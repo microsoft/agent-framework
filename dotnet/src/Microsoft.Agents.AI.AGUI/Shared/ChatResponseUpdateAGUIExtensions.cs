@@ -448,6 +448,8 @@ internal static class ChatResponseUpdateAGUIExtensions
         };
 
         string? currentMessageId = null;
+        string? currentMessageResponseId = null;
+        ChatRole? currentMessageRole = null;
         string? streamingMessageId = null;
         string? currentReasoningBaseId = null;
         string? currentReasoningId = null;
@@ -461,6 +463,13 @@ internal static class ChatResponseUpdateAGUIExtensions
                 chatResponse.MessageId = ContainsToolResult(chatResponse)
                     ? Guid.NewGuid().ToString("N")
                     : (streamingMessageId ??= Guid.NewGuid().ToString("N"));
+            }
+
+            if (IsTextUpdate(chatResponse) &&
+                currentMessageId is not null &&
+                ShouldContinueCurrentTextMessage(chatResponse, currentMessageResponseId, currentMessageRole))
+            {
+                chatResponse.MessageId = currentMessageId;
             }
 
             if (chatResponse is { Contents.Count: > 0 } &&
@@ -503,6 +512,8 @@ internal static class ChatResponseUpdateAGUIExtensions
                 };
 
                 currentMessageId = chatResponse.MessageId;
+                currentMessageResponseId = chatResponse.ResponseId;
+                currentMessageRole = chatResponse.Role;
             }
 
             // Emit text content if present
@@ -739,4 +750,17 @@ internal static class ChatResponseUpdateAGUIExtensions
 
         return false;
     }
+
+    private static bool IsTextUpdate(ChatResponseUpdate chatResponse) =>
+        chatResponse.Contents.Count > 0 &&
+        chatResponse.Contents[0] is TextContent;
+
+    private static bool ShouldContinueCurrentTextMessage(
+        ChatResponseUpdate chatResponse,
+        string? currentMessageResponseId,
+        ChatRole? currentMessageRole) =>
+        !string.IsNullOrWhiteSpace(chatResponse.ResponseId) &&
+        string.Equals(currentMessageResponseId, chatResponse.ResponseId, StringComparison.Ordinal) &&
+        chatResponse.Role == currentMessageRole &&
+        chatResponse.FinishReason is null;
 }

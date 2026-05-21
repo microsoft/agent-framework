@@ -101,6 +101,34 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ClientCoalescesTextChunksWithSameResponseIdAsync()
+    {
+        // Arrange
+        await this.SetupTestServerAsync(useProviderChunkIdsAgent: true);
+        var chatClient = new AGUIChatClient(this._client!, "", null);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
+        ChatMessage userMessage = new(ChatRole.User, "hello");
+
+        List<AgentResponseUpdate> updates = [];
+
+        // Act
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        List<AgentResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
+        textUpdates.Should().NotBeEmpty();
+        textUpdates.Select(u => u.MessageId).Distinct().Should().HaveCount(1);
+
+        AgentResponse response = updates.ToAgentResponse();
+        response.Messages.Should().HaveCount(1);
+        response.Messages[0].Text.Should().Be("Hello from provider chunks!");
+    }
+
+    [Fact]
     public async Task RunAsyncAggregatesStreamingUpdatesAsync()
     {
         // Arrange
@@ -231,14 +259,18 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         response.Messages[0].Text.Should().Be("Hello from fake agent!");
     }
 
-    private async Task SetupTestServerAsync(bool useMultiMessageAgent = false)
+    private async Task SetupTestServerAsync(bool useMultiMessageAgent = false, bool useProviderChunkIdsAgent = false)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
         builder.Services.AddAGUI();
 
-        if (useMultiMessageAgent)
+        if (useProviderChunkIdsAgent)
+        {
+            builder.Services.AddSingleton(new FakeChatClientAgent(useProviderChunkIds: true));
+        }
+        else if (useMultiMessageAgent)
         {
             builder.Services.AddSingleton<FakeMultiMessageAgent>();
         }
@@ -277,6 +309,13 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
 internal sealed class FakeChatClientAgent : AIAgent
 {
+    private readonly bool _useProviderChunkIds;
+
+    public FakeChatClientAgent(bool useProviderChunkIds = false)
+    {
+        this._useProviderChunkIds = useProviderChunkIds;
+    }
+
     protected override string? IdCore => "fake-agent";
 
     public override string? Description => "A fake agent for testing";
@@ -312,13 +351,19 @@ internal sealed class FakeChatClientAgent : AIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string messageId = Guid.NewGuid().ToString("N");
+        const string ResponseId = "response-with-provider-chunk-ids";
+        var chunkIndex = 0;
+        string[] chunks = this._useProviderChunkIds
+            ? ["Hello ", "from ", "provider ", "chunks!"]
+            : ["Hello", " ", "from", " ", "fake", " ", "agent", "!"];
 
         // Simulate streaming a deterministic response
-        foreach (string chunk in new[] { "Hello", " ", "from", " ", "fake", " ", "agent", "!" })
+        foreach (string chunk in chunks)
         {
             yield return new AgentResponseUpdate
             {
-                MessageId = messageId,
+                ResponseId = this._useProviderChunkIds ? ResponseId : null,
+                MessageId = this._useProviderChunkIds ? $"chunk-{++chunkIndex}" : messageId,
                 Role = ChatRole.Assistant,
                 Contents = [new TextContent(chunk)]
             };
