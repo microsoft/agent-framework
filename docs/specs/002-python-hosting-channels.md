@@ -167,6 +167,79 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 
 ## API Surface
 
+### Architecture overview
+
+The host wires one `Agent` (or `Workflow`) to one or more channels, each contributing routes, commands, and a push back-channel. **1a** is the runtime topology — how an inbound request flows through the host. **1b** is the contribution shape — what each channel hands the host at construction.
+
+#### Runtime topology
+
+```mermaid
+graph LR
+    Caller[External caller /<br/>messaging app]
+
+    subgraph Host[AgentFrameworkHost]
+        direction TB
+        ASGI[Starlette app]
+        Router[Channel router]
+        Parse{parse →<br/>command or<br/>message?}
+        Auth[host.authorize]
+        Resolver[IdentityResolver]
+        Delivery[_deliver_response]
+        Push[_handle_push_task]
+        Annot[_annotate_intended_targets]
+    end
+
+    Channels[Channels<br/>Responses · Invocations ·<br/>Telegram · Activity ·<br/>IdentityLinker]
+    CmdHandler[CommandHandler<br/>via ChannelCommandContext]
+    Target[(Agent or Workflow)]
+    Runner[DurableTaskRunner]
+    StateStore[(HostStateStore)]
+
+    Caller --> ASGI
+    ASGI --> Router
+    Router --> Parse
+    Parse -- /command --> CmdHandler
+    Parse -- message --> Auth
+    CmdHandler -- ctx.run --> Auth
+    CmdHandler -- local reply --> Channels
+    Auth --> Resolver
+    Resolver --> StateStore
+    Auth --> Target
+    Target --> Delivery
+    Delivery -- originating sync --> Channels
+    Delivery -- non-originating --> Runner
+    Delivery --> Annot
+    Runner --> Push
+    Push --> Channels
+    Channels --> ASGI
+```
+
+#### Channel contribution shape
+
+Every channel exposes the same three contribution slots, all optional except `routes`. The host duck-types each slot and stitches them in at construction.
+
+```mermaid
+graph LR
+    subgraph C[ConcreteChannel<br/>e.g. TelegramChannel]
+        direction TB
+        Routes[routes:<br/>webhook / poller / API endpoints<br/>→ Starlette router]
+        Commands[commands: Sequence ChannelCommand<br/>name · description · handle ·<br/>scopes · locales · expose_in_ui]
+        Push[ChannelPush.push<br/>+ optional ChannelPushCodec<br/>+ optional response_hook]
+    end
+
+    Host[Host]
+    Native[Platform native catalog<br/>Telegram set_my_commands ·<br/>Teams app manifest · …]
+    Dispatch[CommandHandler dispatch]
+    Delivery[Originating sync delivery<br/>+ runner-scheduled fan-out]
+
+    Routes -- contribute at startup --> Host
+    Commands -- startup projection --> Native
+    Commands -- runtime dispatch --> Dispatch
+    Push -- driven by --> Delivery
+```
+
+The `IdentityLinker` is itself a Channel specialisation: when one is configured, the host auto-inserts a `link` / `connect` `ChannelCommand` into every other channel's catalog (opt-out per channel via `expose_in_ui=False` or rename via metadata).
+
 ### Packages
 
 | Distribution package | Public import surface | Purpose |
@@ -342,6 +415,38 @@ A built-in `link` (or `connect`) `ChannelCommand` is exposed automatically when 
 | **Native allowlist** | `require_link=False`, `allowlist=NativeIdAllowlist(...)` | Only listed channel-native ids (Telegram `chat_id`s, WhatsApp numbers, Slack user ids) get through. Pre-link, no IdP claim involved. | Personal bots, single-user prototypes, small fixed-membership channels. |
 | **Linked-claim allowlist** | `require_link=True`, `allowlist=LinkedClaimAllowlist(...)` | Identity must (a) complete the link ceremony **and** (b) carry an IdP claim whose value is on the list (e.g. AAD `oid in {…}` or `tid == "<tenant>"`). | Multi-channel corporate bot where any channel works but only specific people in a specific tenant are admitted. |
 | **Mixed** | `require_link=False`, `allowlist=AnyOfAllowlists(NativeIdAllowlist(...), LinkedClaimAllowlist(...))` | Either the native id is preapproved **or** the user successfully links and matches the claim allowlist. Native-id hits bypass the link ceremony; everyone else is funneled into it. | A bot that wants ops-team Telegram ids in immediately while still letting other corp users self-onboard via OAuth. |
+
+The decision pipeline that produces each of those profiles:
+
+```mermaid
+flowchart TB
+    Start([authorize identity,<br/>require_link, allowlist])
+    Linked{identity already<br/>linked?<br/>StateStore lookup}
+    Required{require_link?}
+    OpenPath{allowlist is None?}
+    Resolve[/isolation_key:<br/>linked → existing,<br/>else auto-issue channel:native_id/]
+    Evaluate[/allowlist.evaluate context/]
+    Decision{decision}
+    Abstain{requires_linked_claims?}
+    Allowed([Allowed isolation_key])
+    DeniedPre([Denied<br/>allowlist_denied_pre_link])
+    LinkReq([LinkRequired<br/>via configured linker])
+
+    Start --> Linked
+    Linked -- yes --> OpenPath
+    Linked -- no --> Required
+    Required -- yes --> LinkReq
+    Required -- no --> OpenPath
+    OpenPath -- yes --> Resolve --> Allowed
+    OpenPath -- no --> Evaluate --> Decision
+    Decision -- ALLOW --> Resolve
+    Decision -- DENY --> DeniedPre
+    Decision -- ABSTAIN --> Abstain
+    Abstain -- yes --> LinkReq
+    Abstain -- no --> Resolve
+```
+
+The flow shows three terminal states: `Allowed`, `LinkRequired`, `Denied`. `LinkRequired` is reachable whenever `require_link=True` and the identity has not completed the link ceremony (or an allowlist `ABSTAIN`ed and `requires_linked_claims=True`), independent of whether an allowlist is configured.
 
 ##### `IdentityAllowlist` Protocol (tri-state)
 
@@ -1124,6 +1229,41 @@ Webhook transport contributes `/telegram/webhook` by default; the command catalo
 
 A developer wants every Telegram chat to be **authenticated up front** via OAuth (Microsoft Entra ID) before the agent will respond, and wants Teams chats from the same Entra ID user to be **auto-linked** to the existing session — no second `/link` ceremony, just sign in once on the first channel and the rest follow automatically. This delivers cross-channel chat continuity as a side-effect of identity linking; Scenario 7 covers the alternative pattern where a trusted server-side relay supplies identity directly without a link ceremony.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Tg as TelegramChannel
+    participant Host
+    participant Linker as IdentityLinker<br/>(EntraOAuth)
+    participant IdP as OAuth provider
+    participant Store as HostStateStore<br/>(identity_links)
+    participant Act as ActivityChannel
+
+    User->>Tg: /link
+    Tg->>Host: ChannelRequest(identity=tg:12345)
+    Host->>Linker: begin(identity=tg:12345)
+    Linker-->>Host: LinkChallenge(url, state)
+    Host->>Tg: response_hook → push challenge URL
+    Tg-->>User: "click here to sign in"
+
+    User->>IdP: sign in (browser)
+    IdP-->>User: redirect with code
+    User->>Linker: /callback?code=…&state=…
+    Linker->>IdP: exchange code → tokens + claims
+    IdP-->>Linker: claims (oid, email, …)
+    Linker->>Store: persist link(tg:12345 ↔ linked_claims)
+    Linker-->>User: "linked ✅"
+
+    Note over User: later, on Teams (same Entra OID)
+
+    User->>Act: hello
+    Act->>Host: ChannelRequest(identity=teams-aad-oid)
+    Host->>Store: lookup linked_claims by oid
+    Store-->>Host: existing isolation_key (matches tg:12345)
+    Host->>Host: same session as Telegram
+```
+
 > **Prerequisites:** This sample assumes:
 > - `agent-framework-hosting`, `agent-framework-hosting-telegram`, and the (future) `agent-framework-hosting-activity` channel are installed
 > - An OAuth provider is configured (Microsoft Entra ID in this example)
@@ -1191,6 +1331,37 @@ The two enabling pieces:
 A developer runs an internal application server that already knows its end users (e.g. via an SSO session) and wants to expose **two surfaces against the same agent**: the OpenAI-compatible **Responses API** (so the application backend can drive the agent programmatically on behalf of the signed-in user) and **Telegram** (so the same end user can also chat with the agent directly). When the application backend submits a Responses call, it should be possible to (a) link that call to the same `isolation_key` as the user's existing Telegram chats — so the agent sees one continuous conversation history — and optionally (b) have the agent's response pushed back to the user's Telegram chat instead of (or in addition to) being returned synchronously on the Responses HTTP call.
 
 This works **without** an `IdentityLinker` because the application backend is a **trusted relay**: it already authenticated the user through its own SSO and knows both the user's app-internal id and (because the user has previously connected their Telegram account in the application's own settings page) the user's Telegram `chat_id`. The host just needs to be told.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Backend as Server-side backend
+    participant Resp as ResponsesChannel
+    participant Host
+    participant Hook as run_hook<br/>(responses_relay_hook)
+    participant Store as HostStateStore<br/>(continuations)
+    participant Target as Agent
+    participant Runner as DurableTaskRunner
+    participant Tg as TelegramChannel
+
+    Backend->>Resp: POST /v1/responses<br/>extra_body.hosting.push_to_telegram_chat_id=<chat_id>
+    Resp->>Host: ChannelRequest(...)
+    Host->>Hook: run_hook(request, context)
+    Hook->>Hook: rewrite to<br/>background=True,<br/>response_target=identities([tg:<chat_id>])
+    Host->>Store: write continuation(token, status=in_progress)
+    Host-->>Resp: ContinuationToken (token)
+    Resp-->>Backend: 200 with continuation token
+
+    Note over Host,Target: background task
+
+    Host->>Target: run (async)
+    Target-->>Host: AgentResponse
+    Host->>Store: continuation.complete(token, result)
+    Host->>Runner: schedule("hosting.push",<br/>payload for tg:<chat_id>)
+    Runner->>Host: _handle_push_task(payload)
+    Host->>Tg: response_hook → push
+    Tg-->>User: answer arrives in Telegram chat
+```
 
 > **Prerequisites:** This sample assumes:
 > - `agent-framework-hosting`, `agent-framework-hosting-responses`, and `agent-framework-hosting-telegram` are installed
@@ -1329,6 +1500,42 @@ The two enabling pieces:
 
 A developer wants the user to start a long-running task on Telegram and pick up the response on Teams (whichever channel the user happens to be on when the result is ready). The originating Telegram message returns a `ContinuationToken` immediately; when the agent completes, the host pushes the result to the user's currently active channel via `ChannelPush`. A poll route is also exposed for callers that prefer polling.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Tg as TelegramChannel
+    participant Host
+    participant Hook as run_hook
+    participant Store as HostStateStore<br/>(continuations · last_seen)
+    participant Target as Agent
+    participant Runner as DurableTaskRunner
+    participant Act as ActivityChannel
+
+    User->>Tg: long-running ask
+    Tg->>Host: ChannelRequest(identity=tg:12345)
+    Host->>Hook: run_hook
+    Hook->>Hook: background=True,<br/>response_target=active
+    Host->>Store: write continuation(in_progress)
+    Host-->>Tg: ContinuationToken
+    Tg-->>User: "working on it…"
+
+    Note over User: user opens Teams,<br/>last_seen updates to "activity"
+
+    User->>Act: hello on Teams
+    Act->>Host: ChannelRequest(identity=teams-aad-oid)
+    Host->>Store: record_last_seen(isolation_key, activity, now)
+
+    Note over Host,Target: background completes
+
+    Target-->>Host: AgentResponse
+    Host->>Store: get_last_seen(isolation_key) → activity
+    Host->>Runner: schedule("hosting.push",<br/>payload for activity)
+    Runner->>Host: _handle_push_task
+    Host->>Act: push
+    Act-->>User: answer arrives on Teams
+```
+
 > **Prerequisites:** This sample assumes:
 > - `agent-framework-hosting`, `agent-framework-hosting-telegram`, and the (future) `agent-framework-hosting-activity` channel are installed
 > - The user is already linked across Telegram and Teams (Scenario 6)
@@ -1387,6 +1594,42 @@ Variants without changing channel code:
 If the chosen destination channel does not implement `ChannelPush` (e.g. Responses), the host falls back to the `originating` channel and records the fallback in telemetry. This makes the Responses + background-run combo work as "submit on Responses, poll on Responses" without surprising silent drops.
 
 ### Scenario 9: Hosting a `Workflow` instead of an agent (with checkpoint storage)
+
+The host shape is unchanged when the target is a `Workflow`; the result wrapper narrows to `HostedRunResult[WorkflowRunResult]` and `response_hook` carries the projection that lets text-only channels render workflow output.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Channel
+    participant Host
+    participant Workflow
+    participant Store as HostStateStore<br/>(workflow_checkpoints)
+    participant Hook as response_hook<br/>(per-channel)
+
+    User->>Channel: message
+    Channel->>Host: ChannelRequest
+    Host->>Workflow: run(messages)
+    loop per executor / event
+        Workflow->>Store: write checkpoint
+        Workflow-->>Host: WorkflowEvent
+    end
+    Workflow-->>Host: WorkflowRunResult
+    Host->>Host: wrap → HostedRunResult[WorkflowRunResult]<br/>(get_outputs, get_final_state, …)
+
+    alt text-only channel
+        Host->>Hook: response_hook(result, context)
+        Hook->>Hook: result.replace(<br/>result=AgentResponse(<br/>text=workflow.get_outputs()[-1]))
+        Hook-->>Host: HostedRunResult[AgentResponse]
+        Host->>Channel: push (sync or via runner)
+    else card-capable channel
+        Host->>Hook: response_hook(result, context)
+        Hook->>Hook: render adaptive card<br/>from workflow get_outputs
+        Hook-->>Host: HostedRunResult[Any]
+        Host->>Channel: push
+    end
+    Channel-->>User: reply (channel-native)
+```
 
 > **Prerequisites:** This sample assumes:
 > - `agent-framework-hosting` and `agent-framework-hosting-invocations` are installed
@@ -1522,6 +1765,41 @@ The host imposes no projection — channels read `result.result.text` for a conv
 ## Information Design
 
 ### Canonical flow
+
+The default request/response shape — single channel, originating response, no fan-out. Authorization runs before `run_hook`; `response_hook` runs per-destination (here just one).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Channel as Channel<br/>(inbound)
+    participant Host
+    participant Auth as host.authorize
+    participant Target as Agent / Workflow
+    participant Annot as _annotate_intended_targets
+
+    User->>Channel: native payload (webhook / poll / HTTP body)
+    Channel->>Channel: parse → ChannelRequest<br/>(identity, conversation_id, content, response_target=originating)
+    Channel->>Host: dispatch(ChannelRequest)
+    Host->>Auth: authorize(identity, require_link, allowlist)
+    alt Denied / LinkRequired
+        Auth-->>Host: Denied(reason_code, user_message)<br/>or LinkRequired(challenge)
+        Host-->>Channel: render denial / link challenge<br/>(channel-appropriate UX)
+        Channel-->>User: short refusal in-room
+    else Allowed(isolation_key)
+        Host->>Host: resolve session via StateStore
+        Host->>Host: run_hook(request, context)
+        Host->>Target: target.run(messages, session=...)
+        Target-->>Host: AgentResponse / WorkflowRunResult
+        Host->>Host: wrap → HostedRunResult[TResult]
+        Host->>Annot: write hosting.intended_targets<br/>onto assistant message
+        Host->>Channel: response_hook(result, context)
+        Channel->>Channel: shape to native payload
+        Channel-->>User: reply on originating wire
+    end
+```
+
+The textual trace of the same flow (showing more of the per-step bookkeeping):
 
 ```text
 external request/event
@@ -1671,6 +1949,42 @@ Round-trip is guaranteed by `Message.to_dict()` / `Message.from_dict()`. Future 
 
 The inbound envelope above captures the caller's **intent**. The assistant `Message` produced by the host carries a parallel envelope that records the *resolved destination set* — what the host actually intended to deliver to, after `ResponseTarget` resolution and `LinkPolicy` filtering. **This is a single write, never mutated.** Operational state for each push attempt (status, attempts, retries, last error, channel-issued id) lives in the [`DurableTaskRunner`](#durable-task-runner) — not on the message — because the runner is the component that performs and (when durable) retries the push.
 
+The shape of the fan-out — synchronous on the originating wire, scheduled via the runner for every non-originating destination — is the same in every multi-target scenario (`all_linked`, `active`, `channels([...])`, `identities([...])`):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Tg as TelegramChannel<br/>(originating)
+    participant Host
+    participant Target as Agent
+    participant Runner as DurableTaskRunner
+    participant Annot as _annotate_intended_targets
+    participant Act as ActivityChannel<br/>(linked)
+    participant Resp as ResponsesChannel<br/>(linked)
+
+    User->>Tg: message
+    Tg->>Host: ChannelRequest(<br/>identity=tg:12345,<br/>response_target=all_linked)
+    Host->>Host: resolve isolation_key
+    Host->>Target: run
+    Target-->>Host: AgentResponse
+    Host->>Annot: hosting.intended_targets =<br/>[tg, activity, responses]
+
+    par originating — synchronous
+        Host->>Tg: response_hook → push (sync)
+        Tg-->>User: reply on Telegram
+    and non-originating — durable
+        Host->>Runner: schedule("hosting.push",<br/>payload for activity)
+        Runner->>Host: _handle_push_task(payload)
+        Host->>Act: response_hook → push
+        Act-->>User: reply in Teams (or wherever)
+    and
+        Host->>Runner: schedule("hosting.push",<br/>payload for responses)
+        Runner->>Host: _handle_push_task(payload)
+        Host->>Resp: response_hook → push
+    end
+```
+
 Schema on `Message.additional_properties["hosting"]` for a host-produced assistant message:
 
 ```jsonc
@@ -1777,6 +2091,45 @@ When a `DurableTaskRunner` is configured for a deployment that uses out-of-proce
 
 At construction the host runs `_validate_runner_codec_pairing`: if the configured runner declares `payload_mode == JSON` and any push-capable channel does not expose a codec, the host raises `ChannelConfigurationError` so the misconfiguration is caught before traffic. On the consumer side `_handle_push_task` accepts both `OBJECT`-mode (in-memory object) and `JSON`-mode (`{"type": "push", ...}` envelope) shapes so the same handler serves both runner backends.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host
+    participant Codec as ChannelPushCodec<br/>(on the push channel)
+    participant Runner as Durable runner<br/>(payload_mode=JSON)
+    participant Worker as Runner worker<br/>(may run after host scaled to zero)
+    participant Channel as Push channel
+    participant External as External service<br/>(Telegram / Bot Framework / …)
+
+    Note over Host,Runner: construction-time:<br/>_validate_runner_codec_pairing<br/>(refuse JSON runner + codec-less channel)
+
+    Host->>Codec: encode(payload) → JSON-safe Mapping
+    Host->>Runner: schedule("hosting.push",<br/>{"type": "push", "channel": "tg",<br/>"payload": <encoded>})
+    Runner->>Runner: persist task
+    Runner-->>Host: TaskHandle
+    Host-->>Host: synchronous return path<br/>(originating already delivered)
+
+    Note over Worker: ... host may scale to zero ...
+
+    Worker->>Runner: dequeue task
+    Worker->>Host: invoke "hosting.push" handler<br/>(JSON envelope)
+    Host->>Host: _handle_push_task<br/>detect envelope shape (OBJECT or JSON)
+    Host->>Codec: decode(payload) → in-memory object
+    Host->>Channel: ChannelPush.push(identity, result)
+    Channel->>External: native API call
+    alt success
+        External-->>Channel: ok
+        Channel-->>Worker: handler returns
+        Worker->>Runner: mark task succeeded
+    else transient failure
+        External-->>Channel: 5xx
+        Channel-->>Worker: raise
+        Worker->>Runner: retry per RetryPolicy
+    else terminal failure
+        Worker->>Runner: max_attempts → mark failed<br/>(log only)
+    end
+```
+
 #### In-process runner shutdown drain
 
 `InProcessTaskRunner` ships a two-phase shutdown driven by `shutdown_grace_seconds` (default `5.0`):
@@ -1789,6 +2142,36 @@ This is purely operational hygiene for the `long_running` default; durable adapt
 #### Echo idempotency on retry
 
 When `ResponseTarget.channel(name, echo_input=True)` is set, the host packages an echo (`role="user"`) push *and* the agent reply (`role="assistant"`) into the same `"hosting.push"` task per non-originating destination. The handler tracks an `echo_done` cursor on the task state and short-circuits the echo phase on retry: a retry that fires after the echo succeeded but before the response push completed will not double-echo the user's message. The cursor lives on the runner-owned task state, not the message — same principle as the broader "intent only on the message, operational state in the runner" rule.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Runner
+    participant Host
+    participant Channel
+    participant External
+
+    Runner->>Host: _handle_push_task(<br/>echo, response,<br/>state={echo_done: False})
+    Host->>Host: read echo_done → False
+    Host->>Channel: response_hook(echo, is_echo=True)
+    Channel->>External: push user message
+    External-->>Channel: ok
+    Host->>Runner: persist state.echo_done = True
+
+    Host->>Channel: response_hook(response, is_echo=False)
+    Channel->>External: push assistant reply
+    External-->>Channel: 5xx (transient)
+    Channel-->>Host: raise
+
+    Runner->>Runner: retry per RetryPolicy<br/>(backoff)
+
+    Runner->>Host: _handle_push_task(<br/>echo, response,<br/>state={echo_done: True})
+    Host->>Host: read echo_done → True (skip echo)
+    Host->>Channel: response_hook(response, is_echo=False)
+    Channel->>External: push assistant reply
+    External-->>Channel: ok
+    Host-->>Runner: handler returns → succeeded
+```
 
 ## Reference and Parity Plan
 

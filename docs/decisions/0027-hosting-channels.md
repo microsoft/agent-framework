@@ -170,6 +170,105 @@ Built-in channels own the default mapping from each protocol's request model int
 
 The full Python API surface — exact types, fields, default routes, code samples — is specified in the companion Python spec. A future .NET spec captures the .NET-idiomatic API surface for the same model.
 
+#### Runtime topology
+
+How the pieces wire at runtime. Channels contribute routes to the host's app; inbound traffic splits at the parse step into a command dispatch (handled in the channel) or a message that flows through `host.authorize` → target invocation → response delivery. Non-originating destinations go through the configured `DurableTaskRunner`; the originating channel is rendered synchronously.
+
+```mermaid
+graph LR
+    Caller[External caller /<br/>messaging app]
+
+    subgraph Host[AgentFrameworkHost]
+        direction TB
+        ASGI[Starlette / ASP.NET Core app]
+        Router[Channel router]
+        Parse{parse →<br/>command or<br/>message?}
+        Auth[host.authorize]
+        Resolver[IdentityResolver]
+        Delivery[_deliver_response]
+        Push[_handle_push_task]
+    end
+
+    Channels[Channels<br/>Responses · Invocations ·<br/>Telegram · Activity ·<br/>IdentityLinker]
+    CmdHandler[CommandHandler<br/>via ChannelCommandContext]
+    Target[(Agent or Workflow)]
+    Runner[DurableTaskRunner]
+    StateStore[(HostStateStore)]
+
+    Caller --> ASGI
+    ASGI --> Router
+    Router --> Parse
+    Parse -- /command --> CmdHandler
+    Parse -- message --> Auth
+    CmdHandler -- ctx.run --> Auth
+    CmdHandler -- local reply --> Channels
+    Auth --> Resolver
+    Resolver --> StateStore
+    Auth --> Target
+    Target --> Delivery
+    Delivery -- originating sync --> Channels
+    Delivery -- non-originating --> Runner
+    Runner --> Push
+    Push --> Channels
+    Channels --> ASGI
+```
+
+#### Channel contribution shape
+
+Every channel exposes the same three contribution slots (all optional except `routes`). The host duck-types each slot and stitches them in at construction.
+
+```mermaid
+graph LR
+    subgraph C[ConcreteChannel<br/>e.g. TelegramChannel]
+        direction TB
+        Routes[routes:<br/>webhook / poller / API endpoints<br/>→ Starlette router]
+        Commands[commands: Sequence ChannelCommand<br/>name · description · handle ·<br/>scopes · locales · expose_in_ui]
+        Push[ChannelPush.push<br/>+ optional ChannelPushCodec<br/>+ optional response_hook]
+    end
+
+    Host[Host]
+    Native[Platform native catalog<br/>Telegram set_my_commands ·<br/>Teams app manifest · …]
+    Dispatch[CommandHandler dispatch]
+    Delivery[Originating sync delivery<br/>+ runner-scheduled fan-out]
+
+    Routes -- contribute at startup --> Host
+    Commands -- startup projection --> Native
+    Commands -- runtime dispatch --> Dispatch
+    Push -- driven by --> Delivery
+```
+
+#### Authorization decision
+
+`require_link` and `allowlist` are orthogonal axes. The `require_link` gate runs first against the current link state from `StateStore`; an unlinked identity on a `require_link=True` channel returns `LinkRequired` regardless of allowlist. A claim-dependent allowlist that has not yet seen claims returns `ABSTAIN` from `evaluate` and is converted into a `LinkRequired` outcome so the user gets a link prompt rather than a silent deny.
+
+```mermaid
+flowchart TB
+    Start([authorize identity,<br/>require_link, allowlist])
+    Linked{identity already<br/>linked?<br/>StateStore lookup}
+    Required{require_link?}
+    OpenPath{allowlist is None?}
+    Resolve[/isolation_key:<br/>linked → existing,<br/>else auto-issue channel:native_id/]
+    Evaluate[/allowlist.evaluate context/]
+    Decision{decision}
+    Abstain{requires_linked_claims?}
+    Allowed([Allowed isolation_key])
+    DeniedPre([Denied<br/>allowlist_denied_pre_link])
+    LinkReq([LinkRequired<br/>via configured linker])
+
+    Start --> Linked
+    Linked -- yes --> OpenPath
+    Linked -- no --> Required
+    Required -- yes --> LinkReq
+    Required -- no --> OpenPath
+    OpenPath -- yes --> Resolve --> Allowed
+    OpenPath -- no --> Evaluate --> Decision
+    Decision -- ALLOW --> Resolve
+    Decision -- DENY --> DeniedPre
+    Decision -- ABSTAIN --> Abstain
+    Abstain -- yes --> LinkReq
+    Abstain -- no --> Resolve
+```
+
 ## Terminology
 
 These terms are language-neutral and shared between Python and .NET implementations. Each language realizes them with idiomatic types and naming.
