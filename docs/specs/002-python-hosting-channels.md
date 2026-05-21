@@ -129,15 +129,16 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 19. **Target any `SupportsAgentRun` or `Workflow`** — host an `Agent`, `A2AAgent`, or a `Workflow`; the `run_hook` is the seam for adapting the channel's default `ChannelRequest` into the target-specific input shape (free-form messages for agents, typed inputs for workflows).
 20. **Contribute WebSocket endpoints from a channel** — `ChannelContribution.routes` accepts both `Route` (HTTP) and `WebSocketRoute` (WS); the channel codec is responsible for framing and the same `run_hook` / default mapping pipeline applies. Built-in `ResponsesChannel` exposes a WebSocket transport (default `/responses/ws`, controlled by `transports=("http", "websocket")`) alongside its HTTP+SSE transport, anticipating the OpenAI Responses WebSocket transport. The host requires an ASGI server with WebSocket scope support (Uvicorn, Hypercorn, Daphne, Granian).
 21. **Mix channels of different confidentiality tiers on one host** — every `Channel` may declare an opaque `confidentiality_tier: str | None` (e.g. `"corp"`, `"public"`). The host's `LinkPolicy` decides which `(source_tier, target_tier)` pairs may share an `isolation_key` (link) and which may be `ResponseTarget` source/destination for one another (deliver). Built-in policies (`AllowAllLinks` (default), `SameConfidentialityTierOnly`, `ExplicitAllowList`, `DenyAllLinks`) and the policy contract are defined in [LinkPolicy](#linkpolicy-and-confidentiality_tier). Cross-tier link attempts are refused with a typed error; cross-tier deliveries are dropped — so two tiers can share **an agent target** on one host while remaining strictly session-isolated.
+22. **Choose an authorization profile per channel** — every channel that emits a `ChannelIdentity` composes from two orthogonal parameters, `require_link: bool` and `allowlist: IdentityAllowlist | None`, producing the three named profiles **open** (default), **forced-link** (must authenticate, any authenticated identity accepted), and **allowlist** (only listed identities — keyed on either the channel-native id pre-link or on a verified IdP claim post-link). Built-in allowlists (`NativeIdAllowlist`, `LinkedClaimAllowlist`, plus `AnyOfAllowlists` / `AllOfAllowlists` combinators) and the unified host seam (`host.authorize(...)` → `AuthorizationOutcome` of `Allowed` / `LinkRequired` / `Denied`) are defined in [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam). The host applies a `default_allowlist` to every channel whose `allowlist` is left at the sentinel `"inherit"`, so app authors can lock down a whole bot in one place. Configuration combinations that would silently deny every user (e.g. `LinkedClaimAllowlist` on a channel with `require_link=False` and no native verified claims) are rejected at host startup with a typed `ChannelConfigurationError`.
 
 ### v1 Fast Follow
-22. **Generic auth helpers** — shared middleware for common channel auth patterns (HMAC signature, bearer token).
-23. **Pluggable host state store** — interface for cross-host persistence of `ContinuationToken`s, identity-link grants, and last-seen `(isolation_key, channel)` records. Default implementation in v1 is **file-based** (`FileHostStateStore`); `InMemoryHostStateStore` is available for tests. A future `CosmosHostStateStore` / `SQLHostStateStore` would extend cross-channel chat continuity (req #9), background runs (req #14), and identity-link continuity (req #11) beyond a single host/process — but the v1 file-based default already survives host restarts on a single node. Same protocol covers session aliasing where applicable.
-24. **First-party identity linker helpers** — concrete `OAuthIdentityLinker` (with provider presets) and `OneTimeCodeIdentityLinker` (cross-channel code exchange) shipped as opt-in helpers on top of the `IdentityLinker` contract. Investigation of additional first-party linker types tracked as a follow-up.
-25. **`A2AChannel` package** (`agent-framework-hosting-a2a`) — exposes the hostable target over the Agent-to-Agent protocol so other agents can consume it as a peer. Caller-supplied-session family (alongside Responses and Invocations): A2A's per-conversation id maps to `ChannelSession.key`; the calling agent's identity (e.g. its A2A agent card / signed JWT) flows through `IdentityResolver`; structured replies fit the existing `ChannelRequest` + `ResponseTarget` envelope. No new host primitives required — only the protocol binding and package.
-26. **`MCPToolChannel` package** (`agent-framework-hosting-mcp`) — exposes the hostable target as a **Model Context Protocol tool** so MCP clients (other agents, IDE tooling) can invoke it. Same caller-supplied-session family: the MCP `tool/call` carries the conversation key into `ChannelSession.key`; the MCP client identity flows through `IdentityResolver`; the tool result is the target's response. Streaming MCP tools map onto the host's existing streaming response delivery; long-running MCP tools map onto background runs with `ContinuationToken` when the work outlasts a single tool-call round-trip.
-27. **`ActivityChannel` package** (`agent-framework-hosting-activity`) — exposes the hostable target behind **Azure Bot Service**, which fronts Teams, Web Chat, Slack-style connectors, and the rest of the Bot Framework / M365 connector ecosystem. Provides **native translations** between Activity Protocol objects (`Activity`, `ConversationReference`, adaptive cards, `Invoke` activities, …) and the host's `ChannelRequest` / `ChannelResponse` types — so the contract is **explicit** rather than implicit through a generic Invocations endpoint. Host-tracked-session family: Bot Service authenticates with a JWT carrying the AAD object id, the channel populates `ChannelIdentity` from `from.aadObjectId`, the host's per-`isolation_key` alias decides which `AgentSession` to resolve, and `host.reset_session(...)` is reachable via a Teams slash command or adaptive-card action. `ChannelPush` is implemented over Bot Service's `ConversationReference` + `continueConversationAsync` pattern. Naming this channel **Activity** rather than **Teams** keeps a `TeamsChannel` name available for the Teams-native channel below (req #28) and for any future direct-to-Teams transport.
-28. **`TeamsChannel` package** (`agent-framework-hosting-teams`) — Teams-native channel built on the MIT-licensed [`microsoft/teams.py`](https://github.com/microsoft/teams.py) SDK (`microsoft-teams-apps`, `microsoft-teams-api`, `microsoft-teams-cards`). Where `ActivityChannel` (req #27) targets the **generic** Activity Protocol surface across all Bot Service-fronted channels, `TeamsChannel` exploits **Teams-specific affordances** that the generic Activity Protocol does not surface natively:
+23. **Generic auth helpers** — shared middleware for common channel auth patterns (HMAC signature, bearer token).
+24. **Pluggable host state store** — interface for cross-host persistence of `ContinuationToken`s, identity-link grants, and last-seen `(isolation_key, channel)` records. Default implementation in v1 is **file-based** (`FileHostStateStore`); `InMemoryHostStateStore` is available for tests. A future `CosmosHostStateStore` / `SQLHostStateStore` would extend cross-channel chat continuity (req #9), background runs (req #14), and identity-link continuity (req #11) beyond a single host/process — but the v1 file-based default already survives host restarts on a single node. Same protocol covers session aliasing where applicable.
+25. **First-party identity linker helpers** — concrete `OAuthIdentityLinker` (with provider presets) and `OneTimeCodeIdentityLinker` (cross-channel code exchange) shipped as opt-in helpers on top of the `IdentityLinker` contract. Investigation of additional first-party linker types tracked as a follow-up.
+26. **`A2AChannel` package** (`agent-framework-hosting-a2a`) — exposes the hostable target over the Agent-to-Agent protocol so other agents can consume it as a peer. Caller-supplied-session family (alongside Responses and Invocations): A2A's per-conversation id maps to `ChannelSession.key`; the calling agent's identity (e.g. its A2A agent card / signed JWT) flows through `IdentityResolver`; structured replies fit the existing `ChannelRequest` + `ResponseTarget` envelope. No new host primitives required — only the protocol binding and package.
+27. **`MCPToolChannel` package** (`agent-framework-hosting-mcp`) — exposes the hostable target as a **Model Context Protocol tool** so MCP clients (other agents, IDE tooling) can invoke it. Same caller-supplied-session family: the MCP `tool/call` carries the conversation key into `ChannelSession.key`; the MCP client identity flows through `IdentityResolver`; the tool result is the target's response. Streaming MCP tools map onto the host's existing streaming response delivery; long-running MCP tools map onto background runs with `ContinuationToken` when the work outlasts a single tool-call round-trip.
+28. **`ActivityChannel` package** (`agent-framework-hosting-activity`) — exposes the hostable target behind **Azure Bot Service**, which fronts Teams, Web Chat, Slack-style connectors, and the rest of the Bot Framework / M365 connector ecosystem. Provides **native translations** between Activity Protocol objects (`Activity`, `ConversationReference`, adaptive cards, `Invoke` activities, …) and the host's `ChannelRequest` / `ChannelResponse` types — so the contract is **explicit** rather than implicit through a generic Invocations endpoint. Host-tracked-session family: Bot Service authenticates with a JWT carrying the AAD object id, the channel populates `ChannelIdentity` from `from.aadObjectId`, the host's per-`isolation_key` alias decides which `AgentSession` to resolve, and `host.reset_session(...)` is reachable via a Teams slash command or adaptive-card action. `ChannelPush` is implemented over Bot Service's `ConversationReference` + `continueConversationAsync` pattern. Naming this channel **Activity** rather than **Teams** keeps a `TeamsChannel` name available for the Teams-native channel below (req #29) and for any future direct-to-Teams transport.
+29. **`TeamsChannel` package** (`agent-framework-hosting-teams`) — Teams-native channel built on the MIT-licensed [`microsoft/teams.py`](https://github.com/microsoft/teams.py) SDK (`microsoft-teams-apps`, `microsoft-teams-api`, `microsoft-teams-cards`). Where `ActivityChannel` (req #28) targets the **generic** Activity Protocol surface across all Bot Service-fronted channels, `TeamsChannel` exploits **Teams-specific affordances** that the generic Activity Protocol does not surface natively:
     - **Adaptive Cards** via the typed `microsoft-teams-cards` builder, attached as tool side-effects through a `ContextVar`-scoped pending-cards collector consumed by the channel's result projector.
     - **Streamed assistant replies** via `ctx.stream.emit(chunk)` — the channel projects `agent.run(..., stream=True)` chunks directly.
     - **Teams "AI generated" badge**, **built-in feedback controls + custom feedback form**, **suggested-prompt chips** (`SuggestedActions` / `CardAction(IM_BACK)`), **inline citations** (`CitationAppearance` populated from a `FunctionMiddleware` that assigns stable positions to tool-result sources).
@@ -149,20 +150,20 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 
     Mounts the SDK's `App` into the host's Starlette app via a custom `HttpServerAdapter` that defers `register_route(...)` to `ChannelContribution.routes` — the SDK does **not** start its own server; the host owns the lifecycle. Host-tracked-session family (same as `ActivityChannel`): `from.aadObjectId` populates `ChannelIdentity`. The result projector reads `AgentRunResult.messages[*].contents` and routes the rich content variants to their Teams-native renderings (`TextContent` → markdown body, `DataContent`/structured output → Adaptive Card, citation entries from `additional_properties` → `add_citation`, `ErrorContent` → typed error card).
 
-    **Note on transport.** `TeamsChannel` **still rides on Azure Bot Service in v1** — the `microsoft/teams.py` SDK is a higher-level Pythonic wrapper over the same Activity Protocol pipeline that `ActivityChannel` exposes raw. The difference is **what the developer writes against**, not the underlying network path. A truly Bot-Service-free Teams transport is *not currently possible* and is tracked as a separate, speculative stretch item (req #30); when/if Microsoft ships one, the new transport would slot in under the same `TeamsChannel` package without changing this requirement.
+    **Note on transport.** `TeamsChannel` **still rides on Azure Bot Service in v1** — the `microsoft/teams.py` SDK is a higher-level Pythonic wrapper over the same Activity Protocol pipeline that `ActivityChannel` exposes raw. The difference is **what the developer writes against**, not the underlying network path. A truly Bot-Service-free Teams transport is *not currently possible* and is tracked as a separate, speculative stretch item (req #31); when/if Microsoft ships one, the new transport would slot in under the same `TeamsChannel` package without changing this requirement.
 
     **`ActivityChannel` vs `TeamsChannel` — pick by audience:**
 
     | Channel | Built on | Audience |
     |---|---|---|
-    | `ActivityChannel` (req #27) | Activity Protocol over HTTP, no Teams-specific helpers | Bot Service-fronted channels generically (Teams, Web Chat, Slack-style connectors, DirectLine, …); maximum portability across the Bot Framework / M365 connector ecosystem |
-    | `TeamsChannel` (req #28) | `microsoft/teams.py` `App` mounted via custom `HttpServerAdapter` into the host's Starlette app | Teams-first deployments that want Adaptive Cards, modal Dialogs, Message Extensions, citations, feedback, suggested-prompt chips, and SSO out-of-the-box |
+    | `ActivityChannel` (req #28) | Activity Protocol over HTTP, no Teams-specific helpers | Bot Service-fronted channels generically (Teams, Web Chat, Slack-style connectors, DirectLine, …); maximum portability across the Bot Framework / M365 connector ecosystem |
+    | `TeamsChannel` (req #29) | `microsoft/teams.py` `App` mounted via custom `HttpServerAdapter` into the host's Starlette app | Teams-first deployments that want Adaptive Cards, modal Dialogs, Message Extensions, citations, feedback, suggested-prompt chips, and SSO out-of-the-box |
 
     Deployments that only need plain Activity Protocol over Bot Service stick with `ActivityChannel`; `TeamsChannel` is the upgrade path when Teams-native richness is wanted.
 
 ### Stretch
-29. **WhatsApp channel package** — using the same `Channel` + `ChannelCommand` model, designed so it participates in cross-channel continuity (req #9) and can serve as a `ChannelPush` destination (req #13) when paired with a stable per-user `isolation_key`.
-30. **Direct-to-Teams channel package** — *speculative*. Reserved for a future transport that connects to Teams **without going through Azure Bot Service** (and therefore without the Activity Protocol pipeline that backs both `ActivityChannel` (req #27) and `TeamsChannel` (req #28)). At the time of writing **no such transport is publicly available** — the Microsoft Graph chat APIs (`/teams/{id}/channels/{id}/messages`, `/chats/{id}/messages`) and the `microsoft/teams.py` SDK both ultimately route through Bot Service for the bot-as-conversation-participant pattern. This requirement is kept on the roadmap purely to preserve the `TeamsChannel` naming line for if/when Microsoft ships a Bot-Service-free transport (a native Teams REST/RPC, a Graph subscription strong enough to drive both inbound and outbound message flow, or similar). Until then, **the canonical Teams channel is `TeamsChannel` (req #28)** and `ActivityChannel` (req #27) covers the generic Bot Service surface.
+30. **WhatsApp channel package** — using the same `Channel` + `ChannelCommand` model, designed so it participates in cross-channel continuity (req #9) and can serve as a `ChannelPush` destination (req #13) when paired with a stable per-user `isolation_key`.
+31. **Direct-to-Teams channel package** — *speculative*. Reserved for a future transport that connects to Teams **without going through Azure Bot Service** (and therefore without the Activity Protocol pipeline that backs both `ActivityChannel` (req #28) and `TeamsChannel` (req #29)). At the time of writing **no such transport is publicly available** — the Microsoft Graph chat APIs (`/teams/{id}/channels/{id}/messages`, `/chats/{id}/messages`) and the `microsoft/teams.py` SDK both ultimately route through Bot Service for the bot-as-conversation-participant pattern. This requirement is kept on the roadmap purely to preserve the `TeamsChannel` naming line for if/when Microsoft ships a Bot-Service-free transport (a native Teams REST/RPC, a Graph subscription strong enough to drive both inbound and outbound message flow, or similar). Until then, **the canonical Teams channel is `TeamsChannel` (req #29)** and `ActivityChannel` (req #28) covers the generic Bot Service surface.
 
 ## API Surface
 
@@ -226,7 +227,7 @@ TelegramChannel(path="/bots/telegram", bot_token=token)  # -> /bots/telegram/web
 
 | Method | Type | Description |
 |---|---|---|
-| `run(request: ChannelRequest)` | `-> HostedRunResult` | One-shot invocation. |
+| `run(request: ChannelRequest)` | `-> HostedRunResult[Any]` | One-shot invocation. For agent targets `TResult` narrows to `AgentResponse`; for workflow targets to `WorkflowRunResult`. |
 | `stream(request: ChannelRequest)` | `-> HostedStreamResult` | Streaming invocation. |
 
 **`ChannelContribution`** — what a channel returns from `contribute(...)`.
@@ -305,7 +306,7 @@ Runs **after** the channel has produced its default `ChannelRequest`, **before**
 IdentityResolver = Callable[[ChannelIdentity], Awaitable[str | None] | (str | None)]
 ```
 
-The **default resolver auto-issues** an `isolation_key` the first time a `(channel, native_id)` is seen and persists the mapping in the host's identity store, so every end user automatically gets a stable per-user `isolation_key` on first contact through **any** channel — no per-channel boilerplate is required for the single-channel case. Returning `None` is reserved for advanced cases where the resolver wants to refuse unknown identities (e.g. allow-list enforcement).
+The **default resolver auto-issues** an `isolation_key` the first time a `(channel, native_id)` is seen and persists the mapping in the host's identity store, so every end user automatically gets a stable per-user `isolation_key` on first contact through **any** channel — no per-channel boilerplate is required for the single-channel case. Returning `None` is reserved for advanced cases where the resolver wants to refuse unknown identities; the dedicated host seam for accept/reject decisions is **`IdentityAllowlist`** — see [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam) below.
 
 Cross-channel continuity is then a one-shot **merge** operation: after a successful link ceremony (Scenario 6), the host atomically rewrites the second channel's auto-issued key to point at the first channel's existing `isolation_key`. Apps never have to write per-channel mapping hooks just to get continuity to work.
 
@@ -328,7 +329,171 @@ Apps that already own an identity namespace (corporate user id, tenant-scoped ac
 
 A built-in `link` (or `connect`) `ChannelCommand` is exposed automatically when an `IdentityLinker` is configured. Its `handle` invokes `linker.begin(...)` and replies with the `LinkChallenge` payload (URL, code, instructions) projected through the channel's native rendering. Channels may opt out (`expose_in_ui=False`) or override the command's name per channel.
 
-**`require_link` (per-channel)** — every channel that emits a `ChannelIdentity` accepts a `require_link: bool = False` constructor argument. When `True`, the channel calls `linker.is_linked(identity, verified_claims=…)` before producing a `ChannelRequest`; un-linked identities are short-circuited to a rendered `LinkChallenge` reply (the same payload the `link` command would emit) and the agent is **not** invoked for that turn. Combined with the linker's verified-claim auto-link, this gives an "authenticate before chatting" enforcement model where the first channel forces the OAuth ceremony and subsequent channels join the same `isolation_key` silently. See [Scenario 6](#scenario-6-linking-a-new-channel-to-an-existing-identity-via-oauth) for the end-to-end flow. Default is `False`, which preserves the opportunistic flow (auto-issued `isolation_key`, link manually later). Channels whose protocol does not authenticate the user (e.g. anonymous Responses calls) ignore the flag.
+**`require_link` (per-channel)** — every channel that emits a `ChannelIdentity` accepts a `require_link: bool = False` constructor argument. When `True`, the channel calls `linker.is_linked(identity, verified_claims=…)` before producing a `ChannelRequest`; un-linked identities are short-circuited to a rendered `LinkChallenge` reply (the same payload the `link` command would emit) and the agent is **not** invoked for that turn. Combined with the linker's verified-claim auto-link, this gives an "authenticate before chatting" enforcement model where the first channel forces the OAuth ceremony and subsequent channels join the same `isolation_key` silently. See [Scenario 6](#scenario-6-linking-a-new-channel-to-an-existing-identity-via-oauth) for the end-to-end flow. Default is `False`, which preserves the opportunistic flow (auto-issued `isolation_key`, link manually later). Channels whose protocol does not authenticate the user (e.g. anonymous Responses calls) ignore the flag. `require_link` is the **"identity must be linked"** axis; the **orthogonal "identity is on the accept list"** axis is `allowlist` — see [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam) below.
+
+#### Authorization profiles and the `IdentityAllowlist` seam
+
+`require_link` (above) and `allowlist` (below) compose into the **three named authorization profiles** the spec supports for any channel that emits a `ChannelIdentity`. The two parameters stay **orthogonal** on the channel constructor — there is no single `auth_mode` enum — but the host exposes named factories on `AuthPolicy` (`AuthPolicy.open()` / `.require_link()` / `.native_allowlist(...)` / `.linked_claim_allowlist(...)` / `.mixed(...)`) for ergonomic configuration:
+
+| Profile | Channel config | What gets gated | Typical use |
+|---|---|---|---|
+| **Open** (default) | `require_link=False`, `allowlist=None` | Nothing — every identity gets an auto-issued `isolation_key` on first contact. | Public chatbot, internal dev/demo, single-tenant deployments. |
+| **Forced link** | `require_link=True`, `allowlist=None` | Identity must complete the link ceremony at least once. Any successfully authenticated identity is then allowed. | "Sign in once with your corporate account, then chat freely" style bots that gate on tenancy via the IdP rather than per-user. |
+| **Native allowlist** | `require_link=False`, `allowlist=NativeIdAllowlist(...)` | Only listed channel-native ids (Telegram `chat_id`s, WhatsApp numbers, Slack user ids) get through. Pre-link, no IdP claim involved. | Personal bots, single-user prototypes, small fixed-membership channels. |
+| **Linked-claim allowlist** | `require_link=True`, `allowlist=LinkedClaimAllowlist(...)` | Identity must (a) complete the link ceremony **and** (b) carry an IdP claim whose value is on the list (e.g. AAD `oid in {…}` or `tid == "<tenant>"`). | Multi-channel corporate bot where any channel works but only specific people in a specific tenant are admitted. |
+| **Mixed** | `require_link=False`, `allowlist=AnyOfAllowlists(NativeIdAllowlist(...), LinkedClaimAllowlist(...))` | Either the native id is preapproved **or** the user successfully links and matches the claim allowlist. Native-id hits bypass the link ceremony; everyone else is funneled into it. | A bot that wants ops-team Telegram ids in immediately while still letting other corp users self-onboard via OAuth. |
+
+##### `IdentityAllowlist` Protocol (tri-state)
+
+Allowlists are evaluated by a host-level pipeline (`host.authorize(...)`, below) that calls them twice — once with the raw channel-native identity (`phase="pre_link"`) and, if necessary, again after the link ceremony surfaces verified IdP claims (`phase="post_link"`). To make composition (`AnyOfAllowlists`, `AllOfAllowlists`) well-defined and to keep claim-based allowlists from accidentally denying everyone when claims are not yet available, the contract is **tri-state**:
+
+```python
+class AllowlistDecision(StrEnum):
+    ALLOW = "allow"      # accept this identity unconditionally
+    DENY = "deny"        # reject this identity unconditionally
+    ABSTAIN = "abstain"  # this allowlist has no opinion at this phase
+                         # (e.g. a claim-based list during pre_link)
+
+@dataclass(frozen=True)
+class AuthorizationContext:
+    identity: ChannelIdentity
+    phase: Literal["pre_link", "post_link"]
+    isolation_key: str | None              # None at pre_link; resolved at post_link
+    verified_claims: Mapping[str, str]     # {} when no claims; populated post_link
+    claim_source: Literal["linker", "channel", "none"]
+                                           # "channel" when the channel itself emits
+                                           # verified claims (e.g. Activity Protocol
+                                           # bearer with AAD oid); "linker" when the
+                                           # IdentityLinker surfaces them; "none" otherwise.
+
+class IdentityAllowlist(Protocol):
+    requires_linked_claims: bool = False   # if True, host validation rejects
+                                           # configurations where neither `require_link`
+                                           # nor a claim-emitting channel can deliver
+                                           # the claims this allowlist needs.
+
+    async def evaluate(self, context: AuthorizationContext) -> AllowlistDecision: ...
+```
+
+`ABSTAIN` is **not** a denial — it is "this allowlist has no information yet". The host's decision pipeline (below) is what turns an all-`ABSTAIN` outcome into the appropriate next step (allow when open, escalate to a link ceremony when the configuration calls for one). Boolean allowlists were rejected as part of this design pass because two-state composition cannot distinguish "claim allowlist denies you" from "claim allowlist hasn't seen any claims yet" — a critical distinction for the **Mixed** profile.
+
+##### Built-in allowlists
+
+| Helper | Pre-link behavior | Post-link behavior | Notes |
+|---|---|---|---|
+| `AllowAll()` | `ALLOW` | `ALLOW` | Explicit "open" sentinel; useful for tests and for overriding a host-level `default_allowlist`. |
+| `NativeIdAllowlist(channel=None, native_ids=...)` | `ALLOW` if `(channel, native_id)` is on the list; `DENY` if `channel` matches but `native_id` does not; `ABSTAIN` if `channel` does not match (allows mixing per-channel native lists under one `AnyOfAllowlists`). | Same as pre-link — native-id allowlists do not depend on link state. | Constructor accepts `native_ids: Collection[str] \| Callable[[], Awaitable[Collection[str]]]` so the list can be loaded asynchronously (config file, secret store). |
+| `LinkedClaimAllowlist(claim, values)` | `ABSTAIN` (no claims available yet). | `ALLOW` if `verified_claims.get(claim)` is in `values`; `DENY` otherwise. | `requires_linked_claims = True`. Host construction-time validator rejects use with `require_link=False` on a channel that does not also emit verified claims natively — this prevents the silent-deny-everyone footgun. |
+| `AnyOfAllowlists(*allowlists)` | `ALLOW` if any child `ALLOW`s; `DENY` only if **all** children `DENY`; otherwise `ABSTAIN`. | Same rule. | Composition for the **Mixed** profile. |
+| `AllOfAllowlists(*allowlists)` | `DENY` if any child `DENY`s; `ALLOW` only if **all** children `ALLOW`; otherwise `ABSTAIN`. | Same rule. | E.g. require both tenancy (`LinkedClaimAllowlist("tid", ...)`) **and** group membership (`LinkedClaimAllowlist("groups", ...)`). |
+| `CallableAllowlist(fn)` | Calls `fn(context)` and returns its result. | Same. | Escape hatch for app-specific logic; recommended only after exhausting the structured variants. |
+
+##### Host configuration: `default_allowlist` + explicit channel inheritance
+
+Allowlists can be configured at the host level (`AgentFrameworkHost(default_allowlist=...)`) and per-channel. The channel-side default is **explicit inheritance**, not an implicit `None`:
+
+```python
+class SomeChannel:
+    def __init__(
+        self,
+        *,
+        require_link: bool = False,
+        allowlist: IdentityAllowlist | Literal["inherit"] | None = "inherit",
+    ): ...
+```
+
+- `allowlist="inherit"` (default) → the host's `default_allowlist` applies. If the host did not set one either, the channel is open.
+- `allowlist=None` → the channel is **explicitly open**, even if the host has a `default_allowlist`. Used to carve out a public endpoint inside an otherwise-locked-down host.
+- `allowlist=<IdentityAllowlist>` → that allowlist applies, overriding the host default. To **add to** the host default rather than replace it, compose explicitly: `allowlist=AllOfAllowlists(host.default_allowlist, MyExtraList())`.
+
+##### `host.authorize(...)` and `AuthorizationOutcome`
+
+Channels do not run the decision pipeline themselves — they call into a single host seam after extracting `ChannelIdentity` and any natively verified claims:
+
+```python
+@dataclass(frozen=True)
+class Allowed:
+    isolation_key: str
+
+@dataclass(frozen=True)
+class LinkRequired:
+    challenge: LinkChallenge
+
+@dataclass(frozen=True)
+class Denied:
+    reason_code: str                       # stable, machine-readable
+    user_message: str | None = None        # safe to render publicly (group-chat-safe)
+    log_details: Mapping[str, Any] = {}    # never shown to users; structured for audit
+
+AuthorizationOutcome = Allowed | LinkRequired | Denied
+
+async def host.authorize(
+    identity: ChannelIdentity,
+    *,
+    require_link: bool,
+    allowlist: IdentityAllowlist | None,
+    verified_claims: Mapping[str, str] | None = None,
+    conversation_context: ConversationContext | None = None,  # for group-chat policy
+) -> AuthorizationOutcome: ...
+```
+
+**Decision order** (the pipeline the host runs):
+
+1. Build `AuthorizationContext(phase="pre_link", verified_claims=verified_claims or {}, claim_source=…)`.
+2. `decision_pre = allowlist.evaluate(context_pre)` (defaults to `ALLOW` when `allowlist is None`).
+3. `decision_pre == DENY` → `Denied(reason_code="allowlist_denied_pre_link", ...)`.
+4. `decision_pre == ALLOW`:
+   - If `require_link=True` and the linker has no record yet → `LinkRequired(linker.begin(identity))`.
+   - Otherwise → `Allowed(resolved_or_auto_issued_isolation_key)`.
+5. `decision_pre == ABSTAIN`:
+   - If `require_link=True` **or** the allowlist declared `requires_linked_claims`: attempt `linker.is_linked(identity, verified_claims=…)`.
+     - Not linked → `LinkRequired(linker.begin(identity))`.
+     - Linked → evaluate again at `phase="post_link"` with the linker-emitted claims.
+       - `ALLOW` → `Allowed(linked_isolation_key)`.
+       - `DENY` → `Denied(reason_code="allowlist_denied_post_link", ...)`.
+       - `ABSTAIN` post-link is a misconfiguration (no allowlist had an opinion even after linking); logged and treated as `Denied(reason_code="allowlist_abstain_after_link")`.
+   - Otherwise (open profile, no claim dependency): `Allowed(auto_issued_isolation_key)`.
+
+The channel **renders** the outcome — `Allowed` proceeds to `ChannelRequest`, `LinkRequired` projects the `LinkChallenge` through the channel's native UX (same path the `link` command already uses), `Denied` projects `user_message` (when set) through a short refusal. The channel **never** sees `log_details` and is responsible for not echoing `reason_code` to end users.
+
+##### Configuration validation (fail-fast)
+
+The host runs a startup validator across `(channel.require_link, channel.allowlist)` for every channel:
+
+1. If `channel.allowlist` (after resolving `"inherit"`) contains any allowlist with `requires_linked_claims=True`, the channel **must** either have `require_link=True` or declare via a channel attribute that it natively emits verified claims (`Channel.emits_verified_claims: bool = False`). Otherwise: `raise ChannelConfigurationError("LinkedClaimAllowlist requires a source of verified claims; set require_link=True on <channel> or use a channel that emits them natively")`.
+2. If `channel.allowlist` contains a `LinkedClaimAllowlist` and the host has no `identity_linker` configured: same `ChannelConfigurationError`.
+3. If `channel.allowlist` contains a `NativeIdAllowlist(channel=<other>)` whose `<other>` is not a known channel on this host: `ChannelConfigurationError`.
+
+These errors are raised eagerly at `AgentFrameworkHost.__init__` (or `host.serve(...)` startup), not on the first inbound request — silent deny-everyone is the worst possible default and is not allowed.
+
+##### Group chats and privacy of denial
+
+Authorization runs **per message**, not per conversation: in a group chat, one allowlisted user invoking the bot does not authorize other group members for subsequent messages. The host also mirrors the `LinkChallenge` group-chat redirect pattern (see [Multi-user conversations](#multi-user-conversations-telegram-groups-teams-group-chats-and-channels)) for denials:
+
+- In a 1:1 chat, the channel may render the full `user_message` from `Denied`.
+- In a group chat, the channel renders a generic refusal in-room (e.g. "You don't have access to this bot.") and, where the channel supports it, follows up with a DM containing the longer `user_message`. The full `log_details` payload only reaches the host's structured logs / OpenTelemetry span — never the wire.
+
+Built-in `user_message` defaults are intentionally bland and tenancy-free ("You don't have access to this bot." / "Please link your account to continue.") to avoid leaking who else is in the allowlist or which tenant gates it.
+
+##### v1 shipping plan
+
+Because `host.authorize(...)` and `LinkedClaimAllowlist` are tied to the still-unimplemented `IdentityLinker` stack, the seam ships in two waves:
+
+1. **Wave 1 (this core PR — standalone, no linker dep):**
+   - `IdentityAllowlist` Protocol + `AllowlistDecision` enum + `AuthorizationContext` dataclass.
+   - `AllowAll`, `NativeIdAllowlist`, `AnyOfAllowlists`, `AllOfAllowlists`, `CallableAllowlist` built-ins.
+   - `LinkedClaimAllowlist` type exported for composition; `evaluate()` raises `NotImplementedError` until Wave 2 — it is illegal to ship it without either an `identity_linker` (Wave 2) or a channel that declares `emits_verified_claims=True` (caught by config validator #1).
+   - `AuthorizationOutcome` (`Allowed` / `LinkRequired` / `Denied`) types.
+   - `Host(default_allowlist=..., identity_linker=...)` + per-channel `allowlist: ... | Literal["inherit"] | None` parameter and the construction-time config validator. Wave-1 enforces rules #1 (claim-source), **#2 (linker presence — channels with `require_link=True` must be paired with a configured `identity_linker`; otherwise a `ChannelConfigurationError` is raised at construction so misconfigurations cannot ship)**, and #3 (NativeIdAllowlist channel typo). Combinator walking (`AnyOf` / `AllOf`) is recursive so nested misconfigurations are caught at the host level.
+   - `host.authorize(identity, *, require_link, allowlist, verified_claims=None)` shipped for the native-id pipeline: the open path returns `Allowed` with an auto-issued `<channel>:<native_id>` isolation key (linear-scan registry lookup re-issues a known key when the identity has been seen before); a native-id allowlist returns `Allowed`/`Denied` per the list; an `ABSTAIN` decision is mapped to `Denied(reason_code="allowlist_requires_link")` when the allowlist declares `requires_linked_claims=True` (no linker shipped to convert it to `LinkRequired` yet) and falls through to `Allowed` otherwise.
+
+2. **Wave 2 (with the `IdentityLinker` core PR):**
+   - `LinkedClaimAllowlist` enabled end-to-end (replaces the Wave-1 raise).
+   - `host.authorize(...)` returns `LinkRequired` (instead of the Wave-1 `Denied(reason_code="allowlist_requires_link")` placeholder) when an allowlist needs claims and a linker is configured to supply them.
+   - Indexed `IdentityResolver` replaces the Wave-1 linear-scan auto-issue.
+   - `AuthPolicy` factory helpers shipped on the public surface.
+
+
 
 #### `LinkPolicy` and `confidentiality_tier`
 
@@ -408,6 +573,8 @@ Messages that don't satisfy the rule are ignored at the channel layer — no `Ch
 | All linked | `ResponseTarget.all_linked` | Delivered to every channel where the resolved `isolation_key` is known. |
 | None | `ResponseTarget.none` | Background-only — caller must poll the `ContinuationToken`. Forces `background=True`. |
 
+`ResponseTarget` constructors that take at least one channel id (`.channel(...)`, `.channels([...])`, `.identities([...])`) accept an `echo_input: bool = False` kwarg. When true, the host pushes the **originating user's input** to each non-originating destination as a `HostedRunResult[AgentResponse]` whose underlying `messages[*].role == "user"` **before** the agent reply (whose `messages[*].role == "assistant"`). Used when the developer wants downstream channels to mirror what the user said so their UI stays coherent (e.g. a workflow originating on Telegram that pushes to Teams as well — the Teams transcript shows both turns). The echo and the response are bundled into the **same scheduled push task** per destination (the runner-managed unit of work — see [Intended targets + durable delivery](#intended-targets--durable-delivery)); the echo is dispatched first, and an echo-push failure is logged and swallowed inside the task so a channel that drops echoes still receives the agent reply. Both pushes go through the same `ChannelPush.push(identity, payload)` entry point — channels distinguish the echo phase from the response phase by inspecting `payload.result.messages[*].role`, or (for channels that wire a `response_hook`) by branching on `ChannelResponseContext.is_echo` directly. Channels that cannot impersonate the user on their wire (most chat bots can only send as the bot) typically render echoes as a quoted / prefixed block, drop them, or rewrite them via their `response_hook`.
+
 When `response_target` is anything other than `originating`, the originating channel's protocol response is the **`ContinuationToken`** (e.g. an Invocations 202 with the token in the response body and/or a polling URL header), and the actual agent response is delivered out-of-band via the destination channel(s)' `ChannelPush`. If the destination channel doesn't implement `ChannelPush`, the host falls back per the configured policy (default: deliver to `originating`; surfaces a warning in telemetry). The configured `LinkPolicy` is consulted for every destination — destinations that fail the policy (e.g. a corp-tier channel addressed from a public-tier originating request) are dropped, and if every destination is dropped the host falls back to `originating`.
 
 **`ChannelPush`** (Protocol) — optional capability for channels that can deliver outbound messages without a prior request.
@@ -446,7 +613,7 @@ V1 ships two implementations:
 - **`FileHostStateStore(directory: Path = "./.af-hosting/")`** — default; one JSON file per record under `continuations/`, `link_grants/`, plus a `last_seen.json` keyed by isolation key. Atomic writes; per-namespace TTL cleanup (continuations 24h, link grants 15min, last-seen 30d by default). Suitable for single-node hosts and dev; works in hosted-agent environments where the working directory is persisted and isolated per agent.
 - **`InMemoryHostStateStore()`** — testing / ephemeral; same protocol, no persistence.
 
-Pluggable v1-fast-follow implementations (Cosmos, SQL, Redis) plug into the same protocol — see req #23.
+Pluggable v1-fast-follow implementations (Cosmos, SQL, Redis) plug into the same protocol — see req #24.
 
 **`ChannelCommand` / `ChannelCommandContext` / `CommandHandler`** — cross-channel native command model (per PR #5393).
 
@@ -460,10 +627,22 @@ Pluggable v1-fast-follow implementations (Cosmos, SQL, Redis) plug into the same
 
 | Type | Fields | Description |
 |---|---|---|
-| `HostedRunResult` | `response: AgentResponse`, `session: AgentSession?`, `text` | One-shot outcome. |
+| `HostedRunResult[TResult]` | `result: TResult`, `session: AgentSession \| None` | One-shot outcome. `result` carries the **target's full-fidelity output unchanged**: `HostedRunResult[AgentResponse]` for agent targets (channels read `result.messages`, `result.text`, `result.value`, `result.response_id`, `result.usage_details`, … directly off the underlying response), `HostedRunResult[WorkflowRunResult]` for workflow targets (channels iterate `result.get_outputs()` and inspect `result.get_final_state()`). The host never pre-shapes, flattens, or filters — multi-modality and structured outputs survive end-to-end and each channel (through its `response_hook` and its native serializer) decides what subset its wire renders. The echo-input phase synthesises an `HostedRunResult[AgentResponse]` wrapping the originating user turn so the same delivery machinery applies. `session` carries the resolved per-isolation_key `AgentSession` (`None` for workflows, which do not own session state in the agent sense). Treat instances as immutable — the host clones per-destination via `result.replace(result=...)` before invoking each channel's `response_hook`; `replace()` is shallow, so channels that need to mutate ``result`` itself are responsible for their own deep copy. |
 | `HostedStreamResult` | `updates: ResponseStream[...]`, `raw_events: AsyncIterable[Any] \| None`, `session: AgentSession?` | Streaming outcome. `updates` is the **normalized** stream of `AgentRunResponseUpdate` (lossless for messages, function calls, usage) and is the happy path for Responses, Invocations, Telegram, and most channels. `raw_events` is an optional **passthrough seam** onto the underlying agent event stream (before update normalization) for channels whose protocol carries domain events the framework does not model — e.g. AG-UI's `StateSnapshotEvent` / `StateDeltaEvent` / `ToolCallStartEvent`. Channels that consume `raw_events` bear responsibility for the full event translation; the request still flows through `context.stream(...)` so session resolution, identity, push, and policy continue to apply. `None` when the host has no raw upstream (e.g. a workflow-only target produced from cached events). |
 
 The host does **not** emit protocol events directly — channels translate `HostedRunResult`/`HostedStreamResult` into Responses events, Invocations SSE, webhook callbacks, or platform messages.
+
+**`ChannelResponseHook` / `ChannelResponseContext`** — dev-supplied post-processing seam applied per destination before push.
+
+| Type | Shape | Description |
+|---|---|---|
+| `ChannelResponseHook` | `Callable[[HostedRunResult[Any], *, context: ChannelResponseContext], HostedRunResult[Any] \| Awaitable[HostedRunResult[Any]]]` | Stored as a `response_hook` attribute on a channel instance — **duck-typed**, not part of the `Channel` Protocol. Receives a per-destination clone of the `HostedRunResult` and returns a (possibly rewritten) replacement. Hooks rebind ``result`` via `HostedRunResult.replace(result=...)` rather than mutating it in place. Common uses: flatten multi-modal output to text for a text-only wire, filter out tool-call contents, project a workflow `WorkflowRunResult` into a channel-friendly `AgentResponse` for text-only channels, attach citation entities, decide an Adaptive Card vs plain-text presentation. The hook signature stays `Any`-typed in the envelope's `TResult` so a single channel can serve both agent (`HostedRunResult[AgentResponse]`) and workflow (`HostedRunResult[WorkflowRunResult]`) payloads; channels narrow at hook entry if they want static checking. |
+| `ChannelResponseContext` | `request: ChannelRequest`, `channel_name: str`, `destination_identity: ChannelIdentity`, `originating: bool`, `is_echo: bool` | Per-destination context passed to a hook. `originating=False` for push deliveries (current scope of the host's `_deliver_response`); `is_echo=True` when this invocation is for the `ResponseTarget.echo_input` user-message phase rather than the agent reply phase. |
+| `apply_response_hook(hook, result, *, context)` | helper | Standardised invocation convention so channels (and the host's delivery layer) all call hooks the same way. |
+
+The host runs each destination's hook on a **cloned** `HostedRunResult`, so a hook that rebinds `result` cannot leak into the payload another destination observes. The clone is shallow — channels that need to mutate `result` itself (rather than rebind it via `replace()`) are responsible for their own deep copy.
+
+
 
 ### Built-in channel constructors
 
@@ -625,7 +804,7 @@ To make the picture explicit: there are exactly three distinct *storage seams* i
 | Seam | Scope | Examples |
 |---|---|---|
 | **`ContextProvider`** (per-conversation) | Per-`source_id` data the agent needs at run time. Messages (via `HistoryProvider`), AG-UI per-thread state (via `AgUiStateProvider`), or any future per-conversation extension. **The only public per-conversation seam.** | `FileHistoryProvider`, `FoundryHostedAgentHistoryProvider`, `AgUiStateProvider` |
-| **Host-level pluggable store** (per-host) | `ContinuationToken`s for background runs, identity-link grants, last-seen `(isolation_key, channel)` records. **File-based by default** in v1 (`FileHostStateStore`, atomic JSON writes under `./.af-hosting/`); `InMemoryHostStateStore` for tests; pluggable for Cosmos / SQL / Redis adapters in v1 fast follow (req #23). MAY be backed by the same physical store as `ContextProvider`, but the protocol is distinct because the data is host-execution metadata, not per-conversation context. | `FileHostStateStore` (v1 default), `InMemoryHostStateStore`, future Cosmos / SQL / Redis adapters |
+| **Host-level pluggable store** (per-host) | `ContinuationToken`s for background runs, identity-link grants, last-seen `(isolation_key, channel)` records. **File-based by default** in v1 (`FileHostStateStore`, atomic JSON writes under `./.af-hosting/`); `InMemoryHostStateStore` for tests; pluggable for Cosmos / SQL / Redis adapters in v1 fast follow (req #24). MAY be backed by the same physical store as `ContextProvider`, but the protocol is distinct because the data is host-execution metadata, not per-conversation context. | `FileHostStateStore` (v1 default), `InMemoryHostStateStore`, future Cosmos / SQL / Redis adapters |
 | **`CheckpointStorage`** (workflow runtime) | Workflow executor frames so a workflow can resume after process restart. Structurally distinct from both seams above (the data is workflow-runtime state, not session/identity state). MAY share a physical backend, but the protocol stays separate. | `FileCheckpointStorage`, future `CosmosCheckpointStorage` |
 
 Concretely, this means an app deploying onto e.g. Foundry storage can run **all three** against the same Foundry backend and still have three orthogonal protocol surfaces — one per concern — instead of one universal store everything accidentally collides in.
@@ -682,7 +861,7 @@ The packaging question for `uvicorn` (required dependency vs optional extra) is 
 - **Active channel**: The channel most recently observed for a given `isolation_key`. Tracked by the host on every successfully resolved request; consumed by `ResponseTarget.active`.
 - **`ContinuationToken`**: First-class artifact for background/asynchronous runs, returned immediately from `host.run_in_background(request)`. Carries an opaque, URL-safe `token` plus `status`, `isolation_key`, `result`/`error`, and the configured `response_target`. Persisted via `HostStateStore` (file-based by default in v1) so background runs survive host restarts. Host pushes the result to the response target when ready and serves it via channel poll routes.
 - **Background run**: A `ChannelRequest` submitted via `host.run_in_background(request)` (or any request with `background=True`). The originating call returns a `ContinuationToken` immediately; the response is delivered later via the configured `ResponseTarget` and/or polled by token.
-- **`HostStateStore`**: Single persistence seam for host-execution metadata — continuation tokens, identity-link grants, last-seen records. V1 default `FileHostStateStore` (atomic JSON writes under `./.af-hosting/`); `InMemoryHostStateStore` for tests; pluggable for Cosmos / SQL / Redis (fast follow, req #23). Distinct from `ContextProvider` (per-conversation) and `CheckpointStorage` (workflow), but a deployment MAY back all three with the same physical store.
+- **`HostStateStore`**: Single persistence seam for host-execution metadata — continuation tokens, identity-link grants, last-seen records. V1 default `FileHostStateStore` (atomic JSON writes under `./.af-hosting/`); `InMemoryHostStateStore` for tests; pluggable for Cosmos / SQL / Redis (fast follow, req #24). Distinct from `ContextProvider` (per-conversation) and `CheckpointStorage` (workflow), but a deployment MAY back all three with the same physical store.
 - **`session_mode`**: Per-request directive (`auto` | `required` | `disabled`) that controls whether the host resolves a session before invoking the target. Lets `run_hook`s express explicit policy — e.g. translating Responses `store=false` into `session_mode="disabled"` to honor the caller's "don't store" intent at the `HistoryProvider` layer (the channel does not do this automatically — see [The Responses store parameter](#the-responses-store-parameter)).
 - **`confidentiality_tier`** (channel-level): Opaque label (`"corp"`, `"public"`, `"internal"`, …) declared on a `Channel` and consumed by the host's `LinkPolicy`. Two channels with different confidentiality tiers can share an agent target on one host while remaining session-isolated.
 - **`LinkPolicy`**: Host-level decision over which channel pairs may share an `isolation_key` (link) and which channel pairs may be `ResponseTarget` source/destination for one another (deliver). Built-in variants: allow-all (default), same-tier-only, explicit allow-list, deny-all. See [LinkPolicy and confidentiality_tier](#linkpolicy-and-confidentiality_tier) for the full contract and built-ins table.
@@ -692,6 +871,54 @@ The packaging question for `uvicorn` (required dependency vs optional extra) is 
 - **Native command registration**: The startup-time projection of `ChannelCommand` metadata into a platform's native command catalog (e.g. Telegram `set_my_commands(...)`).
 - **`SupportsAgentRun`**: The existing framework agent execution seam (`run(..., session=..., stream=...)`) — the contract the host uses when the hostable target is an agent.
 - **`Workflow`**: The framework workflow execution seam — the contract the host uses when the hostable target is a workflow. The host wraps the workflow's outputs into the same `HostedRunResult` / `HostedStreamResult` shape so channels do not need to distinguish.
+
+## Runtime modes
+
+The host runs in one of two operational shapes, declared (or auto-detected) via a single `runtime_mode` parameter. The parameter is **advisory** — it sets defaults for the seams below; the developer can override any individual choice.
+
+```python
+AgentFrameworkHost(
+    target=my_agent,
+    channels=[...],
+    runtime_mode=None,                              # None → auto-detect; "long_running" | "ephemeral" to force
+)
+```
+
+| Value | Shape | When to use |
+|---|---|---|
+| `"long_running"` | Always-on container / process. Owns its own scheduler. Survives across many requests. | Local dev, OpenClaw-style hosted deployments, classic web-app rollouts on AKS / App Service / Container Apps. |
+| `"ephemeral"` | Scale-to-zero / per-request lifecycle. Process may terminate between requests; cold-start cost on each one. | Foundry Hosted Agent, Azure Functions consumption plan, AWS Lambda, and similar serverless runtimes. |
+| `None` (default) | Auto-detect. The host inspects environment markers at construction; falls back to `"long_running"` when nothing is detected. | The default. Recommended for portable code that works locally and ships to a serverless target. |
+
+**Auto-detection.** When `runtime_mode=None`, the host checks for known deployment markers in this order and picks `"ephemeral"` on the first hit:
+
+| Marker | Meaning |
+|---|---|
+| `FOUNDRY_HOSTING_ENVIRONMENT` (env var) | Running inside Foundry Hosted Agent. |
+| `AZURE_FUNCTIONS_ENVIRONMENT` (env var) | Running inside the Azure Functions worker. |
+| `AWS_LAMBDA_FUNCTION_NAME` (env var) | Running inside an AWS Lambda. |
+
+If none of the markers match, the host defaults to `"long_running"` (a sensible local-dev / container default). Additional markers may be added without bumping the API; the list is documented and overridable via the `runtime_mode` parameter itself.
+
+**Defaults selected by mode.** The mode drives the *default selection* for these seams. Each is independently overridable:
+
+| Concern | `"long_running"` default | `"ephemeral"` default |
+|---|---|---|
+| `HostStateStore` | `InMemoryHostStateStore` (process owns state) | `FileHostStateStore` (atomic JSON under `./.af-hosting/`; survives single-node restart) |
+| `ContinuationToken` persistence | In-memory acceptable | Persistence required (file / Cosmos / Foundry) |
+| `DurableTaskRunner` | `InProcessTaskRunner` (asyncio + bounded retry) | Adapter expected (`agent-framework-hosting-durabletask`, Foundry, …); falls back to `InProcessTaskRunner` with a startup warning when none configured |
+| Background runs (req #14) | Owned by the long-running worker via `InProcessTaskRunner` | Hand off to the durable runner so the process can terminate between requests |
+| Channel polling (e.g. Telegram `getUpdates`) | Natural fit — `on_startup` spawns the poller, `on_shutdown` cancels it | Requires an external scheduled trigger or webhook transport; polling channels emit a startup warning when paired with `"ephemeral"` |
+| `IdentityLinker` short-lived grants | In-memory TTL fine | Must persist via `HostStateStore` |
+| `IdentityAllowlist` lookup | In-memory cache fine | Persisted source or external IdP claim resolution |
+| Health checks + readiness probes | First-class | Less relevant — runtime manages liveness |
+| Per-channel polling-worker isolation | Important — leaks compound over days/weeks (see [`channels_vs_openclaw.md`](../../python/.user/channels_vs_openclaw.md)) | N/A — process recycles between requests |
+| Process-recycle expectations | Days/weeks | Per-request |
+| Memory/leak concerns | Important | Less relevant |
+
+**Detection failures.** Auto-detection is best-effort. If a deployment uses a custom runtime not in the marker list, callers SHOULD set `runtime_mode="ephemeral"` (or `"long_running"`) explicitly. The host logs the detected mode at startup so misdetection is visible in normal operation.
+
+**Why advisory and not enforced.** Most knobs make sense in both modes (e.g. a developer running a "long-running" container may still want `FileHostStateStore` for state durability across deploys); enforcing strict defaults per mode would force every override to fight a config error. The selected defaults are a starting point.
 
 ## Hero Code Samples
 
@@ -1274,11 +1501,13 @@ class MyWebhookChannel:
         return ChannelContribution(routes=[Route(f"{self._path}/inbound", endpoint, methods=["POST"])])
 ```
 
-**Result is rich, not just text.** `result` here is a `HostedRunResult` wrapping an `AgentRunResult` (or a workflow output). It is **not** limited to a flat string — `result.text` is the convenience plain-text projection, but the underlying object carries:
+**Result is rich, not just text.** `result` here is a `HostedRunResult[TResult]` — a thin generic envelope around the target's **full-fidelity output**. For agent targets `TResult` narrows to `AgentResponse`, so channels read everything the target produced directly off `result.result`:
 
 - the full `messages: list[ChatMessage]` thread the agent produced this turn — each message holds an ordered list of typed `Contents` (see [`Contents` in core](https://github.com/microsoft/agent-framework/blob/main/python/packages/core/agent_framework/_types.py)): `TextContent`, `DataContent` (inline base64 blobs), `UriContent` (URLs to images/audio/files), `FunctionCallContent` and `FunctionResultContent` (tool-call traces), `HostedFileContent` / `HostedVectorStoreContent` (provider-side file/vector references), `UsageContent` (token usage), `ErrorContent`, `TextReasoningContent` (reasoning traces), and channel-extensible custom content kinds. Each content also has `additional_properties` for provider-specific extensions (citations, image alt text, source spans, …),
 - `value: T | None` — the typed structured output when the agent returned one (e.g. via response-format / structured-output features),
-- `usage_details: UsageDetails | None`, `raw_representation`, and per-message `additional_properties` carrying provider-native extras.
+- `response_id`, `usage_details: UsageDetails | None`, `raw_representation`, and per-message `additional_properties` carrying provider-native extras.
+
+For workflow targets `TResult` is `WorkflowRunResult`, so `result.result.get_outputs()` iterates the per-executor output payloads and `result.result.get_final_state()` exposes terminal-state info. The host never collapses or pre-shapes workflow outputs — channels (and developer-supplied `response_hook`s) own the projection, since "what counts as a renderable output" is wire-format-specific.
 
 A channel author is free to project this into **whatever the channel's native shape supports**. Examples:
 
@@ -1286,9 +1515,9 @@ A channel author is free to project this into **whatever the channel's native sh
 - The built-in **Responses channel** preserves the full content-list shape on the wire — every `ChatMessage` round-trips as a Responses-shaped output item so callers can inspect the typed mix of text, function-call traces, image/file outputs, reasoning, and structured-output `value`s exactly as the agent produced them. There is no lossy collapse to a single text field.
 - A channel fronting a **chat UI** can render `TextContent` as full GitHub-Flavored Markdown / HTML (tables, code fences with syntax highlighting, math), `DataContent` and `UriContent` as inline images/audio/video players, `FunctionCallContent` / `FunctionResultContent` as collapsible "tool ran" cards, and `TextReasoningContent` as a collapsible reasoning panel — all from the same `result`.
 - A **voice channel** can route `TextContent` through TTS, play `DataContent(audio/*)` directly, and surface `FunctionCallContent` only as audio earcons (or skip them entirely) — the same `result` object drives a completely different surface.
-- A **richly-typed RPC channel** can return `result.value` (the structured output) directly when the workflow / agent produced one, and fall back to `result.text` only when no typed output is available.
+- A **richly-typed RPC channel** can return `result.result.value` (the structured output) directly when the workflow / agent produced one, and fall back to a text projection only when no typed output is available.
 
-The host imposes no projection — `result.text` is offered as a convenience for channels whose native shape really is "single string in, single string out", and channels are encouraged to lean on the full content list when their protocol supports more.
+The host imposes no projection — channels read `result.result.text` for a convenience plain-text rollup on agent targets, but are encouraged to lean on the full underlying payload when their protocol supports more.
 
 ## Information Design
 
@@ -1299,19 +1528,43 @@ external request/event
     -> channel-specific parsing + validation
     -> ChannelIdentity extraction (per-channel native id)
     -> default channel invocation mapping
-    -> optional run_hook
-    -> ChannelRequest (carries response_target, background)
+    -> optional run_hook (dev-supplied; default no-op)
+    -> ChannelRequest (carries response_target, background, echo_input)
     -> AgentFrameworkHost / ChannelContext
     -> identity_resolver(ChannelIdentity) -> isolation_key
     -> host records (isolation_key, channel, now) as last-seen (for ResponseTarget.active)
     -> AgentSession resolution (per session_mode, scoped by isolation_key)
-    -> [foreground] target execution seam -> HostedRunResult/HostedStreamResult -> originating channel serialization
+    -> target execution seam (Agent.run / Workflow.run)
+    -> HostedRunResult[AgentResponse] | HostedRunResult[WorkflowRunResult]
+       (full-fidelity result carried unchanged; no pre-shaping by the host)
+    -> [foreground] fan-out:
+            for each destination resolved from ResponseTarget:
+                -> clone HostedRunResult envelope (per-destination isolation; shallow copy)
+                -> optional channel response_hook (dev-supplied; default = identity)
+                    -> hook receives ChannelResponseContext(request, channel_name, destination_identity, originating, is_echo)
+                    -> hook may rebind result via HostedRunResult.replace(result=...)
+                       (e.g. project a WorkflowRunResult to an AgentResponse for a text-only wire)
+                -> channel-native serialization (channel chooses what content types / outputs it can render)
+                -> channel.push(identity, shaped_payload) | originating return value
+            if ResponseTarget.echo_input is True:
+                each non-originating destination receives the user's input first
+                (synthesised as a HostedRunResult[AgentResponse] with a role="user" message),
+                then the agent reply. Both pushes execute inside the same scheduled
+                push task; an echo-push failure is logged and swallowed so the
+                response push on the same destination is still attempted.
     -> [background or response_target != originating]
             -> ContinuationToken returned immediately to originating channel
             -> target executes asynchronously
-            -> on completion, deliver to ResponseTarget via destination channel.push(...)
+            -> on completion, the same fan-out (clone + response_hook + push) applies
             -> ContinuationToken updated; available via host.get_continuation(token) and channel poll routes
 ```
+
+**Full-fidelity contract.** The host never collapses agent / workflow output. `HostedRunResult[TResult]` carries the target output unchanged: agent targets see the full `AgentResponse` (multi-modal `messages`, `value`, `usage_details`, `response_id`, …); workflow targets see the full `WorkflowRunResult` (per-executor outputs via `get_outputs()`, terminal state via `get_final_state()`). Each channel — through its `response_hook` and its own serializer — decides what subset its wire can carry. A text-only channel iterates `result.result.messages` (or projects the workflow's outputs into a single text turn via a response hook); a card-capable channel inspects the underlying contents directly.
+
+**Per-destination cloning.** Before invoking a channel's `response_hook`, the host clones the `HostedRunResult` envelope so one channel's `replace(result=...)` cannot leak into the payload another destination observes. The clone is shallow — channels that need to mutate `result` itself (rather than rebind it) own the deep copy.
+
+**`response_hook` is a channel-level convention, not part of the `Channel` Protocol.** Channels expose a `response_hook` attribute (callable accepting `(result, *, context: ChannelResponseContext) -> HostedRunResult[Any] | Awaitable[HostedRunResult[Any]]`). The host duck-types this attribute. Adding hook support to an existing channel package does not break the public `Channel` Protocol.
+
 
 A parallel **link ceremony flow** runs out-of-band when a user invokes the host-provided `link`/`connect` command on a channel:
 
@@ -1341,13 +1594,14 @@ channel /link command
 | Session resolution | Host core | based on `ChannelSession` + `ChannelRequest.session_mode`; storage specifics deferred |
 | Channel-native identity extraction | Channel package | populates `ChannelIdentity(channel, native_id, attributes)` per request |
 | Identity resolution (`native_id` → `isolation_key`) | Host core via `IdentityResolver` | default **auto-issues and persists** a per-user `isolation_key` on first contact per `(channel, native_id)`; user-supplied resolver can return app-owned identities directly |
-| Identity store (`(channel, native_id) → isolation_key`) | Host core via `HostStateStore` | file-based by default in v1 (`FileHostStateStore`); pluggable for Cosmos / SQL / Redis in fast follow (req #23). Owns auto-issuance and atomic merge-on-link. |
+| Identity store (`(channel, native_id) → isolation_key`) | Host core via `HostStateStore` | file-based by default in v1 (`FileHostStateStore`); pluggable for Cosmos / SQL / Redis in fast follow (req #24). Owns auto-issuance and atomic merge-on-link. |
 | Identity link ceremony (OAuth / MFA / one-time code) | Host core via `IdentityLinker` | linker contributes its own routes + lifecycle; channels surface a built-in `link`/`connect` command |
+| Authorization (allowlist + link enforcement) | Host core via `host.authorize(...)` + per-channel `IdentityAllowlist` | tri-state allowlist evaluated pre- and post-link; combines with `require_link` to produce one of three named profiles (open / forced-link / allowlist); see [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam) |
 | Link & delivery policy across confidentiality tiers | Host core via `LinkPolicy` | consulted at link time (refuse incompatible link attempts) and at delivery time (drop incompatible `ResponseTarget` destinations); built-in policies cover all-allow, same-tier, explicit allow-list, deny-all |
 | Active-channel tracking | Host core | updated on every successfully resolved request; consumed by `ResponseTarget.active` |
 | Response-target resolution | Host core | translates `ResponseTarget` (originating, active, specific, list, all_linked, none) into an ordered set of `(channel, ChannelIdentity)` deliveries |
 | Proactive outbound delivery | Channel package via optional `ChannelPush` capability | channels that can push (Telegram, Activity Protocol via Bot Service, webhook, SSE) implement `push(identity, result)`; channels that can't are only valid as `originating` targets |
-| Per-delivery audit + replay state | Host core writes the intent + status onto the assistant `Message.additional_properties["hosting"]["deliveries"]`; provider opts into in-place updates via `SupportsDeliveryTracking` for crash-safe lifecycle | Universal data model; live update is provider capability. See [Delivery tracking on assistant messages](#delivery-tracking-on-assistant-messages). |
+| Per-delivery audit + replay state | Host core writes intent-only — the resolved destination set onto the assistant `Message.additional_properties["hosting"]["intended_targets"]` (immutable, single write). Operational state (attempts, retries, last error, success timestamp) lives in the `DurableTaskRunner` and is observed via the runner's own backend. | Replay across host restarts is a property of the configured runner (native for durable adapters; not supported for `InProcessTaskRunner`). See [Intended targets + durable delivery](#intended-targets--durable-delivery) and [Durable task runner](#durable-task-runner). |
 | Background-run lifecycle | Host core | owns `ContinuationToken` issuance, async execution, completion notification; persists via `HostStateStore` (file-based default — survives restarts) |
 | Run poll routes | Channel package | each channel exposes its own protocol-shaped poll route (`/responses/v1/{continuation_token}`, `/invocations/{continuation_token}`) backed by `host.get_continuation(token)` |
 | Conversation history (all channels — Responses, Invocations, Telegram, Activity Protocol, …) | Agent's core `HistoryProvider` (`agent_framework._sessions.HistoryProvider`) | Channels project their wire id (`previous_response_id`, `conversation_id`, request body `session_id`, host-tracked alias, …) into `ChannelSession.key`; the host resolves an `AgentSession` and the agent's `HistoryProvider` does the load / append. No channel-specific history seam. Multi-provider composition (with a single `load_messages=True`) is the standard AF convention; see [Conversation history for the Responses channel](#conversation-history-for-the-responses-channel) for the Foundry-backed variant. |
@@ -1386,7 +1640,7 @@ Identity is an **orthogonal axis** (anonymous vs. identified). The realized cell
 3. If `session_mode == "auto"` and no key is supplied, the host may create an ephemeral session.
 4. If `session_mode == "required"`, the host must resolve or create a usable session before invoking the target.
 5. **Cross-channel resolution rule:** when two channels mounted on the same `AgentFrameworkHost` produce the same `isolation_key` (and either both omit `key` or both produce equivalent keys derived from `isolation_key`), the host resolves them to the **same** `AgentSession`. This is the v1 mechanism for cross-channel chat continuity (e.g. Telegram → Teams against the same conversation history). The **canonical** path for translating a channel's native per-channel identifier (Telegram `chat_id`, Teams AAD object id, …) into the stable `isolation_key` is the host-level `IdentityResolver` (per-channel `run_hook` mapping is supported as a lower-level alternative). When the channel-native identity is not yet linked, the `IdentityLinker` runs a connect ceremony (OAuth, MFA, signed one-time code) to associate it with an existing `isolation_key`.
-6. The first spec does **not** standardize a cross-package storage API; cross-host/cross-process continuity is deferred to the pluggable session store (req #23), which also persists identity-link grants beyond the host process lifetime.
+6. The first spec does **not** standardize a cross-package storage API; cross-host/cross-process continuity is deferred to the pluggable session store (req #24), which also persists identity-link grants beyond the host process lifetime.
 7. Responses and other conversation-aware channels may still own protocol-specific conversation/item storage above this layer.
 8. **Session rotation (`reset_session`).** The host exposes `reset_session(isolation_key)` so **host-tracked** channels (see [Channel session-carriage models](#channel-session-carriage-models)) can implement "start a fresh thread" commands (e.g. Telegram `/new`). The default behavior **rotates the active session id alias** (`<isolation_key>` → `<isolation_key>#<short-uuid>`) rather than deleting on-disk history: prior history remains addressable by its original session id while subsequent runs for that `isolation_key` resolve to a brand-new `AgentSession`. Apps that want destructive reset can layer that on top by calling into their own `HistoryProvider`. **Caller-supplied** channels do not call `reset_session`; their callers branch threads by sending a fresh / no `previous_response_id` (or equivalent) on the next request.
 
@@ -1411,11 +1665,11 @@ When the host invokes the target, it does **not** pass the raw `ChannelRequest.i
 
 Round-trip is guaranteed by `Message.to_dict()` / `Message.from_dict()`. Future providers that key on protocol shape (e.g. a Responses `previous_response_id`-keyed store) can read this envelope to reconstruct cross-channel context without needing a separate channel-metadata sidecar.
 
-`FoundryHostedAgentHistoryProvider` round-trips the entire `additional_properties["hosting"]` namespace (and any other AF-side namespace) through the Foundry response store via a single opaque `agent_framework` container key written onto each `OutputItem`. See [Foundry storage gap: `update_item`](#foundry-storage-gap-update_item) for the one part of the schema (post-push `deliveries[]` mutation) that depends on a service-side addition.
+`FoundryHostedAgentHistoryProvider` round-trips the entire `additional_properties["hosting"]` namespace (and any other AF-side namespace) through the Foundry response store via a single opaque `agent_framework` container key written onto each `OutputItem`. Because the schema is now **intent-only** (no per-destination mutation after the initial write — see [Intended targets + durable delivery](#intended-targets--durable-delivery)), no service-side additions to the Foundry storage SDK are required for it to round-trip.
 
-### Delivery tracking on assistant messages
+### Intended targets + durable delivery
 
-The inbound envelope above captures **intent**. To support **audit** ("which destinations actually received this response, and when?") and **replay** ("Telegram was offline; resend to that user when it comes back"), the assistant `Message` produced by the host carries a parallel envelope that records the *resolved destination set* and per-destination outcome.
+The inbound envelope above captures the caller's **intent**. The assistant `Message` produced by the host carries a parallel envelope that records the *resolved destination set* — what the host actually intended to deliver to, after `ResponseTarget` resolution and `LinkPolicy` filtering. **This is a single write, never mutated.** Operational state for each push attempt (status, attempts, retries, last error, channel-issued id) lives in the [`DurableTaskRunner`](#durable-task-runner) — not on the message — because the runner is the component that performs and (when durable) retries the push.
 
 Schema on `Message.additional_properties["hosting"]` for a host-produced assistant message:
 
@@ -1426,94 +1680,115 @@ Schema on `Message.additional_properties["hosting"]` for a host-produced assista
     "identity": { "channel": "telegram", "native_id": "12345", "attributes": {} },
     "response_target": { "kind": "all_linked", "targets": [] }
   },
-  "deliveries": [
+  "intended_targets": [
+    { "destination": { "channel": "activity", "native_id": "29:abc..." } },
+    { "destination": { "channel": "telegram", "native_id": "12345"     } }
+  ],
+  "skipped_targets": [                            // optional — present only when LinkPolicy excluded something
     {
-      "destination": { "channel": "activity", "native_id": "29:abc..." },
-      "status": "delivered",                       // pending | delivered | failed | skipped
-      "attempts": 1,
-      "first_attempt_at": "2026-04-29T08:31:11Z",
-      "last_attempt_at":  "2026-04-29T08:31:11Z",
-      "last_error": null,
-      "delivery_id": "msg_018f..."                 // channel-issued id, when the channel returns one
-    },
-    {
-      "destination": { "channel": "telegram", "native_id": "12345" },
-      "status": "failed",
-      "attempts": 3,
-      "first_attempt_at": "2026-04-29T08:31:11Z",
-      "last_attempt_at":  "2026-04-29T08:36:11Z",
-      "last_error": { "code": "channel_offline", "message": "Telegram getUpdates 502" },
-      "delivery_id": null
+      "destination": { "channel": "corp-only", "native_id": "..." },
+      "reason": "link_policy"                     // link_policy | no_push_capability
     }
   ]
 }
 ```
 
-Status values:
-
-| Value | Meaning |
-|---|---|
-| `pending` | Host has resolved the destination but has not yet attempted (or is between attempts) `ChannelPush.push(...)`. |
-| `delivered` | Push succeeded. `delivery_id` is populated when the destination channel returns a stable id. |
-| `failed` | Push raised. `last_error` is populated. Eligible for replay. |
-| `skipped` | Destination was excluded by `LinkPolicy`, or the destination channel does not implement `ChannelPush`. Recorded so audit shows *why* a destination resolved by `ResponseTarget` did not receive the message. |
-
 Lifecycle the host follows:
 
-1. After `ResponseTarget` resolution and `LinkPolicy` filtering, **before** any push attempt, the host writes the assistant `Message` with one `deliveries[]` entry per destination, all `status="pending"` (excluded ones written as `"skipped"`). This guarantees the intent is durable across host crashes.
-2. After each `ChannelPush.push(destination_identity, result)`, the host updates the matching `deliveries[]` entry in place — `status`, `attempts`, `first_attempt_at` (set on first attempt), `last_attempt_at`, `last_error`, `delivery_id`.
-3. The mechanism for **retrying** failed deliveries (background worker, operator action, `host.retry_delivery(message_id, destination)`, …) is **out of scope** for this spec — it is enabled by the data model and tracked under Open Questions.
+1. After `ResponseTarget` resolution and `LinkPolicy` filtering, the host writes the assistant `Message` **once**, with the resolved `intended_targets[]` (every destination it will attempt) and an optional `skipped_targets[]` for destinations dropped at resolution time (so audit can show *why* a resolved-by-`ResponseTarget` destination did not receive the message — `link_policy` or `no_push_capability`). This write is immutable.
+2. For each non-originating destination, the host schedules a `"hosting.push"` task via the configured [`DurableTaskRunner`](#durable-task-runner). The runner is responsible for attempting, retrying per its `RetryPolicy`, and (for durable runners) surviving host restarts. The push handler resolves the channel, runs the channel's `response_hook`, and calls `ChannelPush.push(...)`.
+3. Operational delivery state — attempt count, last error, success timestamp, channel-issued message id — lives in the runner's own log. Replay across host restarts is a property of the runner (native for durable runners; not supported for the in-process runner). Operators who want a queryable delivery dashboard can read it from their runner backend's observability surface (TaskHub, Foundry durable tasks, …) — the host does not project it back onto the message.
 
-#### `SupportsDeliveryTracking` provider capability
+The originating destination (when `ResponseTarget` includes it) is **not** routed through the runner. It is rendered synchronously on the originating channel's wire; the host-internal `_deliver_response` helper returns `bool` (`True` if any push was scheduled / delivered, `False` otherwise) for the channel's own bookkeeping. Per-destination delivery outcomes are not collated back to the caller — durable runners surface them in their own logs / dashboards, and the in-process runner logs failures with structured fields. See [Built-in routes](#built-in-routes) for the synchronous return contract.
 
-Updating a stored message in place is provider-specific. The shape above is universal; the *update semantics* are opt-in:
+> **Why intent-only on the message, with operational state in the runner?** A single immutable write keeps the message store as the source of truth for "what the host intended", without requiring providers to implement in-place mutation (no `SupportsDeliveryTracking` capability, no Foundry `update_item` service ask). Per-destination retry, replay, and failure surfacing become responsibilities of the runner, which is the right component because it owns the work queue. Operators who already use a durable runner (TaskHub, Foundry durable tasks) get observability through the runner's existing tooling rather than through a parallel ETL on the message store.
+
+### Durable task runner
+
+The host delegates non-originating push fan-out — and, in v1 fast-follow, background runs — to a pluggable `DurableTaskRunner`. The runner is the component that owns "this work needs to happen; retry on failure; survive (or don't survive) restarts depending on which runner you chose". Channel packages never see it directly; they just implement `ChannelPush.push(...)`.
 
 ```python
-from typing import Protocol, Sequence
+from typing import Protocol, Callable, Awaitable, Mapping, Any, Literal
+from dataclasses import dataclass
 
-class SupportsDeliveryTracking(Protocol):
-    async def update_deliveries(
+@dataclass(frozen=True)
+class RetryPolicy:
+    max_attempts: int = 5
+    initial_backoff_seconds: float = 1.0
+    backoff_multiplier: float = 2.0
+    max_backoff_seconds: float = 60.0
+
+@dataclass(frozen=True)
+class TaskHandle:
+    task_id: str                          # opaque, runner-issued
+    name: str                             # the registered handler name
+
+TaskStatus = Literal["scheduled", "running", "succeeded", "failed", "cancelled"]
+
+class DurableTaskRunner(Protocol):
+    def register(
         self,
-        *,
-        session_id: str,
-        message_id: str,
-        deliveries: Sequence[Mapping[str, Any]],
+        name: str,
+        handler: Callable[[Mapping[str, Any]], Awaitable[None]],
     ) -> None: ...
+
+    async def schedule(
+        self,
+        name: str,
+        payload: Mapping[str, Any],
+        *,
+        retry_policy: RetryPolicy | None = None,
+    ) -> TaskHandle: ...
+
+    async def get(self, handle: TaskHandle) -> TaskStatus | None: ...
 ```
 
-| Provider | `SupportsDeliveryTracking`? | Behavior |
+The host registers an internal handler `"hosting.push"` at startup. Each non-originating destination becomes a single `runner.schedule("hosting.push", payload)` call. The handler:
+
+1. Resolves the channel from `payload["channel_id"]`.
+2. Clones the `HostedRunResult` and runs the channel's `response_hook` (if any).
+3. Calls `ChannelPush.push(identity, shaped_result)`.
+4. Returns normally on success. On exception, the runner records the failure and either schedules a retry per `RetryPolicy` or marks the task `failed` (terminal).
+
+Built-in runner shipped in core:
+
+| Runner | Persistence | Replay across restarts | Default for |
+|---|---|---|---|
+| `InProcessTaskRunner` | None — `asyncio.create_task` + in-process retry | No (in-flight tasks lost on process death) | `runtime_mode="long_running"` |
+
+Adapter packages (deferred to v1 Fast Follow; no runtime dep from core):
+
+| Package | Backend | Notes |
 |---|---|---|
-| `FileHistoryProvider` (append-only JSONL) | No (capability not implemented) | Host writes the assistant `Message` **once**, at the end of the delivery cycle, with terminal `deliveries[]`. Pre-attempt `pending` snapshot is not durable; a host crash mid-delivery loses per-destination state for in-flight pushes. **Audit-complete, replay-best-effort.** |
-| `FoundryHostedAgentHistoryProvider` (Foundry response store) | **Partial — initial-write only** (see [Foundry storage gap](#foundry-storage-gap-update_item) below) | Inbound envelope (`channel`/`identity`/`response_target`) and **initial-write `deliveries[]` snapshot** (all `pending`, plus any `skipped`) round-trip through the Foundry response store unchanged via the `agent_framework` extras container key the provider writes onto each `OutputItem`. **Per-destination updates after each push attempt are not durable** because the Foundry storage SDK does not yet expose a way to mutate an individual stored history item. Behaves as `FileHistoryProvider` in that regard until the [service ask](#foundry-storage-gap-update_item) lands. **Audit-complete-on-write, replay-best-effort.** |
-| Cosmos / SQL providers (when introduced) | Expected to implement | Same as above. |
+| `agent-framework-hosting-durabletask` | `agent-framework-durabletask` (gRPC TaskHub) | Suits `ephemeral` deployments that already run a Durable Task sidecar. |
+| `agent-framework-hosting-foundry` (extension) | Foundry durable-task API | Deferred until the FHA durable-task surface is finalized. |
+| (possibly) SQLite-outbox runner | SQLite under the existing `HostStateStore` root | Lowest-dep "survives single-node restart" option for ephemeral hosts without an external sidecar. |
 
-Providers that omit the capability are still valid hosts for any `ResponseTarget` configuration — they just cannot offer durable replay. The host detects the capability with `isinstance(provider, SupportsDeliveryTracking)` and degrades to write-once when absent.
+Default selection follows [Runtime modes](#runtime-modes). `long_running` defaults to `InProcessTaskRunner`. `ephemeral` is **strict**: if `durable_task_runner` is not configured and `allow_in_process_runner=True` is not opted in, the host raises `RuntimeError` at construction — falling back to the in-process runner in an ephemeral environment would silently drop in-flight pushes on the next scale-to-zero. The `allow_in_process_runner=True` escape hatch is intentionally noisy (warning) and meant for local dev / smoke tests.
 
-> **Why on the message and not in a separate delivery log?** Two reasons. First, the message store is the single source of truth for an assistant turn; piggy-backing on it avoids a second consistency boundary between "message written" and "delivery scheduled". Second, any operator who wants a queryable delivery dashboard can ETL the array out of `additional_properties["hosting"]["deliveries"]` into their preferred outbox/log store — the on-message form does not preclude that. The spec commits only to the on-message shape; outbox layers are an implementation choice.
+#### Codec contract for durable serialisation
 
-#### Foundry storage gap: `update_item`
+When a `DurableTaskRunner` is configured for a deployment that uses out-of-process scheduling (e.g. a sidecar / gRPC TaskHub), task payloads must be **JSON-serialisable** end to end. Two pieces of the contract enforce this:
 
-`FoundryHostedAgentHistoryProvider` round-trips arbitrary `Message.additional_properties` namespaces through the Foundry response store as opaque JSON via a single `agent_framework` container key on each `OutputItem` (see `_shared.py:_collect_af_extras` / `_inject_af_extras` / `_attach_extras`). This makes the **initial-write** parts of the schema above durable:
+- **`DurableTaskRunner.payload_mode`** — a class-level attribute declared by each runner implementation:
+  - `OBJECT` — the in-process runner; payloads pass Python objects by reference. No serialisation required.
+  - `JSON` — out-of-process runners; payloads must round-trip through JSON.
+- **`ChannelPushCodec`** — a Protocol exposed by push-capable channels whose payloads are not natively JSON-serialisable. The codec defines `encode(payload) -> Mapping[str, Any]` / `decode(envelope) -> Any` so the channel owns the over-the-wire shape of its push payloads. Channels without exotic payloads can leave the codec unset and rely on the host's default `dataclasses.asdict`-style encode.
 
-- The inbound `hosting` envelope (`channel`, `identity`, `response_target`) on user messages.
-- The initial-write `deliveries[]` snapshot on assistant messages (all entries `pending` or `skipped`, written before the first push attempt).
+At construction the host runs `_validate_runner_codec_pairing`: if the configured runner declares `payload_mode == JSON` and any push-capable channel does not expose a codec, the host raises `ChannelConfigurationError` so the misconfiguration is caught before traffic. On the consumer side `_handle_push_task` accepts both `OBJECT`-mode (in-memory object) and `JSON`-mode (`{"type": "push", ...}` envelope) shapes so the same handler serves both runner backends.
 
-What is **not yet** durable through this provider is **post-push mutation** of an individual stored item. The `azure.ai.agentserver.responses.store.FoundryStorageProvider` SDK exposes `create_response`, `get_response`, `update_response`, `delete_response`, `get_input_items`, `get_items`, and `get_history_item_ids` — but no `update_item` / PATCH on a single history item. So when the host updates an entry in `deliveries[]` after `ChannelPush.push()` returns (`status` → `delivered`/`failed`, `attempts`, timestamps, `last_error`, `delivery_id`), there is no way to push that mutation back into the per-item storage row.
+#### In-process runner shutdown drain
 
-**Workarounds and trade-offs:**
+`InProcessTaskRunner` ships a two-phase shutdown driven by `shutdown_grace_seconds` (default `5.0`):
 
-| Option | Trade-off |
-|---|---|
-| Encode `deliveries[]` on the *response object* (under `agent_framework`) instead of the assistant *item*, and use `update_response` to mutate it. | Works today, but deliveries are no longer co-located with the assistant message — schema for the `Message` round-trip becomes provider-specific. |
-| Delete + recreate the assistant item with the updated body. | Likely loses the `previous_response_id` chain pointer, breaks subsequent `get_history_item_ids` walks, and re-stamps the storage `id` (audit-trail noise). |
-| Wait for Foundry storage to add `update_item`. | Cleanest end-state. **This is the recommended path.** |
+1. After lifespan shutdown signals, in-flight `"hosting.push"` tasks are given the grace period to finish — during which retries keep happening — so a clean Ctrl-C does not abandon work that is one network call away from completing.
+2. When the grace expires, remaining tasks are cancelled and their `CancelledError` is swallowed (not logged as a failure — it is the expected shutdown shape).
 
-**Service ask for the FoundryHostedAgent / Foundry response store team:**
+This is purely operational hygiene for the `long_running` default; durable adapters get this behaviour for free from their backends.
 
-- Add `update_item(item_id, item_body, *, isolation: IsolationContext | None = None) -> None` (PATCH semantics) to `azure.ai.agentserver.responses.store.FoundryStorageProvider` and the underlying `POST/PATCH /storage/items/{item_id}` REST surface.
-- Required because the Hosting spec's per-destination delivery-tracking lifecycle (`pending → delivered`/`failed`/`skipped`) needs to mutate an individual stored item after the first push attempt completes.
-- Without it, the FoundryHostedAgentHistoryProvider's `SupportsDeliveryTracking` implementation is permanently stuck at "write-once-best-effort" and durable replay through Foundry storage is unreachable.
-- Existing `update_response` is not sufficient because deliveries belong on the **assistant `Message`** (so they round-trip with the message into any provider that consumes the standard `Message` schema), not on the response envelope.
+#### Echo idempotency on retry
+
+When `ResponseTarget.channel(name, echo_input=True)` is set, the host packages an echo (`role="user"`) push *and* the agent reply (`role="assistant"`) into the same `"hosting.push"` task per non-originating destination. The handler tracks an `echo_done` cursor on the task state and short-circuits the echo phase on retry: a retry that fires after the echo succeeded but before the response push completed will not double-echo the user's message. The cursor lives on the runner-owned task state, not the message — same principle as the broader "intent only on the message, operational state in the runner" rule.
 
 ## Reference and Parity Plan
 
@@ -1548,7 +1823,7 @@ The new core sits **below** the conceptual boundary of today's top-level Respons
 | `FoundryHostedAgentHistoryProvider` (in `agent-framework-foundry-hosting`, built on `azure.ai.agentserver.responses.store._foundry_provider.FoundryStorageProvider`) | Agent Framework Foundry | TBD | Proposed v1 deliverable so Foundry-defined (and any other) agents can use Foundry's response store as a `HistoryProvider` through the new host. Implements the standard core `HistoryProvider` Protocol — usable from any channel, no Responses-specific Protocol. Owns a runtime dep on `azure.ai.agentserver` for the storage SDK. |
 | PR #5393 Telegram sample (commands, polling/webhook patterns) | Agent Framework | PR author | Reference-only; informs `ChannelCommand` and `TelegramChannel` design |
 | Telegram Bot API SDK | External | n/a | Committed (runtime dep of `agent-framework-hosting-telegram`) |
-| `microsoft/teams.py` SDK (`microsoft-teams-apps`, `microsoft-teams-api`, `microsoft-teams-cards`) | External (MIT, Microsoft) | n/a | Proposed runtime dep of `agent-framework-hosting-teams` (req #28). The SDK already ships a "Build an agent using Microsoft Agent Framework" guide and a pluggable `HttpServerAdapter`, so the hosting package mounts the SDK's `App` into the host's Starlette app and reuses its Adaptive Cards / Streaming / Citations / Feedback / Suggested-prompts / Dialogs / Message-Extensions / SSO surface instead of re-implementing them. |
+| `microsoft/teams.py` SDK (`microsoft-teams-apps`, `microsoft-teams-api`, `microsoft-teams-cards`) | External (MIT, Microsoft) | n/a | Proposed runtime dep of `agent-framework-hosting-teams` (req #29). The SDK already ships a "Build an agent using Microsoft Agent Framework" guide and a pluggable `HttpServerAdapter`, so the hosting package mounts the SDK's `App` into the host's Starlette app and reuses its Adaptive Cards / Streaming / Citations / Feedback / Suggested-prompts / Dialogs / Message-Extensions / SSO surface instead of re-implementing them. |
 | `agent-framework-ag-ui`, `-a2a`, `-devui` | Agent Framework | various | Out of scope for first implementation; future convergence kept as a possibility |
 
 ## Open Questions
@@ -1560,10 +1835,9 @@ The new core sits **below** the conceptual boundary of today's top-level Respons
 | 8 | Should command scopes / projection metadata become first-class — e.g. private-chat-only vs group-chat-visible commands, or per-locale descriptions? | Eng / PM | Telegram's `BotCommandScope` and `language_code` would need to be representable cross-channel. |
 | 10 | Is "Channel" the GA name? "Head" was used interchangeably during design discussions. | PM | "Channel" chosen for the spec; confirm before public docs. |
 | 12 | Should `ChannelRequest.session_mode` grow additional values (e.g. `"shared"` for multi-channel session sharing) or stay closed at three? | Eng | The taxonomy needs a **dedicated design exercise** covering all known channel session-shape patterns; revisit after that exercise. |
-| 14 | Where do issued link grants live — short-lived in-memory state on the host, the same pluggable session store (#23), or a separate identity store? | Eng | Resolved as part of the **`HostStateStore`** seam (see [Host state storage](#host-state-storage)). Link grants live alongside continuation tokens and last-seen records in the v1 file-based default (`FileHostStateStore` → `link_grants/` namespace, 15min TTL). Pluggable Cosmos / SQL / Redis adapters tracked in req #23. **→ Move to Resolved Questions in next pass.** |
+| 14 | Where do issued link grants live — short-lived in-memory state on the host, the same pluggable session store (#24), or a separate identity store? | Eng | Resolved as part of the **`HostStateStore`** seam (see [Host state storage](#host-state-storage)). Link grants live alongside continuation tokens and last-seen records in the v1 file-based default (`FileHostStateStore` → `link_grants/` namespace, 15min TTL). Pluggable Cosmos / SQL / Redis adapters tracked in req #24. **→ Move to Resolved Questions in next pass.** |
 | 17 | Should `ResponseTarget.active` honor a configurable **time window** (last seen within N minutes) and what is the fallback when the window has expired before the response is ready — `originating`, `all_linked`, drop with `ContinuationToken` `status="failed"`? | PM / Eng | Likely yes with sensible default (e.g. 24h fall back to `originating`); per-request override via the run hook. |
 | 22 | For the Responses WebSocket transport, what subprotocol identifier (if any) should be advertised on the `Upgrade` and how is auth conveyed — `Authorization` header on the upgrade, a `Sec-WebSocket-Protocol` token, or a query-string-bound short-lived token? | Eng / PM | Aligning with whatever OpenAI ships for Responses WS is preferable; keep the codec swappable so the channel can track upstream changes without breaking the host contract. |
-| 27 | What is the retention contract for completed `deliveries[]` entries — keep forever for audit, GC after the message itself ages out, or cap per-message at a fixed attempt count? Should `last_error` payloads be redacted to a code/message pair to avoid logging PII from the underlying channel SDK? | Eng / Compliance | Suggest "lifetime equals message lifetime" + redacted error shape (`{code, message}` only, no provider stack frames or payload echoes) as the default; revisit when the persistent store contract lands. |
 
 ### Resolved Questions (decisions log)
 
@@ -1573,7 +1847,7 @@ Original numbering preserved so external references (checkpoints, ADR cross-link
 |---|---|---|
 | 1 | Final distribution package names? | `agent-framework-hosting` with suffixes (`-responses`, `-invocations`, `-telegram`, …). Public imports stay at `agent_framework.hosting`. |
 | 2 | `uvicorn` required vs optional extra? | Use **hypercorn** instead of uvicorn; the `serve` extra remains optional. `host.app` is still the canonical server-agnostic ASGI surface. |
-| 3 | Keep `HostedRunResult` wrapper or return `AgentResponse` directly? | **Keep `HostedRunResult`.** It wraps both `AgentRunResult` *and* the unknown output type of a `Workflow`, and adds host-run metadata (resolved session, etc.). |
+| 3 | Keep `HostedRunResult` wrapper or return `AgentResponse` directly? | **Keep `HostedRunResult`,** now shaped as a **generic typed envelope `HostedRunResult[TResult]`** (see Q31). It wraps both `AgentResponse` *and* `WorkflowRunResult`, and carries host-run metadata (resolved `session`) alongside the full-fidelity target output. |
 | 4 | Where do generic auth helpers live? | Only the **mechanisms** live in core. Concrete implementations sit in their own packages when they pull dependencies; dep-free helpers may live in `hosting`. |
 | 7 | `protocol_request` typed (`Any`) or typed kwargs? | **Keep `Any`.** |
 | 9 | Allow nested routers / `path=""`? | **Yes.** The host developer is responsible for ensuring routes do not overlap. |
@@ -1581,22 +1855,38 @@ Original numbering preserved so external references (checkpoints, ADR cross-link
 | 13 | Which identity linkers ship in phase 1? | **Entra linker** (in the Entra package) + **one-time-code linker** (in core). Drop MFA for now; investigating additional linkers tracked as a follow-up. |
 | 15 | Identity resolver invoked once on host vs per channel? | **Once on the host** with `ChannelIdentity(channel, native_id, ...)`. |
 | 16 | Should `IdentityLinker` and `Channel` share a base `Contributor` protocol? | **A linker *is* a Channel — specialised.** Use the single Channel-shaped contract; collapse `IdentityLinker` into a Channel specialisation. |
-| 18 | Contract for `ChannelPush` failures? | **Annotate the failure on the relevant `deliveries[]` entry** in the data model (see §"Delivery tracking on assistant messages"). Re-delivery is future work (Q26). |
+| 18 | Contract for `ChannelPush` failures? | **The `DurableTaskRunner` owns retry and final-failure semantics**, per its `RetryPolicy`. Push handler exceptions are caught by the runner, which retries with backoff and ultimately marks the task `failed` when `max_attempts` is exhausted. Downstream push outcomes live in the runner's own log — there is no per-destination status surfaced on the message and no synchronous failure object returned to the caller. The host's internal `_deliver_response` helper returns `bool` (whether any work was scheduled) for the originating channel; observability for downstream pushes comes from the runner backend (TaskHub, Foundry durable tasks, log fields on `InProcessTaskRunner`). The earlier `DeliveryReport` value type has been removed. See [Intended targets + durable delivery](#intended-targets--durable-delivery) and [Durable task runner](#durable-task-runner). |
 | 19 | `host.run_in_background(...)` `notify` callback? | Programmatic non-channel delivery will be expressed via the **`continuation_token`** mechanism (see Q20), not a separate `notify` callback. |
 | 20 | Storage / TTL of `ContinuationToken`s? | **Done in this revision.** `ContinuationToken` is the type, with an opaque `token: str` field that channels surface to callers; equivalent continuation-token support is added to the **Invocations channel** alongside the existing Responses behaviour. Push-capable channels can still use it; default behaviour remains "push on completion", but the developer can choose other UX (poll-after-push, hybrid, …). Persistence is the **`HostStateStore`** seam — v1 default is **`FileHostStateStore`** (atomic JSON writes, 24h TTL on completed entries), so background runs survive host restarts. |
-| 21 | Partial-failure surfacing for `all_linked`? | **Handled by the `deliveries[]` array** in the data model, updated per-destination as each push attempt completes. |
+| 21 | Partial-failure surfacing for `all_linked`? | **Runner-only.** Originating-destination outcome is rendered synchronously on the originating channel's wire; the host's `_deliver_response` helper returns `bool` for the channel's own bookkeeping. Non-originating destinations are scheduled as `"hosting.push"` tasks on the `DurableTaskRunner`; per-task outcome (success / retried / terminal-failure) is observable via the runner's backend (TaskHub, Foundry durable tasks, structured log fields on `InProcessTaskRunner`). The host does not collate per-destination status back onto the message and no longer emits a `DeliveryReport`. |
 | 23 | Share one backing store contract for host-level vs `ContextProvider`? | **Stay separate protocols** (current draft direction confirmed). A deployment may still bind both onto the same physical backend. |
 | 24 | Where does the Foundry history provider live? | Tentative name **`FoundryHostedAgentHistoryProvider`**, in the **`foundry-hosting`** package (shares the dependency). Confirm with Foundry package owners before launch. |
 | 25 | `Channel.confidentiality_tier` opaque vs enum? | Keep as `str?` for now; can revisit before Release. |
-| 26 | Where does the delivery-replay mechanism live? | **In the Host**, but **out of scope for v1.** The on-message `deliveries[]` envelope is sufficient input for any future replayer. |
+| 26 | Where does the delivery-replay mechanism live? | **In the `DurableTaskRunner`.** Durable adapters (TaskHub, Foundry durable tasks) provide retry-with-backoff and survive host restarts natively — replay is "the runner keeps retrying until `max_attempts` is exhausted or the push succeeds". The built-in `InProcessTaskRunner` retries within the process but does **not** survive restarts (in-flight tasks are lost). Operator-driven replay (`host.replay(task_handle)`) is out of scope for v1; the runner's own surface is sufficient for the common case. |
+| 28 | Should the host collapse agent / workflow output to text? | **No.** `HostedRunResult[TResult]` carries the target output **unchanged** — full `AgentResponse` (with its multi-modal `messages`, `value`, `usage_details`) for agent targets, full `WorkflowRunResult` (with its `get_outputs()` / `get_final_state()`) for workflow targets. Channels decide what subset their wire renders; a `response_hook` may rebind `result` (e.g. project a workflow output into an `AgentResponse` for a text-only wire) via `HostedRunResult.replace(result=...)`. The host never loses fidelity it has, and never restricts modality. |
+| 29 | How do channels do per-destination post-processing (text flattening, card rendering, citation attachment) without breaking the `Channel` Protocol? | **Channels expose a `response_hook` instance attribute** (callable accepting `(result, *, context: ChannelResponseContext) -> HostedRunResult[Any] \| Awaitable[HostedRunResult[Any]]`). The host duck-types this attribute and applies it on a per-destination clone of the `HostedRunResult` envelope before push. The `Channel` Protocol stays a small `name / path / contribute` contract — adding hook support to a new channel does not require Protocol changes. |
+| 30 | Should non-originating destinations also see the user's input message, not just the agent reply? | **Opt-in via `ResponseTarget.channel(name, echo_input=True)`** (and the same kwarg on `.channels([...])` / `.identities([...])`). The host synthesises a `HostedRunResult[AgentResponse]` wrapping the user's input as a `role="user"` message and bundles it into the same scheduled push task as the agent reply per non-originating destination; the echo is dispatched first inside the task and an echo-push failure is logged and swallowed so the response push on the same destination is still attempted. Channels can transform or drop echoes via their `response_hook` (which receives `is_echo=True` for the echo phase). |
+| 31 | Should `HostedRunResult` be flattened (text / messages) or carry the full target output? | **Carry the full target output, generically typed.** `HostedRunResult[TResult]` exposes a single `result: TResult` field — `AgentResponse` for agent targets, `WorkflowRunResult` for workflow targets — plus an optional `session: AgentSession \| None`. Earlier drafts carried a flattened `messages: list[Message]` projection alongside `raw_response`; this lost workflow-specific affordances (`get_outputs()`, `get_final_state()`, structured per-executor payloads) and forced the host to pre-shape data only some channels needed. The generic envelope keeps the host modality-agnostic, lets channels read the canonical accessor on the underlying type (`result.messages`, `result.value`, `result.get_outputs()`, …), and gives channel authors static typing where they want it. |
+| 32 | Should authorization (per-channel allowlist) ship as a single `auth_mode` enum or as two orthogonal parameters? | **Two orthogonal parameters (`require_link: bool` + `allowlist: IdentityAllowlist \| Literal["inherit"] \| None = "inherit"`)** plus named `AuthPolicy` factories for the three common combinations. A single enum collapses `require_link` and `allowlist` into one axis and cannot express the Mixed profile (`AnyOfAllowlists(NativeIdAllowlist, LinkedClaimAllowlist)` with `require_link=False` — native ids bypass auth, everyone else is funneled into linking) without re-introducing per-value sub-parameters that would defeat the point. Composition is built on a **tri-state `AllowlistDecision` (`ALLOW` / `DENY` / `ABSTAIN`)** rather than a boolean, because boolean composition cannot distinguish "claim allowlist denies you" from "claim allowlist hasn't seen any claims yet" — a critical distinction for the Mixed profile. `LinkedClaimAllowlist` is rejected at host startup if no source of verified claims is available (config validator, fail-fast), preventing the silent-deny-everyone footgun. Group-chat denials apply the same DM-redirect pattern as `LinkChallenge` (short generic refusal in-room, fuller `user_message` in DM, structured `log_details` only in logs). Shipping in two waves: the Protocol + `NativeIdAllowlist` + config validator ship with the next core PR; full `host.authorize(...)` pipeline + `LinkedClaimAllowlist` enforcement land with the `IdentityLinker` core PR. See [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam). |
+| 33 | How does the host decide whether it is running long-running vs ephemeral? | **Single `runtime_mode` parameter on `AgentFrameworkHost`**, defaulting to `None` for auto-detection. Auto-detect inspects known deployment markers (`FOUNDRY_HOSTING_ENVIRONMENT`, `AZURE_FUNCTIONS_ENVIRONMENT`, `AWS_LAMBDA_FUNCTION_NAME`) and picks `"ephemeral"` on the first hit; otherwise falls back to `"long_running"` (sensible local-dev / always-on default). The mode is **advisory** — it drives *defaults* for `HostStateStore`, `DurableTaskRunner`, identity-link state, and similar seams, but every individual choice remains overridable. Detected mode is logged at startup so misdetection is visible. See [Runtime modes](#runtime-modes). |
+| 34 | How does delivery to non-originating destinations actually happen — synchronously in the originating request handler, or out-of-band? | **Out-of-band via a `DurableTaskRunner`.** The host registers an internal handler `"hosting.push"` at startup; each non-originating destination becomes a single `runner.schedule("hosting.push", payload)` call. The originating destination (when `ResponseTarget` includes it) is **still rendered synchronously** on the originating channel's wire — only fan-out goes through the runner. Default runner is `InProcessTaskRunner` (asyncio + bounded retry, no cross-restart persistence — suitable for `long_running`). Durable adapter packages (`agent-framework-hosting-durabletask`, future Foundry adapter) plug into the same Protocol for `ephemeral` deployments. See [Durable task runner](#durable-task-runner). |
+| 35 | What is the audit shape on the assistant message — full per-destination state machine, or intent only? | **Intent only.** `Message.additional_properties["hosting"]["intended_targets"]` is a single immutable write that records the resolved destination set (after `ResponseTarget` + `LinkPolicy` filtering). Operational state — attempt count, last error, success timestamp, channel-issued id — lives in the `DurableTaskRunner` and is observed via the runner's backend. This eliminates the previous `deliveries[]` status state machine (`pending`/`delivered`/`failed`/`skipped`), the `SupportsDeliveryTracking` provider capability, and the Foundry `update_item` service ask. See [Intended targets + durable delivery](#intended-targets--durable-delivery). |
+| 36 | What happens when `runtime_mode="ephemeral"` and no `durable_task_runner` is configured? | **Raise at construction.** Silently falling back to `InProcessTaskRunner` in an ephemeral environment would drop every in-flight push on the next scale-to-zero — a footgun. The host raises `RuntimeError` unless `allow_in_process_runner=True` is opted in (warning logged). The opt-in is intended for local-dev / smoke tests where the developer accepts the in-flight loss. See [Durable task runner](#durable-task-runner). |
+| 37 | What is the wire contract for push payloads under a durable (out-of-process) runner? | **A two-piece contract.** Each `DurableTaskRunner` declares its `payload_mode` (`OBJECT` for in-process pass-by-reference; `JSON` for runners that round-trip through JSON). Channels that ship non-JSON-native payloads expose a `ChannelPushCodec` (`encode` / `decode`). At construction the host runs `_validate_runner_codec_pairing` and refuses a `JSON`-mode runner paired with codec-less push channels. The push handler accepts both `OBJECT` and `JSON` envelope shapes so the same handler serves both runner backends. See [Codec contract for durable serialisation](#codec-contract-for-durable-serialisation). |
+| 38 | Should `DeliveryReport` remain as a per-destination return value? | **No — removed.** Operational state lives in the runner; observability comes from the runner's backend (TaskHub, Foundry durable tasks, structured log fields on `InProcessTaskRunner`). The host's internal `_deliver_response` helper now returns `bool` (whether any work was scheduled / delivered) for the originating channel's own bookkeeping. Removing the value type collapses the public surface and removes a coupling point that would have needed a "schedule-time failure" subtype to round-trip durable failures back to the caller — failures live where they originate (the runner), not on a parallel object passed back through the synchronous return. |
+| 39 | How is double-echo avoided when a push task retries after the echo phase succeeded but the response phase failed? | **An `echo_done` cursor on the runner-owned task state.** When `echo_input=True`, the `"hosting.push"` handler packages both the echo (`role="user"`) and the assistant reply into the same task; on the first attempt the handler dispatches the echo, sets `echo_done=True` on the task state, and then dispatches the reply. A retry that fires after the echo succeeded but the reply failed reads the cursor and short-circuits the echo phase. The cursor lives in the runner — same principle as the broader "intent only on the message, operational state in the runner" rule. See [Echo idempotency on retry](#echo-idempotency-on-retry). |
+| 40 | What happens to in-flight `"hosting.push"` tasks on a clean `InProcessTaskRunner` shutdown? | **Two-phase drain.** A `shutdown_grace_seconds` window (default `5.0`) lets in-flight retries finish; remaining tasks are then cancelled and `CancelledError` is swallowed (not logged as a failure — it is the expected shutdown shape). Operators with longer worst-case retry chains can extend the grace via the constructor. Durable adapters get equivalent behaviour from their backends. See [In-process runner shutdown drain](#in-process-runner-shutdown-drain). |
 
 ### Decisions-driven follow-ups
 
 The following resolutions imply prose / API edits elsewhere in the spec body (not just the table above). Captured here so they aren't lost; the edits themselves are deferred to a separate pass.
 
 - **Q2** — Switch all install / `host.serve()` references from `uvicorn` to `hypercorn`.
-- **Q3** — Update `HostedRunResult` documentation to cover the workflow-output case and the host-run metadata it adds on top of `AgentRunResult`.
+- **Q3** — ✅ Done. `HostedRunResult[TResult]` is now generic over the target output type; see Q31 below for the rationale.
 - **Q11** — Strip any remaining "multi-target hedge" language from the spec body.
 - **Q13** — Update the linker catalogue: Entra (in Entra package) + one-time-code (in core); remove MFA references.
 - **Q16** — Collapse `IdentityLinker` into a Channel specialisation in the spec body (architecture diagrams, contracts, examples).
 - **Q20** — ✅ Done. `ContinuationToken` type carries an opaque `token: str`; routes use `/{continuation_token}`; Invocations channel gets equivalent continuation-token support; persistence via `HostStateStore` (v1 default file-based).
+- **Q32** — Spec text added (see [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam) and req #22). **Wave 1 landed in this core PR**: `IdentityAllowlist` Protocol, `AllowlistDecision` enum, `AuthorizationContext`, `AllowAll` / `NativeIdAllowlist` / `AnyOfAllowlists` / `AllOfAllowlists` / `CallableAllowlist` built-ins, `LinkedClaimAllowlist` (composable; `evaluate()` raises until Wave 2), `Allowed` / `LinkRequired` / `Denied` outcomes, `Host(default_allowlist=..., identity_linker=...)` + per-channel `allowlist` parameter, construction-time validator (rules #1 + #2 + #3 — `require_link=True` without `identity_linker` now raises), and `host.authorize(...)` for the native-id pipeline. Wave 2 (linker stack, `LinkedClaimAllowlist` enablement, indexed `IdentityResolver`, `AuthPolicy` factories) ships with the `IdentityLinker` core PR.
+- **Q36 / Q37 / Q38 / Q39 / Q40** — Spec text added: strict-ephemeral default + `allow_in_process_runner` opt-in in §[Durable task runner](#durable-task-runner); new sub-sections [Codec contract for durable serialisation](#codec-contract-for-durable-serialisation), [In-process runner shutdown drain](#in-process-runner-shutdown-drain), [Echo idempotency on retry](#echo-idempotency-on-retry); `DeliveryReport` references purged from §[Intended targets + durable delivery](#intended-targets--durable-delivery) and Qs 18 / 21. Code lands in this core PR: `DurableTaskPayloadMode` + `ChannelPushCodec` + `PushPayloadNotSerializable` exception in `_types.py`; `_validate_runner_codec_pairing` + dual-mode `_handle_push_task` + `_build_push_payload` + `echo_done` cursor + `_annotate_intended_targets` in `_host.py`; `shutdown_grace_seconds` + 2-phase drain in `_runner.py`.
+- **Q33 / Q34 / Q35** — Spec text added: new top-level §[Runtime modes](#runtime-modes), rewritten §[Intended targets + durable delivery](#intended-targets--durable-delivery), new §[Durable task runner](#durable-task-runner). Code lands in this core PR: `DurableTaskRunner` Protocol + `InProcessTaskRunner` + `runtime_mode` constructor parameter + auto-detection. Durable runner adapters (`agent-framework-hosting-durabletask`, Foundry adapter) are separate follow-up packages tracked under §[Decisions-driven follow-ups](#decisions-driven-follow-ups). Bumping req #14 (background runs) to share the same runner is a non-goal of this PR — the `ContinuationToken` machinery and the runner can be wired together in a later pass without re-shaping either contract.
