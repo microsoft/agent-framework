@@ -1718,7 +1718,7 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        from httpx import AsyncClient, Request, Timeout
+        from httpx import URL, AsyncClient, Request, Timeout
 
         http_client = self._httpx_client
         if self._header_provider is not None:
@@ -1730,8 +1730,11 @@ class MCPStreamableHTTPTool(MCPTool):
                 self._httpx_client = http_client
 
             if not hasattr(self, "_inject_headers_hook"):
+                target_origin = _url_origin(URL(self.url))
 
                 async def _inject_headers(request: Request) -> None:  # noqa: RUF029
+                    if _url_origin(request.url) != target_origin:
+                        return
                     headers = _mcp_call_headers.get({})
                     for key, value in headers.items():
                         request.headers[key] = value
@@ -1770,6 +1773,13 @@ class MCPStreamableHTTPTool(MCPTool):
             finally:
                 _mcp_call_headers.reset(token)
         return await super().call_tool(tool_name, **kwargs)
+
+
+def _url_origin(url: Any) -> tuple[str, str, int | None]:
+    port = url.port
+    if port is None:
+        port = 443 if url.scheme == "https" else 80 if url.scheme == "http" else None
+    return (url.scheme, url.host or "", port)
 
 
 class MCPWebsocketTool(MCPTool):

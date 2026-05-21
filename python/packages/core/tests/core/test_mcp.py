@@ -4641,6 +4641,42 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
             await tool._httpx_client.aclose()
 
 
+async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redirect():
+    """The request hook must not re-add caller headers after a cross-origin redirect."""
+    import httpx
+
+    from agent_framework._mcp import _mcp_call_headers
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="https://example.com/mcp",
+        header_provider=lambda kw: {"Authorization": f"Bearer {kw.get('token', '')}"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            token = _mcp_call_headers.set({"Authorization": "Bearer secret"})
+            try:
+                same_origin = httpx.Request("POST", "https://example.com/redirected")
+                await hooks[0](same_origin)
+                assert same_origin.headers.get("Authorization") == "Bearer secret"
+
+                cross_origin = httpx.Request("POST", "https://attacker.example/capture")
+                await hooks[0](cross_origin)
+                assert "Authorization" not in cross_origin.headers
+            finally:
+                _mcp_call_headers.reset(token)
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()
+
+
 async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client():
     """Test that header_provider works when the user provides their own httpx client."""
     import httpx
