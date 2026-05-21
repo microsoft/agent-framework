@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import os
 import sys
+import warnings
 from functools import wraps
 from pathlib import Path
 from typing import Annotated, Any
@@ -984,6 +985,25 @@ def test_get_web_search_tool_with_location() -> None:
     assert tool_obj is not None
 
 
+def test_get_web_search_tool_allowed_domains() -> None:
+    """allowed_domains is wrapped into the SDK filters field."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        tool_obj = RawFoundryChatClient.get_web_search_tool(allowed_domains=["example.com"])
+    assert tool_obj.filters is not None
+    assert tool_obj.filters.allowed_domains == ["example.com"]
+
+
+def test_get_web_search_tool_custom_search_configuration() -> None:
+    """custom_search_configuration is forwarded to the SDK without warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        tool_obj = RawFoundryChatClient.get_web_search_tool(
+            custom_search_configuration={"connection_id": "c", "instance_name": "i"},
+        )
+    assert tool_obj.custom_search_configuration == {"connection_id": "c", "instance_name": "i"}
+
+
 def test_get_image_generation_tool() -> None:
     """Test image generation tool creation."""
 
@@ -1135,6 +1155,29 @@ def test_get_bing_custom_search_tool() -> None:
 
 
 @pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_bing_grounding_tool() -> None:
+    """Bing grounding tool factory builds the nested search configuration."""
+    bing_tool_cls = _skip_if_sdk_class_missing("BingGroundingTool")
+
+    tool_obj = FoundryChatClient.get_bing_grounding_tool(
+        connection_id="bing-conn",
+        market="en-US",
+        set_lang="en",
+        count=10,
+        freshness="Day",
+    )
+    assert isinstance(tool_obj, bing_tool_cls)
+    configs = tool_obj.bing_grounding.search_configurations
+    assert len(configs) == 1
+    config = configs[0]
+    assert config.project_connection_id == "bing-conn"
+    assert config.market == "en-US"
+    assert config.set_lang == "en"
+    assert config.count == 10
+    assert config.freshness == "Day"
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_a2a_tool() -> None:
     """A2A tool factory carries base_url, agent_card_path, and project_connection_id."""
     a2a_tool_cls = _skip_if_sdk_class_missing("A2APreviewTool")
@@ -1150,8 +1193,16 @@ def test_get_a2a_tool() -> None:
     assert tool_obj.project_connection_id == "a2a-conn"
 
 
-_EXPERIMENTAL_FACTORY_CASES: list[tuple[str, str, dict[str, Any]]] = [
+_FOUNDRY_TOOLS_FACTORY_CASES: list[tuple[str, str, dict[str, Any]]] = [
     ("get_azure_ai_search_tool", "AzureAISearchTool", {"index_connection_id": "c", "index_name": "i"}),
+    (
+        "get_bing_grounding_tool",
+        "BingGroundingTool",
+        {"connection_id": "c"},
+    ),
+]
+
+_FOUNDRY_PREVIEW_TOOLS_FACTORY_CASES: list[tuple[str, str, dict[str, Any]]] = [
     ("get_sharepoint_tool", "SharepointPreviewTool", {"connection_id": "c"}),
     ("get_fabric_tool", "MicrosoftFabricPreviewTool", {"connection_id": "c"}),
     (
@@ -1175,35 +1226,27 @@ _EXPERIMENTAL_FACTORY_CASES: list[tuple[str, str, dict[str, Any]]] = [
 
 
 @pytest.mark.filterwarnings("ignore::FutureWarning")
-@pytest.mark.parametrize("factory_name, sdk_class_name, kwargs", _EXPERIMENTAL_FACTORY_CASES)
-def test_experimental_foundry_tool_factories_are_marked(
-    factory_name: str, sdk_class_name: str, kwargs: dict[str, Any]
-) -> None:
-    """Each new factory carries the FOUNDRY_TOOLS experimental feature metadata."""
+@pytest.mark.parametrize("factory_name, sdk_class_name, kwargs", _FOUNDRY_TOOLS_FACTORY_CASES)
+def test_foundry_tools_factories_are_marked(factory_name: str, sdk_class_name: str, kwargs: dict[str, Any]) -> None:
+    """Factories wrapping GA Foundry tool SDK classes carry FOUNDRY_TOOLS metadata."""
     _skip_if_sdk_class_missing(sdk_class_name)
     factory = getattr(FoundryChatClient, factory_name)
-    # `@staticmethod` + `@experimental` wraps the underlying function; metadata sits on it.
     assert getattr(factory, "__feature_stage__", None) == "experimental"
     assert getattr(factory, "__feature_id__", None) == "FOUNDRY_TOOLS"
-    # The factory must be invokable without a FoundryChatClient instance.
     assert factory(**kwargs) is not None
 
 
-def test_get_azure_ai_search_tool_requires_sdk_class(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A missing preview class raises a clear ImportError, not AttributeError.
-
-    Uses ``setattr(..., None, raising=False)`` rather than ``delattr`` so the
-    test is robust against modules that implement PEP 562 ``__getattr__`` and
-    would otherwise rehydrate the attribute on access.
-    """
-    from azure.ai.projects import models as projects_models
-
-    monkeypatch.setattr(projects_models, "AzureAISearchTool", None, raising=False)
-    with pytest.raises(ImportError, match="AzureAISearchTool"):
-        FoundryChatClient.get_azure_ai_search_tool(
-            index_connection_id="c",
-            index_name="i",
-        )
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+@pytest.mark.parametrize("factory_name, sdk_class_name, kwargs", _FOUNDRY_PREVIEW_TOOLS_FACTORY_CASES)
+def test_foundry_preview_tools_factories_are_marked(
+    factory_name: str, sdk_class_name: str, kwargs: dict[str, Any]
+) -> None:
+    """Factories wrapping preview Foundry tool SDK classes carry FOUNDRY_PREVIEW_TOOLS metadata."""
+    _skip_if_sdk_class_missing(sdk_class_name)
+    factory = getattr(FoundryChatClient, factory_name)
+    assert getattr(factory, "__feature_stage__", None) == "experimental"
+    assert getattr(factory, "__feature_id__", None) == "FOUNDRY_PREVIEW_TOOLS"
+    assert factory(**kwargs) is not None
 
 
 def test_parse_chunk_surfaces_oauth_consent_request() -> None:

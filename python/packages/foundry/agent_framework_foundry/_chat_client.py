@@ -22,9 +22,29 @@ from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
+    A2APreviewTool,
+    AISearchIndexResource,
     AutoCodeInterpreterToolParam,
+    AzureAISearchTool,
+    AzureAISearchToolResource,
+    BingCustomSearchConfiguration,
+    BingCustomSearchPreviewTool,
+    BingCustomSearchToolParameters,
+    BingGroundingSearchConfiguration,
+    BingGroundingSearchToolParameters,
+    BingGroundingTool,
+    BrowserAutomationPreviewTool,
+    BrowserAutomationToolConnectionParameters,
+    BrowserAutomationToolParameters,
     CodeInterpreterTool,
+    ComputerUsePreviewTool,
+    FabricDataAgentToolParameters,
     ImageGenTool,
+    MemorySearchPreviewTool,
+    MicrosoftFabricPreviewTool,
+    SharepointGroundingToolParameters,
+    SharepointPreviewTool,
+    ToolProjectConnection,
     WebSearchApproximateLocation,
     WebSearchTool,
     WebSearchToolFilters,
@@ -109,26 +129,6 @@ FoundryChatOptionsT = TypeVar(
 )
 
 FoundryChatOptions = OpenAIChatOptions
-
-
-def _require_sdk_class(name: str) -> Any:
-    """Resolve an ``azure.ai.projects.models`` class lazily.
-
-    Preview SDK classes (``*PreviewTool`` and their parameter helpers) are added
-    on a rolling cadence; importing them at module load time would break the
-    package on older ``azure-ai-projects`` versions. This helper resolves them
-    on demand and raises a clear ``ImportError`` when the installed SDK is too
-    old to provide the requested symbol.
-    """
-    from azure.ai.projects import models as _projects_models
-
-    cls = getattr(_projects_models, name, None)
-    if cls is None:
-        raise ImportError(
-            f"{name!r} is not available in the installed azure-ai-projects package. "
-            "Upgrade azure-ai-projects to a version that exposes this Foundry tool."
-        )
-    return cls
 
 
 class RawFoundryChatClient(  # type: ignore[misc]
@@ -390,17 +390,44 @@ class RawFoundryChatClient(  # type: ignore[misc]
         custom_search_configuration: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> WebSearchTool:
-        """Create a web search tool configuration for Microsoft Foundry.
+        """Create a Web Search tool configuration for Microsoft Foundry.
+
+        **Choosing a web grounding tool.** Foundry exposes three options that all reach
+        the public web via Bing. Pick the one that matches your scenario:
+
+        * :py:meth:`get_web_search_tool` (this one, GA) — recommended starting point.
+          The Bing resource is managed by Microsoft, no extra Azure setup is required,
+          and only Azure OpenAI models are supported. Parameters are limited to
+          ``user_location`` and ``search_context_size``.
+        * :py:meth:`get_bing_grounding_tool` (preview) — use when you need finer Bing parameters (``count``,
+          ``freshness``, ``market``, ``set_lang``), want to ground non-OpenAI
+          Foundry models, or are migrating from Grounding with Bing Search on the
+          classic agents platform. You manage the Grounding with Bing Search
+          resource yourself (Contributor/Owner to create the resource, Foundry
+          Project Manager to wire the connection).
+        * :py:meth:`get_bing_custom_search_tool` (preview) — use when you need to
+          restrict grounding to a curated set of domains defined in a Bing Custom
+          Search instance.
+
+        For all three, search data flows outside the Azure compliance boundary. See
+        https://learn.microsoft.com/azure/foundry/agents/how-to/tools/web-overview for
+        the full comparison.
 
         Keyword Args:
-            user_location: Location context with keys like "city", "country", "region", "timezone".
-            search_context_size: Amount of context from search results ("low", "medium", "high").
-            allowed_domains: List of domains to restrict search results to.
-            custom_search_configuration: Custom Bing search configuration.
-            **kwargs: Additional arguments passed to the SDK WebSearchTool constructor.
+            user_location: Location context with keys like ``"city"``, ``"country"``,
+                ``"region"``, ``"timezone"``.
+            search_context_size: Amount of context from search results
+                (``"low"``, ``"medium"``, ``"high"``).
+            allowed_domains: List of domains to restrict search results to. Wrapped
+                into ``WebSearchToolFilters`` and passed as the ``filters`` field on
+                the SDK ``WebSearchTool``.
+            custom_search_configuration: Custom Bing search configuration for
+                domain-restricted scenarios.
+            **kwargs: Additional arguments passed to the SDK ``WebSearchTool``
+                constructor.
 
         Returns:
-            A WebSearchTool ready to pass to an Agent.
+            A ``WebSearchTool`` ready to pass to an Agent.
         """
         ws_kwargs: dict[str, Any] = {**kwargs}
         if search_context_size:
@@ -409,15 +436,137 @@ class RawFoundryChatClient(  # type: ignore[misc]
             ws_kwargs["filters"] = WebSearchToolFilters(allowed_domains=allowed_domains)
         if custom_search_configuration:
             ws_kwargs["custom_search_configuration"] = custom_search_configuration
-        ws_tool = WebSearchTool(**ws_kwargs)
         if user_location:
-            ws_tool.user_location = WebSearchApproximateLocation(
+            ws_kwargs["user_location"] = WebSearchApproximateLocation(
                 city=user_location.get("city"),
                 country=user_location.get("country"),
                 region=user_location.get("region"),
                 timezone=user_location.get("timezone"),
             )
-        return ws_tool
+        return WebSearchTool(**ws_kwargs)
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    def get_bing_grounding_tool(
+        *,
+        connection_id: str,
+        market: str | None = None,
+        set_lang: str | None = None,
+        count: int | None = None,
+        freshness: str | None = None,
+        **kwargs: Any,
+    ) -> BingGroundingTool:
+        """Create a Grounding with Bing Search tool configuration for Foundry.
+
+        Use this factory when :py:meth:`get_web_search_tool` is too restrictive — for
+        example when you need ``count``/``freshness``/``market``/``set_lang``
+        parameters, want to ground a non-OpenAI Foundry model, or are migrating an
+        agent that already uses Grounding with Bing Search on the classic agents
+        platform. You manage the Grounding with Bing Search Azure resource yourself
+        (Contributor or Owner to create the resource, Foundry Project Manager to
+        create the project connection). Search data flows outside the Azure
+        compliance boundary.
+
+        For domain-restricted grounding to a curated allow-list, use
+        :py:meth:`get_bing_custom_search_tool` instead. For a zero-setup default that
+        works for most agents, see :py:meth:`get_web_search_tool`. The full
+        comparison lives at
+        https://learn.microsoft.com/azure/foundry/agents/how-to/tools/web-overview.
+
+        Keyword Args:
+            connection_id: The Foundry project connection ID for the Grounding with
+                Bing Search resource.
+            market: Optional Bing market identifier (e.g. ``"en-US"``).
+            set_lang: Optional UI language code passed to the Bing API.
+            count: Optional number of search results to return.
+            freshness: Optional time-range filter for search results. See
+                https://learn.microsoft.com/bing/search-apis/bing-web-search/reference/query-parameters
+                for accepted values.
+            **kwargs: Additional arguments forwarded to the SDK
+                ``BingGroundingSearchConfiguration``.
+
+        Returns:
+            A ``BingGroundingTool`` ready to pass to an Agent.
+        """
+        config_kwargs: dict[str, Any] = {
+            **kwargs,
+            "project_connection_id": connection_id,
+        }
+        if market is not None:
+            config_kwargs["market"] = market
+        if set_lang is not None:
+            config_kwargs["set_lang"] = set_lang
+        if count is not None:
+            config_kwargs["count"] = count
+        if freshness is not None:
+            config_kwargs["freshness"] = freshness
+        return BingGroundingTool(
+            bing_grounding=BingGroundingSearchToolParameters(
+                search_configurations=[BingGroundingSearchConfiguration(**config_kwargs)],
+            ),
+        )
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
+    def get_bing_custom_search_tool(
+        *,
+        connection_id: str,
+        instance_name: str,
+        market: str | None = None,
+        set_lang: str | None = None,
+        count: int | None = None,
+        freshness: str | None = None,
+        **kwargs: Any,
+    ) -> BingCustomSearchPreviewTool:
+        """Create a Grounding with Bing Custom Search tool configuration for Foundry.
+
+        Use this factory (preview) when you need to restrict grounding to a curated
+        list of domains. The allow/block list is defined ahead of time on a Bing
+        Custom Search resource (in the Bing portal) and referenced here by
+        ``instance_name``. Like the other Bing-backed tools, search data flows
+        outside the Azure compliance boundary, and you must create the Bing Custom
+        Search resource yourself.
+
+        For unrestricted public-web grounding with no extra Azure setup, prefer
+        :py:meth:`get_web_search_tool`. For unrestricted grounding with finer Bing
+        parameters or non-OpenAI models, prefer :py:meth:`get_bing_grounding_tool`.
+        See
+        https://learn.microsoft.com/azure/foundry/agents/how-to/tools/web-overview
+        for the full comparison.
+
+        Keyword Args:
+            connection_id: The Foundry project connection ID for the Grounding with
+                Bing Custom Search resource.
+            instance_name: The custom configuration instance name defined on the
+                Bing Custom Search resource.
+            market: Optional Bing market identifier (e.g. ``"en-US"``).
+            set_lang: Optional UI language code passed to the Bing API.
+            count: Optional number of search results to return.
+            freshness: Optional time-range filter for search results.
+            **kwargs: Additional arguments forwarded to the SDK
+                ``BingCustomSearchConfiguration``.
+
+        Returns:
+            A ``BingCustomSearchPreviewTool`` ready to pass to an Agent.
+        """
+        config_kwargs: dict[str, Any] = {
+            **kwargs,
+            "project_connection_id": connection_id,
+            "instance_name": instance_name,
+        }
+        if market is not None:
+            config_kwargs["market"] = market
+        if set_lang is not None:
+            config_kwargs["set_lang"] = set_lang
+        if count is not None:
+            config_kwargs["count"] = count
+        if freshness is not None:
+            config_kwargs["freshness"] = freshness
+        return BingCustomSearchPreviewTool(
+            bing_custom_search_preview=BingCustomSearchToolParameters(
+                search_configurations=[BingCustomSearchConfiguration(**config_kwargs)],
+            ),
+        )
 
     @staticmethod
     def get_image_generation_tool(  # type: ignore[override]
@@ -535,7 +684,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
         filter: str | None = None,
         index_asset_id: str | None = None,
         **kwargs: Any,
-    ) -> Any:
+    ) -> AzureAISearchTool:
         """Create an Azure AI Search tool configuration for Foundry.
 
         Keyword Args:
@@ -551,9 +700,6 @@ class RawFoundryChatClient(  # type: ignore[misc]
         Returns:
             An ``AzureAISearchTool`` ready to pass to an Agent.
         """
-        tool_cls = _require_sdk_class("AzureAISearchTool")
-        resource_cls = _require_sdk_class("AzureAISearchToolResource")
-        index_cls = _require_sdk_class("AISearchIndexResource")
         index_kwargs: dict[str, Any] = {
             **kwargs,
             "project_connection_id": index_connection_id,
@@ -567,15 +713,17 @@ class RawFoundryChatClient(  # type: ignore[misc]
             index_kwargs["filter"] = filter
         if index_asset_id is not None:
             index_kwargs["index_asset_id"] = index_asset_id
-        return tool_cls(azure_ai_search=resource_cls(indexes=[index_cls(**index_kwargs)]))
+        return AzureAISearchTool(
+            azure_ai_search=AzureAISearchToolResource(indexes=[AISearchIndexResource(**index_kwargs)]),
+        )
 
     @staticmethod
-    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
     def get_sharepoint_tool(
         *,
         connection_id: str,
         **kwargs: Any,
-    ) -> Any:
+    ) -> SharepointPreviewTool:
         """Create a SharePoint grounding tool configuration for Foundry.
 
         Keyword Args:
@@ -586,23 +734,20 @@ class RawFoundryChatClient(  # type: ignore[misc]
         Returns:
             A ``SharepointPreviewTool`` ready to pass to an Agent.
         """
-        tool_cls = _require_sdk_class("SharepointPreviewTool")
-        params_cls = _require_sdk_class("SharepointGroundingToolParameters")
-        connection_cls = _require_sdk_class("ToolProjectConnection")
-        return tool_cls(
-            sharepoint_grounding_preview=params_cls(
-                project_connections=[connection_cls(project_connection_id=connection_id)],
+        return SharepointPreviewTool(
+            sharepoint_grounding_preview=SharepointGroundingToolParameters(
+                project_connections=[ToolProjectConnection(project_connection_id=connection_id)],
                 **kwargs,
             )
         )
 
     @staticmethod
-    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
     def get_fabric_tool(
         *,
         connection_id: str,
         **kwargs: Any,
-    ) -> Any:
+    ) -> MicrosoftFabricPreviewTool:
         """Create a Microsoft Fabric data agent tool configuration for Foundry.
 
         Keyword Args:
@@ -613,18 +758,15 @@ class RawFoundryChatClient(  # type: ignore[misc]
         Returns:
             A ``MicrosoftFabricPreviewTool`` ready to pass to an Agent.
         """
-        tool_cls = _require_sdk_class("MicrosoftFabricPreviewTool")
-        params_cls = _require_sdk_class("FabricDataAgentToolParameters")
-        connection_cls = _require_sdk_class("ToolProjectConnection")
-        return tool_cls(
-            fabric_dataagent_preview=params_cls(
-                project_connections=[connection_cls(project_connection_id=connection_id)],
+        return MicrosoftFabricPreviewTool(
+            fabric_dataagent_preview=FabricDataAgentToolParameters(
+                project_connections=[ToolProjectConnection(project_connection_id=connection_id)],
                 **kwargs,
             )
         )
 
     @staticmethod
-    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
     def get_memory_search_tool(
         *,
         memory_store_name: str,
@@ -632,7 +774,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
         search_options: Any | None = None,
         update_delay: int | None = None,
         **kwargs: Any,
-    ) -> Any:
+    ) -> MemorySearchPreviewTool:
         """Create a Memory Search tool configuration for Foundry.
 
         Keyword Args:
@@ -646,7 +788,6 @@ class RawFoundryChatClient(  # type: ignore[misc]
         Returns:
             A ``MemorySearchPreviewTool`` ready to pass to an Agent.
         """
-        tool_cls = _require_sdk_class("MemorySearchPreviewTool")
         params: dict[str, Any] = {
             **kwargs,
             "memory_store_name": memory_store_name,
@@ -656,17 +797,17 @@ class RawFoundryChatClient(  # type: ignore[misc]
             params["search_options"] = search_options
         if update_delay is not None:
             params["update_delay"] = update_delay
-        return tool_cls(**params)
+        return MemorySearchPreviewTool(**params)
 
     @staticmethod
-    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
     def get_computer_use_tool(
         *,
         environment: str,
         display_width: int,
         display_height: int,
         **kwargs: Any,
-    ) -> Any:
+    ) -> ComputerUsePreviewTool:
         """Create a Computer Use tool configuration for Foundry.
 
         Keyword Args:
@@ -679,8 +820,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
         Returns:
             A ``ComputerUsePreviewTool`` ready to pass to an Agent.
         """
-        tool_cls = _require_sdk_class("ComputerUsePreviewTool")
-        return tool_cls(
+        return ComputerUsePreviewTool(
             environment=environment,
             display_width=display_width,
             display_height=display_height,
@@ -688,12 +828,12 @@ class RawFoundryChatClient(  # type: ignore[misc]
         )
 
     @staticmethod
-    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
     def get_browser_automation_tool(
         *,
         connection_id: str,
         **kwargs: Any,
-    ) -> Any:
+    ) -> BrowserAutomationPreviewTool:
         """Create a Browser Automation tool configuration for Foundry.
 
         Keyword Args:
@@ -704,71 +844,22 @@ class RawFoundryChatClient(  # type: ignore[misc]
         Returns:
             A ``BrowserAutomationPreviewTool`` ready to pass to an Agent.
         """
-        tool_cls = _require_sdk_class("BrowserAutomationPreviewTool")
-        params_cls = _require_sdk_class("BrowserAutomationToolParameters")
-        connection_cls = _require_sdk_class("BrowserAutomationToolConnectionParameters")
-        return tool_cls(
-            browser_automation_preview=params_cls(
-                connection=connection_cls(project_connection_id=connection_id),
+        return BrowserAutomationPreviewTool(
+            browser_automation_preview=BrowserAutomationToolParameters(
+                connection=BrowserAutomationToolConnectionParameters(project_connection_id=connection_id),
                 **kwargs,
             )
         )
 
     @staticmethod
-    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
-    def get_bing_custom_search_tool(
-        *,
-        connection_id: str,
-        instance_name: str,
-        market: str | None = None,
-        set_lang: str | None = None,
-        count: int | None = None,
-        freshness: str | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Create a Bing Custom Search tool configuration for Foundry.
-
-        Keyword Args:
-            connection_id: The Foundry project connection ID for grounding with Bing search.
-            instance_name: The custom configuration instance name.
-            market: Optional Bing market identifier (e.g. ``"en-US"``).
-            set_lang: Optional UI language code passed to the Bing API.
-            count: Optional number of search results to return.
-            freshness: Optional time-range filter for search results.
-            **kwargs: Additional arguments forwarded to the SDK
-                ``BingCustomSearchConfiguration``.
-
-        Returns:
-            A ``BingCustomSearchPreviewTool`` ready to pass to an Agent.
-        """
-        tool_cls = _require_sdk_class("BingCustomSearchPreviewTool")
-        params_cls = _require_sdk_class("BingCustomSearchToolParameters")
-        config_cls = _require_sdk_class("BingCustomSearchConfiguration")
-        config_kwargs: dict[str, Any] = {
-            **kwargs,
-            "project_connection_id": connection_id,
-            "instance_name": instance_name,
-        }
-        if market is not None:
-            config_kwargs["market"] = market
-        if set_lang is not None:
-            config_kwargs["set_lang"] = set_lang
-        if count is not None:
-            config_kwargs["count"] = count
-        if freshness is not None:
-            config_kwargs["freshness"] = freshness
-        search_params = params_cls(search_configurations=[config_cls(**config_kwargs)])
-        return tool_cls(bing_custom_search_preview=search_params)
-
-    @staticmethod
-    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
     def get_a2a_tool(
         *,
         base_url: str | None = None,
         agent_card_path: str | None = None,
         project_connection_id: str | None = None,
         **kwargs: Any,
-    ) -> Any:
+    ) -> A2APreviewTool:
         """Create an Agent-to-Agent (A2A) tool configuration for Foundry.
 
         Keyword Args:
@@ -782,7 +873,6 @@ class RawFoundryChatClient(  # type: ignore[misc]
         Returns:
             An ``A2APreviewTool`` ready to pass to an Agent.
         """
-        tool_cls = _require_sdk_class("A2APreviewTool")
         params: dict[str, Any] = dict(kwargs)
         if base_url is not None:
             params["base_url"] = base_url
@@ -790,7 +880,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
             params["agent_card_path"] = agent_card_path
         if project_connection_id is not None:
             params["project_connection_id"] = project_connection_id
-        return tool_cls(**params)
+        return A2APreviewTool(**params)
 
     # endregion
 
