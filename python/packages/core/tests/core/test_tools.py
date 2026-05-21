@@ -183,6 +183,17 @@ async def test_tool_decorator_with_json_schema_invoke_invalid_type():
         await search.invoke(arguments={"query": "hello", "max_results": "three"})
 
 
+async def test_tool_invoke_preserves_required_nullable_argument() -> None:
+    @tool
+    def get_weather(location: str, unit: str | None) -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle", "unit": None})
+
+    assert isinstance(result, list)
+    assert result[0].text == "Seattle:None"
+
+
 def test_tool_decorator_with_json_schema_preserves_custom_properties():
     """Test schema passthrough keeps custom JSON schema properties."""
 
