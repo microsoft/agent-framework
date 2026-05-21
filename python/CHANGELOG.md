@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-05-19
+
+### Added
+- **agent-framework-core**, **agent-framework-foundry**, **agent-framework-openai**: Record actual served model from Azure OpenAI ([#5910](https://github.com/microsoft/agent-framework/pull/5910))
+- **samples**: New Foundry Hosted Agents samples for RAG, Skills, and Memory ([#5822](https://github.com/microsoft/agent-framework/pull/5822))
+
+### Changed
+- **agent-framework-core**, **agent-framework-azurefunctions**, **agent-framework-devui**, **agent-framework-foundry**, **agent-framework-orchestrations**: Improve handling of intermediate outputs for workflows and orchestrations ([#5623](https://github.com/microsoft/agent-framework/pull/5623))
+- **agent-framework-durabletask**: Pin `durabletask` and `durabletask-azuremanaged` floors to `>=1.4.0` and exclude upstream `durabletask` 1.4.1, 1.4.2, and 1.4.3 from the supported version range.
+- **agent-framework-orchestrations**: Bumped package to release candidate stage.
+
+### Fixed
+- **agent-framework-core**: Parse YAML block scalars in SKILL.md frontmatter ([#5863](https://github.com/microsoft/agent-framework/pull/5863))
+- **agent-framework-github-copilot**: Include tools added by `ContextProvider.before_run` in session creation ([#5780](https://github.com/microsoft/agent-framework/pull/5780))
+- **agent-framework-hyperlight**: Skip symlinks when staging sandbox input ([#5919](https://github.com/microsoft/agent-framework/pull/5919))
+- **agent-framework-purview**: Remove duplicate pop in `InMemoryCacheProvider.remove` ([#5795](https://github.com/microsoft/agent-framework/pull/5795))
+
 ## [1.4.0] - 2026-05-14
 
 ### Added
@@ -67,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-foundry-hosting**: Add hosted Durable Workflow support — propagate full conversation history to workflow agents and wire `Workflow.as_agent()` end-to-end via the foundry hosting layer ([#5531](https://github.com/microsoft/agent-framework/pull/5531))
 
 ### Changed
-- **agent-framework-orchestrations**: [BREAKING] Standardize orchestration terminal outputs as `AgentResponse` so `Workflow.as_agent()` returns the final answer only; aligns sequential-approval (`with_request_info`) and concurrent (`intermediate_outputs=True`) flows on the same output contract ([#5301](https://github.com/microsoft/agent-framework/pull/5301))
+- **agent-framework-orchestrations**: [BREAKING] Standardize orchestration terminal outputs as `AgentResponse` so `Workflow.as_agent()` returns the final answer only; aligns sequential-approval (`with_request_info`) and concurrent participant output designation flows on the same output contract ([#5301](https://github.com/microsoft/agent-framework/pull/5301))
 - **agent-framework-core**, **agent-framework-declarative**: Preserve `Workflow.run()` shared state across calls so multi-turn `WorkflowAgent` invocations retain context, accept `list[Message]` input in the declarative start executor, and coerce `Enum` values when serializing PowerFx symbols ([#5531](https://github.com/microsoft/agent-framework/pull/5531))
 - **dependencies**: Update workspace package dependencies and preserve `mcp[ws]` / `uvicorn[standard]` extras through override-dependencies in `/python` ([#5555](https://github.com/microsoft/agent-framework/pull/5555))
 
@@ -1071,7 +1088,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.4.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.5.0...HEAD
+[1.5.0]: https://github.com/microsoft/agent-framework/compare/python-1.4.0...python-1.5.0
 [1.4.0]: https://github.com/microsoft/agent-framework/compare/python-1.3.0...python-1.4.0
 [1.3.0]: https://github.com/microsoft/agent-framework/compare/python-1.2.2...python-1.3.0
 [1.2.2]: https://github.com/microsoft/agent-framework/compare/python-1.2.1...python-1.2.2

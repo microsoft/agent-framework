@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
@@ -247,6 +248,15 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 : new AgentSkillsProvider(Directory.GetCurrentDirectory());
 
             providers.Add(skillsProvider);
+        }
+
+        if (options?.BackgroundAgents is IEnumerable<AIAgent> backgroundAgents)
+        {
+            var materializedAgents = backgroundAgents.ToList();
+            if (materializedAgents.Count > 0)
+            {
+                providers.Add(new BackgroundAgentsProvider(materializedAgents, options.BackgroundAgentsProviderOptions));
+            }
         }
 
         if (options?.AIContextProviders is IEnumerable<AIContextProvider> userProviders)

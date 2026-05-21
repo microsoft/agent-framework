@@ -272,9 +272,7 @@ async def test_agent_executor_tool_call_with_approval() -> None:
         tools=[mock_tool_requiring_approval],
     )
 
-    workflow = (
-        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
-    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
 
     # Act
     events = await workflow.run("Invoke tool requiring approval")
@@ -343,9 +341,7 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
         tools=[mock_tool_requiring_approval],
     )
 
-    workflow = (
-        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
-    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
 
     # Act
     events = await workflow.run("Invoke tool requiring approval")
@@ -512,9 +508,7 @@ async def test_agent_executor_declaration_only_tool_emits_request_info() -> None
         tools=[declaration_only_tool],
     )
 
-    workflow = (
-        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
-    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
 
     # Act
     events = await workflow.run("Use the client side tool")
@@ -587,9 +581,7 @@ async def test_agent_executor_parallel_declaration_only_tool_emits_request_info(
         tools=[declaration_only_tool],
     )
 
-    workflow = (
-        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
-    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
 
     # Act
     events = await workflow.run("Use the client side tool")

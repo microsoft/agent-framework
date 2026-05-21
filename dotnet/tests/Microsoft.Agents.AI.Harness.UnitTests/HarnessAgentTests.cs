@@ -1197,4 +1197,154 @@ public class HarnessAgentTests
     }
 
     #endregion
+
+    #region Feature: BackgroundAgentsProvider
+
+    /// <summary>
+    /// Verify that BackgroundAgentsProvider is included when BackgroundAgents are specified.
+    /// </summary>
+    [Fact]
+    public void BackgroundAgentsProvider_IncludedWhenAgentsSpecified()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var bgAgentMock = new Mock<AIAgent>();
+        bgAgentMock.Setup(a => a.Name).Returns("TestBackgroundAgent");
+        var options = CreateAllDisabledOptions();
+        options.BackgroundAgents = [bgAgentMock.Object];
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent?.AIContextProviders);
+        Assert.Contains(innerAgent!.AIContextProviders!, p => p is BackgroundAgentsProvider);
+    }
+
+    /// <summary>
+    /// Verify that BackgroundAgentsProvider is not included when BackgroundAgents is null.
+    /// </summary>
+    [Fact]
+    public void BackgroundAgentsProvider_ExcludedWhenAgentsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.BackgroundAgents = null;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent);
+        if (innerAgent!.AIContextProviders != null)
+        {
+            Assert.DoesNotContain(innerAgent.AIContextProviders, p => p is BackgroundAgentsProvider);
+        }
+    }
+
+    /// <summary>
+    /// Verify that BackgroundAgentsProvider is not included when BackgroundAgents is an empty collection.
+    /// </summary>
+    [Fact]
+    public void BackgroundAgentsProvider_ExcludedWhenAgentsEmpty()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.BackgroundAgents = Array.Empty<AIAgent>();
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent);
+        if (innerAgent!.AIContextProviders != null)
+        {
+            Assert.DoesNotContain(innerAgent.AIContextProviders, p => p is BackgroundAgentsProvider);
+        }
+    }
+
+    /// <summary>
+    /// Verify that BackgroundAgentsProviderOptions is passed through when specified.
+    /// </summary>
+    [Fact]
+    public async Task BackgroundAgentsProvider_UsesProvidedOptionsAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var bgAgentMock = new Mock<AIAgent>();
+        bgAgentMock.Setup(a => a.Name).Returns("TestBackgroundAgent");
+        bgAgentMock.Setup(a => a.Description).Returns("A test background agent");
+        var providerOptions = new BackgroundAgentsProviderOptions
+        {
+            Instructions = "Custom instructions with {background_agents} list.",
+        };
+        var options = CreateAllDisabledOptions();
+        options.BackgroundAgents = [bgAgentMock.Object];
+        options.BackgroundAgentsProviderOptions = providerOptions;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+        var bgProvider = innerAgent!.AIContextProviders!.OfType<BackgroundAgentsProvider>().Single();
+
+#pragma warning disable MAAI001
+        var invokingContext = new AIContextProvider.InvokingContext(
+            new Mock<AIAgent>().Object,
+            new Mock<AgentSession>().Object,
+            new AIContext());
+#pragma warning restore MAAI001
+
+        AIContext result = await bgProvider.InvokingAsync(invokingContext);
+
+        // Assert — custom instructions template is used and agent info is included
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("Custom instructions with", result.Instructions);
+        Assert.Contains("TestBackgroundAgent", result.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that multiple background agents are all passed to the provider.
+    /// </summary>
+    [Fact]
+    public async Task BackgroundAgentsProvider_IncludesMultipleAgentsAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var agent1Mock = new Mock<AIAgent>();
+        agent1Mock.Setup(a => a.Name).Returns("Agent1");
+        agent1Mock.Setup(a => a.Description).Returns("First agent");
+        var agent2Mock = new Mock<AIAgent>();
+        agent2Mock.Setup(a => a.Name).Returns("Agent2");
+        agent2Mock.Setup(a => a.Description).Returns("Second agent");
+        var options = CreateAllDisabledOptions();
+        options.BackgroundAgents = [agent1Mock.Object, agent2Mock.Object];
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+        var bgProvider = innerAgent!.AIContextProviders!.OfType<BackgroundAgentsProvider>().Single();
+
+#pragma warning disable MAAI001
+        var invokingContext = new AIContextProvider.InvokingContext(
+            new Mock<AIAgent>().Object,
+            new Mock<AgentSession>().Object,
+            new AIContext());
+#pragma warning restore MAAI001
+
+        AIContext result = await bgProvider.InvokingAsync(invokingContext);
+
+        // Assert — both agents appear in the provider's instructions
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("Agent1", result.Instructions);
+        Assert.Contains("First agent", result.Instructions);
+        Assert.Contains("Agent2", result.Instructions);
+        Assert.Contains("Second agent", result.Instructions);
+    }
+
+    #endregion
 }

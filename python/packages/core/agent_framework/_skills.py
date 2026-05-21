@@ -651,9 +651,7 @@ def _validate_compatibility(compatibility: str | None) -> None:
         ValueError: If the value exceeds the maximum allowed length.
     """
     if compatibility is not None and len(compatibility) > MAX_COMPATIBILITY_LENGTH:
-        raise ValueError(
-            f"Skill compatibility must be {MAX_COMPATIBILITY_LENGTH} characters or fewer."
-        )
+        raise ValueError(f"Skill compatibility must be {MAX_COMPATIBILITY_LENGTH} characters or fewer.")
 
 
 def _build_skill_content(
@@ -732,6 +730,7 @@ class InlineSkill(Skill):
                 ),
                 instructions="Use this skill for DB tasks.",
             )
+
 
             @skill.resource
             def get_schema() -> str:
@@ -2613,11 +2612,7 @@ class FileSkillsSource(SkillsSource):
 
             # Reject absolute paths (check both POSIX and Windows-style roots
             # so validation is consistent regardless of the host OS)
-            if (
-                os.path.isabs(directory)
-                or normalized.startswith("/")
-                or re.match(r"^[A-Za-z]:[/\\]", directory)
-            ):
+            if os.path.isabs(directory) or normalized.startswith("/") or re.match(r"^[A-Za-z]:[/\\]", directory):
                 logger.warning(
                     "Skipping directory '%s': absolute paths are not allowed.",
                     directory,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import os
 import sys
+import warnings
 from functools import wraps
 from pathlib import Path
 from typing import Annotated, Any
@@ -86,12 +87,28 @@ def _with_foundry_debug() -> Any:
     return decorator
 
 
+def _as_raw(mock_response: MagicMock) -> MagicMock:
+    """Wrap ``mock_response`` so it looks like an OpenAI ``with_raw_response`` wrapper.
+
+    The chat client now calls ``responses.with_raw_response.{create,parse}`` and then
+    ``.parse()`` on the returned wrapper to get the actual response payload, plus
+    ``.headers`` to surface the ``x-ms-served-model`` Azure header.
+    """
+    mock_response.parse = MagicMock(return_value=mock_response)
+    mock_response.headers = {}
+    return mock_response
+
+
 def _make_mock_openai_client() -> MagicMock:
     client = MagicMock()
     client.default_headers = {}
     client.responses = MagicMock()
     client.responses.create = AsyncMock()
     client.responses.parse = AsyncMock()
+    client.responses.with_raw_response = MagicMock()
+    client.responses.with_raw_response.create = AsyncMock()
+    client.responses.with_raw_response.parse = AsyncMock()
+    client.responses.with_raw_response.retrieve = AsyncMock()
     client.files = MagicMock()
     client.files.create = AsyncMock()
     client.files.delete = AsyncMock()
@@ -470,7 +487,7 @@ async def test_content_filter_exception() -> None:
         body={"error": {"code": "content_filter", "message": "Content filter error"}},
     )
     mock_error.code = "content_filter"
-    client.client.responses.create.side_effect = mock_error
+    client.client.responses.with_raw_response.create.side_effect = mock_error
 
     with pytest.raises(OpenAIContentFilterException) as exc_info:
         await client.get_response(messages=[Message(role="user", contents=["Test message"])])
@@ -494,7 +511,7 @@ async def test_response_format_parse_path() -> None:
     mock_parsed_response.usage = None
     mock_parsed_response.finish_reason = None
     mock_parsed_response.conversation = None
-    client.client.responses.parse = AsyncMock(return_value=mock_parsed_response)
+    client.client.responses.with_raw_response.parse = AsyncMock(return_value=_as_raw(mock_parsed_response))
 
     response = await client.get_response(
         messages=[Message(role="user", contents=["Test message"])],
@@ -522,7 +539,7 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
     mock_parsed_response.finish_reason = None
     mock_parsed_response.conversation = MagicMock()
     mock_parsed_response.conversation.id = "conversation_456"
-    client.client.responses.parse = AsyncMock(return_value=mock_parsed_response)
+    client.client.responses.with_raw_response.parse = AsyncMock(return_value=_as_raw(mock_parsed_response))
 
     response = await client.get_response(
         messages=[Message(role="user", contents=["Test message"])],
@@ -562,7 +579,7 @@ async def test_response_format_dict_parse_path() -> None:
     mock_message_item.type = "message"
     mock_message_item.content = [mock_message_content]
     mock_response.output = [mock_message_item]
-    client.client.responses.create = AsyncMock(return_value=mock_response)
+    client.client.responses.with_raw_response.create = AsyncMock(return_value=_as_raw(mock_response))
 
     response = await client.get_response(
         messages=[Message(role="user", contents=["Test message"])],
@@ -587,7 +604,7 @@ async def test_bad_request_error_non_content_filter() -> None:
         body={"error": {"code": "invalid_request", "message": "Invalid request"}},
     )
     mock_error.code = "invalid_request"
-    client.client.responses.parse = AsyncMock(side_effect=mock_error)
+    client.client.responses.with_raw_response.parse = AsyncMock(side_effect=mock_error)
 
     with pytest.raises(ChatClientException) as exc_info:
         await client.get_response(
@@ -968,6 +985,25 @@ def test_get_web_search_tool_with_location() -> None:
     assert tool_obj is not None
 
 
+def test_get_web_search_tool_allowed_domains() -> None:
+    """allowed_domains is wrapped into the SDK filters field."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        tool_obj = RawFoundryChatClient.get_web_search_tool(allowed_domains=["example.com"])
+    assert tool_obj.filters is not None
+    assert tool_obj.filters.allowed_domains == ["example.com"]
+
+
+def test_get_web_search_tool_custom_search_configuration() -> None:
+    """custom_search_configuration is forwarded to the SDK without warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        tool_obj = RawFoundryChatClient.get_web_search_tool(
+            custom_search_configuration={"connection_id": "c", "instance_name": "i"},
+        )
+    assert tool_obj.custom_search_configuration == {"connection_id": "c", "instance_name": "i"}
+
+
 def test_get_image_generation_tool() -> None:
     """Test image generation tool creation."""
 
@@ -994,6 +1030,223 @@ def test_get_mcp_tool_with_connection_id() -> None:
         description="GitHub MCP via Foundry",
     )
     assert tool_obj is not None
+
+
+def _skip_if_sdk_class_missing(name: str) -> Any:
+    """Return the SDK class or skip the test if older azure-ai-projects lacks it."""
+    from azure.ai.projects import models as projects_models
+
+    cls = getattr(projects_models, name, None)
+    if cls is None:
+        pytest.skip(f"azure-ai-projects in this environment does not expose {name!r}.")
+    return cls
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_azure_ai_search_tool() -> None:
+    """Azure AI Search tool factory builds the nested resource correctly."""
+    azure_ai_search_tool_cls = _skip_if_sdk_class_missing("AzureAISearchTool")
+
+    tool_obj = FoundryChatClient.get_azure_ai_search_tool(
+        index_connection_id="conn-1",
+        index_name="my-index",
+        query_type="vector_semantic_hybrid",
+        top_k=5,
+        filter="category eq 'docs'",
+    )
+    assert isinstance(tool_obj, azure_ai_search_tool_cls)
+    indexes = tool_obj.azure_ai_search.indexes
+    assert len(indexes) == 1
+    index = indexes[0]
+    assert index.project_connection_id == "conn-1"
+    assert index.index_name == "my-index"
+    assert index.query_type == "vector_semantic_hybrid"
+    assert index.top_k == 5
+    assert index.filter == "category eq 'docs'"
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_sharepoint_tool() -> None:
+    """SharePoint tool factory wires the connection through nested params."""
+    sharepoint_tool_cls = _skip_if_sdk_class_missing("SharepointPreviewTool")
+
+    tool_obj = FoundryChatClient.get_sharepoint_tool(connection_id="sp-conn")
+    assert isinstance(tool_obj, sharepoint_tool_cls)
+    connections = tool_obj.sharepoint_grounding_preview.project_connections
+    assert connections is not None
+    assert len(connections) == 1
+    assert connections[0].project_connection_id == "sp-conn"
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_fabric_tool() -> None:
+    """Fabric tool factory wires the connection through nested params."""
+    fabric_tool_cls = _skip_if_sdk_class_missing("MicrosoftFabricPreviewTool")
+
+    tool_obj = FoundryChatClient.get_fabric_tool(connection_id="fab-conn")
+    assert isinstance(tool_obj, fabric_tool_cls)
+    connections = tool_obj.fabric_dataagent_preview.project_connections
+    assert connections is not None
+    assert len(connections) == 1
+    assert connections[0].project_connection_id == "fab-conn"
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_memory_search_tool() -> None:
+    """Memory search tool factory passes core fields through."""
+    memory_tool_cls = _skip_if_sdk_class_missing("MemorySearchPreviewTool")
+
+    tool_obj = FoundryChatClient.get_memory_search_tool(
+        memory_store_name="store-1",
+        scope="{{$userId}}",
+        update_delay=600,
+    )
+    assert isinstance(tool_obj, memory_tool_cls)
+    assert tool_obj.memory_store_name == "store-1"
+    assert tool_obj.scope == "{{$userId}}"
+    assert tool_obj.update_delay == 600
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_computer_use_tool() -> None:
+    """Computer use tool factory passes environment + display dimensions."""
+    computer_use_cls = _skip_if_sdk_class_missing("ComputerUsePreviewTool")
+
+    tool_obj = FoundryChatClient.get_computer_use_tool(
+        environment="browser",
+        display_width=1920,
+        display_height=1080,
+    )
+    assert isinstance(tool_obj, computer_use_cls)
+    assert tool_obj.environment == "browser"
+    assert tool_obj.display_width == 1920
+    assert tool_obj.display_height == 1080
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_browser_automation_tool() -> None:
+    """Browser automation tool factory wraps the connection id in the params type."""
+    browser_tool_cls = _skip_if_sdk_class_missing("BrowserAutomationPreviewTool")
+
+    tool_obj = FoundryChatClient.get_browser_automation_tool(connection_id="playwright-conn")
+    assert isinstance(tool_obj, browser_tool_cls)
+    assert tool_obj.browser_automation_preview.connection.project_connection_id == "playwright-conn"
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_bing_custom_search_tool() -> None:
+    """Bing custom search tool factory builds the nested search configuration."""
+    bing_tool_cls = _skip_if_sdk_class_missing("BingCustomSearchPreviewTool")
+
+    tool_obj = FoundryChatClient.get_bing_custom_search_tool(
+        connection_id="bing-conn",
+        instance_name="my-custom-config",
+        market="en-US",
+        count=10,
+    )
+    assert isinstance(tool_obj, bing_tool_cls)
+    configs = tool_obj.bing_custom_search_preview.search_configurations
+    assert len(configs) == 1
+    config = configs[0]
+    assert config.project_connection_id == "bing-conn"
+    assert config.instance_name == "my-custom-config"
+    assert config.market == "en-US"
+    assert config.count == 10
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_bing_grounding_tool() -> None:
+    """Bing grounding tool factory builds the nested search configuration."""
+    bing_tool_cls = _skip_if_sdk_class_missing("BingGroundingTool")
+
+    tool_obj = FoundryChatClient.get_bing_grounding_tool(
+        connection_id="bing-conn",
+        market="en-US",
+        set_lang="en",
+        count=10,
+        freshness="Day",
+    )
+    assert isinstance(tool_obj, bing_tool_cls)
+    configs = tool_obj.bing_grounding.search_configurations
+    assert len(configs) == 1
+    config = configs[0]
+    assert config.project_connection_id == "bing-conn"
+    assert config.market == "en-US"
+    assert config.set_lang == "en"
+    assert config.count == 10
+    assert config.freshness == "Day"
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+def test_get_a2a_tool() -> None:
+    """A2A tool factory carries base_url, agent_card_path, and project_connection_id."""
+    a2a_tool_cls = _skip_if_sdk_class_missing("A2APreviewTool")
+
+    tool_obj = FoundryChatClient.get_a2a_tool(
+        base_url="https://agent.example.com",
+        agent_card_path="/.well-known/agent-card.json",
+        project_connection_id="a2a-conn",
+    )
+    assert isinstance(tool_obj, a2a_tool_cls)
+    assert tool_obj.base_url == "https://agent.example.com"
+    assert tool_obj.agent_card_path == "/.well-known/agent-card.json"
+    assert tool_obj.project_connection_id == "a2a-conn"
+
+
+_FOUNDRY_TOOLS_FACTORY_CASES: list[tuple[str, str, dict[str, Any]]] = [
+    ("get_azure_ai_search_tool", "AzureAISearchTool", {"index_connection_id": "c", "index_name": "i"}),
+    (
+        "get_bing_grounding_tool",
+        "BingGroundingTool",
+        {"connection_id": "c"},
+    ),
+]
+
+_FOUNDRY_PREVIEW_TOOLS_FACTORY_CASES: list[tuple[str, str, dict[str, Any]]] = [
+    ("get_sharepoint_tool", "SharepointPreviewTool", {"connection_id": "c"}),
+    ("get_fabric_tool", "MicrosoftFabricPreviewTool", {"connection_id": "c"}),
+    (
+        "get_memory_search_tool",
+        "MemorySearchPreviewTool",
+        {"memory_store_name": "s", "scope": "u"},
+    ),
+    (
+        "get_computer_use_tool",
+        "ComputerUsePreviewTool",
+        {"environment": "browser", "display_width": 1, "display_height": 1},
+    ),
+    ("get_browser_automation_tool", "BrowserAutomationPreviewTool", {"connection_id": "c"}),
+    (
+        "get_bing_custom_search_tool",
+        "BingCustomSearchPreviewTool",
+        {"connection_id": "c", "instance_name": "i"},
+    ),
+    ("get_a2a_tool", "A2APreviewTool", {"base_url": "https://a.example.com"}),
+]
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+@pytest.mark.parametrize("factory_name, sdk_class_name, kwargs", _FOUNDRY_TOOLS_FACTORY_CASES)
+def test_foundry_tools_factories_are_marked(factory_name: str, sdk_class_name: str, kwargs: dict[str, Any]) -> None:
+    """Factories wrapping GA Foundry tool SDK classes carry FOUNDRY_TOOLS metadata."""
+    _skip_if_sdk_class_missing(sdk_class_name)
+    factory = getattr(FoundryChatClient, factory_name)
+    assert getattr(factory, "__feature_stage__", None) == "experimental"
+    assert getattr(factory, "__feature_id__", None) == "FOUNDRY_TOOLS"
+    assert factory(**kwargs) is not None
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+@pytest.mark.parametrize("factory_name, sdk_class_name, kwargs", _FOUNDRY_PREVIEW_TOOLS_FACTORY_CASES)
+def test_foundry_preview_tools_factories_are_marked(
+    factory_name: str, sdk_class_name: str, kwargs: dict[str, Any]
+) -> None:
+    """Factories wrapping preview Foundry tool SDK classes carry FOUNDRY_PREVIEW_TOOLS metadata."""
+    _skip_if_sdk_class_missing(sdk_class_name)
+    factory = getattr(FoundryChatClient, factory_name)
+    assert getattr(factory, "__feature_stage__", None) == "experimental"
+    assert getattr(factory, "__feature_id__", None) == "FOUNDRY_PREVIEW_TOOLS"
+    assert factory(**kwargs) is not None
 
 
 def test_parse_chunk_surfaces_oauth_consent_request() -> None:

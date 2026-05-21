@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
 from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
 from ._const import INTERNAL_SOURCE_ID
@@ -18,6 +19,8 @@ from ._typing_utils import is_instance_of
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+YieldOutputEventType = Literal["output", "intermediate"]
+YieldOutputClassifier = Callable[[str], YieldOutputEventType | None]
 
 
 class MessageType(Enum):
@@ -263,6 +266,14 @@ class RunnerContext(Protocol):
         """
         ...
 
+    def set_yield_output_classifier(self, classifier: YieldOutputClassifier) -> None:
+        """Set the classifier used by WorkflowContext.yield_output()."""
+        ...
+
+    def classify_yielded_output(self, executor_id: str) -> YieldOutputEventType | None:
+        """Classify an executor's yield_output payload as output, intermediate, or hidden."""
+        ...
+
 
 class InProcRunnerContext:
     """In-process execution context for local execution and optional checkpointing."""
@@ -286,6 +297,7 @@ class InProcRunnerContext:
 
         # Streaming flag - set by workflow's run(..., stream=True) vs run(..., stream=False)
         self._streaming: bool = False
+        self._yield_output_classifier: YieldOutputClassifier = lambda _executor_id: "output"
 
     # region Messaging and Events
     async def send_message(self, message: WorkflowMessage) -> None:
@@ -480,3 +492,11 @@ class InProcRunnerContext:
             A dictionary mapping request IDs to their corresponding WorkflowEvent (type='request_info').
         """
         return dict(self._pending_request_info_events)
+
+    def set_yield_output_classifier(self, classifier: YieldOutputClassifier) -> None:
+        """Set the classifier used by WorkflowContext.yield_output()."""
+        self._yield_output_classifier = classifier
+
+    def classify_yielded_output(self, executor_id: str) -> YieldOutputEventType | None:
+        """Classify an executor's yield_output payload as output, intermediate, or hidden."""
+        return self._yield_output_classifier(executor_id)
