@@ -527,18 +527,19 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 last_task_state = status_event.status.state
                 updates = self._updates_from_task_update_event(status_event)
                 is_terminal = status_event.status.state in TERMINAL_TASK_STATES
+                is_input_required = status_event.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
                 if emit_intermediate:
                     for update in updates:
                         all_updates.append(update)
                         yield update
-                elif is_terminal:
+                elif is_terminal or is_input_required:
                     if updates:
-                        # Terminal event with content — discard accumulated intermediates
+                        # Terminal/input-required event with content — discard accumulated intermediates
                         pending_updates_by_task.pop(status_event.task_id, None)
                         for update in updates:
                             all_updates.append(update)
                             yield update
-                    else:
+                    elif is_terminal:
                         # Terminal event with NO content — flush accumulated updates
                         pending = pending_updates_by_task.pop(status_event.task_id, [])
                         for update in pending:
@@ -710,6 +711,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if not update_event.status.HasField("message") or not update_event.status.message.parts:
             return []
 
+        state = update_event.status.state
+        if state not in TERMINAL_TASK_STATES and state != TaskState.TASK_STATE_INPUT_REQUIRED:
+            return []
+
         message = update_event.status.message
         contents = self._parse_contents_from_a2a(message.parts)
         if not contents:
@@ -718,12 +723,19 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         msg_meta = MessageToDict(message.metadata) if message.metadata else {}
         event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
         merged_metadata = {**msg_meta, **event_meta} or None
+
+        additional_properties: dict[str, Any] = {}
+        if merged_metadata:
+            additional_properties["a2a_metadata"] = merged_metadata
+        if state == TaskState.TASK_STATE_INPUT_REQUIRED:
+            additional_properties["input_required"] = True
+
         return [
             AgentResponseUpdate(
                 contents=contents,
                 role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
                 response_id=update_event.task_id,
-                additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
+                additional_properties=additional_properties or None,
                 raw_representation=update_event,
             )
         ]

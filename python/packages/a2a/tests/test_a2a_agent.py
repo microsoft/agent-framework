@@ -1329,16 +1329,17 @@ async def test_streaming_artifact_update_event_yields_content(
 async def test_streaming_status_update_event_yields_content(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
-    """Test that streaming status update events surface message content directly from the update event."""
+    """Test that streaming status update events surface content for terminal/input-required states only."""
+    # COMPLETED state should yield content (terminal)
     update_event = TaskStatusUpdateEvent(
         task_id="task-status",
         context_id="ctx-status",
         status=TaskStatus(
-            state=TaskState.TASK_STATE_WORKING,
+            state=TaskState.TASK_STATE_COMPLETED,
             message=A2AMessage(
                 message_id=str(uuid4()),
                 role=A2ARole.ROLE_AGENT,
-                parts=[Part(text="Still working")],
+                parts=[Part(text="Done")],
             ),
         ),
     )
@@ -1349,9 +1350,63 @@ async def test_streaming_status_update_event_yields_content(
         updates.append(update)
 
     assert len(updates) == 1
-    assert updates[0].text == "Still working"
+    assert updates[0].text == "Done"
     assert updates[0].role == "assistant"
     assert updates[0].raw_representation == update_event
+
+
+@mark.asyncio
+async def test_streaming_input_required_sets_flag(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that input-required status updates set the input_required flag in additional_properties."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status",
+        context_id="ctx-status",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=A2AMessage(
+                message_id=str(uuid4()),
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="What is your name?")],
+            ),
+        ),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].text == "What is your name?"
+    assert updates[0].additional_properties["input_required"] is True
+
+
+@mark.asyncio
+async def test_streaming_working_status_gates_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that intermediate WORKING status updates do NOT emit content (gated like .NET)."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status",
+        context_id="ctx-status",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_WORKING,
+            message=A2AMessage(
+                message_id=str(uuid4()),
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Processing...")],
+            ),
+        ),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 0
 
 
 async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_artifacts(
@@ -1573,28 +1628,17 @@ async def test_task_status_update_event_metadata_merged(a2a_agent: A2AAgent, moc
         task_id="task-se",
         context_id="ctx",
         status=TaskStatus(
-            state=TaskState.TASK_STATE_WORKING,
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
             message=A2AMessage(
                 message_id="m1",
                 role=A2ARole.ROLE_AGENT,
-                parts=[Part(text="working...")],
+                parts=[Part(text="need input")],
                 metadata={"msg_key": "msg_val"},
             ),
         ),
         metadata={"event_key": "event_val"},
     )
-    terminal_task = Task(
-        id="task-se",
-        context_id="ctx",
-        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-        artifacts=[
-            Artifact(artifact_id="a1", parts=[Part(text="done")]),
-        ],
-    )
-    mock_a2a_client.responses.extend([
-        StreamResponse(status_update=status_event),
-        StreamResponse(task=terminal_task),
-    ])
+    mock_a2a_client.responses.append(StreamResponse(status_update=status_event))
 
     stream = a2a_agent.run("hello", stream=True)
     updates: list[AgentResponseUpdate] = []
@@ -1678,11 +1722,11 @@ async def test_non_streaming_terminal_status_update_surfaces_content(
     assert response.messages[0].text == "Done! Here is your answer."
 
 
-async def test_non_streaming_accumulates_working_content_for_empty_terminal(
+async def test_non_streaming_working_content_gated(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
-    """Non-streaming run() accumulates WORKING content and flushes on empty terminal event."""
-    # Intermediate WORKING event with content
+    """Non-streaming: WORKING status content is gated and not surfaced to callers."""
+    # Intermediate WORKING event with content — should be gated
     working_msg = A2AMessage(
         message_id="msg-working",
         role=A2ARole.ROLE_AGENT,
@@ -1699,9 +1743,8 @@ async def test_non_streaming_accumulates_working_content_for_empty_terminal(
 
     response = await a2a_agent.run("Hello")
 
-    # The accumulated WORKING content is flushed when terminal arrives empty
-    assert len(response.messages) == 1
-    assert response.messages[0].text == "Here is your answer from working state."
+    # WORKING content is gated — nothing to accumulate or flush
+    assert len(response.messages) == 0
 
 
 async def test_non_streaming_intermediate_discarded_when_terminal_has_content(
