@@ -1371,4 +1371,88 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
                     x.InvokeException == null),
                 ItExpr.IsAny<CancellationToken>());
     }
+
+    /// <summary>
+    /// Reproduces a regression introduced in 1.4.0 (commit 626b41862, PR #5310):
+    /// <c>GetStreamingResponseAsync</c> changed from <c>responseUpdates.Add(update)</c> to
+    /// <c>responseUpdates.Add(update.Clone())</c>. <see cref="ChatResponseUpdate.Clone"/> is a shallow
+    /// copy that initially shares the <see cref="ChatResponseUpdate.Contents"/> list reference, but
+    /// <see cref="FunctionInvokingChatClient"/> reassigns <c>update.Contents</c> to a new list when
+    /// rewriting <see cref="FunctionCallContent"/> → <see cref="ToolApprovalRequestContent"/> for
+    /// <see cref="ApprovalRequiredAIFunction"/> tools — after the persistence wrapper has snapshotted.
+    /// The snapshot therefore retains the pre-rewrite <see cref="FunctionCallContent"/>, and the
+    /// aggregated <see cref="ChatResponse"/> passed to the <see cref="ChatHistoryProvider"/> never sees
+    /// the approval rewrite.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_PersistsApprovalRewrittenContents_ForApprovalRequiredFunctionAsync()
+    {
+        // Arrange
+        const string CallId = "c1";
+        const string FunctionName = "ping";
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(CreateAsyncEnumerableAsync(
+                new ChatResponseUpdate
+                {
+                    Role = ChatRole.Assistant,
+                    Contents = [new FunctionCallContent(callId: CallId, name: FunctionName, arguments: null)],
+                }));
+
+        var invokedContexts = new List<ChatHistoryProvider.InvokedContext>();
+
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(ctx.RequestMessages.ToList()));
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Callback((ChatHistoryProvider.InvokedContext ctx, CancellationToken _) => invokedContexts.Add(ctx))
+            .Returns(() => new ValueTask());
+
+        var pingFn = AIFunctionFactory.Create(() => "pong", name: FunctionName);
+#pragma warning disable MEAI001
+        var tools = new List<AITool> { new ApprovalRequiredAIFunction(pingFn) };
+#pragma warning restore MEAI001
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Tools = tools },
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        // Act — drain the stream end-to-end. Collect contents to sanity-check the live rewrite.
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        var liveContents = new List<AIContent>();
+        await foreach (var update in agent.RunStreamingAsync([new(ChatRole.User, "call ping")], session))
+        {
+            liveContents.AddRange(update.Contents);
+        }
+
+        // Sanity — the live stream visible to the caller carries the approval rewrite.
+        // This isolates the bug to the persistence wrapper's snapshot: FIC did rewrite,
+        // but the snapshot the persistence wrapper passes to InvokedCoreAsync did not see it.
+        Assert.Contains(liveContents, c => c is ToolApprovalRequestContent);
+
+        // Assert — the InvokedContext handed to the ChatHistoryProvider should ALSO carry the
+        // rewritten contents. On the broken (1.4.0+) Clone() path this fails: the persisted
+        // contents still contain a raw FunctionCallContent because Clone() froze the Contents
+        // reference before FIC reassigned it to the rewritten list.
+        Assert.Single(invokedContexts);
+        Assert.NotNull(invokedContexts[0].ResponseMessages);
+        var persistedContents = invokedContexts[0].ResponseMessages!
+            .SelectMany(m => m.Contents)
+            .ToList();
+        Assert.Contains(persistedContents, c => c is ToolApprovalRequestContent);
+    }
 }
