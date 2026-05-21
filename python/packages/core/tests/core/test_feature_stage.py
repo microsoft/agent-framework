@@ -151,8 +151,6 @@ def test_experimental_abc_subclass_warning_points_at_user_file() -> None:
     """
     from abc import ABC, abstractmethod
 
-    _WARNED_FEATURES.clear()
-
     @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
     class ExperimentalABC(ABC):
         @abstractmethod

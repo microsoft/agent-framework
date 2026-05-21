@@ -77,16 +77,29 @@ class ExperimentalWarning(FeatureStageWarning):
     """Warning emitted when an experimental API is used."""
 
 
+# Sentinel attribute used to detect (and reuse) a formatter we've already
+# installed. This lets the install be idempotent across re-imports / reloads
+# and keeps a stable reference to the previous formatter for testing or
+# external restoration via ``warnings.formatwarning = original``.
+_FEATURE_STAGE_FORMATTER_MARKER = "__feature_stage_formatter__"
+
+
 def _install_feature_stage_formatter() -> None:
     """Install a single-line formatter for FeatureStageWarning categories.
 
     The stdlib default formatter emits two lines (header + source snippet)
     which is noisy for our warnings — the offending class/function name is
     already in the message, so a one-line ``file:lineno: Category: message``
-    is enough. Other warning categories are delegated to the original
+    is enough. Other warning categories are delegated to the previous
     formatter so we never change behaviour for unrelated warnings.
+
+    The install is idempotent: if a formatter installed by this module is
+    already in place, we leave it alone so re-imports (and any third-party
+    formatter wrapped on top of ours) don't get wrapped multiple times.
     """
-    original = warnings.formatwarning
+    current = warnings.formatwarning
+    if getattr(current, _FEATURE_STAGE_FORMATTER_MARKER, False):
+        return
 
     def _formatwarning(
         message: Warning | str,
@@ -97,8 +110,12 @@ def _install_feature_stage_formatter() -> None:
     ) -> str:
         if issubclass(category, FeatureStageWarning):
             return f"{filename}:{lineno}: {category.__name__}: {message}\n"
-        return original(message, category, filename, lineno, line)
+        return current(message, category, filename, lineno, line)
 
+    setattr(_formatwarning, _FEATURE_STAGE_FORMATTER_MARKER, True)
+    # Keep a reference to the wrapped formatter so callers (tests, embedders)
+    # can restore the previous behaviour if they need to.
+    _formatwarning.__wrapped__ = current  # type: ignore[attr-defined]
     warnings.formatwarning = _formatwarning
 
 
@@ -174,20 +191,29 @@ def _resolve_user_frame() -> tuple[str, int, str] | None:
     Returns ``None`` if no such frame is found; callers fall back to plain
     ``warnings.warn`` with a fixed stacklevel.
     """
+    # Frame objects participate in reference cycles (``frame -> f_locals ->
+    # frame``) and can delay GC if held implicitly. Capture the user frame's
+    # data into plain values inside the try, and explicitly delete the frame
+    # references in finally so we never leak frames across this call. This
+    # follows CPython's own guidance for code that uses ``inspect.currentframe``.
     frame = inspect.currentframe()
-    if frame is None:
+    candidate: Any = None
+    try:
+        if frame is None:
+            return None
+        # Skip _resolve_user_frame itself + the warn helper that called it.
+        candidate = frame.f_back.f_back if frame.f_back and frame.f_back.f_back else None
+        while candidate is not None:
+            if not _is_internal_frame(candidate):
+                return (
+                    candidate.f_code.co_filename,
+                    candidate.f_lineno,
+                    candidate.f_globals.get("__name__", "<unknown>"),
+                )
+            candidate = candidate.f_back
         return None
-    # Skip _resolve_user_frame itself + the warn helper that called it.
-    frame = frame.f_back.f_back if frame.f_back and frame.f_back.f_back else None
-    while frame is not None:
-        if not _is_internal_frame(frame):
-            return (
-                frame.f_code.co_filename,
-                frame.f_lineno,
-                frame.f_globals.get("__name__", "<unknown>"),
-            )
-        frame = frame.f_back
-    return None
+    finally:
+        del frame, candidate
 
 
 def _warn_on_feature_use(
