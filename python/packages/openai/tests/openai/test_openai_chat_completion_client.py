@@ -19,9 +19,13 @@ from agent_framework import (
     SupportsWebSearchTool,
     tool,
 )
+from agent_framework._types import _finalize_response, _process_update
 from agent_framework.exceptions import ChatClientException, SettingNotFoundError
 from openai import BadRequestError
 from openai.types.chat.chat_completion import ChatCompletion, Choice
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from pydantic import BaseModel
 from pytest import param
@@ -823,10 +827,6 @@ def test_parse_text_reasoning_content_from_streaming_chunk(
     openai_unit_test_env: dict[str, str],
 ) -> None:
     """Test that TextReasoningContent is correctly parsed from streaming OpenAI chunk with reasoning_details."""
-    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-    from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
-
     client = OpenAIChatCompletionClient()
 
     # Mock streaming chunk with reasoning_details
@@ -867,6 +867,76 @@ def test_parse_text_reasoning_content_from_streaming_chunk(
     assert update.contents[1].protected_data is not None
     parsed_details = json.loads(update.contents[1].protected_data)
     assert parsed_details == mock_reasoning_details
+
+
+def test_parse_reasoning_content_from_response(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that OpenAI-compatible reasoning_content is preserved from a non-streaming response."""
+    client = OpenAIChatCompletionClient()
+
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="deepseek-reasoner",
+        choices=[
+            Choice(
+                index=0,
+                message=ChatCompletionMessage(
+                    role="assistant",
+                    content="The answer is 42.",
+                    reasoning_content="Step-by-step thinking...",
+                ),
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    assert len(response.messages) == 1
+    message = response.messages[0]
+    assert len(message.contents) == 2
+    assert message.contents[0].type == "text"
+    assert message.contents[1].type == "text_reasoning"
+    assert message.contents[1].protected_data is not None
+    assert json.loads(message.contents[1].protected_data) == "Step-by-step thinking..."
+    assert message.contents[1].additional_properties["openai_reasoning_format"] == "reasoning_content"
+
+
+def test_parse_reasoning_content_from_streaming_chunk(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that OpenAI-compatible reasoning_content is preserved from streaming chunks."""
+    client = OpenAIChatCompletionClient()
+
+    mock_chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="deepseek-reasoner",
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChunkChoiceDelta(
+                    role="assistant",
+                    content="Partial answer",
+                    reasoning_content="Analyzing the question...",
+                ),
+                finish_reason=None,
+            )
+        ],
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert len(update.contents) == 2
+    assert update.contents[0].type == "text"
+    assert update.contents[1].type == "text_reasoning"
+    assert update.contents[1].text == "Analyzing the question..."
+    assert update.contents[1].protected_data is None
+    assert update.contents[1].additional_properties["openai_reasoning_format"] == "reasoning_content"
 
 
 def test_prepare_message_with_text_reasoning_content(
@@ -1011,6 +1081,148 @@ def test_prepare_message_with_text_reasoning_before_function_call(
     assert "tool_calls" in prepared[0]
     assert prepared[0]["tool_calls"][0]["function"]["name"] == "get_weather"
     assert prepared[0]["role"] == "assistant"
+
+
+def test_prepare_message_with_reasoning_content_before_function_call(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that reasoning_content is replayed on tool-calling messages for compatible providers."""
+    client = OpenAIChatCompletionClient()
+
+    reasoning_content = Content.from_text_reasoning(
+        text=None,
+        protected_data=json.dumps("Analyzing before tool call"),
+        additional_properties={"openai_reasoning_format": "reasoning_content"},
+    )
+
+    message = Message(
+        role="assistant",
+        contents=[
+            reasoning_content,
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "Seattle"}'),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert "reasoning_content" in prepared[0]
+    assert prepared[0]["reasoning_content"] == "Analyzing before tool call"
+    assert "reasoning_details" not in prepared[0]
+    assert prepared[0]["tool_calls"][0]["function"]["name"] == "get_weather"
+
+
+def test_prepare_message_with_text_function_call_and_reasoning_details_stays_single_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that text plus function_call plus reasoning_details stays one assistant message."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text(text="Let me check that."),
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "Seattle"}'),
+            Content.from_text_reasoning(
+                text=None,
+                protected_data=json.dumps({"summary": "Deciding to call a function"}),
+            ),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == "Let me check that."
+    assert prepared[0]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert prepared[0]["reasoning_details"] == {"summary": "Deciding to call a function"}
+
+
+def test_prepare_message_with_text_function_call_and_reasoning_content_stays_single_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that text plus function_call plus reasoning_content stays one assistant message."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text(text="Let me check that."),
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "Seattle"}'),
+            Content.from_text_reasoning(
+                text=None,
+                protected_data=json.dumps("Deciding to call a function"),
+                additional_properties={"openai_reasoning_format": "reasoning_content"},
+            ),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == "Let me check that."
+    assert prepared[0]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert prepared[0]["reasoning_content"] == "Deciding to call a function"
+    assert "reasoning_details" not in prepared[0]
+
+
+def test_streaming_reasoning_content_accumulates_and_replays_on_tool_call_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that streamed reasoning_content chunks accumulate before replay on a tool-calling message."""
+    client = OpenAIChatCompletionClient()
+    response = ChatResponse(messages=[], response_id="resp-1")
+
+    first_chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="deepseek-reasoner",
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChunkChoiceDelta(
+                    role="assistant",
+                    reasoning_content="first ",
+                ),
+                finish_reason=None,
+            )
+        ],
+    )
+    second_chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="deepseek-reasoner",
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChunkChoiceDelta(
+                    role="assistant",
+                    reasoning_content="second",
+                ),
+                finish_reason=None,
+            )
+        ],
+    )
+
+    _process_update(response, client._parse_response_update_from_openai(first_chunk))
+    _process_update(response, client._parse_response_update_from_openai(second_chunk))
+    _finalize_response(response)
+
+    tool_call_message = Message(
+        role="assistant",
+        contents=[
+            *response.messages[0].contents,
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "Seattle"}'),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(tool_call_message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["reasoning_content"] == "first second"
+    assert prepared[0]["tool_calls"][0]["function"]["name"] == "get_weather"
 
 
 def test_function_approval_content_is_skipped_in_preparation(
