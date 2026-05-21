@@ -480,24 +480,25 @@ def test_prepare_message_for_a2a_with_multiple_contents() -> None:
 
 
 def test_prepare_message_for_a2a_forwards_context_id() -> None:
-    """Test conversion of Message preserves context_id without duplicating it in metadata."""
+    """Test conversion of Message uses context_id from A2AAgentSession."""
 
     agent = A2AAgent(client=MagicMock(), http_client=None)
 
     message = Message(
         role="user",
         contents=[Content.from_text(text="Continue the task")],
-        additional_properties={"context_id": "ctx-123", "a2a_metadata": {"trace_id": "trace-456"}},
+        additional_properties={"a2a_metadata": {"trace_id": "trace-456"}},
     )
 
-    result = agent._prepare_message_for_a2a(message)
+    session = A2AAgentSession(context_id="ctx-123")
+    result = agent._prepare_message_for_a2a(message, session=session)
 
     assert result.context_id == "ctx-123"
     assert result.metadata == {"trace_id": "trace-456"}
 
 
 def test_prepare_message_for_a2a_uses_fallback_context_id() -> None:
-    """Test that context_id kwarg is used when message has no context_id property."""
+    """Test that service_session_id from a plain session is used when message has no context_id property."""
 
     agent = A2AAgent(client=MagicMock(), http_client=None)
 
@@ -506,25 +507,26 @@ def test_prepare_message_for_a2a_uses_fallback_context_id() -> None:
         contents=[Content.from_text(text="Hello")],
     )
 
-    result = agent._prepare_message_for_a2a(message, context_id="session-ctx-1")
+    session = AgentSession(service_session_id="session-ctx-1")
+    result = agent._prepare_message_for_a2a(message, session=session)
 
     assert result.context_id == "session-ctx-1"
 
 
-def test_prepare_message_for_a2a_message_context_id_takes_precedence() -> None:
-    """Test that message.additional_properties context_id wins over the fallback."""
+def test_prepare_message_for_a2a_a2a_session_context_id_takes_precedence() -> None:
+    """Test that A2AAgentSession.context_id is used over plain session service_session_id."""
 
     agent = A2AAgent(client=MagicMock(), http_client=None)
 
     message = Message(
         role="user",
         contents=[Content.from_text(text="Hello")],
-        additional_properties={"context_id": "explicit-ctx"},
     )
 
-    result = agent._prepare_message_for_a2a(message, context_id="session-ctx-1")
+    session = A2AAgentSession(context_id="a2a-ctx")
+    result = agent._prepare_message_for_a2a(message, session=session)
 
-    assert result.context_id == "explicit-ctx"
+    assert result.context_id == "a2a-ctx"
 
 
 def test_parse_contents_from_a2a_with_data_part() -> None:
@@ -871,21 +873,16 @@ async def test_run_passes_session_service_session_id_as_context_id(mock_a2a_clie
 
 
 @mark.asyncio
-async def test_run_message_context_id_takes_precedence_over_session(mock_a2a_client: MockA2AClient) -> None:
-    """Test that an explicit context_id on the message wins over session.service_session_id."""
+async def test_run_a2a_session_context_id_used_over_service_session_id(mock_a2a_client: MockA2AClient) -> None:
+    """Test that A2AAgentSession.context_id is used for outbound messages."""
     agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
     mock_a2a_client.add_message_response("msg-ctx2", "reply")
 
-    session = AgentSession(service_session_id="svc-session-42")
-    message = Message(
-        role="user",
-        contents=[Content.from_text(text="Hello")],
-        additional_properties={"context_id": "explicit-ctx"},
-    )
-    await agent.run(messages=[message], session=session)
+    session = A2AAgentSession(context_id="a2a-ctx-99")
+    await agent.run("Hello", session=session)
 
     assert mock_a2a_client.last_message is not None
-    assert mock_a2a_client.last_message.context_id == "explicit-ctx"
+    assert mock_a2a_client.last_message.context_id == "a2a-ctx-99"
 
 
 # endregion
@@ -1887,7 +1884,6 @@ async def test_plain_agent_session_no_reference_tracking(mock_a2a_client: MockA2
 async def test_a2a_agent_session_serialization() -> None:
     """Test A2AAgentSession serialization and deserialization."""
     session = A2AAgentSession(
-        session_id="sess-123",
         context_id="ctx-456",
         task_id="task-789",
         task_state=TaskState.TASK_STATE_COMPLETED,
@@ -1896,10 +1892,41 @@ async def test_a2a_agent_session_serialization() -> None:
     data = session.to_dict()
     restored = A2AAgentSession.from_dict(data)
 
-    assert restored.session_id == "sess-123"
+    assert restored.session_id == session.session_id
     assert restored.context_id == "ctx-456"
     assert restored.task_id == "task-789"
     assert restored.task_state == TaskState.TASK_STATE_COMPLETED
+
+
+@mark.asyncio
+async def test_input_required_sets_task_id_instead_of_reference(mock_a2a_client: MockA2AClient) -> None:
+    """Test that when task_state is INPUT_REQUIRED, follow-up sets task_id (not reference_task_ids)."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+
+    # First turn: task ends in INPUT_REQUIRED
+    mock_a2a_client.add_in_progress_task_response(
+        "task-ir",
+        context_id="ctx-ir",
+        state=TaskState.TASK_STATE_INPUT_REQUIRED,
+        text="What is your name?",
+    )
+
+    session = A2AAgentSession()
+    await agent.run("Start", session=session)
+
+    assert session.task_state == TaskState.TASK_STATE_INPUT_REQUIRED
+    assert session.task_id == "task-ir"
+
+    # Second turn: follow-up should set task_id (not reference_task_ids)
+    mock_a2a_client.add_in_progress_task_response(
+        "task-ir-2", context_id="ctx-ir", state=TaskState.TASK_STATE_COMPLETED, text="Thanks!"
+    )
+    await agent.run("My name is Alice", session=session)
+
+    # The outbound message should have task_id set, not reference_task_ids
+    last_msg = mock_a2a_client.last_message
+    assert last_msg.task_id == "task-ir"
+    assert list(last_msg.reference_task_ids) == []
 
 
 # endregion

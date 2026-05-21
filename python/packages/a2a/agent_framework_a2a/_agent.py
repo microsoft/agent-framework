@@ -68,7 +68,6 @@ class A2AAgentSession(AgentSession):
     def __init__(
         self,
         *,
-        session_id: str | None = None,
         context_id: str | None = None,
         task_id: str | None = None,
         task_state: TaskState | None = None,
@@ -76,12 +75,11 @@ class A2AAgentSession(AgentSession):
         """Initialize the A2A agent session.
 
         Keyword Args:
-            session_id: Optional session ID (generated if not provided).
             context_id: Optional A2A context ID for conversation tracking.
             task_id: Optional task ID from a previous interaction.
             task_state: Optional state of the most recent task.
         """
-        super().__init__(session_id=session_id, service_session_id=context_id)
+        super().__init__(service_session_id=context_id)
         self.context_id: str | None = context_id
         self.task_id: str | None = task_id
         self.task_state: TaskState | None = task_state
@@ -119,11 +117,11 @@ class A2AAgentSession(AgentSession):
         base_session = AgentSession.from_dict(data)
 
         session = cls(
-            session_id=base_session.session_id,
             context_id=context_id or base_session.service_session_id,
             task_id=task_id,
             task_state=task_state,
         )
+        session._session_id = base_session.session_id
         session.state.update(base_session.state)
         return session
 
@@ -369,20 +367,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         else:
             if not normalized_messages:
                 raise ValueError("At least one message is required when starting a new task (no continuation_token).")
-            # Read A2A-specific state from A2AAgentSession if available
-            context_id: str | None = None
-            previous_task_id: str | None = None
-            if isinstance(session, A2AAgentSession):
-                context_id = session.context_id
-                previous_task_id = session.task_id
-            elif session is not None:
-                context_id = session.service_session_id
-
-            a2a_message = self._prepare_message_for_a2a(
-                normalized_messages[-1],
-                context_id=context_id,
-                previous_task_id=previous_task_id,
-            )
+            a2a_message = self._prepare_message_for_a2a(normalized_messages[-1], session=session)
             a2a_stream = self.client.send_message(SendMessageRequest(message=a2a_message))
 
         provider_session = session
@@ -742,9 +727,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
 
-    def _prepare_message_for_a2a(
-        self, message: Message, *, context_id: str | None = None, previous_task_id: str | None = None
-    ) -> A2AMessage:
+    def _prepare_message_for_a2a(self, message: Message, *, session: AgentSession | None = None) -> A2AMessage:
         """Prepare a Message for the A2A protocol.
 
         Transforms Agent Framework Message objects into A2A protocol Messages by:
@@ -753,20 +736,33 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         - Converting file references (URI/data/hosted_file) to FilePart objects
         - Preserving metadata and additional properties from the original message
         - Setting the role to 'user' as framework messages are treated as user input
-        - Linking follow-up messages to previous tasks via reference_task_ids
+        - Linking follow-up messages to previous tasks via reference_task_ids or task_id
+
+        When the session is an ``A2AAgentSession``, the method reads context_id,
+        task_id, and task_state directly. If the task is in INPUT_REQUIRED state,
+        the outbound message's ``task_id`` is set (continuing the same task);
+        otherwise ``reference_task_ids`` is used for task refinement linking.
 
         Args:
             message: The framework Message to convert.
 
         Keyword Args:
-            context_id: Optional fallback context identifier (e.g. derived from
-                ``AgentSession.service_session_id``). When the *message* already
-                carries a ``context_id`` in its ``additional_properties`` that
-                value takes precedence; otherwise this fallback is used.
-            previous_task_id: Optional task ID from a previous interaction. When
-                provided, the message is linked as a follow-up (task refinement)
-                via ``reference_task_ids``.
+            session: Optional session to read A2A state from. If an
+                ``A2AAgentSession``, context_id/task_id/task_state are used for
+                linking. A plain ``AgentSession`` provides service_session_id as
+                a fallback context_id.
         """
+        # Extract A2A state from the session
+        context_id: str | None = None
+        previous_task_id: str | None = None
+        task_state: TaskState | None = None
+        if isinstance(session, A2AAgentSession):
+            context_id = session.context_id
+            previous_task_id = session.task_id
+            task_state = session.task_state
+        elif session is not None:
+            context_id = session.service_session_id
+
         parts: list[A2APart] = []
         if not message.contents:
             raise ValueError("Message.contents is empty; cannot convert to A2AMessage.")
@@ -829,12 +825,17 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             role=A2ARole.ROLE_USER,
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
-            context_id=message.additional_properties.get("context_id") or context_id,
+            context_id=context_id,
             metadata=a2a_metadata or {},
         )
 
         if previous_task_id:
-            a2a_message.reference_task_ids.append(previous_task_id)
+            if task_state == TaskState.TASK_STATE_INPUT_REQUIRED:
+                # Task is waiting for user input — set task_id to continue the same task
+                a2a_message.task_id = previous_task_id
+            else:
+                # Link as a follow-up (task refinement)
+                a2a_message.reference_task_ids.append(previous_task_id)
 
         return a2a_message
 
