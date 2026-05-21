@@ -751,6 +751,14 @@ class RawGeminiChatClient(
             kwargs["response_mime_type"] = "application/json"
         if schema := options.get("response_schema"):
             kwargs["response_schema"] = schema
+        elif (response_format := options.get("response_format")) is not None:
+            # Forward cross-client ``response_format`` to Gemini's native ``response_schema``
+            # so structured-output requests carry the schema, not just JSON mode.
+            # See https://github.com/microsoft/agent-framework/issues/5888.
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                kwargs["response_schema"] = response_format
+            elif isinstance(response_format, Mapping):
+                kwargs["response_schema"] = dict(response_format)
         if tools := self._prepare_tools(options):
             kwargs["tools"] = tools
         if tool_config := self._prepare_tool_config(options.get("tool_choice")):

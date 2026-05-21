@@ -931,6 +931,64 @@ async def test_response_schema_added_to_config() -> None:
     assert config.response_schema == schema
 
 
+async def test_response_format_dict_forwarded_as_response_schema() -> None:
+    """Raw JSON schema in response_format should reach Gemini's response_schema, not just JSON mode.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/5888 — the
+    declarative loader hands the chat client ``response_format`` as a plain dict; without
+    this forwarding the model gets ``response_mime_type=application/json`` but no schema
+    and returns arbitrary JSON.
+    """
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"response_format": schema},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema == schema
+
+
+async def test_response_format_pydantic_forwarded_as_response_schema() -> None:
+    """Pydantic ``response_format`` should also surface on Gemini's ``response_schema``."""
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"response_format": Reply},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema is Reply
+
+
+async def test_response_schema_takes_precedence_over_response_format() -> None:
+    """If both are set, the explicit ``response_schema`` wins over ``response_format``."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+    explicit_schema = {"type": "object", "properties": {"score": {"type": "integer"}}}
+    fallback = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"response_schema": explicit_schema, "response_format": fallback},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_schema == explicit_schema
+
+
 async def test_streaming_response_format_passed_to_build_response_stream() -> None:
     """Verifies that response_format is forwarded to _build_response_stream when streaming
     so that structured output parsing works correctly on the final assembled response.
