@@ -1,0 +1,8 @@
+﻿name: harness-step02-research-background
+services:
+  harness-step02-research-background:
+    project: .
+    host: azure.ai.agent
+    language: dotnet
+    config:
+      startupCommand: dotnet bin/Debug/net10.0/Harness_Step02_Research_WithBackgroundAgents.dll

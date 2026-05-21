@@ -1,0 +1,7 @@
+﻿template:
+  kind: hosted
+  name: harness-step03-data-processing
+  description: Hosted Harness data processing sample for azd.
+  protocols:
+    - protocol: responses
+      version: "1.0.0"

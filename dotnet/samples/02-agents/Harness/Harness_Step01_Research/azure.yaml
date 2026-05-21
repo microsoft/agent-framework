@@ -1,0 +1,8 @@
+﻿name: harness-step01-research
+services:
+  harness-step01-research:
+    project: .
+    host: azure.ai.agent
+    language: dotnet
+    config:
+      startupCommand: dotnet bin/Debug/net10.0/Harness_Step01_Research.dll

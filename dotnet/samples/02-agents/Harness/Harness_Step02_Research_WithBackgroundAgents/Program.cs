@@ -13,13 +13,18 @@
 #pragma warning disable MAAI001  // Suppress experimental API warnings for Agents AI experiments.
 
 using System.ClientModel.Primitives;
+using Azure.AI.AgentServer.Core;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Harness.Shared.Console;
+using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT or AZURE_AI_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
 
 const int MaxContextWindowTokens = 1_050_000;
@@ -113,7 +118,10 @@ AIAgent parentAgent =
         },
     });
 
-// Run the interactive console session.
-await HarnessConsole.RunAgentAsync(
-    parentAgent,
-    userPrompt: "Enter a list of stock tickers (e.g., BAC, MSFT, BA):");
+var builder = AgentHost.CreateBuilder(args);
+builder.Services.AddFoundryResponses(parentAgent);
+builder.Services.AddDevTemporaryLocalContributorSetup();
+builder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
+
+var app = builder.Build();
+app.Run();

@@ -1,0 +1,7 @@
+﻿template:
+  kind: hosted
+  name: harness-step02-research-background
+  description: Hosted Harness research sample with background agents for azd.
+  protocols:
+    - protocol: responses
+      version: "1.0.0"

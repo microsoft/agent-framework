@@ -1,0 +1,7 @@
+﻿template:
+  kind: hosted
+  name: harness-step01-research
+  description: Hosted Harness research sample for azd.
+  protocols:
+    - protocol: responses
+      version: "1.0.0"
