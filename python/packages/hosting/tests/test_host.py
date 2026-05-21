@@ -24,6 +24,7 @@ from agent_framework_hosting import (
     ChannelPush,
     ChannelRequest,
     ChannelSession,
+    DurableTaskPayloadMode,
     DurableTaskRunner,
     HostedRunResult,
     ResponseTarget,
@@ -150,6 +151,11 @@ class _SyncTaskRunner(DurableTaskRunner):
         self.handler_errors: list[BaseException] = []
         self.schedule_raises: BaseException | None = None
         self.swallow_handler_errors = swallow_handler_errors
+
+    # Default object-mode matches the real ``InProcessTaskRunner`` —
+    # tests that want to exercise the JSON-mode path override this on
+    # the instance.
+    payload_mode = DurableTaskPayloadMode.OBJECT
 
     def register(
         self,
@@ -714,29 +720,34 @@ def _record_identity_on(host: AgentFrameworkHost, isolation_key: str, channel: s
 
 
 class TestDeliverResponse:
-    async def test_originating_returns_include_originating(self) -> None:
-        _, _, _, ctx, _runner = _make_host_with_two_channels()
+    """Delivery routing — the originating channel learns whether to render
+    on its own wire from the ``bool`` return; everything else
+    (scheduled tasks, schedule-time failures, skip reasons) lives in
+    the runner's own log. Tests assert the bool plus observable
+    state on the sync runner fake (``scheduled``, ``handler_errors``)
+    and on the destination channels (``pushes``)."""
+
+    async def test_originating_returns_true(self) -> None:
+        _, _, _, ctx, runner = _make_host_with_two_channels()
         req = ChannelRequest(channel="responses", operation="op", input="x")
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.include_originating is True
-        assert report.pushed == ()
-        assert report.skipped == ()
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is True
+        assert runner.scheduled == []
 
     async def test_none_suppresses_everything(self) -> None:
-        _, _, _, ctx, _runner = _make_host_with_two_channels()
+        _, _, _, ctx, runner = _make_host_with_two_channels()
         req = ChannelRequest(
             channel="responses",
             operation="op",
             input="x",
             response_target=ResponseTarget.none,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.include_originating is False
-        assert report.pushed == ()
-        assert report.skipped == ()
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is False
+        assert runner.scheduled == []
 
     async def test_active_pushes_to_other_channel(self) -> None:
-        host, a, b, ctx, _runner = _make_host_with_two_channels()
+        host, _a, b, ctx, runner = _make_host_with_two_channels()
         # Alice was last seen on telegram.
         _record_identity_on(host, "alice", "telegram", "42")
         # Now she sends a message via responses; ResponseTarget.active should
@@ -748,13 +759,13 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.active,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.include_originating is False
-        assert report.pushed == ("telegram:42",)
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is False
+        assert len(runner.scheduled) == 1
         assert b.pushes and b.pushes[0][0].native_id == "42"
 
     async def test_active_falls_back_to_originating_when_self(self) -> None:
-        host, _a, _b, ctx, _runner = _make_host_with_two_channels()
+        host, _a, _b, ctx, runner = _make_host_with_two_channels()
         _record_identity_on(host, "alice", "responses", "user:1")
         req = ChannelRequest(
             channel="responses",
@@ -763,11 +774,12 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.active,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.include_originating is True
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is True
+        assert runner.scheduled == []
 
-    async def test_channels_with_unknown_identity_skipped(self) -> None:
-        _, _, _, ctx, _runner = _make_host_with_two_channels()
+    async def test_channels_with_unknown_identity_falls_back_to_originating(self) -> None:
+        _, _, _, ctx, runner = _make_host_with_two_channels()
         # No prior identity seeded for telegram on alice.
         req = ChannelRequest(
             channel="responses",
@@ -776,27 +788,27 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram"),
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        # Skipped → fallback to originating.
-        assert report.include_originating is True
-        assert report.skipped == ("telegram",)
-        assert report.pushed == ()
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        # Skipped at resolution → fallback to originating so the user
+        # still gets a reply.
+        assert include_originating is True
+        assert runner.scheduled == []
 
     async def test_channels_with_explicit_native_id_token(self) -> None:
-        _, _, b, ctx, _runner = _make_host_with_two_channels()
+        _, _, b, ctx, runner = _make_host_with_two_channels()
         req = ChannelRequest(
             channel="responses",
             operation="op",
             input="x",
             response_target=ResponseTarget.channel("telegram:99"),
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.pushed == ("telegram:99",)
-        assert report.include_originating is False
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is False
+        assert len(runner.scheduled) == 1
         assert b.pushes[0][0].native_id == "99"
 
     async def test_channels_originating_pseudo_includes_origin(self) -> None:
-        host, _a, _b, ctx, _runner = _make_host_with_two_channels()
+        host, _a, _b, ctx, runner = _make_host_with_two_channels()
         _record_identity_on(host, "alice", "telegram", "42")
         req = ChannelRequest(
             channel="responses",
@@ -805,23 +817,23 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channels(["originating", "telegram"]),
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.include_originating is True
-        assert report.pushed == ("telegram:42",)
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is True
+        assert len(runner.scheduled) == 1
 
-    async def test_channels_unknown_channel_name_skipped(self) -> None:
-        _, _, _, ctx, _runner = _make_host_with_two_channels()
+    async def test_channels_unknown_channel_name_falls_back(self) -> None:
+        _, _, _, ctx, runner = _make_host_with_two_channels()
         req = ChannelRequest(
             channel="responses",
             operation="op",
             input="x",
             response_target=ResponseTarget.channel("nope"),
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.include_originating is True  # fallback
-        assert report.skipped == ("nope",)
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is True  # fallback
+        assert runner.scheduled == []
 
-    async def test_no_push_capability_skipped(self) -> None:
+    async def test_no_push_capability_falls_back(self) -> None:
         agent = _FakeAgent()
         a = _RecordingChannel(name="responses", path="/r")
         b = _NoPushChannel(name="nopush", path="/n")
@@ -838,12 +850,11 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("nopush"),
         )
-        report = await a.context.deliver_response(req, _make_reply("reply"))
-        assert report.skipped == ("nopush:42",)
-        assert report.include_originating is True  # fallback
+        include_originating = await a.context.deliver_response(req, _make_reply("reply"))
+        assert include_originating is True  # fallback
 
     async def test_all_linked_pushes_to_every_other_channel(self) -> None:
-        host, _a, b, ctx, _runner = _make_host_with_two_channels()
+        host, _a, b, ctx, runner = _make_host_with_two_channels()
         # Alice on responses (originating) and telegram.
         host._identities.setdefault("alice", {})
         host._identities["alice"]["responses"] = ChannelIdentity(channel="responses", native_id="user:1")
@@ -855,13 +866,13 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.all_linked,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.include_originating is True
-        assert report.pushed == ("telegram:42",)
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is True
+        assert len(runner.scheduled) == 1
         assert b.pushes and b.pushes[0][1].result.text == "reply"
 
     async def test_all_linked_no_other_channels_falls_back(self) -> None:
-        host, _a, _b, ctx, _runner = _make_host_with_two_channels()
+        _host, _a, _b, ctx, runner = _make_host_with_two_channels()
         req = ChannelRequest(
             channel="responses",
             operation="op",
@@ -869,21 +880,57 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.all_linked,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.include_originating is True
-        assert report.pushed == ()
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is True
+        assert runner.scheduled == []
 
-    async def test_handler_exception_does_not_abort_schedule(self) -> None:
+    async def test_identities_variant_preserves_attributes(self) -> None:
+        """``ResponseTarget.identities([...])`` plumbs full
+        :class:`ChannelIdentity` objects through resolution, preserving
+        ``attributes`` for destination channels that need conversation/
+        thread metadata (Teams, Slack, Bot Framework)."""
+        _, _, b, ctx, runner = _make_host_with_two_channels()
+        ident = ChannelIdentity(
+            channel="telegram",
+            native_id="42",
+            attributes={"thread_id": "t1", "service_url": "https://x"},
+        )
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="x",
+            response_target=ResponseTarget.identity(ident),
+        )
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is False
+        assert len(runner.scheduled) == 1
+        # The destination identity arrived at push with attributes intact.
+        pushed_identity = b.pushes[0][0]
+        assert pushed_identity.native_id == "42"
+        assert dict(pushed_identity.attributes) == {"thread_id": "t1", "service_url": "https://x"}
+
+    async def test_identities_pointing_to_originating_includes_origin(self) -> None:
+        """An identity whose channel matches the originating channel
+        folds into ``include_originating`` rather than double-delivering
+        via push."""
+        _, _, _, ctx, runner = _make_host_with_two_channels()
+        ident = ChannelIdentity(channel="responses", native_id="user:1")
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="x",
+            response_target=ResponseTarget.identities([ident]),
+        )
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is True
+        assert runner.scheduled == []
+
+    async def test_handler_exception_does_not_change_return_value(self) -> None:
         """When ``ChannelPush.push`` raises *inside the runner handler*
-        the destination is still considered ``pushed`` from the host's
-        perspective — ``DurableTaskRunner.schedule`` accepted the work,
-        and downstream delivery outcome (success / retry / terminal
-        failure) is owned by the runner.
-
-        Compare with :meth:`test_schedule_exception_lands_in_failed`:
-        ``DeliveryReport.failed`` is reserved for *host-side* outages
-        (the runner refused the work), not downstream push failures.
-        """
+        the originating channel still sees the same return value —
+        ``DurableTaskRunner.schedule`` accepted the work, and downstream
+        delivery outcome is owned by the runner (it logs and retries
+        per the configured ``RetryPolicy``)."""
         host, _a, b, ctx, runner = _make_host_with_two_channels()
         b._push_raises = RuntimeError("boom")  # type: ignore[attr-defined]
         host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
@@ -894,34 +941,22 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram"),
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        # Schedule succeeded → ``pushed``, ``failed`` is for host-side
-        # outages only.
-        assert report.pushed == ("telegram:42",)
-        assert report.failed == ()
-        assert report.skipped == ()
-        # Handler raised — runner captured the error (in the real
-        # runner it would be retried; the sync runner records it).
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        # Schedule succeeded → the return value is unaffected by a
+        # downstream handler failure.
+        assert include_originating is False
+        assert len(runner.scheduled) == 1
+        # Handler raised — runner captured the error (the real runner
+        # would retry it; the sync fake records it).
         assert runner.handler_errors and isinstance(runner.handler_errors[0], RuntimeError)
         assert str(runner.handler_errors[0]) == "boom"
-        # No fallback: the handler is responsible for any user-visible
-        # surface after schedule returned.
-        assert report.include_originating is False
 
-    async def test_schedule_exception_lands_in_failed_no_fallback(self) -> None:
+    async def test_schedule_exception_falls_back_to_originating(self) -> None:
         """When :meth:`DurableTaskRunner.schedule` itself raises (the
-        runner backend is unreachable) the destination lands in
-        ``DeliveryReport.failed`` with an error summary. This is the
-        host-side outage signal — distinct from a "no link recorded"
-        drop (``skipped``) and from a downstream channel-push failure
-        (owned by the runner).
-
-        No originating-fallback fires when every destination fails to
-        schedule — the originating channel is meant to inspect
-        ``failed`` and decide whether to surface a degraded reply
-        itself rather than double-delivering on a host-side outage
-        that may resolve on its own.
-        """
+        runner backend is unreachable) the destination is treated as
+        skipped — same outcome as any other resolution-time drop. The
+        host's fall-back-to-originating rule then ensures the user
+        still gets a reply rather than being left without one."""
         host, _a, _b, ctx, runner = _make_host_with_two_channels()
         runner.schedule_raises = RuntimeError("runner backend unreachable")
         host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
@@ -932,15 +967,10 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram"),
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
-        assert report.pushed == ()
-        assert report.skipped == ()
-        assert len(report.failed) == 1
-        token, summary = report.failed[0]
-        assert token == "telegram:42"
-        assert "RuntimeError" in summary
-        assert "runner backend unreachable" in summary
-        assert report.include_originating is False
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        # Schedule raised → no scheduled tasks, fall back to originating.
+        assert runner.scheduled == []
+        assert include_originating is True
 
     async def test_echo_input_pushes_user_message_then_response(self) -> None:
         """``echo_input=True`` triggers two pushes per destination,
@@ -957,11 +987,10 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
-        report = await ctx.deliver_response(req, _make_reply("reply"))
+        include_originating = await ctx.deliver_response(req, _make_reply("reply"))
+        assert include_originating is False
         # One scheduled task per destination; the handler does echo then response inline.
-        assert report.pushed == ("telegram:42",)
         assert len(runner.scheduled) == 1
-        # The single task contained both echo_result and result.
         _, payload = runner.scheduled[0]
         assert payload["echo_result"] is not None
         # Two pushes landed on the channel: echo first, then response.
@@ -1010,14 +1039,44 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
-        report = await a.context.deliver_response(req, _make_reply("reply"))
+        include_originating = await a.context.deliver_response(req, _make_reply("reply"))
         # Schedule succeeded; handler swallowed the echo failure and
         # the response push landed on the channel.
-        assert report.pushed == ("telegram:42",)
+        assert include_originating is False
         assert b.pushes and b.pushes[0][1].result.text == "reply"
         # Handler did not raise (echo failure was swallowed inside
         # the handler), so the runner saw no error.
         assert runner.handler_errors == []
+
+    async def test_echo_idempotent_on_retry(self) -> None:
+        """When the response push fails on a retried task, the handler
+        must NOT re-deliver the echo if a prior attempt already
+        succeeded. The ``echo_done`` cursor on the payload mapping is
+        the host's idempotency primitive; this test invokes the
+        handler directly twice with the same payload to exercise the
+        retry semantics."""
+        host, _a, b, ctx, runner = _make_host_with_two_channels()
+        host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            session=ChannelSession(isolation_key="alice"),
+            response_target=ResponseTarget.channel("telegram", echo_input=True),
+        )
+        # First scheduled invocation — echo + response both succeed.
+        await ctx.deliver_response(req, _make_reply("reply"))
+        assert len(b.pushes) == 2  # echo + response
+        # Simulate a retry: invoke the handler again with the same
+        # payload mapping (the in-process runner reuses the mapping
+        # across retries). After the first run ``echo_done`` was
+        # mutated to ``True``; the second run must skip the echo.
+        _, payload = runner.scheduled[0]
+        assert payload["echo_done"] is True
+        await host._handle_push_task(payload)
+        # Only one more push (the response) — the echo was skipped.
+        assert len(b.pushes) == 3
+        assert str(b.pushes[2][1].result.messages[0].role) == "assistant"
 
 
 # --------------------------------------------------------------------------- #
@@ -1064,7 +1123,7 @@ class TestResponseHookFanOut:
             response_target=ResponseTarget.channel("telegram"),
         )
         report = await a.context.deliver_response(req, _make_reply("reply"))
-        assert report.pushed == ("telegram:42",)
+        assert report is False
         # The pushed payload reflects the hook's transform.
         assert b.pushes[0][1].result.text == "[hooked] reply"
         assert seen == [("telegram", "42", False)]
@@ -1104,7 +1163,7 @@ class TestResponseHookFanOut:
             response_target=ResponseTarget.channels(["telegram", "extra"]),
         )
         report = await a.context.deliver_response(req, original)
-        assert sorted(report.pushed) == ["extra:9", "telegram:42"]
+        assert report is False
         # The rebind on the telegram clone must not have touched the
         # original envelope, nor the extra channel's view.
         assert original.result is original_result_snapshot

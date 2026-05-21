@@ -25,7 +25,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
-from ._types import DurableTaskRunner, RetryPolicy, TaskHandle, TaskStatus
+from ._types import DurableTaskPayloadMode, DurableTaskRunner, RetryPolicy, TaskHandle, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -45,15 +45,27 @@ class InProcessTaskRunner(DurableTaskRunner):
     host registers all handlers at startup, before serving traffic.
     """
 
+    # Declared at class level so the ``DurableTaskRunner`` Protocol's
+    # ``payload_mode`` attribute resolves on instances without needing
+    # to assign it in ``__init__``.
+    payload_mode: DurableTaskPayloadMode = DurableTaskPayloadMode.OBJECT
+
     def __init__(
         self,
         *,
         default_retry_policy: RetryPolicy | None = None,
         terminal_cache_size: int = 1024,
+        shutdown_grace_seconds: float = 5.0,
     ) -> None:
         self._handlers: dict[str, Callable[[Mapping[str, Any]], Awaitable[None]]] = {}
         self._default_retry_policy = default_retry_policy or RetryPolicy()
         self._terminal_cache_size = terminal_cache_size
+        # How long ``shutdown()`` waits for in-flight tasks to finish on
+        # their own before cancelling them. Channels may legitimately
+        # schedule a final push during their own shutdown callback
+        # (goodbye message, telemetry flush), so the runner gives them
+        # this window to complete before cancellation kicks in.
+        self._shutdown_grace_seconds = shutdown_grace_seconds
 
         # Operational state. ``_pending`` holds tasks that are scheduled or
         # running; ``_terminal`` is a bounded ring of final outcomes. The
@@ -138,29 +150,53 @@ class InProcessTaskRunner(DurableTaskRunner):
     # ------------------------------------------------------------------ #
 
     async def shutdown(self, *, timeout: float | None = None) -> None:
-        """Cancel pending tasks and wait briefly for them to wind down.
+        """Wait briefly for pending tasks to drain, then cancel anything still running.
 
         Called by the host on ``on_shutdown`` so a graceful shutdown does
-        not orphan in-flight push retries. Tasks that don't honour
-        cancellation within ``timeout`` seconds are abandoned — the
-        in-process runner makes no durability claim, so cleanup is
-        best-effort by design.
+        not orphan in-flight push retries. Channels may legitimately
+        schedule a final push from their own shutdown callback (e.g. a
+        goodbye message); the runner therefore *waits* up to
+        ``timeout`` seconds (default: the runner's
+        ``shutdown_grace_seconds`` configured at construction) for the
+        in-flight set to finish on its own before cancelling stragglers.
+        Tasks that don't honour cancellation within the same window are
+        abandoned — the in-process runner makes no durability claim, so
+        cleanup is best-effort by design.
         """
         if not self._pending:
             return
+        grace = timeout if timeout is not None else self._shutdown_grace_seconds
         tasks = list(self._pending.values())
-        for task in tasks:
+        # Phase 1 — wait for natural completion within the grace window.
+        # ``asyncio.wait`` does not raise on timeout (it just returns the
+        # split sets), which is what we want: the loser tasks roll over
+        # into the cancellation phase.
+        if grace > 0:
+            await asyncio.wait(tasks, timeout=grace)
+        # Phase 2 — cancel anything still pending, then wait briefly for
+        # cancellation to propagate. Tasks that ignore cancellation
+        # within the cancellation window are logged and abandoned.
+        still_pending = [t for t in tasks if not t.done()]
+        if not still_pending:
+            return
+        logger.info(
+            "InProcessTaskRunner.shutdown: %d task(s) still running after %.2fs grace; cancelling",
+            len(still_pending),
+            grace,
+        )
+        for task in still_pending:
             task.cancel()
+        cancellation_window = max(grace, 1.0)
         try:
             await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=timeout,
+                asyncio.gather(*still_pending, return_exceptions=True),
+                timeout=cancellation_window,
             )
         except (TimeoutError, asyncio.TimeoutError):
             logger.warning(
-                "InProcessTaskRunner.shutdown: %d task(s) did not exit within %ss; abandoning",
-                sum(not t.done() for t in tasks),
-                timeout,
+                "InProcessTaskRunner.shutdown: %d task(s) did not exit within %.2fs of cancellation; abandoning",
+                sum(not t.done() for t in still_pending),
+                cancellation_window,
             )
 
     # ------------------------------------------------------------------ #
