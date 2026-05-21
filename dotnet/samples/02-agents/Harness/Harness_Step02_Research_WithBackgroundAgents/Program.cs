@@ -102,10 +102,7 @@ AIAgent parentAgent =
         DisableFileAccess = true,   // If enabled, this would allow the agent to read/write files in a working directory
         DisableToolApproval = true, // If enabled, this allows don't-ask-again approval functionality.
         DisableWebSearch = true,
-        AIContextProviders =
-        [
-            new BackgroundAgentsProvider([webSearchAgent]),
-        ],
+        BackgroundAgents = [webSearchAgent],
         ChatOptions = new ChatOptions
         {
             Instructions = parentInstructions,

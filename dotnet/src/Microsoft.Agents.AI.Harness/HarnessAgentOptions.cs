@@ -218,4 +218,26 @@ public sealed class HarnessAgentOptions
     /// This property is ignored when <see cref="DisableOpenTelemetry"/> is <see langword="true"/>.
     /// </remarks>
     public string? OpenTelemetrySourceName { get; set; }
+
+    /// <summary>
+    /// Gets or sets the collection of background agents available for delegation via <see cref="BackgroundAgentsProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// When non-null and non-empty, a <see cref="BackgroundAgentsProvider"/> is automatically included in the
+    /// agent's context providers, enabling the agent to start, monitor, and retrieve results from background tasks.
+    /// When <see langword="null"/> or empty, no <see cref="BackgroundAgentsProvider"/> is configured.
+    /// Each agent in the collection must have a non-empty <see cref="AIAgent.Name"/> and names must be unique
+    /// (case-insensitive). If these requirements are not met, <see cref="BackgroundAgentsProvider"/> will throw
+    /// an <see cref="System.ArgumentException"/> during construction.
+    /// </remarks>
+    public IEnumerable<AIAgent>? BackgroundAgents { get; set; }
+
+    /// <summary>
+    /// Gets or sets optional configuration for the <see cref="BackgroundAgentsProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// Use this to customize instructions or agent list formatting for the background agents feature.
+    /// This property is ignored when <see cref="BackgroundAgents"/> is <see langword="null"/> or empty.
+    /// </remarks>
+    public BackgroundAgentsProviderOptions? BackgroundAgentsProviderOptions { get; set; }
 }
