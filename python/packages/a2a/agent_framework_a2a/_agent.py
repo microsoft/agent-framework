@@ -107,8 +107,6 @@ class A2AAgentSession(AgentSession):
         Returns:
             Restored A2AAgentSession instance.
         """
-        from agent_framework._sessions import _deserialize_state
-
         data = dict(data)  # defensive copy
         context_id = data.pop(cls._CONTEXT_ID_KEY, None)
         task_id = data.pop(cls._TASK_ID_KEY, None)
@@ -117,13 +115,16 @@ class A2AAgentSession(AgentSession):
         # TaskState is a protobuf enum (int values); store and restore as-is
         task_state: TaskState | None = task_state_value if task_state_value is not None else None
 
+        # Delegate state deserialization to the base class
+        base_session = AgentSession.from_dict(data)
+
         session = cls(
-            session_id=data.get("session_id"),
-            context_id=context_id or data.get("service_session_id"),
+            session_id=base_session.session_id,
+            context_id=context_id or base_session.service_session_id,
             task_id=task_id,
             task_state=task_state,
         )
-        session.state = _deserialize_state(data.get("state", {}))
+        session.state.update(base_session.state)
         return session
 
 
