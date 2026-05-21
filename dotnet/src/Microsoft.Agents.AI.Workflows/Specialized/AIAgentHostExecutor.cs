@@ -70,6 +70,8 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
         return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder))
+                   .YieldsOutput<AgentResponseUpdate>()
+                   .YieldsOutput<AgentResponse>()
                    .ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<ResetChatSignal>(this.ResetChat));
     }
 
