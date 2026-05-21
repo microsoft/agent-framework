@@ -31,7 +31,7 @@ from agent_framework import (
 from agent_framework.a2a import A2AAgent
 from pytest import fixture, mark, raises
 
-from agent_framework_a2a import A2AContinuationToken
+from agent_framework_a2a import A2AAgentSession, A2AContinuationToken
 from agent_framework_a2a._utils import get_uri_data
 
 
@@ -1680,7 +1680,7 @@ async def test_first_message_has_no_reference_task_ids(mock_a2a_client: MockA2AC
     agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
     mock_a2a_client.add_task_response("task-first", [{"content": "Hello back"}])
 
-    session = AgentSession()
+    session = A2AAgentSession()
     await agent.run("Hello", session=session)
 
     assert mock_a2a_client.last_message is not None
@@ -1693,11 +1693,11 @@ async def test_follow_up_message_includes_reference_task_ids(mock_a2a_client: Mo
     agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
     mock_a2a_client.add_task_response("task-abc-123", [{"content": "First reply"}])
 
-    session = AgentSession()
+    session = A2AAgentSession()
     await agent.run("Hello", session=session)
 
     # Verify task_id was persisted on session
-    assert session.state.get("a2a_task_id") == "task-abc-123"
+    assert session.task_id == "task-abc-123"
 
     # Send a follow-up message
     mock_a2a_client.add_task_response("task-def-456", [{"content": "Second reply"}])
@@ -1712,24 +1712,24 @@ async def test_reference_task_ids_updated_after_each_interaction(mock_a2a_client
     """Test that reference_task_ids always points to the most recent task."""
     agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
 
-    session = AgentSession()
+    session = A2AAgentSession()
 
     # First interaction
     mock_a2a_client.add_task_response("task-1", [{"content": "Reply 1"}])
     await agent.run("Message 1", session=session)
-    assert session.state["a2a_task_id"] == "task-1"
+    assert session.task_id == "task-1"
 
     # Second interaction
     mock_a2a_client.add_task_response("task-2", [{"content": "Reply 2"}])
     await agent.run("Message 2", session=session)
     assert mock_a2a_client.last_message.reference_task_ids == ["task-1"]
-    assert session.state["a2a_task_id"] == "task-2"
+    assert session.task_id == "task-2"
 
     # Third interaction references the second task
     mock_a2a_client.add_task_response("task-3", [{"content": "Reply 3"}])
     await agent.run("Message 3", session=session)
     assert mock_a2a_client.last_message.reference_task_ids == ["task-2"]
-    assert session.state["a2a_task_id"] == "task-3"
+    assert session.task_id == "task-3"
 
 
 @mark.asyncio
@@ -1752,10 +1752,11 @@ async def test_task_id_tracked_from_status_update_events(mock_a2a_client: MockA2
     )
     mock_a2a_client.responses.append(StreamResponse(status_update=status_event))
 
-    session = AgentSession()
+    session = A2AAgentSession()
     await agent.run("Hello", session=session)
 
-    assert session.state.get("a2a_task_id") == "task-from-status"
+    assert session.task_id == "task-from-status"
+    assert session.task_state == TaskState.TASK_STATE_COMPLETED
 
 
 @mark.asyncio
@@ -1784,10 +1785,98 @@ async def test_task_id_tracked_from_message_payload(mock_a2a_client: MockA2AClie
     )
     mock_a2a_client.responses.append(StreamResponse(message=message_with_task))
 
+    session = A2AAgentSession()
+    await agent.run("Hello", session=session)
+
+    assert session.task_id == "task-from-message"
+
+
+@mark.asyncio
+async def test_context_id_assigned_from_response(mock_a2a_client: MockA2AClient) -> None:
+    """Test that context_id is assigned from the response when not set on session."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    mock_a2a_client.add_task_response("task-ctx", [{"content": "Reply"}])
+
+    session = A2AAgentSession()
+    assert session.context_id is None
+
+    await agent.run("Hello", session=session)
+
+    # context_id from the task response should be assigned
+    assert session.context_id == "test-context"
+    assert session.service_session_id == "test-context"
+
+
+@mark.asyncio
+async def test_context_id_mismatch_raises_error(mock_a2a_client: MockA2AClient) -> None:
+    """Test that a context_id mismatch between session and response raises an error."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+
+    # Task response has context_id="test-context" (from add_task_response helper)
+    mock_a2a_client.add_task_response("task-mismatch", [{"content": "Reply"}])
+
+    # Session already has a different context_id
+    session = A2AAgentSession(context_id="different-context")
+
+    with raises(RuntimeError, match="differs from the session's context_id"):
+        await agent.run("Hello", session=session)
+
+
+@mark.asyncio
+async def test_task_state_tracked_on_session(mock_a2a_client: MockA2AClient) -> None:
+    """Test that task_state is tracked on A2AAgentSession."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+
+    # Add a task that ends in INPUT_REQUIRED
+    mock_a2a_client.add_in_progress_task_response(
+        "task-input",
+        context_id="ctx-input",
+        state=TaskState.TASK_STATE_INPUT_REQUIRED,
+        text="What is your name?",
+    )
+
+    session = A2AAgentSession()
+    await agent.run("Start", session=session)
+
+    assert session.task_id == "task-input"
+    assert session.task_state == TaskState.TASK_STATE_INPUT_REQUIRED
+
+
+@mark.asyncio
+async def test_plain_agent_session_no_reference_tracking(mock_a2a_client: MockA2AClient) -> None:
+    """Test that a plain AgentSession works but does not get reference_task_ids tracking."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    mock_a2a_client.add_task_response("task-plain", [{"content": "Reply"}])
+
     session = AgentSession()
     await agent.run("Hello", session=session)
 
-    assert session.state.get("a2a_task_id") == "task-from-message"
+    # Plain session does not get task_id tracking
+    assert "a2a_task_id" not in session.state
+
+    # Follow-up has no reference_task_ids (no tracking on plain session)
+    mock_a2a_client.add_task_response("task-plain-2", [{"content": "Reply 2"}])
+    await agent.run("Follow up", session=session)
+    assert list(mock_a2a_client.last_message.reference_task_ids) == []
+
+
+@mark.asyncio
+async def test_a2a_agent_session_serialization() -> None:
+    """Test A2AAgentSession serialization and deserialization."""
+    session = A2AAgentSession(
+        session_id="sess-123",
+        context_id="ctx-456",
+        task_id="task-789",
+        task_state=TaskState.TASK_STATE_COMPLETED,
+    )
+
+    data = session.to_dict()
+    restored = A2AAgentSession.from_dict(data)
+
+    assert restored.session_id == "sess-123"
+    assert restored.context_id == "ctx-456"
+    assert restored.task_id == "task-789"
+    assert restored.task_state == TaskState.TASK_STATE_COMPLETED
 
 
 # endregion

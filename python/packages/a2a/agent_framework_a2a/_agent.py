@@ -43,9 +43,88 @@ from agent_framework._types import AgentRunInputs
 from agent_framework.observability import AgentTelemetryLayer
 from google.protobuf.json_format import MessageToDict
 
-__all__ = ["A2AAgent", "A2AContinuationToken"]
+__all__ = ["A2AAgent", "A2AAgentSession", "A2AContinuationToken"]
 
 from agent_framework_a2a._utils import get_uri_data
+
+
+class A2AAgentSession(AgentSession):
+    """Session for A2A-based agents.
+
+    Extends AgentSession with A2A protocol-specific state: context_id for
+    conversation tracking, task_id for the most recent task, and task_state
+    for detecting input-required continuations vs. task refinements.
+
+    Attributes:
+        context_id: The A2A conversation context identifier.
+        task_id: The most recent task ID returned by the remote agent.
+        task_state: The state of the most recent task (e.g., completed, input-required).
+    """
+
+    _CONTEXT_ID_KEY = "a2a_context_id"
+    _TASK_ID_KEY = "a2a_task_id"
+    _TASK_STATE_KEY = "a2a_task_state"
+
+    def __init__(
+        self,
+        *,
+        session_id: str | None = None,
+        context_id: str | None = None,
+        task_id: str | None = None,
+        task_state: TaskState | None = None,
+    ) -> None:
+        """Initialize the A2A agent session.
+
+        Keyword Args:
+            session_id: Optional session ID (generated if not provided).
+            context_id: Optional A2A context ID for conversation tracking.
+            task_id: Optional task ID from a previous interaction.
+            task_state: Optional state of the most recent task.
+        """
+        super().__init__(session_id=session_id, service_session_id=context_id)
+        self.context_id: str | None = context_id
+        self.task_id: str | None = task_id
+        self.task_state: TaskState | None = task_state
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize session to a plain dict for storage/transfer."""
+        data = super().to_dict()
+        if self.context_id is not None:
+            data[self._CONTEXT_ID_KEY] = self.context_id
+        if self.task_id is not None:
+            data[self._TASK_ID_KEY] = self.task_id
+        if self.task_state is not None:
+            data[self._TASK_STATE_KEY] = self.task_state
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "A2AAgentSession":
+        """Restore session from a previously serialized dict.
+
+        Args:
+            data: Dict from a previous ``to_dict()`` call.
+
+        Returns:
+            Restored A2AAgentSession instance.
+        """
+        from agent_framework._sessions import _deserialize_state
+
+        data = dict(data)  # defensive copy
+        context_id = data.pop(cls._CONTEXT_ID_KEY, None)
+        task_id = data.pop(cls._TASK_ID_KEY, None)
+        task_state_value = data.pop(cls._TASK_STATE_KEY, None)
+
+        # TaskState is a protobuf enum (int values); store and restore as-is
+        task_state: TaskState | None = task_state_value if task_state_value is not None else None
+
+        session = cls(
+            session_id=data.get("session_id"),
+            context_id=context_id or data.get("service_session_id"),
+            task_id=task_id,
+            task_state=task_state,
+        )
+        session.state = _deserialize_state(data.get("state", {}))
+        return session
 
 
 class A2AContinuationToken(ContinuationToken):
@@ -289,10 +368,18 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         else:
             if not normalized_messages:
                 raise ValueError("At least one message is required when starting a new task (no continuation_token).")
-            previous_task_id = session.state.get("a2a_task_id") if session else None
+            # Read A2A-specific state from A2AAgentSession if available
+            context_id: str | None = None
+            previous_task_id: str | None = None
+            if isinstance(session, A2AAgentSession):
+                context_id = session.context_id
+                previous_task_id = session.task_id
+            elif session is not None:
+                context_id = session.service_session_id
+
             a2a_message = self._prepare_message_for_a2a(
                 normalized_messages[-1],
-                context_id=session.service_session_id if session else None,
+                context_id=context_id,
                 previous_task_id=previous_task_id,
             )
             a2a_stream = self.client.send_message(SendMessageRequest(message=a2a_message))
@@ -366,6 +453,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         all_updates: list[AgentResponseUpdate] = []
         streamed_artifact_ids_by_task: dict[str, set[str]] = {}
         last_task_id: str | None = None
+        last_context_id: str | None = None
+        last_task_state: TaskState | None = None
         # In non-streaming mode, accumulate intermediate status content so it
         # can be surfaced when the terminal event arrives (mirroring v0.3.x
         # behavior where the full Task history was available at completion).
@@ -391,6 +480,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             elif payload_type == "task":
                 task = item.task
                 last_task_id = task.id
+                if task.context_id:
+                    last_context_id = task.context_id
+                last_task_state = task.status.state
                 updates = self._updates_from_task(
                     task,
                     background=background,
@@ -413,6 +505,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             elif payload_type == "status_update":
                 status_event = item.status_update
                 last_task_id = status_event.task_id or last_task_id
+                if status_event.context_id:
+                    last_context_id = status_event.context_id
+                last_task_state = status_event.status.state
                 updates = self._updates_from_task_update_event(status_event)
                 is_terminal = status_event.status.state in TERMINAL_TASK_STATES
                 if emit_intermediate:
@@ -439,6 +534,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             elif payload_type == "artifact_update":
                 artifact_event = item.artifact_update
                 last_task_id = artifact_event.task_id or last_task_id
+                if artifact_event.context_id:
+                    last_context_id = artifact_event.context_id
                 updates = self._updates_from_task_update_event(artifact_event)
                 # Always yield artifact updates — they carry actual response
                 # content (files, data).  Track IDs so that a subsequent
@@ -457,10 +554,20 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if all_updates:
             session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
 
-        # Persist the last task_id on the session so follow-up messages can
-        # reference it via reference_task_ids (task refinements).
-        if session is not None and last_task_id:
-            session.state["a2a_task_id"] = last_task_id
+        # Persist A2A protocol state on the session for follow-up message linking.
+        if isinstance(session, A2AAgentSession) and last_task_id:
+            # Validate context_id consistency
+            if session.context_id is not None and last_context_id and session.context_id != last_context_id:
+                raise RuntimeError(
+                    f"The context_id returned from the A2A agent ('{last_context_id}') "
+                    f"differs from the session's context_id ('{session.context_id}')."
+                )
+            # Assign server-generated context_id if not already set
+            if session.context_id is None and last_context_id:
+                session.context_id = last_context_id
+                session.service_session_id = last_context_id
+            session.task_id = last_task_id
+            session.task_state = last_task_state
 
         await self._run_after_providers(session=session, context=session_context)
 
