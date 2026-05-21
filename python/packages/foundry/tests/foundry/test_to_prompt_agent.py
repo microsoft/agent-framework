@@ -26,7 +26,7 @@ from azure.ai.projects.models import (
 from agent_framework_foundry import (
     FoundryChatClient,
     RawFoundryChatClient,
-    deploy_as_prompt_agent,
+    create_prompt_agent,
     to_prompt_agent,
 )
 
@@ -288,12 +288,12 @@ def _make_foundry_chat_client_with_async_agents_ops(
     return client, create_version
 
 
-async def test_deploy_as_prompt_agent_publishes_definition() -> None:
-    """deploy_as_prompt_agent calls project_client.agents.create_version with the converted definition."""
+async def test_create_prompt_agent_publishes_definition() -> None:
+    """create_prompt_agent calls project_client.agents.create_version with the converted definition."""
     client, create_version = _make_foundry_chat_client_with_async_agents_ops()
     agent = _make_agent(client, instructions="x", tools=[WebSearchTool()])
 
-    result = await deploy_as_prompt_agent(agent, agent_name="travel-agent")
+    result = await create_prompt_agent(agent, agent_name="travel-agent")
 
     create_version.assert_awaited_once()
     call_kwargs = create_version.await_args.kwargs
@@ -307,7 +307,7 @@ async def test_deploy_as_prompt_agent_publishes_definition() -> None:
     assert result is create_version.return_value
 
 
-async def test_deploy_as_prompt_agent_defaults_name_and_description_from_agent() -> None:
+async def test_create_prompt_agent_defaults_name_and_description_from_agent() -> None:
     """When the Agent has name/description, the helper lifts them so the call site stays minimal."""
     client, create_version = _make_foundry_chat_client_with_async_agents_ops()
     agent = _make_agent(
@@ -317,14 +317,14 @@ async def test_deploy_as_prompt_agent_defaults_name_and_description_from_agent()
         description="Helps Contoso employees book travel.",
     )
 
-    await deploy_as_prompt_agent(agent)
+    await create_prompt_agent(agent)
 
     call_kwargs = create_version.await_args.kwargs
     assert call_kwargs["agent_name"] == "travel-agent"
     assert call_kwargs["description"] == "Helps Contoso employees book travel."
 
 
-async def test_deploy_as_prompt_agent_explicit_overrides_win() -> None:
+async def test_create_prompt_agent_explicit_overrides_win() -> None:
     """Explicit agent_name and description kwargs override the values from the Agent."""
     client, create_version = _make_foundry_chat_client_with_async_agents_ops()
     agent = _make_agent(
@@ -334,7 +334,7 @@ async def test_deploy_as_prompt_agent_explicit_overrides_win() -> None:
         description="Agent-level description",
     )
 
-    await deploy_as_prompt_agent(
+    await create_prompt_agent(
         agent,
         agent_name="travel-agent-v2",
         description="Override description",
@@ -345,23 +345,23 @@ async def test_deploy_as_prompt_agent_explicit_overrides_win() -> None:
     assert call_kwargs["description"] == "Override description"
 
 
-async def test_deploy_as_prompt_agent_requires_an_agent_name() -> None:
+async def test_create_prompt_agent_requires_an_agent_name() -> None:
     """If neither agent_name nor agent.name is set, a ValueError is raised before any service call."""
     client, create_version = _make_foundry_chat_client_with_async_agents_ops()
     agent = _make_agent(client, instructions="x")
     agent.name = None  # mirror an Agent constructed without a name
 
     with pytest.raises(ValueError, match="agent_name"):
-        await deploy_as_prompt_agent(agent)
+        await create_prompt_agent(agent)
     create_version.assert_not_awaited()
 
 
-async def test_deploy_as_prompt_agent_forwards_metadata_and_description() -> None:
+async def test_create_prompt_agent_forwards_metadata_and_description() -> None:
     """Optional metadata + description land on the create_version call."""
     client, create_version = _make_foundry_chat_client_with_async_agents_ops()
     agent = _make_agent(client, instructions="x")
 
-    await deploy_as_prompt_agent(
+    await create_prompt_agent(
         agent,
         agent_name="travel-agent",
         metadata={"env": "prod"},
@@ -373,17 +373,17 @@ async def test_deploy_as_prompt_agent_forwards_metadata_and_description() -> Non
     assert call_kwargs["description"] == "Production travel agent"
 
 
-async def test_deploy_as_prompt_agent_forwards_extra_kwargs() -> None:
+async def test_create_prompt_agent_forwards_extra_kwargs() -> None:
     """Extra keyword args fall through to project_client.agents.create_version."""
     client, create_version = _make_foundry_chat_client_with_async_agents_ops()
     agent = _make_agent(client, instructions="x")
 
-    await deploy_as_prompt_agent(agent, agent_name="travel-agent", headers={"x-trace": "abc"})
+    await create_prompt_agent(agent, agent_name="travel-agent", headers={"x-trace": "abc"})
 
     assert create_version.await_args.kwargs["headers"] == {"x-trace": "abc"}
 
 
-async def test_deploy_as_prompt_agent_rejects_non_foundry_client() -> None:
+async def test_create_prompt_agent_rejects_non_foundry_client() -> None:
     """A non-FoundryChatClient client raises TypeError before any service call."""
 
     class NotFoundryChatClient:
@@ -392,10 +392,10 @@ async def test_deploy_as_prompt_agent_rejects_non_foundry_client() -> None:
     agent = _make_agent(NotFoundryChatClient())
 
     with pytest.raises(TypeError, match="FoundryChatClient"):
-        await deploy_as_prompt_agent(agent, agent_name="travel-agent")
+        await create_prompt_agent(agent, agent_name="travel-agent")
 
 
-def test_deploy_as_prompt_agent_is_marked_experimental() -> None:
-    """deploy_as_prompt_agent carries the TO_PROMPT_AGENT experimental metadata."""
-    assert getattr(deploy_as_prompt_agent, "__feature_stage__", None) == "experimental"
-    assert getattr(deploy_as_prompt_agent, "__feature_id__", None) == ExperimentalFeature.TO_PROMPT_AGENT.value
+def test_create_prompt_agent_is_marked_experimental() -> None:
+    """create_prompt_agent carries the TO_PROMPT_AGENT experimental metadata."""
+    assert getattr(create_prompt_agent, "__feature_stage__", None) == "experimental"
+    assert getattr(create_prompt_agent, "__feature_id__", None) == ExperimentalFeature.TO_PROMPT_AGENT.value

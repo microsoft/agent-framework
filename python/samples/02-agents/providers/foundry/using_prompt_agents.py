@@ -6,7 +6,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryAgent, FoundryChatClient, deploy_as_prompt_agent
+from agent_framework.foundry import FoundryAgent, FoundryChatClient, create_prompt_agent
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
@@ -21,7 +21,7 @@ This sample shows the end-to-end loop:
 
 1. Build an ``Agent`` backed by ``FoundryChatClient`` with a local ``@tool``
    function and Foundry-hosted tools.
-2. Publish it to Foundry as a prompt agent via ``deploy_as_prompt_agent``.
+2. Publish it to Foundry as a prompt agent via ``create_prompt_agent``.
 3. Connect to the deployed prompt agent with ``FoundryAgent`` and pass the
    *same* ``book_hotel`` callable through ``tools=`` so the server-side
    prompt agent and the client share a single tool definition.
@@ -31,7 +31,7 @@ JSON schema). When the deployed agent decides to call the tool, ``FoundryAgent``
 executes the local Python implementation by matching tool names \u2014 keeping the
 schema on the server and the implementation on the client in sync.
 
-``deploy_as_prompt_agent`` is experimental
+``create_prompt_agent`` is experimental
 (``ExperimentalFeature.TO_PROMPT_AGENT``) and may change before reaching GA.
 """
 
@@ -71,7 +71,7 @@ async def main() -> None:
 
     # 2) Publish as a prompt agent. The version returned by Foundry includes the version label
     # we need when connecting back to that specific deployment.
-    created = await deploy_as_prompt_agent(agent)
+    created = await create_prompt_agent(agent)
     print(f"Published prompt agent: {created.name} v{created.version}\n")
 
     # 3) Connect to the deployed prompt agent with FoundryAgent and pass the *same* callable.

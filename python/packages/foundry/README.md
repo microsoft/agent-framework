@@ -43,7 +43,7 @@ async with Agent(
 ## Publishing an agent as a Foundry prompt agent
 
 > **Experimental — `ExperimentalFeature.TO_PROMPT_AGENT`.** `to_prompt_agent`
-> and `deploy_as_prompt_agent` are preview APIs and may change before reaching
+> and `create_prompt_agent` are preview APIs and may change before reaching
 > GA. The warning fires the first time the `TO_PROMPT_AGENT` feature is
 > exercised in a process and is then deduplicated.
 
@@ -55,7 +55,7 @@ the same agent definition you run locally can be published as a hosted prompt
 agent without restating the model deployment name.
 
 For the common case of "convert and publish in one step", use
-`deploy_as_prompt_agent(agent, agent_name=...)`. It reuses the bound
+`create_prompt_agent(agent, agent_name=...)`. It reuses the bound
 `FoundryChatClient`'s project client to call
 `project_client.agents.create_version(...)`, so the caller does not need to
 construct a separate `AIProjectClient`:
@@ -64,7 +64,7 @@ construct a separate `AIProjectClient`:
 import asyncio
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, deploy_as_prompt_agent
+from agent_framework.foundry import FoundryChatClient, create_prompt_agent
 from azure.identity.aio import AzureCliCredential
 
 
@@ -86,7 +86,7 @@ async def main() -> None:
         ],
     )
 
-    created = await deploy_as_prompt_agent(agent, agent_name="travel-agent")
+    created = await create_prompt_agent(agent, agent_name="travel-agent")
     print(f"Published {created.name} v{created.version}")
 
 
@@ -134,8 +134,8 @@ See the runnable examples under `samples/02-agents/providers/foundry/`:
 
 - [`creating_prompt_agents.py`](../../samples/02-agents/providers/foundry/creating_prompt_agents.py)
   \u2014 build an Agent, run it locally, and publish it via both
-  `deploy_as_prompt_agent` and `to_prompt_agent` + `AIProjectClient`.
+  `create_prompt_agent` and `to_prompt_agent` + `AIProjectClient`.
 - [`using_prompt_agents.py`](../../samples/02-agents/providers/foundry/using_prompt_agents.py)
-  \u2014 publish with `deploy_as_prompt_agent`, then connect back with
+  \u2014 publish with `create_prompt_agent`, then connect back with
   `FoundryAgent` and execute the same local `@tool` callable that the
   deployed prompt agent invokes by name.
