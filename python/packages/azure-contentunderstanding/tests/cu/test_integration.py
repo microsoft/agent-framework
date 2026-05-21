@@ -111,10 +111,12 @@ async def test_before_run_e2e() -> None:
             assert "invoice.pdf" in docs
             doc_entry = docs["invoice.pdf"]
             assert doc_entry["status"] == "ready"
-            assert doc_entry["result"] is not None
-            assert doc_entry["result"].get("markdown")
-            assert len(doc_entry["result"]["markdown"]) > 10
-            assert "CONTOSO LTD." in doc_entry["result"]["markdown"]
+            # ``result`` is now the rendered string from ``to_llm_input``.
+            rendered = doc_entry["result"]
+            assert isinstance(rendered, str)
+            assert len(rendered) > 10
+            assert "source: invoice.pdf" in rendered
+            assert "CONTOSO LTD." in rendered
 
 
 # Raw GitHub URL for a public invoice PDF from the CU samples repo
@@ -172,10 +174,11 @@ async def test_before_run_uri_content() -> None:
 
             doc_entry = docs["invoice.pdf"]
             assert doc_entry["status"] == "ready"
-            assert doc_entry["result"] is not None
-            assert doc_entry["result"].get("markdown")
-            assert len(doc_entry["result"]["markdown"]) > 10
-            assert "CONTOSO LTD." in doc_entry["result"]["markdown"]
+            rendered = doc_entry["result"]
+            assert isinstance(rendered, str)
+            assert len(rendered) > 10
+            assert "source: invoice.pdf" in rendered
+            assert "CONTOSO LTD." in rendered
 
 
 @pytest.mark.flaky
@@ -235,10 +238,11 @@ async def test_before_run_data_uri_content() -> None:
 
             doc_entry = docs["invoice_b64.pdf"]
             assert doc_entry["status"] == "ready"
-            assert doc_entry["result"] is not None
-            assert doc_entry["result"].get("markdown")
-            assert len(doc_entry["result"]["markdown"]) > 10
-            assert "CONTOSO LTD." in doc_entry["result"]["markdown"]
+            rendered = doc_entry["result"]
+            assert isinstance(rendered, str)
+            assert len(rendered) > 10
+            assert "source: invoice_b64.pdf" in rendered
+            assert "CONTOSO LTD." in rendered
 
 
 @pytest.mark.flaky
@@ -307,6 +311,6 @@ async def test_before_run_background_analysis() -> None:
             await cu.before_run(agent=MagicMock(), session=session, context=context2, state=state)
 
             assert docs["invoice.pdf"]["status"] == "ready"
-            assert docs["invoice.pdf"]["result"] is not None
-            assert docs["invoice.pdf"]["result"].get("markdown")
-            assert "CONTOSO LTD." in docs["invoice.pdf"]["result"]["markdown"]
+            rendered = docs["invoice.pdf"]["result"]
+            assert isinstance(rendered, str)
+            assert "CONTOSO LTD." in rendered
