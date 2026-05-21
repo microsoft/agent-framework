@@ -607,65 +607,36 @@ async def test_streaming_per_service_call_persistence_hides_response_id_from_aft
     assert provider_state["response_ids"] == [None, None]
 
 
-async def test_per_service_call_persistence_uses_real_service_storage_when_client_stores_by_default(
+async def test_per_service_call_persistence_rejects_service_storage_when_client_stores_by_default(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     provider = _RecordingHistoryProvider()
-
-    @tool(name="lookup_weather", approval_mode="never_require")
-    def lookup_weather(location: str) -> str:
-        return f"Weather in {location}: sunny"
 
     chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
 
     session = AgentSession()
     session.state[provider.source_id] = {"messages": []}
-    chat_client_base.run_responses = [
-        ChatResponse(
-            messages=Message(
-                role="assistant",
-                contents=[
-                    Content.from_function_call(
-                        call_id="call_1",
-                        name="lookup_weather",
-                        arguments='{"location": "Seattle"}',
-                    )
-                ],
-            ),
-            conversation_id="resp_service_managed",
-            response_id="resp_call_1",
-        ),
-        ChatResponse(
-            messages=Message(role="assistant", contents=["It is sunny in Seattle."]),
-            conversation_id="resp_service_managed",
-            response_id="resp_call_2",
-        ),
-    ]
 
     agent = Agent(
         client=chat_client_base,
-        tools=[lookup_weather],
         context_providers=[provider],
         require_per_service_call_history_persistence=True,
     )
 
-    result = await agent.run("What's the weather in Seattle?", session=session)
+    with pytest.raises(AgentInvalidRequestException, match="store=False"):
+        await agent.run("Hello", session=session)
 
     provider_state = session.state[provider.source_id]
 
-    assert result.text == "It is sunny in Seattle."
-    assert result.response_id == "resp_call_2"
-    assert chat_client_base.call_count == 2
+    assert chat_client_base.call_count == 0
     assert "get_call_count" not in provider_state
     assert "save_call_count" not in provider_state
-    assert session.service_session_id == "resp_service_managed"
+    assert session.service_session_id is None
 
 
-async def test_service_storage_updates_session_handle_per_service_call_before_non_streaming_failure(
+async def test_service_storage_updates_session_handle_before_non_streaming_failure(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    provider = _RecordingHistoryProvider()
-
     @tool(name="lookup_weather", approval_mode="never_require")
     def lookup_weather(location: str) -> str:
         return f"Weather in {location}: sunny"
@@ -673,7 +644,6 @@ async def test_service_storage_updates_session_handle_per_service_call_before_no
     chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
 
     session = AgentSession()
-    session.state[provider.source_id] = {"messages": []}
     first_response = ChatResponse(
         messages=Message(
             role="assistant",
@@ -695,8 +665,6 @@ async def test_service_storage_updates_session_handle_per_service_call_before_no
     agent = Agent(
         client=chat_client_base,
         tools=[lookup_weather],
-        context_providers=[provider],
-        require_per_service_call_history_persistence=True,
     )
 
     with (
@@ -709,11 +677,9 @@ async def test_service_storage_updates_session_handle_per_service_call_before_no
     assert session.service_session_id == "resp_call_1"
 
 
-async def test_service_storage_updates_session_handle_per_service_call_before_streaming_failure(
+async def test_service_storage_updates_session_handle_before_streaming_failure(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    provider = _RecordingHistoryProvider()
-
     @tool(name="lookup_weather", approval_mode="never_require")
     def lookup_weather(location: str) -> str:
         return f"Weather in {location}: sunny"
@@ -721,7 +687,6 @@ async def test_service_storage_updates_session_handle_per_service_call_before_st
     chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
 
     session = AgentSession()
-    session.state[provider.source_id] = {"messages": []}
 
     async def _first_stream_updates() -> AsyncIterable[ChatResponseUpdate]:
         yield ChatResponseUpdate(
@@ -758,8 +723,6 @@ async def test_service_storage_updates_session_handle_per_service_call_before_st
     agent = Agent(
         client=chat_client_base,
         tools=[lookup_weather],
-        context_providers=[provider],
-        require_per_service_call_history_persistence=True,
     )
 
     with (
