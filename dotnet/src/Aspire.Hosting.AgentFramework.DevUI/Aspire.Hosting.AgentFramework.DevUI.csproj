@@ -31,6 +31,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      Microsoft.Agents.AI.DevUI ships the embedded DevUI frontend assets that the
+      aggregator loads at runtime via Assembly.Load. Reference it here so users of
+      Aspire.Hosting.AgentFramework.DevUI get the frontend out of the box without
+      having to add a second package to their AppHost project.
+    -->
+    <ProjectReference Include="..\Microsoft.Agents.AI.DevUI\Microsoft.Agents.AI.DevUI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>
