@@ -32,10 +32,34 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
     pending_tool_call_ids: set[str] | None = None
     pending_confirm_changes_id: str | None = None
 
+    def flush_pending_tool_calls(reason: str) -> None:
+        nonlocal pending_tool_call_ids, pending_confirm_changes_id
+        if not pending_tool_call_ids:
+            return
+
+        logger.info(f"{reason} with {len(pending_tool_call_ids)} pending tool calls - injecting synthetic results")
+        for pending_call_id in pending_tool_call_ids:
+            logger.info(f"Injecting synthetic tool result for pending call_id={pending_call_id}")
+            sanitized.append(
+                Message(
+                    role="tool",
+                    contents=[
+                        Content.from_function_result(
+                            call_id=pending_call_id,
+                            result="Tool execution skipped - history continued without matching tool result",
+                        )
+                    ],
+                )
+            )
+        pending_tool_call_ids = None
+        pending_confirm_changes_id = None
+
     for msg in messages:
         role_value = get_role_value(msg)
 
         if role_value == "assistant":
+            flush_pending_tool_calls("Assistant message arrived")
+
             tool_ids = {
                 str(content.call_id)
                 for content in msg.contents or []
@@ -147,24 +171,7 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                     logger.debug(f"Could not parse user message as confirm_changes response: {type(exc).__name__}")
 
             if pending_tool_call_ids:
-                logger.info(
-                    f"User message arrived with {len(pending_tool_call_ids)} pending tool calls - "
-                    "injecting synthetic results"
-                )
-                for pending_call_id in pending_tool_call_ids:
-                    logger.info(f"Injecting synthetic tool result for pending call_id={pending_call_id}")
-                    synthetic_result = Message(
-                        role="tool",
-                        contents=[
-                            Content.from_function_result(
-                                call_id=pending_call_id,
-                                result="Tool execution skipped - user provided follow-up message",
-                            )
-                        ],
-                    )
-                    sanitized.append(synthetic_result)
-                pending_tool_call_ids = None
-                pending_confirm_changes_id = None
+                flush_pending_tool_calls("User message arrived")
 
             sanitized.append(msg)
             pending_confirm_changes_id = None
@@ -193,6 +200,8 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
         sanitized.append(msg)
         pending_tool_call_ids = None
         pending_confirm_changes_id = None
+
+    flush_pending_tool_calls("History ended")
 
     return sanitized
 

@@ -994,6 +994,46 @@ def test_sanitize_pending_tool_skip_on_user_followup():
     assert "skipped" in str(tool_results[0].contents[0].result).lower()
 
 
+def test_sanitize_consecutive_assistant_tool_calls_flushes_previous_pending():
+    """A second assistant tool-call message must not orphan the first call."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    first_assistant = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="first_tool", arguments="{}")],
+    )
+    second_assistant = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c2", name="second_tool", arguments="{}")],
+    )
+    user_msg = Message(role="user", contents=[Content.from_text(text="continue")])
+
+    result = _sanitize_tool_history([first_assistant, second_assistant, user_msg])
+
+    assert [m.role for m in result] == ["assistant", "tool", "assistant", "tool", "user"]
+    tool_results = [m.contents[0] for m in result if m.role == "tool"]
+    assert [content.call_id for content in tool_results] == ["c1", "c2"]
+
+
+def test_sanitize_history_end_flushes_pending_tool_calls():
+    """History ending after assistant tool calls still needs matching tool results."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="first_tool", arguments="{}"),
+            Content.from_function_call(call_id="c2", name="second_tool", arguments="{}"),
+        ],
+    )
+
+    result = _sanitize_tool_history([assistant_msg])
+
+    assert [m.role for m in result] == ["assistant", "tool", "tool"]
+    tool_results = [m.contents[0] for m in result if m.role == "tool"]
+    assert {content.call_id for content in tool_results} == {"c1", "c2"}
+
+
 def test_sanitize_tool_result_clears_pending_confirm():
     """Tool result for pending confirm_changes call_id clears pending state."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
