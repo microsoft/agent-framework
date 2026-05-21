@@ -289,9 +289,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         else:
             if not normalized_messages:
                 raise ValueError("At least one message is required when starting a new task (no continuation_token).")
+            previous_task_id = session.state.get("a2a_task_id") if session else None
             a2a_message = self._prepare_message_for_a2a(
                 normalized_messages[-1],
                 context_id=session.service_session_id if session else None,
+                previous_task_id=previous_task_id,
             )
             a2a_stream = self.client.send_message(SendMessageRequest(message=a2a_message))
 
@@ -363,6 +365,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         all_updates: list[AgentResponseUpdate] = []
         streamed_artifact_ids_by_task: dict[str, set[str]] = {}
+        last_task_id: str | None = None
         # In non-streaming mode, accumulate intermediate status content so it
         # can be surfaced when the terminal event arrives (mirroring v0.3.x
         # behavior where the full Task history was available at completion).
@@ -372,6 +375,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if payload_type == "message":
                 # Process A2A Message
                 msg = item.message
+                if msg.task_id:
+                    last_task_id = msg.task_id
                 contents = self._parse_contents_from_a2a(msg.parts)
                 metadata = MessageToDict(msg.metadata) if msg.metadata else None
                 update = AgentResponseUpdate(
@@ -385,6 +390,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 yield update
             elif payload_type == "task":
                 task = item.task
+                last_task_id = task.id
                 updates = self._updates_from_task(
                     task,
                     background=background,
@@ -406,6 +412,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     yield update
             elif payload_type == "status_update":
                 status_event = item.status_update
+                last_task_id = status_event.task_id or last_task_id
                 updates = self._updates_from_task_update_event(status_event)
                 is_terminal = status_event.status.state in TERMINAL_TASK_STATES
                 if emit_intermediate:
@@ -431,6 +438,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         pending_updates_by_task.setdefault(status_event.task_id, []).extend(updates)
             elif payload_type == "artifact_update":
                 artifact_event = item.artifact_update
+                last_task_id = artifact_event.task_id or last_task_id
                 updates = self._updates_from_task_update_event(artifact_event)
                 # Always yield artifact updates — they carry actual response
                 # content (files, data).  Track IDs so that a subsequent
@@ -448,6 +456,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         # Set the response on the context for after_run providers
         if all_updates:
             session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
+
+        # Persist the last task_id on the session so follow-up messages can
+        # reference it via reference_task_ids (task refinements).
+        if session is not None and last_task_id:
+            session.state["a2a_task_id"] = last_task_id
 
         await self._run_after_providers(session=session, context=session_context)
 
@@ -618,7 +631,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
 
-    def _prepare_message_for_a2a(self, message: Message, *, context_id: str | None = None) -> A2AMessage:
+    def _prepare_message_for_a2a(
+        self, message: Message, *, context_id: str | None = None, previous_task_id: str | None = None
+    ) -> A2AMessage:
         """Prepare a Message for the A2A protocol.
 
         Transforms Agent Framework Message objects into A2A protocol Messages by:
@@ -627,13 +642,19 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         - Converting file references (URI/data/hosted_file) to FilePart objects
         - Preserving metadata and additional properties from the original message
         - Setting the role to 'user' as framework messages are treated as user input
+        - Linking follow-up messages to previous tasks via reference_task_ids
 
         Args:
             message: The framework Message to convert.
+
+        Keyword Args:
             context_id: Optional fallback context identifier (e.g. derived from
                 ``AgentSession.service_session_id``). When the *message* already
                 carries a ``context_id`` in its ``additional_properties`` that
                 value takes precedence; otherwise this fallback is used.
+            previous_task_id: Optional task ID from a previous interaction. When
+                provided, the message is linked as a follow-up (task refinement)
+                via ``reference_task_ids``.
         """
         parts: list[A2APart] = []
         if not message.contents:
@@ -693,13 +714,18 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         a2a_metadata = message.additional_properties.get("a2a_metadata")
 
-        return A2AMessage(
+        a2a_message = A2AMessage(
             role=A2ARole.ROLE_USER,
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
             context_id=message.additional_properties.get("context_id") or context_id,
             metadata=a2a_metadata or {},
         )
+
+        if previous_task_id:
+            a2a_message.reference_task_ids.append(previous_task_id)
+
+        return a2a_message
 
     def _parse_contents_from_a2a(self, parts: Sequence[A2APart]) -> list[Content]:
         """Parse A2A Parts into Agent Framework Content.
