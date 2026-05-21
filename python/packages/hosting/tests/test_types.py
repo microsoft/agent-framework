@@ -10,7 +10,7 @@ from agent_framework_hosting import (
     ChannelIdentity,
     ChannelRequest,
     ChannelSession,
-    DeliveryReport,
+    DurableTaskPayloadMode,
     ResponseTarget,
     ResponseTargetKind,
     apply_run_hook,
@@ -191,39 +191,62 @@ class TestApplyRunHook:
         assert captured["protocol_request_in_kwargs"] is True
 
 
-class TestDeliveryReport:
-    """`DeliveryReport.failed` records *schedule-time* failures (the
-    durable runner refused the work — a host-side outage), distinct
-    from `skipped` (no link recorded / no push capability). Downstream
-    delivery outcomes — including `ChannelPush.push` raising — are
-    owned by the runner and observable via its backend, not via the
-    report. Assert the field exists, defaults empty, and accepts the
-    documented shape; the original `pushed` / `skipped` semantics
-    (now meaning "scheduled successfully" / "dropped at resolution")
-    are preserved."""
+class TestDurableTaskPayloadMode:
+    """``DurableTaskPayloadMode`` distinguishes object-mode (in-process,
+    live references) from JSON-mode (durable persistence, channel codec
+    required) runners. The host's startup validator uses the value to
+    refuse misconfigured deployments."""
 
-    def test_defaults_are_empty_tuples(self) -> None:
-        report = DeliveryReport(include_originating=True)
-        assert report.include_originating is True
-        assert report.pushed == ()
-        assert report.skipped == ()
-        assert report.failed == ()
+    def test_enum_values(self) -> None:
+        assert DurableTaskPayloadMode.OBJECT.value == "object"
+        assert DurableTaskPayloadMode.JSON.value == "json"
+        # Both members; no surprise additions until we ship a third
+        # adapter style.
+        assert set(DurableTaskPayloadMode) == {DurableTaskPayloadMode.OBJECT, DurableTaskPayloadMode.JSON}
 
-    def test_failed_carries_token_and_error_summary(self) -> None:
-        # ``failed`` carries (token, summary) per destination whose
-        # ``DurableTaskRunner.schedule(...)`` raised — a host-side
-        # outage indicator. The originating channel can use it to
-        # decide whether to surface a degraded reply itself.
-        report = DeliveryReport(
-            include_originating=False,
-            pushed=("teams:42",),
-            skipped=("telegram",),
-            failed=(("telegram:99", "RuntimeError: runner backend unreachable"),),
-        )
-        assert report.pushed == ("teams:42",)
-        assert report.skipped == ("telegram",)
-        assert len(report.failed) == 1
-        token, summary = report.failed[0]
-        assert token == "telegram:99"
-        assert "RuntimeError" in summary
-        assert "runner backend unreachable" in summary
+
+class TestResponseTargetIdentities:
+    """``ResponseTarget.identity``/``.identities`` carry full
+    :class:`ChannelIdentity` objects (incl. attributes) so destination
+    channels that need conversation/thread metadata (Teams, Slack, Bot
+    Framework) don't have to encode it through string tokens."""
+
+    def test_identity_single(self) -> None:
+        ident = ChannelIdentity(channel="teams", native_id="user@contoso", attributes={"tenant_id": "abc"})
+        target = ResponseTarget.identity(ident)
+        assert target.kind is ResponseTargetKind.IDENTITIES
+        assert len(target.target_identities) == 1
+        assert target.target_identities[0].channel == "teams"
+        assert target.target_identities[0].native_id == "user@contoso"
+        assert dict(target.target_identities[0].attributes) == {"tenant_id": "abc"}
+
+    def test_identities_list_preserves_attributes(self) -> None:
+        ident_a = ChannelIdentity(channel="teams", native_id="u1", attributes={"thread": "t1"})
+        ident_b = ChannelIdentity(channel="slack", native_id="u2", attributes={"channel_id": "c2"})
+        target = ResponseTarget.identities([ident_a, ident_b])
+        assert target.kind is ResponseTargetKind.IDENTITIES
+        assert len(target.target_identities) == 2
+        assert dict(target.target_identities[0].attributes) == {"thread": "t1"}
+        assert dict(target.target_identities[1].attributes) == {"channel_id": "c2"}
+
+    def test_identity_value_equality_matches_on_attributes(self) -> None:
+        # Two ``ResponseTarget.identity`` values built independently
+        # compare equal when the underlying ``ChannelIdentity`` content
+        # matches — important because tests and channel parsers use
+        # ``==`` on targets.
+        ident_a = ChannelIdentity(channel="teams", native_id="u1", attributes={"thread": "t1"})
+        ident_b = ChannelIdentity(channel="teams", native_id="u1", attributes={"thread": "t1"})
+        assert ResponseTarget.identity(ident_a) == ResponseTarget.identity(ident_b)
+        # Different attributes → not equal.
+        ident_c = ChannelIdentity(channel="teams", native_id="u1", attributes={"thread": "t2"})
+        assert ResponseTarget.identity(ident_a) != ResponseTarget.identity(ident_c)
+
+    def test_identity_repr_includes_targets(self) -> None:
+        ident = ChannelIdentity(channel="teams", native_id="u1")
+        rep = repr(ResponseTarget.identity(ident))
+        assert "ResponseTarget.identities" in rep
+
+    def test_identity_echo_input_flag(self) -> None:
+        ident = ChannelIdentity(channel="teams", native_id="u1")
+        target = ResponseTarget.identity(ident, echo_input=True)
+        assert target.echo_input is True

@@ -14,6 +14,7 @@ from agent_framework_hosting import (
     AgentFrameworkHost,
     ChannelContext,
     ChannelContribution,
+    DurableTaskPayloadMode,
     InProcessTaskRunner,
     RetryPolicy,
     TaskHandle,
@@ -93,15 +94,29 @@ class TestHostRuntimeMode:
         )
         assert host.runtime_mode == "long_running"
 
-    def test_explicit_ephemeral_warns_with_default_runner(self, caplog: pytest.LogCaptureFixture) -> None:
-        # Default runner is in-process and not durable; ephemeral
-        # deployments should be warned at construction so the operator
-        # doesn't ship a config that silently loses pushes.
+    def test_explicit_ephemeral_with_default_runner_raises(self) -> None:
+        # Default runner is in-process and not durable. Ephemeral
+        # deployments would silently lose pushes on scale-to-zero, so
+        # the host refuses the combination at construction unless the
+        # operator opts in explicitly via ``allow_in_process_runner``.
+        with pytest.raises(RuntimeError, match="ephemeral"):
+            AgentFrameworkHost(
+                target=_AgentStub(),
+                channels=[_ChannelStub()],
+                runtime_mode="ephemeral",
+            )
+
+    def test_explicit_ephemeral_with_in_process_opt_in_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        # The opt-in escape hatch keeps the old warn-and-proceed
+        # behaviour for local-dev / smoke-test scenarios that genuinely
+        # want ephemeral runtime semantics without a real durable
+        # backend.
         with caplog.at_level("WARNING", logger="agent_framework.hosting"):
             host = AgentFrameworkHost(
                 target=_AgentStub(),
                 channels=[_ChannelStub()],
                 runtime_mode="ephemeral",
+                allow_in_process_runner=True,
             )
         assert host.runtime_mode == "ephemeral"
         assert any("ephemeral" in r.getMessage() and "InProcessTaskRunner" in r.getMessage() for r in caplog.records)
@@ -120,9 +135,19 @@ class TestHostRuntimeMode:
         assert host.durable_task_runner is runner
         assert not any("ephemeral" in r.getMessage() for r in caplog.records)
 
-    def test_auto_detect_uses_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_auto_detect_ephemeral_raises_without_opt_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Auto-detected ephemeral flows through the same strict gate.
         monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "production")
-        host = AgentFrameworkHost(target=_AgentStub(), channels=[_ChannelStub()])
+        with pytest.raises(RuntimeError, match="ephemeral"):
+            AgentFrameworkHost(target=_AgentStub(), channels=[_ChannelStub()])
+
+    def test_auto_detect_ephemeral_with_opt_in_proceeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "production")
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub()],
+            allow_in_process_runner=True,
+        )
         assert host.runtime_mode == "ephemeral"
 
     def test_default_runner_is_in_process_task_runner(self) -> None:
@@ -222,6 +247,31 @@ class TestInProcessTaskRunner:
         assert cancelled.is_set()
         assert await runner.get(handle) == "cancelled"
 
+    async def test_shutdown_grace_drain_does_not_cancel_finishing_tasks(self) -> None:
+        """A short-lived task that completes within the grace window
+        must NOT receive a cancellation. The grace-period drain is the
+        graceful-shutdown contract — channels with goodbye-message
+        flushes rely on it."""
+        runner = InProcessTaskRunner()
+        cancelled = asyncio.Event()
+        completed = asyncio.Event()
+
+        async def quick(_p: Mapping[str, Any]) -> None:
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            completed.set()
+
+        runner.register("quick", quick)
+        handle = await runner.schedule("quick", {})
+        # Shutdown with a generous grace window relative to the task duration.
+        await runner.shutdown(timeout=1.0)
+        assert completed.is_set()
+        assert not cancelled.is_set()
+        assert await runner.get(handle) == "succeeded"
+
     async def test_get_returns_none_for_unknown_handle(self) -> None:
         runner = InProcessTaskRunner()
         handle = TaskHandle(task_id="never-scheduled", name="x")
@@ -251,6 +301,15 @@ class TestInProcessTaskRunner:
         runner = InProcessTaskRunner()
         # No-op shouldn't raise.
         await runner.shutdown()
+
+    def test_payload_mode_defaults_to_object(self) -> None:
+        # The in-process runner passes live Python references through
+        # the payload — the host wires this attribute into its codec
+        # validator at startup. Durable adapters that persist payloads
+        # must override this to ``JSON`` so the host refuses to ship
+        # un-serialisable references.
+        runner = InProcessTaskRunner()
+        assert runner.payload_mode == DurableTaskPayloadMode.OBJECT
 
 
 # --------------------------------------------------------------------------- #

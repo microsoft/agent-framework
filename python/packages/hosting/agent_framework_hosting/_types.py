@@ -87,6 +87,7 @@ class ResponseTargetKind(str, Enum):
     ACTIVE = "active"
     CHANNELS = "channels"
     ALL_LINKED = "all_linked"
+    IDENTITIES = "identities"
     NONE = "none"
 
 
@@ -106,6 +107,12 @@ class ResponseTarget:
       name (host resolves the native id from its identity registry) or a
       ``"channel:native_id"`` token (used verbatim). The pseudo-name
       ``"originating"`` includes the originating channel in the fan-out.
+    - ``ResponseTarget.identity(ChannelIdentity)`` /
+      ``.identities([ChannelIdentity, ...])`` — push to one or more
+      **fully-specified identities**. Preferred over the ``"channel:native_id"``
+      string variant when the destination needs ``identity.attributes``
+      preserved (Teams conversation/thread metadata, Slack channel+thread,
+      Bot Framework service-url, etc.).
     - ``ResponseTarget.all_linked`` — push to every channel where the
       resolved ``isolation_key`` has been observed.
     - ``ResponseTarget.none`` — background-only; in the prototype this just
@@ -119,11 +126,18 @@ class ResponseTarget:
         self,
         kind: ResponseTargetKind = ResponseTargetKind.ORIGINATING,
         targets: tuple[str, ...] = (),
+        identities: tuple[ChannelIdentity, ...] = (),
         *,
         echo_input: bool = False,
     ) -> None:
         self.kind = kind
         self.targets = targets
+        # Stored under a non-clashing name so the ``identities``
+        # *classmethod* (the public builder) can coexist with the
+        # value accessor (the ``identities`` property below). At
+        # runtime instance attributes shadow class attributes anyway,
+        # but type checkers see the classmethod and reject reassignment.
+        self._target_identities: tuple[ChannelIdentity, ...] = tuple(identities)
         # When True, the host first pushes the originating user message
         # to every non-originating destination (so end-user apps observing
         # those channels can keep their UI in sync) before pushing the
@@ -131,6 +145,15 @@ class ResponseTarget:
         # every channel knows how to render ``role="user"`` content
         # gracefully on its own surface.
         self.echo_input = echo_input
+
+    @property
+    def target_identities(self) -> tuple[ChannelIdentity, ...]:
+        """Destination identities for ``kind == IDENTITIES`` targets.
+
+        Public name distinct from the :meth:`identities` classmethod
+        builder. Empty for non-``IDENTITIES`` kinds.
+        """
+        return self._target_identities
 
     # -- builders ---------------------------------------------------------- #
 
@@ -144,25 +167,78 @@ class ResponseTarget:
         """Target an explicit list of destination channels."""
         return cls(kind=ResponseTargetKind.CHANNELS, targets=tuple(names), echo_input=echo_input)
 
+    @classmethod
+    def identity(cls, identity: ChannelIdentity, *, echo_input: bool = False) -> ResponseTarget:
+        """Target a single fully-specified :class:`ChannelIdentity`.
+
+        Preferred over the ``"channel:native_id"`` string token in
+        :meth:`channels` when ``identity.attributes`` carries metadata the
+        destination channel needs (Teams conversation/thread ids and
+        service-url, Slack channel + thread, Bot Framework activity-locator
+        fields, etc.). The host pushes to the named identity verbatim
+        without consulting its own identity registry.
+        """
+        return cls(kind=ResponseTargetKind.IDENTITIES, identities=(identity,), echo_input=echo_input)
+
+    @classmethod
+    def identities(cls, identities: Sequence[ChannelIdentity], *, echo_input: bool = False) -> ResponseTarget:
+        """Target an explicit list of fully-specified :class:`ChannelIdentity` objects.
+
+        See :meth:`identity` for the single-destination variant.
+        """
+        return cls(kind=ResponseTargetKind.IDENTITIES, identities=tuple(identities), echo_input=echo_input)
+
     # -- value semantics --------------------------------------------------- #
     # ``ResponseTarget`` is treated as immutable, so two instances with the
-    # same ``kind`` + ``targets`` + ``echo_input`` are interchangeable.
-    # Tests and channel parsers compare instances with ``==`` and use them
-    # as dict keys.
+    # same ``kind`` + ``targets`` + ``identities`` + ``echo_input`` are
+    # interchangeable. Tests and channel parsers compare instances with
+    # ``==`` and use them as dict keys.
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ResponseTarget):
             return NotImplemented
-        return self.kind is other.kind and self.targets == other.targets and self.echo_input == other.echo_input
+        return (
+            self.kind is other.kind
+            and self.targets == other.targets
+            and _identities_equal(self._target_identities, other._target_identities)
+            and self.echo_input == other.echo_input
+        )
 
     def __hash__(self) -> int:
-        return hash((self.kind, self.targets, self.echo_input))
+        # ``ChannelIdentity`` is not itself hashable (mutable attributes
+        # mapping); fold the identifying triple so two ``identities``
+        # tuples with the same channel/native_id/attributes content hash
+        # the same.
+        identities_key = tuple(
+            (i.channel, i.native_id, tuple(sorted(i.attributes.items()))) for i in self._target_identities
+        )
+        return hash((self.kind, self.targets, identities_key, self.echo_input))
 
     def __repr__(self) -> str:
         suffix = ", echo_input=True" if self.echo_input else ""
         if self.kind is ResponseTargetKind.CHANNELS:
             return f"ResponseTarget.channels({list(self.targets)!r}{suffix})"
+        if self.kind is ResponseTargetKind.IDENTITIES:
+            return f"ResponseTarget.identities({list(self._target_identities)!r}{suffix})"
         return f"ResponseTarget.{self.kind.value}{suffix}"
+
+
+def _identities_equal(left: tuple[ChannelIdentity, ...], right: tuple[ChannelIdentity, ...]) -> bool:
+    """Structural-equality helper for ``ResponseTarget.identities`` comparisons.
+
+    ``ChannelIdentity`` is a plain class without ``__eq__``, so ``tuple`` /
+    ``list`` comparisons fall back to identity equality which is too strict
+    for value-typed ``ResponseTarget`` callers (two equivalent identity
+    tuples produced independently would otherwise compare unequal).
+    """
+    if len(left) != len(right):
+        return False
+    for a, b in zip(left, right, strict=True):
+        if a.channel != b.channel or a.native_id != b.native_id:
+            return False
+        if dict(a.attributes) != dict(b.attributes):
+            return False
+    return True
 
 
 # Module-level singletons so callers can write ``ResponseTarget.originating``
@@ -326,63 +402,92 @@ class HostedRunResult(Generic[TResult]):
         return new
 
 
-class DeliveryReport:
-    """What :meth:`ChannelContext.deliver_response` did with a payload.
+class DurableTaskPayloadMode(str, Enum):
+    """How a :class:`DurableTaskRunner` consumes scheduled-task payloads.
 
-    The originating channel uses ``include_originating`` to decide whether
-    to render the agent reply on its own wire (``True`` — default for the
-    ``originating`` target, or when ``"originating"`` is one of the listed
-    destinations) or to return only an acknowledgement (``False`` — when
-    the target lists only out-of-band destinations).
+    Used by the host's startup validator to pair a runner's persistence
+    expectations with the channels' push-codec capabilities. Adapter packages
+    pick the right value for their backing store.
 
-    Non-originating destinations are dispatched **asynchronously** via the
-    host's :class:`DurableTaskRunner`. ``pushed`` lists the destinations
-    whose push task was **scheduled successfully** — not necessarily yet
-    delivered. The runner owns subsequent retry, terminal-failure
-    bookkeeping, and (for durable runners) cross-restart replay; operators
-    inspect runner-backend state for live delivery outcome rather than
-    this report.
-
-    ``skipped`` records destinations dropped at resolution time, *before*
-    any scheduling attempt — typically because the destination channel
-    does not implement :class:`ChannelPush`, the host has no recorded
-    identity for that channel under the current ``isolation_key``, or the
-    channel name is unknown. ``failed`` records destinations whose
-    :meth:`DurableTaskRunner.schedule` call itself raised (a configuration
-    or runner-internal failure — *not* a delivery failure, which the
-    runner handles). A non-empty ``failed`` indicates a host-side outage
-    (e.g. the runner backend is unreachable) and is the right signal for
-    a caller that wants to surface a degraded reply to the originating
-    user instead of treating the request as fully dispatched.
-
-    Echo phase. When ``ResponseTarget.echo_input`` is set the originating
-    user message is dispatched to each non-originating destination *before*
-    the agent reply, within the same per-destination push task. Echo
-    outcome is not reported back to the originating channel — it lives in
-    the runner's own log alongside the agent-reply outcome.
+    * ``OBJECT`` — the runner accepts live Python objects in the payload.
+      No serialization is required; the host's
+      :class:`InProcessTaskRunner` is the canonical example. Suitable for
+      ``runtime_mode="long_running"`` deployments where the runner shares
+      address space with the producer.
+    * ``JSON`` — the runner persists the payload (database, durable queue,
+      Foundry scheduled-task store, …) and replays it after a process
+      restart. Payloads MUST be JSON-serializable, which constrains what
+      the host can put on the wire. The host validates at construction
+      that every push-capable channel exposes a
+      :class:`ChannelPushCodec` (so :class:`HostedRunResult` payloads can
+      be reduced to a JSON envelope before scheduling).
     """
 
-    def __init__(
+    OBJECT = "object"
+    JSON = "json"
+
+
+# A push-codec implementation reduces the ``(result, request, identity)``
+# triple a destination channel will receive into a JSON-safe envelope that
+# a durable :class:`DurableTaskRunner` can persist, and reconstructs the
+# rendering inputs on the consumer side. The host *invokes* the codec
+# during scheduling; the destination channel implements it (the channel
+# knows what shape of payload it can render).
+#
+# Channels with no push codec are usable only with object-mode runners
+# (the default :class:`InProcessTaskRunner`) — the host validates this at
+# construction so the mismatch surfaces eagerly rather than on first push.
+class ChannelPushCodec(Protocol):
+    """Optional capability: serialise the push envelope for a durable task runner.
+
+    Implementations live on the destination channel (alongside ``push``)
+    as a duck-typed ``push_codec`` attribute. The host's
+    :meth:`_deliver_response` invokes :meth:`encode` once per scheduled
+    push (in JSON-mode runner deployments) to produce a JSON-safe
+    envelope for the runner; the handler calls :meth:`decode`
+    immediately before invoking :meth:`ChannelPush.push`. Object-mode
+    runners (the default in-process runner) bypass the codec entirely
+    and pass live references through verbatim.
+
+    Encoded envelopes MUST be JSON-serialisable
+    (``dict``/``list``/``str``/``int``/``float``/``bool``/``None``).
+    Channels that cannot satisfy this for some inputs (e.g. arbitrary
+    workflow result objects without a stable schema) SHOULD raise a
+    typed :class:`PushPayloadNotSerializable` from :meth:`encode`
+    rather than return a best-effort representation; the host surfaces
+    that as a schedule-time error and the destination is treated as
+    skipped (other destinations still get their chance).
+    """
+
+    async def encode(
         self,
-        include_originating: bool,
-        pushed: tuple[str, ...] = (),
-        skipped: tuple[str, ...] = (),
-        failed: tuple[tuple[str, str], ...] = (),
-    ) -> None:
-        self.include_originating = include_originating
-        # Destination tokens whose push task was *scheduled* with the
-        # durable task runner. Not yet (necessarily) delivered.
-        self.pushed = pushed
-        # Destinations dropped at resolution time — no channel of that
-        # name, channel doesn't implement ``ChannelPush``, or no
-        # identity recorded for that channel under the current
-        # ``isolation_key``.
-        self.skipped = skipped
-        # Destinations whose ``runner.schedule(...)`` itself raised —
-        # a configuration / runner-side failure, *not* a delivery
-        # failure (the runner handles those). Each entry is
-        # ``(target_token, error_summary)``.
-        self.failed = failed
+        *,
+        result: HostedRunResult[Any],
+        request: ChannelRequest,
+        identity: ChannelIdentity,
+        echo_result: HostedRunResult[Any] | None,
+    ) -> Mapping[str, Any]:
+        """Project the in-memory push triple into a JSON-safe envelope."""
+        ...
+
+    async def decode(
+        self,
+        envelope: Mapping[str, Any],
+    ) -> tuple[HostedRunResult[Any], ChannelRequest, ChannelIdentity, HostedRunResult[Any] | None]:
+        """Reconstruct ``(result, request, identity, echo_result)`` from an envelope."""
+        ...
+
+
+class PushPayloadNotSerializable(RuntimeError):
+    """Raised by a :class:`ChannelPushCodec` when the payload cannot be serialised.
+
+    Channels raise this from :meth:`ChannelPushCodec.encode` when the
+    inbound :class:`HostedRunResult` carries content the codec has no
+    JSON projection for (e.g. an arbitrary workflow result with no
+    declared schema). The host surfaces the error eagerly at schedule
+    time rather than letting the runner discover it after persisting
+    a half-formed envelope.
+    """
 
 
 # A transform hook runs over each AgentResponseUpdate as the channel consumes
@@ -646,7 +751,21 @@ class DurableTaskRunner(Protocol):
     plus adapter packages (``agent-framework-hosting-durabletask``, a future
     Foundry adapter) for ``runtime_mode="ephemeral"`` deployments that need
     cross-restart durability.
+
+    Adapters MUST publish their ``payload_mode`` so the host's startup
+    validator can pair runner persistence expectations with channel
+    push-codec capabilities. Object-mode runners accept live Python
+    references in the payload (the in-process default does this for
+    speed); JSON-mode runners persist payloads across process restarts
+    and therefore require every push-capable channel to expose a
+    :class:`ChannelPushCodec`.
     """
+
+    # Adapter classes set this explicitly; the host inspects it at
+    # construction time. Default is conservative ("object") so a runner
+    # that omits the attribute is treated as in-process-only and does
+    # not silently impose a JSON requirement on channels.
+    payload_mode: DurableTaskPayloadMode
 
     def register(
         self,
@@ -702,15 +821,17 @@ __all__ = [
     "ChannelContribution",
     "ChannelIdentity",
     "ChannelPush",
+    "ChannelPushCodec",
     "ChannelRequest",
     "ChannelResponseContext",
     "ChannelResponseHook",
     "ChannelRunHook",
     "ChannelSession",
     "ChannelStreamTransformHook",
-    "DeliveryReport",
+    "DurableTaskPayloadMode",
     "DurableTaskRunner",
     "HostedRunResult",
+    "PushPayloadNotSerializable",
     "ResponseStream",
     "ResponseTarget",
     "ResponseTargetKind",
