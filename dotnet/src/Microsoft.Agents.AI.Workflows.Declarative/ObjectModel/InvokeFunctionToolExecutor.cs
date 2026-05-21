@@ -103,6 +103,24 @@ internal sealed class InvokeFunctionToolExecutor(
         FunctionResultContent? matchingResult = functionResults
             .FirstOrDefault(r => r.CallId == this.Id);
 
+        // When the caller approved an approval-required function call but didn't execute it
+        // locally (the hosted Foundry scenario, where mcp_approval_response is converted to a
+        // ToolApprovalResponseContent only), invoke the registered AIFunction here so that the
+        // declarative workflow can capture the result and continue (e.g. for downstream
+        // SendActivity/PropertyPath consumers like {Local.Result}).
+        if (matchingResult is null)
+        {
+            ToolApprovalResponseContent? approval = response.Messages
+                .SelectMany(m => m.Contents)
+                .OfType<ToolApprovalResponseContent>()
+                .FirstOrDefault(r => r.RequestId == this.Id);
+
+            if (approval is { Approved: true })
+            {
+                matchingResult = await this.InvokeRegisteredFunctionAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         if (matchingResult is not null)
         {
             // Store the result in output variable
@@ -239,6 +257,42 @@ internal sealed class InvokeFunctionToolExecutor(
 
         string conversationIdValue = this.Evaluator.GetValue(this.Model.ConversationId).Value;
         return conversationIdValue.Length == 0 ? null : conversationIdValue;
+    }
+
+    private async ValueTask<FunctionResultContent?> InvokeRegisteredFunctionAsync(CancellationToken cancellationToken)
+    {
+        string functionName = this.GetFunctionName();
+        AIFunction? function = agentProvider.Functions?.FirstOrDefault(
+            f => string.Equals(f.Name, functionName, System.StringComparison.Ordinal));
+
+        if (function is null)
+        {
+            return new FunctionResultContent(
+                this.Id,
+                $"Function '{functionName}' is not registered with the agent provider.");
+        }
+
+        Dictionary<string, object?>? arguments = this.GetArguments();
+        AIFunctionArguments? functionArguments = arguments is null ? null : new AIFunctionArguments(arguments);
+
+        object? result;
+        try
+        {
+            result = await function.InvokeAsync(functionArguments, cancellationToken).ConfigureAwait(false);
+        }
+        catch (System.Exception ex)
+        {
+            return new FunctionResultContent(this.Id, $"Function '{functionName}' invocation failed: {ex.Message}");
+        }
+
+        string serialized = result switch
+        {
+            null => string.Empty,
+            string s => s,
+            _ => result.ToString() ?? string.Empty,
+        };
+
+        return new FunctionResultContent(this.Id, serialized);
     }
 
     private bool GetRequireApproval()
