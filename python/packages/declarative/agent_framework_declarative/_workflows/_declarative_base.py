@@ -28,12 +28,14 @@ from __future__ import annotations
 import locale
 import logging
 import os
+import re
 import sys
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal as _Decimal
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Literal, cast
 
 from agent_framework import (
@@ -42,8 +44,6 @@ from agent_framework import (
     WorkflowContext,
 )
 from agent_framework._workflows._state import State
-
-from .._models import _safe_mode_context  # type: ignore[reportPrivateUsage]
 
 try:
     from powerfx import Engine
@@ -59,6 +59,82 @@ else:
 
 
 logger = logging.getLogger(__name__)
+
+
+_ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
+
+_EMPTY_ENV_VALUES: Mapping[str, str] = MappingProxyType({})
+_EMPTY_ENV_REFERENCES: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class DeclarativeEnvConfig:
+    """Configuration that populates the PowerFx ``Env`` symbol for a workflow.
+
+    Mirrors the .NET ``IConfiguration``-driven environment binding in
+    ``Microsoft.Agents.AI.Workflows.Declarative/PowerFx/WorkflowDiagnostics.cs``.
+    The configuration values are always exposed under ``Env.<name>`` (matching
+    ``IConfiguration`` semantics), and ``os.environ`` is consulted only when
+    ``restrict_to_configuration`` is ``False`` and the YAML literally
+    references the name in a PowerFx expression.
+
+    Attributes:
+        values: Caller-supplied configuration values resolved by name when
+            the workflow YAML references ``=Env.NAME``. Always exposed in
+            the ``Env`` symbol regardless of ``restrict_to_configuration``.
+        restrict_to_configuration: When ``True`` (default), the ``Env``
+            symbol is populated exclusively from ``values``; ``os.environ``
+            is never consulted. Set to ``False`` to additionally fall back
+            to ``os.environ`` for names absent from ``values`` that the
+            workflow YAML explicitly references.
+        referenced_names: The set of ``Env.NAME`` symbols discovered in
+            PowerFx expressions inside the workflow definition. The
+            ``os.environ`` fallback is constrained to this allowlist so
+            unrelated environment variables never enter the PowerFx scope.
+    """
+
+    values: Mapping[str, str] = _EMPTY_ENV_VALUES
+    restrict_to_configuration: bool = True
+    referenced_names: frozenset[str] = _EMPTY_ENV_REFERENCES
+
+
+_EMPTY_ENV_CONFIG = DeclarativeEnvConfig()
+
+
+def discover_env_references(node: Any) -> set[str]:
+    """Discover ``Env.NAME`` references in PowerFx expressions inside ``node``.
+
+    Walks any nested ``Mapping``/``list``/scalar structure and inspects every
+    string value. To avoid false positives from doc/description fields that
+    happen to mention ``Env.SOMETHING`` as plain text, the scan only inspects
+    strings that begin with ``=`` (PowerFx expression marker, matching the
+    convention enforced by :meth:`DeclarativeWorkflowState.eval`).
+
+    Args:
+        node: A parsed workflow definition (typically the dict produced by
+            ``yaml.safe_load``).
+
+    Returns:
+        The set of ``Env`` identifier names referenced in PowerFx
+        expressions inside ``node``.
+    """
+    names: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, str):
+            if value.startswith("="):
+                names.update(_ENV_REFERENCE_RE.findall(value))
+            return
+        if isinstance(value, Mapping):
+            for inner in cast(Mapping[Any, Any], value).values():
+                visit(inner)
+            return
+        if isinstance(value, list):
+            for item in cast(list[Any], value):
+                visit(item)
+
+    visit(node)
+    return names
 
 
 class ConversationData(TypedDict):
@@ -172,13 +248,18 @@ class DeclarativeWorkflowState:
     - Conversation: Conversation history
     """
 
-    def __init__(self, state: State):
+    def __init__(self, state: State, env_config: DeclarativeEnvConfig = _EMPTY_ENV_CONFIG):
         """Initialize with a State instance.
 
         Args:
             state: The workflow's state for persistence
+            env_config: Configuration that populates the PowerFx ``Env``
+                symbol when ``_to_powerfx_symbols`` is called. Defaults to
+                an empty configuration which results in no ``Env`` binding,
+                matching the safe default of the :class:`WorkflowFactory`.
         """
         self._state = state
+        self._env_config = env_config
 
     def initialize(self, inputs: Mapping[str, Any] | None = None) -> None:
         """Initialize the declarative state with inputs.
@@ -717,13 +798,27 @@ class DeclarativeWorkflowState:
             # Custom namespaces
             **state_data.get("Custom", {}),
         }
-        # Expose ``Env`` ONLY when the active workflow factory has explicitly
-        # opted out of safe mode. Matches the policy enforced by
-        # ``_try_powerfx_eval`` in ``_models.py`` and the AgentFactory
-        # ``safe_mode`` flag. Treat the default as safe even when no factory
-        # is in scope (e.g. in unit tests) so opt-in is required.
-        if not _safe_mode_context.get():
-            symbols["Env"] = dict(os.environ)
+        # Populate the ``Env`` symbol from the workflow-level
+        # :class:`DeclarativeEnvConfig`. Caller-supplied configuration
+        # values are always exposed (matching .NET ``IConfiguration``
+        # semantics); ``os.environ`` is consulted only when
+        # ``restrict_to_configuration`` is ``False`` and the YAML explicitly
+        # references the name in a PowerFx expression. When both sources
+        # produce no values the ``Env`` symbol is omitted entirely so
+        # ``=Env.X`` resolves to the literal expression string (preserving
+        # the legacy "unbound identifier" fallback behaviour).
+        env_bound: dict[str, str] = {}
+        for name, value in self._env_config.values.items():
+            env_bound[name] = str(value)
+        if not self._env_config.restrict_to_configuration:
+            for name in self._env_config.referenced_names:
+                if name in env_bound:
+                    continue
+                env_value = os.environ.get(name)
+                if env_value is not None:
+                    env_bound[name] = env_value
+        if env_bound:
+            symbols["Env"] = env_bound
         # Debug log the Local symbols to help diagnose type issues
         if local_data:
             for key, value in local_data.items():
@@ -877,12 +972,27 @@ class DeclarativeActionExecutor(Executor):
         action_id = id or action_def.get("id") or f"{action_def.get('kind', 'action')}_{hash(str(action_def)) % 10000}"
         super().__init__(id=action_id, defer_discovery=True)
         self._action_def = action_def
+        # The active :class:`DeclarativeEnvConfig` is stamped onto the
+        # executor by :class:`DeclarativeWorkflowBuilder` after construction.
+        # Defaults to an empty configuration so direct ``DeclarativeActionExecutor``
+        # construction (e.g. in unit tests) doesn't expose ``os.environ``.
+        self._declarative_env_config: DeclarativeEnvConfig = _EMPTY_ENV_CONFIG
 
         # Manually register handlers after initialization
         self._handlers = {}
         self._handler_specs = []
         self._discover_handlers()
         self._discover_response_handlers()
+
+    def set_declarative_env_config(self, env_config: DeclarativeEnvConfig) -> None:
+        """Set the workflow-level :class:`DeclarativeEnvConfig` for this executor.
+
+        Called by :class:`DeclarativeWorkflowBuilder` after each executor is
+        created so that ``_to_powerfx_symbols`` populates the ``Env`` symbol
+        according to the caller-supplied configuration on the
+        :class:`WorkflowFactory`.
+        """
+        self._declarative_env_config = env_config
 
     @property
     def action_def(self) -> dict[str, Any]:
@@ -896,7 +1006,7 @@ class DeclarativeActionExecutor(Executor):
 
     def _get_state(self, state: State) -> DeclarativeWorkflowState:
         """Get the declarative workflow state wrapper."""
-        return DeclarativeWorkflowState(state)
+        return DeclarativeWorkflowState(state, env_config=self._declarative_env_config)
 
     async def _ensure_state_initialized(
         self,

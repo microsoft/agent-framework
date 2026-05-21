@@ -22,8 +22,10 @@ from agent_framework import (
 )
 
 from ._declarative_base import (
+    _EMPTY_ENV_CONFIG,  # type: ignore[reportPrivateUsage]
     ConditionResult,
     DeclarativeActionExecutor,
+    DeclarativeEnvConfig,
     LoopIterationResult,
 )
 from ._errors import DeclarativeWorkflowError
@@ -140,6 +142,7 @@ class DeclarativeWorkflowBuilder:
         max_iterations: int | None = None,
         http_request_handler: HttpRequestHandler | None = None,
         mcp_tool_handler: MCPToolHandler | None = None,
+        env_config: DeclarativeEnvConfig | None = None,
     ):
         """Initialize the builder.
 
@@ -158,6 +161,10 @@ class DeclarativeWorkflowBuilder:
             mcp_tool_handler: Handler used to dispatch InvokeMcpTool calls.
                 Must be supplied when the workflow contains any InvokeMcpTool;
                 otherwise build raises ``DeclarativeWorkflowError``.
+            env_config: Optional :class:`DeclarativeEnvConfig` controlling
+                how the ``Env`` PowerFx symbol is populated for every
+                executor built by this builder. Defaults to an empty
+                configuration (``Env`` not exposed).
         """
         self._yaml_def = yaml_definition
         self._workflow_id = workflow_id or yaml_definition.get("name", "declarative_workflow")
@@ -171,6 +178,7 @@ class DeclarativeWorkflowBuilder:
         self._seen_explicit_ids: set[str] = set()  # Track explicit IDs for duplicate detection
         self._http_request_handler = http_request_handler
         self._mcp_tool_handler = mcp_tool_handler
+        self._env_config: DeclarativeEnvConfig = env_config if env_config is not None else _EMPTY_ENV_CONFIG
         # Resolve max_iterations: explicit arg > YAML maxTurns > core default
         resolved = max_iterations if max_iterations is not None else yaml_definition.get("maxTurns")
         if resolved is not None and (not isinstance(resolved, int) or resolved <= 0):
@@ -220,6 +228,15 @@ class DeclarativeWorkflowBuilder:
 
         # Resolve pending gotos (back-edges for loops, forward-edges for jumps)
         self._resolve_pending_gotos(builder)
+
+        # Stamp the resolved DeclarativeEnvConfig onto every executor so they
+        # expose the configured Env binding through their _get_state(). This
+        # happens after _create_executors_for_actions and _resolve_pending_gotos
+        # so it covers the entry node, join nodes, evaluators, foreach
+        # init/next/exit nodes, and goto placeholders.
+        for executor in self._executors.values():
+            if isinstance(executor, DeclarativeActionExecutor):
+                executor.set_declarative_env_config(self._env_config)
 
         return builder.build()
 

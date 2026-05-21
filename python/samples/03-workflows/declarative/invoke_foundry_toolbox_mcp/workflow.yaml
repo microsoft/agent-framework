@@ -7,10 +7,9 @@
 # The workflow:
 #   1. Accepts a documentation / web search query as input.
 #   2. Lists the tools exposed by the toolbox using the reserved
-#      toolName: ``tools/list``. The Python ``DefaultMCPToolHandler``
-#      does not intercept this name on its own; the sample's host code
-#      wraps it with a small handler that translates ``tools/list`` to
-#      an MCP ``session.list_tools()`` call.
+#      toolName: ``tools/list``. ``DefaultMCPToolHandler`` intercepts
+#      this reserved name natively and translates it
+#      to an MCP ``session.list_tools()`` call, returning a JSON catalog.
 #   3. Invokes the Microsoft Learn ``microsoft_docs_search`` MCP tool
 #      surfaced by the toolbox. Tool names from MCP-server-backed
 #      toolbox tools are namespaced as ``<server_label>___<tool_name>``.
@@ -41,9 +40,7 @@ trigger:
       variable: Local.SearchQuery
       value: =Workflow.Inputs.text
 
-    # List the tools exposed by the toolbox MCP proxy. The sample's
-    # custom MCPToolHandler intercepts the reserved ``tools/list`` name
-    # and returns the toolbox tool list as JSON.
+    # List the tools exposed by the toolbox MCP proxy.
     #
     # We intentionally OMIT ``conversationId`` here: the tool list is
     # metadata for the demo, not useful context for the downstream
