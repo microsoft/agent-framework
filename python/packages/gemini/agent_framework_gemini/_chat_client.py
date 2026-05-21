@@ -109,8 +109,8 @@ class GeminiChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
             or ``types.Tool`` objects returned by ``get_code_interpreter_tool``, ``get_web_search_tool``,
             ``get_mcp_tool``, ``get_file_search_tool``, or ``get_maps_grounding_tool``.
         tool_choice: How the model picks a tool. One of ``'auto'``, ``'none'``, or ``'required'``.
-        response_format: Pydantic model type for structured JSON output. The response text is
-            parsed into the model and exposed via ``ChatResponse.value``.
+        response_format: Pydantic model type or JSON schema mapping for structured JSON output.
+            The response text is parsed and exposed via ``ChatResponse.value``.
         instructions: Extra system-level instructions prepended to the system message.
 
     Not supported, and passing these raises a type error:
@@ -254,6 +254,29 @@ _OPTION_CONSUMED_KEYS: frozenset[str] = frozenset({
 })
 
 _OPTION_EXCLUDE_KEYS: frozenset[str] = _OPTION_EXPLICIT_KEYS | _OPTION_CONSUMED_KEYS
+
+_JSON_SCHEMA_TYPES: frozenset[str] = frozenset({
+    "array",
+    "boolean",
+    "integer",
+    "null",
+    "number",
+    "object",
+    "string",
+})
+
+_JSON_SCHEMA_KEYWORDS: frozenset[str] = frozenset({
+    "$defs",
+    "additionalProperties",
+    "allOf",
+    "anyOf",
+    "enum",
+    "items",
+    "oneOf",
+    "properties",
+    "required",
+    "type",
+})
 
 _FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "STOP": "stop",
@@ -747,9 +770,13 @@ class RawGeminiChatClient(
                 continue
             kwargs[_OPTION_TRANSLATIONS.get(key, key)] = value
 
-        if options.get("response_format") or options.get("response_schema"):
+        response_format = options.get("response_format")
+        response_schema = options.get("response_schema")
+        if response_format is not None or response_schema is not None:
             kwargs["response_mime_type"] = "application/json"
-        if schema := options.get("response_schema"):
+        if response_schema is not None:
+            kwargs["response_schema"] = response_schema
+        elif (schema := self._extract_response_schema(response_format)) is not None:
             kwargs["response_schema"] = schema
         if tools := self._prepare_tools(options):
             kwargs["tools"] = tools
@@ -761,6 +788,47 @@ class RawGeminiChatClient(
                 kwargs["thinking_config"] = types.ThinkingConfig(**thinking_config_kwargs)
 
         return types.GenerateContentConfig(**kwargs)
+
+    @staticmethod
+    def _extract_response_schema(response_format: Any) -> dict[str, Any] | None:
+        """Extract a Gemini response schema from supported mapping response_format shapes."""
+        if not isinstance(response_format, Mapping):
+            return None
+
+        if (
+            isinstance(format_config := response_format.get("format"), Mapping)
+            and (schema := RawGeminiChatClient._extract_response_schema(format_config)) is not None
+        ):
+            return schema
+
+        if isinstance(json_schema := response_format.get("json_schema"), Mapping) and isinstance(
+            schema := json_schema.get("schema"), Mapping
+        ):
+            return dict(schema)
+
+        if isinstance(schema := response_format.get("schema"), Mapping):
+            return dict(schema)
+
+        if RawGeminiChatClient._is_json_schema_mapping(response_format):
+            return dict(response_format)
+
+        return None
+
+    @staticmethod
+    def _is_json_schema_mapping(value: Mapping[str, Any]) -> bool:
+        """Return True when a mapping appears to be a JSON Schema rather than a response-format envelope."""
+        if not any(keyword in value for keyword in _JSON_SCHEMA_KEYWORDS):
+            return False
+
+        schema_type = value.get("type")
+        if schema_type is None:
+            return True
+        if isinstance(schema_type, str):
+            return schema_type in _JSON_SCHEMA_TYPES
+        if isinstance(schema_type, Sequence) and not isinstance(schema_type, (str, bytes)):
+            return all(isinstance(item, str) and item in _JSON_SCHEMA_TYPES for item in schema_type)
+
+        return False
 
     def _prepare_tools(self, options: Mapping[str, Any]) -> list[types.Tool] | None:
         """Translate the framework tool list into Gemini API tool objects.
