@@ -36,7 +36,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -69,7 +69,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -90,7 +90,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-results-openai
           path: ./python/pytest.xml
@@ -112,7 +112,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -123,7 +123,7 @@ jobs:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
       - name: Azure CLI Login
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -141,7 +141,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-results-azure-openai
           path: ./python/pytest.xml
@@ -163,7 +163,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -177,7 +177,7 @@ jobs:
         run: curl -fsSL https://ollama.com/install.sh | sh
         working-directory: .
       - name: Cache Ollama models
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.ollama/models
           key: ollama-models-qwen2.5-1.5b-nomic-embed-text-v1
@@ -231,7 +231,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-results-misc
           path: ./python/pytest.xml
@@ -283,7 +283,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -294,7 +294,7 @@ jobs:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
       - name: Azure CLI Login
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -315,7 +315,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-results-functions
           path: ./python/pytest.xml
@@ -341,7 +341,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -352,7 +352,7 @@ jobs:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
       - name: Azure CLI Login
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -369,7 +369,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-results-foundry
           path: ./python/pytest.xml
@@ -388,7 +388,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -399,7 +399,7 @@ jobs:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
       - name: Azure CLI Login
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -416,7 +416,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-results-foundry-hosting
           path: ./python/pytest.xml
@@ -443,7 +443,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -468,7 +468,7 @@ jobs:
         run: uv run --directory packages/azure-cosmos poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5 --junitxml=${{ github.workspace }}/python/pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-results-cosmos
           path: ./python/pytest.xml
@@ -496,7 +496,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -506,12 +506,12 @@ jobs:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
       - name: Download all test results from current run
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: test-results-*
           path: test-results/
       - name: Restore report history cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: python/integration-report-history.json
           key: integration-report-history-integration-${{ github.run_id }}
@@ -528,13 +528,13 @@ jobs:
         run: cat integration-test-report.md >> $GITHUB_STEP_SUMMARY
       - name: Save report history cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: python/integration-report-history.json
           key: integration-report-history-integration-${{ github.run_id }}
       - name: Upload unified trend report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: integration-test-report
           path: |
@@ -558,12 +558,12 @@ jobs:
     steps:
       - name: Fail workflow if tests failed
         if: contains(join(needs.*.result, ','), 'failure')
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: core.setFailed('Integration Tests Failed!')
 
       - name: Fail workflow if tests cancelled
         if: contains(join(needs.*.result, ','), 'cancelled')
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: core.setFailed('Integration Tests Cancelled!')

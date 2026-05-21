@@ -113,6 +113,61 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         Assert.Equal(new Uri("http://jsonrpc/agent"), this._handler.CapturedUris[1]);
     }
 
+    [Fact]
+    public async Task GetAIAgentAsync_WithAgentOptions_OverridesCardValuesAsync()
+    {
+        // Arrange
+        this._handler.ResponsesToReturn.Enqueue(new AgentCard
+        {
+            Name = "Card Agent",
+            Description = "Card description",
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+        });
+
+        var agentOptions = new A2AAgentOptions
+        {
+            Id = "custom-id",
+            Name = "Custom Agent",
+            Description = "Custom description"
+        };
+
+        // Act
+        var agent = await this._resolver.GetAIAgentAsync(agentOptions, httpClient: this._httpClient);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<A2AAgent>(agent);
+        Assert.Equal("custom-id", agent.Id);
+        Assert.Equal("Custom Agent", agent.Name);
+        Assert.Equal("Custom description", agent.Description);
+    }
+
+    [Fact]
+    public async Task GetAIAgentAsync_WithAgentOptions_FallsBackToCardValuesAsync()
+    {
+        // Arrange
+        this._handler.ResponsesToReturn.Enqueue(new AgentCard
+        {
+            Name = "Card Agent",
+            Description = "Card description",
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+        });
+
+        var agentOptions = new A2AAgentOptions
+        {
+            Id = "custom-id"
+        };
+
+        // Act
+        var agent = await this._resolver.GetAIAgentAsync(agentOptions, httpClient: this._httpClient);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("custom-id", agent.Id);
+        Assert.Equal("Card Agent", agent.Name);
+        Assert.Equal("Card description", agent.Description);
+    }
+
     public void Dispose()
     {
         this._handler.Dispose();
