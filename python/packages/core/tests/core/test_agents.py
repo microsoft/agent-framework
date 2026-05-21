@@ -26,10 +26,12 @@ from agent_framework import (
     ContextProvider,
     FunctionTool,
     HistoryProvider,
+    InlineSkill,
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
     SessionContext,
+    SkillsProvider,
     SlidingWindowStrategy,
     SupportsAgentRun,
     SupportsChatGetResponse,
@@ -2360,6 +2362,89 @@ async def test_chat_agent_context_provider_adds_tools_when_agent_has_none(
     # The context tools should now be in the options
     assert options.get("tools") is not None
     assert len(options["tools"]) == 1
+
+
+@pytest.mark.filterwarnings(r"ignore:\[SKILLS\].*:FutureWarning")
+async def test_chat_agent_skill_script_approval_replays_stored_tool_call(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Approved skill scripts need the previous tool call replayed with the result."""
+
+    captured_calls: list[list[tuple[str, list[tuple[str, str | None]]]]] = []
+    original_get_response = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture_messages(
+        *,
+        messages: MutableSequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_calls.append([
+            (
+                message.role,
+                [(content.type, getattr(content, "call_id", None)) for content in message.contents],
+            )
+            for message in messages
+        ])
+        return await original_get_response(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture_messages  # type: ignore[attr-defined,method-assign]
+
+    script_ran = False
+    skill = InlineSkill(
+        name="unit-converter",
+        description="Convert between common units.",
+        instructions="Use the convert script for unit conversions.",
+    )
+
+    @skill.script(name="convert", description="Convert a value using a factor.")
+    def convert_units(value: float, factor: float) -> str:
+        nonlocal script_ran
+        script_ran = True
+        return json.dumps({"value": value, "factor": factor, "result": round(value * factor, 4)})
+
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[SkillsProvider([skill], require_script_approval=True)],
+    )
+    session = agent.create_session()
+    call_arguments = {
+        "skill_name": "unit-converter",
+        "script_name": "convert",
+        "args": {"value": 26.2, "factor": 1.60934},
+    }
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="script-call-1",
+                        name="run_skill_script",
+                        arguments=json.dumps(call_arguments),
+                    ),
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await agent.run("Convert 26.2 miles to km.", session=session)
+
+    assert len(response.user_input_requests) == 1
+    approval_response = response.user_input_requests[0].to_function_approval_response(approved=True)
+
+    final_response = await agent.run([approval_response], session=session)
+
+    assert script_ran is True
+    assert final_response.text == "done"
+    final_call = captured_calls[-1]
+    flattened = [(role, content_type, call_id) for role, contents in final_call for content_type, call_id in contents]
+    function_call = ("assistant", "function_call", "script-call-1")
+    function_result = ("tool", "function_result", "script-call-1")
+    assert function_call in flattened
+    assert function_result in flattened
+    assert flattened.index(function_call) < flattened.index(function_result)
 
 
 @pytest.mark.asyncio

@@ -1171,16 +1171,16 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         # indicators. An explicit `store=False` forces local (in-memory) history injection,
         # even if the client is configured to use service-side storage by default.
         store_ = opts.get("store", self.default_options.get("store", getattr(self.client, "STORES_BY_DEFAULT", False)))
-        # Auto-inject InMemoryHistoryProvider when session is provided, no context providers
-        # registered, and no service-side storage indicators
+        # Auto-inject local history when a session is provided, no history provider
+        # is registered, and no service-side storage indicators are present.
         if (
             session is not None
-            and not self.context_providers
+            and not self._get_history_providers()
             and not session.service_session_id
             and not opts.get("conversation_id")
             and not store_
         ):
-            self.context_providers.append(InMemoryHistoryProvider())
+            self.context_providers.insert(0, InMemoryHistoryProvider())
 
         active_session = session
         if active_session is None and self.context_providers:
