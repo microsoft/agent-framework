@@ -4,15 +4,13 @@
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI.Mcp</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
-    <NoWarn>$(NoWarn);MEAI001;MAAI001;MCPEXP001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001;MCPEXP001</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
-    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
-    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
   </PropertyGroup>
 

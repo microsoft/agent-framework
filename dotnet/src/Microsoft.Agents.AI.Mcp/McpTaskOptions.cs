@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Mcp;
 
@@ -17,7 +15,6 @@ namespace Microsoft.Agents.AI.Mcp;
 /// and tracks the in-flight specification.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class McpTaskOptions
 {
     /// <summary>

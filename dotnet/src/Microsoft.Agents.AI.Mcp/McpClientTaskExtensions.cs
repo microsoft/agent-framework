@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -16,7 +14,6 @@ namespace Microsoft.Agents.AI.Mcp;
 /// Extension methods on <see cref="McpClient"/> that expose MCP server tools to a Microsoft
 /// Agent Framework agent with optional long-running task (SEP-2663) handling.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class McpClientTaskExtensions
 {
     /// <summary>
