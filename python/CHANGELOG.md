@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-05-21
+
+### Added
+- **agent-framework-monty**: New Monty-backed CodeAct provider package ([#5915](https://github.com/microsoft/agent-framework/pull/5915))
+- **agent-framework-foundry**: Add experimental hosted tool factories on `FoundryChatClient` ([#5958](https://github.com/microsoft/agent-framework/pull/5958))
+- **agent-framework-foundry**: Include tool definitions for Foundry agent evals ([#5974](https://github.com/microsoft/agent-framework/pull/5974))
+- **agent-framework-a2a**: Use non-streaming transport and `return_immediately` for background ops ([#5963](https://github.com/microsoft/agent-framework/pull/5963))
+
+### Changed
+- **agent-framework-core**, **agent-framework-foundry**: [BREAKING] Enable instrumentation by default ([#5865](https://github.com/microsoft/agent-framework/pull/5865))
+- **agent-framework-foundry**: Show more authentication methods in Foundry Toolbox MCP ([#5719](https://github.com/microsoft/agent-framework/pull/5719))
+
+### Fixed
+- **agent-framework-core**: Skip MCP prompt loading when unsupported ([#5370](https://github.com/microsoft/agent-framework/pull/5370))
+
 ## [1.5.0] - 2026-05-19
 
 ### Added
@@ -1088,7 +1103,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.5.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.6.0...HEAD
+[1.6.0]: https://github.com/microsoft/agent-framework/compare/python-1.5.0...python-1.6.0
 [1.5.0]: https://github.com/microsoft/agent-framework/compare/python-1.4.0...python-1.5.0
 [1.4.0]: https://github.com/microsoft/agent-framework/compare/python-1.3.0...python-1.4.0
 [1.3.0]: https://github.com/microsoft/agent-framework/compare/python-1.2.2...python-1.3.0

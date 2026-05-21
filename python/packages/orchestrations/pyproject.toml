@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.5.0,<2",
+    "agent-framework-core>=1.6.0,<2",
 ]
 
 [tool.uv]
