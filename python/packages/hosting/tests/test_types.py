@@ -192,10 +192,15 @@ class TestApplyRunHook:
 
 
 class TestDeliveryReport:
-    """`DeliveryReport.failed` distinguishes "push raised" (an outage)
-    from "no link recorded" (`skipped`). Assert the field exists,
-    defaults empty, accepts the documented shape, and that the original
-    `pushed` / `skipped` semantics are preserved."""
+    """`DeliveryReport.failed` records *schedule-time* failures (the
+    durable runner refused the work — a host-side outage), distinct
+    from `skipped` (no link recorded / no push capability). Downstream
+    delivery outcomes — including `ChannelPush.push` raising — are
+    owned by the runner and observable via its backend, not via the
+    report. Assert the field exists, defaults empty, and accepts the
+    documented shape; the original `pushed` / `skipped` semantics
+    (now meaning "scheduled successfully" / "dropped at resolution")
+    are preserved."""
 
     def test_defaults_are_empty_tuples(self) -> None:
         report = DeliveryReport(include_originating=True)
@@ -205,14 +210,15 @@ class TestDeliveryReport:
         assert report.failed == ()
 
     def test_failed_carries_token_and_error_summary(self) -> None:
-        # Channels return a (token, summary) tuple per failed push so
-        # the originating channel can tell "telegram outage" from
-        # "no link" without parsing logs.
+        # ``failed`` carries (token, summary) per destination whose
+        # ``DurableTaskRunner.schedule(...)`` raised — a host-side
+        # outage indicator. The originating channel can use it to
+        # decide whether to surface a degraded reply itself.
         report = DeliveryReport(
             include_originating=False,
             pushed=("teams:42",),
             skipped=("telegram",),
-            failed=(("telegram:99", "RuntimeError: rate limited"),),
+            failed=(("telegram:99", "RuntimeError: runner backend unreachable"),),
         )
         assert report.pushed == ("teams:42",)
         assert report.skipped == ("telegram",)
@@ -220,4 +226,4 @@ class TestDeliveryReport:
         token, summary = report.failed[0]
         assert token == "telegram:99"
         assert "RuntimeError" in summary
-        assert "rate limited" in summary
+        assert "runner backend unreachable" in summary

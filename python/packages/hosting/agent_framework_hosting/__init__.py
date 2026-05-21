@@ -13,7 +13,7 @@ they need.
 
 import importlib.metadata
 
-from ._host import AgentFrameworkHost, ChannelContext, logger
+from ._host import AgentFrameworkHost, ChannelContext, RuntimeMode, logger
 from ._isolation import (
     ISOLATION_HEADER_CHAT,
     ISOLATION_HEADER_USER,
@@ -22,6 +22,7 @@ from ._isolation import (
     reset_current_isolation_keys,
     set_current_isolation_keys,
 )
+from ._runner import InProcessTaskRunner
 from ._types import (
     Channel,
     ChannelCommand,
@@ -36,9 +37,13 @@ from ._types import (
     ChannelSession,
     ChannelStreamTransformHook,
     DeliveryReport,
+    DurableTaskRunner,
     HostedRunResult,
     ResponseTarget,
     ResponseTargetKind,
+    RetryPolicy,
+    TaskHandle,
+    TaskStatus,
     apply_response_hook,
     apply_run_hook,
 )
@@ -66,10 +71,16 @@ __all__ = [
     "ChannelSession",
     "ChannelStreamTransformHook",
     "DeliveryReport",
+    "DurableTaskRunner",
     "HostedRunResult",
+    "InProcessTaskRunner",
     "IsolationKeys",
     "ResponseTarget",
     "ResponseTargetKind",
+    "RetryPolicy",
+    "RuntimeMode",
+    "TaskHandle",
+    "TaskStatus",
     "__version__",
     "apply_response_hook",
     "apply_run_hook",

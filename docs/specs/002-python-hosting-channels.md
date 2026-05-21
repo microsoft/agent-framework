@@ -571,7 +571,7 @@ Messages that don't satisfy the rule are ignored at the channel layer — no `Ch
 | All linked | `ResponseTarget.all_linked` | Delivered to every channel where the resolved `isolation_key` is known. |
 | None | `ResponseTarget.none` | Background-only — caller must poll the `ContinuationToken`. Forces `background=True`. |
 
-`ResponseTarget` constructors that take at least one channel id (`.channel(...)`, `.channels([...])`, `.identities([...])`) accept an `echo_input: bool = False` kwarg. When true, the host pushes the **originating user's input** to each non-originating destination as a `HostedRunResult[AgentResponse]` whose underlying `messages[*].role == "user"` **before** the agent reply (whose `messages[*].role == "assistant"`). Used when the developer wants downstream channels to mirror what the user said so their UI stays coherent (e.g. a workflow originating on Telegram that pushes to Teams as well — the Teams transcript shows both turns). Echo failures land in `DeliveryReport.echo_failed` and do **not** abort the corresponding response push: a channel that drops echoes still receives the agent reply. Both pushes go through the same `ChannelPush.push(identity, payload)` entry point — channels distinguish the echo phase from the response phase by inspecting `payload.result.messages[*].role`, or (for channels that wire a `response_hook`) by branching on `ChannelResponseContext.is_echo` directly. Channels that cannot impersonate the user on their wire (most chat bots can only send as the bot) typically render echoes as a quoted / prefixed block, drop them, or rewrite them via their `response_hook`.
+`ResponseTarget` constructors that take at least one channel id (`.channel(...)`, `.channels([...])`, `.identities([...])`) accept an `echo_input: bool = False` kwarg. When true, the host pushes the **originating user's input** to each non-originating destination as a `HostedRunResult[AgentResponse]` whose underlying `messages[*].role == "user"` **before** the agent reply (whose `messages[*].role == "assistant"`). Used when the developer wants downstream channels to mirror what the user said so their UI stays coherent (e.g. a workflow originating on Telegram that pushes to Teams as well — the Teams transcript shows both turns). The echo and the response are bundled into the **same scheduled push task** per destination (the runner-managed unit of work — see [Intended targets + durable delivery](#intended-targets--durable-delivery)); the echo is dispatched first, and an echo-push failure is logged and swallowed inside the task so a channel that drops echoes still receives the agent reply. Both pushes go through the same `ChannelPush.push(identity, payload)` entry point — channels distinguish the echo phase from the response phase by inspecting `payload.result.messages[*].role`, or (for channels that wire a `response_hook`) by branching on `ChannelResponseContext.is_echo` directly. Channels that cannot impersonate the user on their wire (most chat bots can only send as the bot) typically render echoes as a quoted / prefixed block, drop them, or rewrite them via their `response_hook`.
 
 When `response_target` is anything other than `originating`, the originating channel's protocol response is the **`ContinuationToken`** (e.g. an Invocations 202 with the token in the response body and/or a polling URL header), and the actual agent response is delivered out-of-band via the destination channel(s)' `ChannelPush`. If the destination channel doesn't implement `ChannelPush`, the host falls back per the configured policy (default: deliver to `originating`; surfaces a warning in telemetry). The configured `LinkPolicy` is consulted for every destination — destinations that fail the policy (e.g. a corp-tier channel addressed from a public-tier originating request) are dropped, and if every destination is dropped the host falls back to `originating`.
 
@@ -869,6 +869,54 @@ The packaging question for `uvicorn` (required dependency vs optional extra) is 
 - **Native command registration**: The startup-time projection of `ChannelCommand` metadata into a platform's native command catalog (e.g. Telegram `set_my_commands(...)`).
 - **`SupportsAgentRun`**: The existing framework agent execution seam (`run(..., session=..., stream=...)`) — the contract the host uses when the hostable target is an agent.
 - **`Workflow`**: The framework workflow execution seam — the contract the host uses when the hostable target is a workflow. The host wraps the workflow's outputs into the same `HostedRunResult` / `HostedStreamResult` shape so channels do not need to distinguish.
+
+## Runtime modes
+
+The host runs in one of two operational shapes, declared (or auto-detected) via a single `runtime_mode` parameter. The parameter is **advisory** — it sets defaults for the seams below; the developer can override any individual choice.
+
+```python
+AgentFrameworkHost(
+    target=my_agent,
+    channels=[...],
+    runtime_mode=None,                              # None → auto-detect; "long_running" | "ephemeral" to force
+)
+```
+
+| Value | Shape | When to use |
+|---|---|---|
+| `"long_running"` | Always-on container / process. Owns its own scheduler. Survives across many requests. | Local dev, OpenClaw-style hosted deployments, classic web-app rollouts on AKS / App Service / Container Apps. |
+| `"ephemeral"` | Scale-to-zero / per-request lifecycle. Process may terminate between requests; cold-start cost on each one. | Foundry Hosted Agent, Azure Functions consumption plan, AWS Lambda, and similar serverless runtimes. |
+| `None` (default) | Auto-detect. The host inspects environment markers at construction; falls back to `"long_running"` when nothing is detected. | The default. Recommended for portable code that works locally and ships to a serverless target. |
+
+**Auto-detection.** When `runtime_mode=None`, the host checks for known deployment markers in this order and picks `"ephemeral"` on the first hit:
+
+| Marker | Meaning |
+|---|---|
+| `FOUNDRY_HOSTING_ENVIRONMENT` (env var) | Running inside Foundry Hosted Agent. |
+| `AZURE_FUNCTIONS_ENVIRONMENT` (env var) | Running inside the Azure Functions worker. |
+| `AWS_LAMBDA_FUNCTION_NAME` (env var) | Running inside an AWS Lambda. |
+
+If none of the markers match, the host defaults to `"long_running"` (a sensible local-dev / container default). Additional markers may be added without bumping the API; the list is documented and overridable via the `runtime_mode` parameter itself.
+
+**Defaults selected by mode.** The mode drives the *default selection* for these seams. Each is independently overridable:
+
+| Concern | `"long_running"` default | `"ephemeral"` default |
+|---|---|---|
+| `HostStateStore` | `InMemoryHostStateStore` (process owns state) | `FileHostStateStore` (atomic JSON under `./.af-hosting/`; survives single-node restart) |
+| `ContinuationToken` persistence | In-memory acceptable | Persistence required (file / Cosmos / Foundry) |
+| `DurableTaskRunner` | `InProcessTaskRunner` (asyncio + bounded retry) | Adapter expected (`agent-framework-hosting-durabletask`, Foundry, …); falls back to `InProcessTaskRunner` with a startup warning when none configured |
+| Background runs (req #14) | Owned by the long-running worker via `InProcessTaskRunner` | Hand off to the durable runner so the process can terminate between requests |
+| Channel polling (e.g. Telegram `getUpdates`) | Natural fit — `on_startup` spawns the poller, `on_shutdown` cancels it | Requires an external scheduled trigger or webhook transport; polling channels emit a startup warning when paired with `"ephemeral"` |
+| `IdentityLinker` short-lived grants | In-memory TTL fine | Must persist via `HostStateStore` |
+| `IdentityAllowlist` lookup | In-memory cache fine | Persisted source or external IdP claim resolution |
+| Health checks + readiness probes | First-class | Less relevant — runtime manages liveness |
+| Per-channel polling-worker isolation | Important — leaks compound over days/weeks (see [`channels_vs_openclaw.md`](../../python/.user/channels_vs_openclaw.md)) | N/A — process recycles between requests |
+| Process-recycle expectations | Days/weeks | Per-request |
+| Memory/leak concerns | Important | Less relevant |
+
+**Detection failures.** Auto-detection is best-effort. If a deployment uses a custom runtime not in the marker list, callers SHOULD set `runtime_mode="ephemeral"` (or `"long_running"`) explicitly. The host logs the detected mode at startup so misdetection is visible in normal operation.
+
+**Why advisory and not enforced.** Most knobs make sense in both modes (e.g. a developer running a "long-running" container may still want `FileHostStateStore` for state durability across deploys); enforcing strict defaults per mode would force every override to fight a config error. The selected defaults are a starting point.
 
 ## Hero Code Samples
 
@@ -1499,8 +1547,9 @@ external request/event
             if ResponseTarget.echo_input is True:
                 each non-originating destination receives the user's input first
                 (synthesised as a HostedRunResult[AgentResponse] with a role="user" message),
-                then the agent reply. Echo failures land in DeliveryReport.echo_failed and do NOT abort
-                the response push on the same destination.
+                then the agent reply. Both pushes execute inside the same scheduled
+                push task; an echo-push failure is logged and swallowed so the
+                response push on the same destination is still attempted.
     -> [background or response_target != originating]
             -> ContinuationToken returned immediately to originating channel
             -> target executes asynchronously
@@ -1550,7 +1599,7 @@ channel /link command
 | Active-channel tracking | Host core | updated on every successfully resolved request; consumed by `ResponseTarget.active` |
 | Response-target resolution | Host core | translates `ResponseTarget` (originating, active, specific, list, all_linked, none) into an ordered set of `(channel, ChannelIdentity)` deliveries |
 | Proactive outbound delivery | Channel package via optional `ChannelPush` capability | channels that can push (Telegram, Activity Protocol via Bot Service, webhook, SSE) implement `push(identity, result)`; channels that can't are only valid as `originating` targets |
-| Per-delivery audit + replay state | Host core writes the intent + status onto the assistant `Message.additional_properties["hosting"]["deliveries"]`; provider opts into in-place updates via `SupportsDeliveryTracking` for crash-safe lifecycle | Universal data model; live update is provider capability. See [Delivery tracking on assistant messages](#delivery-tracking-on-assistant-messages). |
+| Per-delivery audit + replay state | Host core writes intent-only — the resolved destination set onto the assistant `Message.additional_properties["hosting"]["intended_targets"]` (immutable, single write). Operational state (attempts, retries, last error, success timestamp) lives in the `DurableTaskRunner` and is observed via the runner's own backend. | Replay across host restarts is a property of the configured runner (native for durable adapters; not supported for `InProcessTaskRunner`). See [Intended targets + durable delivery](#intended-targets--durable-delivery) and [Durable task runner](#durable-task-runner). |
 | Background-run lifecycle | Host core | owns `ContinuationToken` issuance, async execution, completion notification; persists via `HostStateStore` (file-based default — survives restarts) |
 | Run poll routes | Channel package | each channel exposes its own protocol-shaped poll route (`/responses/v1/{continuation_token}`, `/invocations/{continuation_token}`) backed by `host.get_continuation(token)` |
 | Conversation history (all channels — Responses, Invocations, Telegram, Activity Protocol, …) | Agent's core `HistoryProvider` (`agent_framework._sessions.HistoryProvider`) | Channels project their wire id (`previous_response_id`, `conversation_id`, request body `session_id`, host-tracked alias, …) into `ChannelSession.key`; the host resolves an `AgentSession` and the agent's `HistoryProvider` does the load / append. No channel-specific history seam. Multi-provider composition (with a single `load_messages=True`) is the standard AF convention; see [Conversation history for the Responses channel](#conversation-history-for-the-responses-channel) for the Foundry-backed variant. |
@@ -1614,11 +1663,11 @@ When the host invokes the target, it does **not** pass the raw `ChannelRequest.i
 
 Round-trip is guaranteed by `Message.to_dict()` / `Message.from_dict()`. Future providers that key on protocol shape (e.g. a Responses `previous_response_id`-keyed store) can read this envelope to reconstruct cross-channel context without needing a separate channel-metadata sidecar.
 
-`FoundryHostedAgentHistoryProvider` round-trips the entire `additional_properties["hosting"]` namespace (and any other AF-side namespace) through the Foundry response store via a single opaque `agent_framework` container key written onto each `OutputItem`. See [Foundry storage gap: `update_item`](#foundry-storage-gap-update_item) for the one part of the schema (post-push `deliveries[]` mutation) that depends on a service-side addition.
+`FoundryHostedAgentHistoryProvider` round-trips the entire `additional_properties["hosting"]` namespace (and any other AF-side namespace) through the Foundry response store via a single opaque `agent_framework` container key written onto each `OutputItem`. Because the schema is now **intent-only** (no per-destination mutation after the initial write — see [Intended targets + durable delivery](#intended-targets--durable-delivery)), no service-side additions to the Foundry storage SDK are required for it to round-trip.
 
-### Delivery tracking on assistant messages
+### Intended targets + durable delivery
 
-The inbound envelope above captures **intent**. To support **audit** ("which destinations actually received this response, and when?") and **replay** ("Telegram was offline; resend to that user when it comes back"), the assistant `Message` produced by the host carries a parallel envelope that records the *resolved destination set* and per-destination outcome.
+The inbound envelope above captures the caller's **intent**. The assistant `Message` produced by the host carries a parallel envelope that records the *resolved destination set* — what the host actually intended to deliver to, after `ResponseTarget` resolution and `LinkPolicy` filtering. **This is a single write, never mutated.** Operational state for each push attempt (status, attempts, retries, last error, channel-issued id) lives in the [`DurableTaskRunner`](#durable-task-runner) — not on the message — because the runner is the component that performs and (when durable) retries the push.
 
 Schema on `Message.additional_properties["hosting"]` for a host-produced assistant message:
 
@@ -1629,94 +1678,91 @@ Schema on `Message.additional_properties["hosting"]` for a host-produced assista
     "identity": { "channel": "telegram", "native_id": "12345", "attributes": {} },
     "response_target": { "kind": "all_linked", "targets": [] }
   },
-  "deliveries": [
+  "intended_targets": [
+    { "destination": { "channel": "activity", "native_id": "29:abc..." } },
+    { "destination": { "channel": "telegram", "native_id": "12345"     } }
+  ],
+  "skipped_targets": [                            // optional — present only when LinkPolicy excluded something
     {
-      "destination": { "channel": "activity", "native_id": "29:abc..." },
-      "status": "delivered",                       // pending | delivered | failed | skipped
-      "attempts": 1,
-      "first_attempt_at": "2026-04-29T08:31:11Z",
-      "last_attempt_at":  "2026-04-29T08:31:11Z",
-      "last_error": null,
-      "delivery_id": "msg_018f..."                 // channel-issued id, when the channel returns one
-    },
-    {
-      "destination": { "channel": "telegram", "native_id": "12345" },
-      "status": "failed",
-      "attempts": 3,
-      "first_attempt_at": "2026-04-29T08:31:11Z",
-      "last_attempt_at":  "2026-04-29T08:36:11Z",
-      "last_error": { "code": "channel_offline", "message": "Telegram getUpdates 502" },
-      "delivery_id": null
+      "destination": { "channel": "corp-only", "native_id": "..." },
+      "reason": "link_policy"                     // link_policy | no_push_capability
     }
   ]
 }
 ```
 
-Status values:
-
-| Value | Meaning |
-|---|---|
-| `pending` | Host has resolved the destination but has not yet attempted (or is between attempts) `ChannelPush.push(...)`. |
-| `delivered` | Push succeeded. `delivery_id` is populated when the destination channel returns a stable id. |
-| `failed` | Push raised. `last_error` is populated. Eligible for replay. |
-| `skipped` | Destination was excluded by `LinkPolicy`, or the destination channel does not implement `ChannelPush`. Recorded so audit shows *why* a destination resolved by `ResponseTarget` did not receive the message. |
-
 Lifecycle the host follows:
 
-1. After `ResponseTarget` resolution and `LinkPolicy` filtering, **before** any push attempt, the host writes the assistant `Message` with one `deliveries[]` entry per destination, all `status="pending"` (excluded ones written as `"skipped"`). This guarantees the intent is durable across host crashes.
-2. After each `ChannelPush.push(destination_identity, result)`, the host updates the matching `deliveries[]` entry in place — `status`, `attempts`, `first_attempt_at` (set on first attempt), `last_attempt_at`, `last_error`, `delivery_id`.
-3. The mechanism for **retrying** failed deliveries (background worker, operator action, `host.retry_delivery(message_id, destination)`, …) is **out of scope** for this spec — it is enabled by the data model and tracked under Open Questions.
+1. After `ResponseTarget` resolution and `LinkPolicy` filtering, the host writes the assistant `Message` **once**, with the resolved `intended_targets[]` (every destination it will attempt) and an optional `skipped_targets[]` for destinations dropped at resolution time (so audit can show *why* a resolved-by-`ResponseTarget` destination did not receive the message — `link_policy` or `no_push_capability`). This write is immutable.
+2. For each non-originating destination, the host schedules a `"hosting.push"` task via the configured [`DurableTaskRunner`](#durable-task-runner). The runner is responsible for attempting, retrying per its `RetryPolicy`, and (for durable runners) surviving host restarts. The push handler resolves the channel, runs the channel's `response_hook`, and calls `ChannelPush.push(...)`.
+3. Operational delivery state — attempt count, last error, success timestamp, channel-issued message id — lives in the runner's own log. Replay across host restarts is a property of the runner (native for durable runners; not supported for the in-process runner). Operators who want a queryable delivery dashboard can read it from their runner backend's observability surface (TaskHub, Foundry durable tasks, …) — the host does not project it back onto the message.
 
-#### `SupportsDeliveryTracking` provider capability
+The originating destination (when `ResponseTarget` includes it) is **not** routed through the runner. It is rendered synchronously on the originating channel's wire and reported via the in-process `DeliveryReport` returned to the channel — see [Built-in routes](#built-in-routes) and `DeliveryReport` for the synchronous return contract.
 
-Updating a stored message in place is provider-specific. The shape above is universal; the *update semantics* are opt-in:
+> **Why intent-only on the message, with operational state in the runner?** A single immutable write keeps the message store as the source of truth for "what the host intended", without requiring providers to implement in-place mutation (no `SupportsDeliveryTracking` capability, no Foundry `update_item` service ask). Per-destination retry, replay, and failure surfacing become responsibilities of the runner, which is the right component because it owns the work queue. Operators who already use a durable runner (TaskHub, Foundry durable tasks) get observability through the runner's existing tooling rather than through a parallel ETL on the message store.
+
+### Durable task runner
+
+The host delegates non-originating push fan-out — and, in v1 fast-follow, background runs — to a pluggable `DurableTaskRunner`. The runner is the component that owns "this work needs to happen; retry on failure; survive (or don't survive) restarts depending on which runner you chose". Channel packages never see it directly; they just implement `ChannelPush.push(...)`.
 
 ```python
-from typing import Protocol, Sequence
+from typing import Protocol, Callable, Awaitable, Mapping, Any, Literal
+from dataclasses import dataclass
 
-class SupportsDeliveryTracking(Protocol):
-    async def update_deliveries(
+@dataclass(frozen=True)
+class RetryPolicy:
+    max_attempts: int = 5
+    initial_backoff_seconds: float = 1.0
+    backoff_multiplier: float = 2.0
+    max_backoff_seconds: float = 60.0
+
+@dataclass(frozen=True)
+class TaskHandle:
+    task_id: str                          # opaque, runner-issued
+    name: str                             # the registered handler name
+
+TaskStatus = Literal["scheduled", "running", "succeeded", "failed", "cancelled"]
+
+class DurableTaskRunner(Protocol):
+    def register(
         self,
-        *,
-        session_id: str,
-        message_id: str,
-        deliveries: Sequence[Mapping[str, Any]],
+        name: str,
+        handler: Callable[[Mapping[str, Any]], Awaitable[None]],
     ) -> None: ...
+
+    async def schedule(
+        self,
+        name: str,
+        payload: Mapping[str, Any],
+        *,
+        retry_policy: RetryPolicy | None = None,
+    ) -> TaskHandle: ...
+
+    async def get(self, handle: TaskHandle) -> TaskStatus | None: ...
 ```
 
-| Provider | `SupportsDeliveryTracking`? | Behavior |
+The host registers an internal handler `"hosting.push"` at startup. Each non-originating destination becomes a single `runner.schedule("hosting.push", payload)` call. The handler:
+
+1. Resolves the channel from `payload["channel_id"]`.
+2. Clones the `HostedRunResult` and runs the channel's `response_hook` (if any).
+3. Calls `ChannelPush.push(identity, shaped_result)`.
+4. Returns normally on success. On exception, the runner records the failure and either schedules a retry per `RetryPolicy` or marks the task `failed` (terminal).
+
+Built-in runner shipped in core:
+
+| Runner | Persistence | Replay across restarts | Default for |
+|---|---|---|---|
+| `InProcessTaskRunner` | None — `asyncio.create_task` + in-process retry | No (in-flight tasks lost on process death) | `runtime_mode="long_running"` |
+
+Adapter packages (deferred to v1 Fast Follow; no runtime dep from core):
+
+| Package | Backend | Notes |
 |---|---|---|
-| `FileHistoryProvider` (append-only JSONL) | No (capability not implemented) | Host writes the assistant `Message` **once**, at the end of the delivery cycle, with terminal `deliveries[]`. Pre-attempt `pending` snapshot is not durable; a host crash mid-delivery loses per-destination state for in-flight pushes. **Audit-complete, replay-best-effort.** |
-| `FoundryHostedAgentHistoryProvider` (Foundry response store) | **Partial — initial-write only** (see [Foundry storage gap](#foundry-storage-gap-update_item) below) | Inbound envelope (`channel`/`identity`/`response_target`) and **initial-write `deliveries[]` snapshot** (all `pending`, plus any `skipped`) round-trip through the Foundry response store unchanged via the `agent_framework` extras container key the provider writes onto each `OutputItem`. **Per-destination updates after each push attempt are not durable** because the Foundry storage SDK does not yet expose a way to mutate an individual stored history item. Behaves as `FileHistoryProvider` in that regard until the [service ask](#foundry-storage-gap-update_item) lands. **Audit-complete-on-write, replay-best-effort.** |
-| Cosmos / SQL providers (when introduced) | Expected to implement | Same as above. |
+| `agent-framework-hosting-durabletask` | `agent-framework-durabletask` (gRPC TaskHub) | Suits `ephemeral` deployments that already run a Durable Task sidecar. |
+| `agent-framework-hosting-foundry` (extension) | Foundry durable-task API | Deferred until the FHA durable-task surface is finalized. |
+| (possibly) SQLite-outbox runner | SQLite under the existing `HostStateStore` root | Lowest-dep "survives single-node restart" option for ephemeral hosts without an external sidecar. |
 
-Providers that omit the capability are still valid hosts for any `ResponseTarget` configuration — they just cannot offer durable replay. The host detects the capability with `isinstance(provider, SupportsDeliveryTracking)` and degrades to write-once when absent.
-
-> **Why on the message and not in a separate delivery log?** Two reasons. First, the message store is the single source of truth for an assistant turn; piggy-backing on it avoids a second consistency boundary between "message written" and "delivery scheduled". Second, any operator who wants a queryable delivery dashboard can ETL the array out of `additional_properties["hosting"]["deliveries"]` into their preferred outbox/log store — the on-message form does not preclude that. The spec commits only to the on-message shape; outbox layers are an implementation choice.
-
-#### Foundry storage gap: `update_item`
-
-`FoundryHostedAgentHistoryProvider` round-trips arbitrary `Message.additional_properties` namespaces through the Foundry response store as opaque JSON via a single `agent_framework` container key on each `OutputItem` (see `_shared.py:_collect_af_extras` / `_inject_af_extras` / `_attach_extras`). This makes the **initial-write** parts of the schema above durable:
-
-- The inbound `hosting` envelope (`channel`, `identity`, `response_target`) on user messages.
-- The initial-write `deliveries[]` snapshot on assistant messages (all entries `pending` or `skipped`, written before the first push attempt).
-
-What is **not yet** durable through this provider is **post-push mutation** of an individual stored item. The `azure.ai.agentserver.responses.store.FoundryStorageProvider` SDK exposes `create_response`, `get_response`, `update_response`, `delete_response`, `get_input_items`, `get_items`, and `get_history_item_ids` — but no `update_item` / PATCH on a single history item. So when the host updates an entry in `deliveries[]` after `ChannelPush.push()` returns (`status` → `delivered`/`failed`, `attempts`, timestamps, `last_error`, `delivery_id`), there is no way to push that mutation back into the per-item storage row.
-
-**Workarounds and trade-offs:**
-
-| Option | Trade-off |
-|---|---|
-| Encode `deliveries[]` on the *response object* (under `agent_framework`) instead of the assistant *item*, and use `update_response` to mutate it. | Works today, but deliveries are no longer co-located with the assistant message — schema for the `Message` round-trip becomes provider-specific. |
-| Delete + recreate the assistant item with the updated body. | Likely loses the `previous_response_id` chain pointer, breaks subsequent `get_history_item_ids` walks, and re-stamps the storage `id` (audit-trail noise). |
-| Wait for Foundry storage to add `update_item`. | Cleanest end-state. **This is the recommended path.** |
-
-**Service ask for the FoundryHostedAgent / Foundry response store team:**
-
-- Add `update_item(item_id, item_body, *, isolation: IsolationContext | None = None) -> None` (PATCH semantics) to `azure.ai.agentserver.responses.store.FoundryStorageProvider` and the underlying `POST/PATCH /storage/items/{item_id}` REST surface.
-- Required because the Hosting spec's per-destination delivery-tracking lifecycle (`pending → delivered`/`failed`/`skipped`) needs to mutate an individual stored item after the first push attempt completes.
-- Without it, the FoundryHostedAgentHistoryProvider's `SupportsDeliveryTracking` implementation is permanently stuck at "write-once-best-effort" and durable replay through Foundry storage is unreachable.
-- Existing `update_response` is not sufficient because deliveries belong on the **assistant `Message`** (so they round-trip with the message into any provider that consumes the standard `Message` schema), not on the response envelope.
+Default selection follows [Runtime modes](#runtime-modes): `long_running` defaults to `InProcessTaskRunner`; `ephemeral` expects an adapter and falls back to `InProcessTaskRunner` with a startup warning if none is configured.
 
 ## Reference and Parity Plan
 
@@ -1766,7 +1812,6 @@ The new core sits **below** the conceptual boundary of today's top-level Respons
 | 14 | Where do issued link grants live — short-lived in-memory state on the host, the same pluggable session store (#24), or a separate identity store? | Eng | Resolved as part of the **`HostStateStore`** seam (see [Host state storage](#host-state-storage)). Link grants live alongside continuation tokens and last-seen records in the v1 file-based default (`FileHostStateStore` → `link_grants/` namespace, 15min TTL). Pluggable Cosmos / SQL / Redis adapters tracked in req #24. **→ Move to Resolved Questions in next pass.** |
 | 17 | Should `ResponseTarget.active` honor a configurable **time window** (last seen within N minutes) and what is the fallback when the window has expired before the response is ready — `originating`, `all_linked`, drop with `ContinuationToken` `status="failed"`? | PM / Eng | Likely yes with sensible default (e.g. 24h fall back to `originating`); per-request override via the run hook. |
 | 22 | For the Responses WebSocket transport, what subprotocol identifier (if any) should be advertised on the `Upgrade` and how is auth conveyed — `Authorization` header on the upgrade, a `Sec-WebSocket-Protocol` token, or a query-string-bound short-lived token? | Eng / PM | Aligning with whatever OpenAI ships for Responses WS is preferable; keep the codec swappable so the channel can track upstream changes without breaking the host contract. |
-| 27 | What is the retention contract for completed `deliveries[]` entries — keep forever for audit, GC after the message itself ages out, or cap per-message at a fixed attempt count? Should `last_error` payloads be redacted to a code/message pair to avoid logging PII from the underlying channel SDK? | Eng / Compliance | Suggest "lifetime equals message lifetime" + redacted error shape (`{code, message}` only, no provider stack frames or payload echoes) as the default; revisit when the persistent store contract lands. |
 
 ### Resolved Questions (decisions log)
 
@@ -1784,19 +1829,22 @@ Original numbering preserved so external references (checkpoints, ADR cross-link
 | 13 | Which identity linkers ship in phase 1? | **Entra linker** (in the Entra package) + **one-time-code linker** (in core). Drop MFA for now; investigating additional linkers tracked as a follow-up. |
 | 15 | Identity resolver invoked once on host vs per channel? | **Once on the host** with `ChannelIdentity(channel, native_id, ...)`. |
 | 16 | Should `IdentityLinker` and `Channel` share a base `Contributor` protocol? | **A linker *is* a Channel — specialised.** Use the single Channel-shaped contract; collapse `IdentityLinker` into a Channel specialisation. |
-| 18 | Contract for `ChannelPush` failures? | **Annotate the failure on the relevant `deliveries[]` entry** in the data model (see §"Delivery tracking on assistant messages"). Re-delivery is future work (Q26). |
+| 18 | Contract for `ChannelPush` failures? | **The `DurableTaskRunner` owns retry and final-failure semantics**, per its `RetryPolicy`. Push handler exceptions are caught by the runner, which retries with backoff and ultimately marks the task `failed` when `max_attempts` is exhausted. The synchronous `DeliveryReport.failed` returned to the originating channel is reserved for **schedule-time** failures (the runner refused the work — a host-side outage); downstream push outcomes live in the runner's own log, *not* on the message and *not* on `DeliveryReport`. See [Intended targets + durable delivery](#intended-targets--durable-delivery) and [Durable task runner](#durable-task-runner). |
 | 19 | `host.run_in_background(...)` `notify` callback? | Programmatic non-channel delivery will be expressed via the **`continuation_token`** mechanism (see Q20), not a separate `notify` callback. |
 | 20 | Storage / TTL of `ContinuationToken`s? | **Done in this revision.** `ContinuationToken` is the type, with an opaque `token: str` field that channels surface to callers; equivalent continuation-token support is added to the **Invocations channel** alongside the existing Responses behaviour. Push-capable channels can still use it; default behaviour remains "push on completion", but the developer can choose other UX (poll-after-push, hybrid, …). Persistence is the **`HostStateStore`** seam — v1 default is **`FileHostStateStore`** (atomic JSON writes, 24h TTL on completed entries), so background runs survive host restarts. |
-| 21 | Partial-failure surfacing for `all_linked`? | **Handled by the `deliveries[]` array** in the data model, updated per-destination as each push attempt completes. |
+| 21 | Partial-failure surfacing for `all_linked`? | **Two surfaces.** Originating-destination outcome is reported via the synchronous `DeliveryReport` returned to the originating channel (in-process). Non-originating destinations are scheduled as `"hosting.push"` tasks on the `DurableTaskRunner`; per-task outcome (success / retried / terminal-failure) is observable via the runner's backend (TaskHub, Foundry durable tasks, …). The host does not collate per-destination status back onto the message. |
 | 23 | Share one backing store contract for host-level vs `ContextProvider`? | **Stay separate protocols** (current draft direction confirmed). A deployment may still bind both onto the same physical backend. |
 | 24 | Where does the Foundry history provider live? | Tentative name **`FoundryHostedAgentHistoryProvider`**, in the **`foundry-hosting`** package (shares the dependency). Confirm with Foundry package owners before launch. |
 | 25 | `Channel.confidentiality_tier` opaque vs enum? | Keep as `str?` for now; can revisit before Release. |
-| 26 | Where does the delivery-replay mechanism live? | **In the Host**, but **out of scope for v1.** The on-message `deliveries[]` envelope is sufficient input for any future replayer. |
+| 26 | Where does the delivery-replay mechanism live? | **In the `DurableTaskRunner`.** Durable adapters (TaskHub, Foundry durable tasks) provide retry-with-backoff and survive host restarts natively — replay is "the runner keeps retrying until `max_attempts` is exhausted or the push succeeds". The built-in `InProcessTaskRunner` retries within the process but does **not** survive restarts (in-flight tasks are lost). Operator-driven replay (`host.replay(task_handle)`) is out of scope for v1; the runner's own surface is sufficient for the common case. |
 | 28 | Should the host collapse agent / workflow output to text? | **No.** `HostedRunResult[TResult]` carries the target output **unchanged** — full `AgentResponse` (with its multi-modal `messages`, `value`, `usage_details`) for agent targets, full `WorkflowRunResult` (with its `get_outputs()` / `get_final_state()`) for workflow targets. Channels decide what subset their wire renders; a `response_hook` may rebind `result` (e.g. project a workflow output into an `AgentResponse` for a text-only wire) via `HostedRunResult.replace(result=...)`. The host never loses fidelity it has, and never restricts modality. |
 | 29 | How do channels do per-destination post-processing (text flattening, card rendering, citation attachment) without breaking the `Channel` Protocol? | **Channels expose a `response_hook` instance attribute** (callable accepting `(result, *, context: ChannelResponseContext) -> HostedRunResult[Any] \| Awaitable[HostedRunResult[Any]]`). The host duck-types this attribute and applies it on a per-destination clone of the `HostedRunResult` envelope before push. The `Channel` Protocol stays a small `name / path / contribute` contract — adding hook support to a new channel does not require Protocol changes. |
-| 30 | Should non-originating destinations also see the user's input message, not just the agent reply? | **Opt-in via `ResponseTarget.channel(name, echo_input=True)`** (and the same kwarg on `.channels([...])` / `.identities([...])`). The host synthesises a `HostedRunResult[AgentResponse]` wrapping the user's input as a `role="user"` message and pushes it to each non-originating destination before the agent reply. Echo failures land in `DeliveryReport.echo_failed` and do not block the corresponding response push. Channels can transform or drop echoes via their `response_hook` (which receives `is_echo=True` for the echo phase). |
+| 30 | Should non-originating destinations also see the user's input message, not just the agent reply? | **Opt-in via `ResponseTarget.channel(name, echo_input=True)`** (and the same kwarg on `.channels([...])` / `.identities([...])`). The host synthesises a `HostedRunResult[AgentResponse]` wrapping the user's input as a `role="user"` message and bundles it into the same scheduled push task as the agent reply per non-originating destination; the echo is dispatched first inside the task and an echo-push failure is logged and swallowed so the response push on the same destination is still attempted. Channels can transform or drop echoes via their `response_hook` (which receives `is_echo=True` for the echo phase). |
 | 31 | Should `HostedRunResult` be flattened (text / messages) or carry the full target output? | **Carry the full target output, generically typed.** `HostedRunResult[TResult]` exposes a single `result: TResult` field — `AgentResponse` for agent targets, `WorkflowRunResult` for workflow targets — plus an optional `session: AgentSession \| None`. Earlier drafts carried a flattened `messages: list[Message]` projection alongside `raw_response`; this lost workflow-specific affordances (`get_outputs()`, `get_final_state()`, structured per-executor payloads) and forced the host to pre-shape data only some channels needed. The generic envelope keeps the host modality-agnostic, lets channels read the canonical accessor on the underlying type (`result.messages`, `result.value`, `result.get_outputs()`, …), and gives channel authors static typing where they want it. |
 | 32 | Should authorization (per-channel allowlist) ship as a single `auth_mode` enum or as two orthogonal parameters? | **Two orthogonal parameters (`require_link: bool` + `allowlist: IdentityAllowlist \| Literal["inherit"] \| None = "inherit"`)** plus named `AuthPolicy` factories for the three common combinations. A single enum collapses `require_link` and `allowlist` into one axis and cannot express the Mixed profile (`AnyOfAllowlists(NativeIdAllowlist, LinkedClaimAllowlist)` with `require_link=False` — native ids bypass auth, everyone else is funneled into linking) without re-introducing per-value sub-parameters that would defeat the point. Composition is built on a **tri-state `AllowlistDecision` (`ALLOW` / `DENY` / `ABSTAIN`)** rather than a boolean, because boolean composition cannot distinguish "claim allowlist denies you" from "claim allowlist hasn't seen any claims yet" — a critical distinction for the Mixed profile. `LinkedClaimAllowlist` is rejected at host startup if no source of verified claims is available (config validator, fail-fast), preventing the silent-deny-everyone footgun. Group-chat denials apply the same DM-redirect pattern as `LinkChallenge` (short generic refusal in-room, fuller `user_message` in DM, structured `log_details` only in logs). Shipping in two waves: the Protocol + `NativeIdAllowlist` + config validator ship with the next core PR; full `host.authorize(...)` pipeline + `LinkedClaimAllowlist` enforcement land with the `IdentityLinker` core PR. See [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam). |
+| 33 | How does the host decide whether it is running long-running vs ephemeral? | **Single `runtime_mode` parameter on `AgentFrameworkHost`**, defaulting to `None` for auto-detection. Auto-detect inspects known deployment markers (`FOUNDRY_HOSTING_ENVIRONMENT`, `AZURE_FUNCTIONS_ENVIRONMENT`, `AWS_LAMBDA_FUNCTION_NAME`) and picks `"ephemeral"` on the first hit; otherwise falls back to `"long_running"` (sensible local-dev / always-on default). The mode is **advisory** — it drives *defaults* for `HostStateStore`, `DurableTaskRunner`, identity-link state, and similar seams, but every individual choice remains overridable. Detected mode is logged at startup so misdetection is visible. See [Runtime modes](#runtime-modes). |
+| 34 | How does delivery to non-originating destinations actually happen — synchronously in the originating request handler, or out-of-band? | **Out-of-band via a `DurableTaskRunner`.** The host registers an internal handler `"hosting.push"` at startup; each non-originating destination becomes a single `runner.schedule("hosting.push", payload)` call. The originating destination (when `ResponseTarget` includes it) is **still rendered synchronously** on the originating channel's wire — only fan-out goes through the runner. Default runner is `InProcessTaskRunner` (asyncio + bounded retry, no cross-restart persistence — suitable for `long_running`). Durable adapter packages (`agent-framework-hosting-durabletask`, future Foundry adapter) plug into the same Protocol for `ephemeral` deployments. See [Durable task runner](#durable-task-runner). |
+| 35 | What is the audit shape on the assistant message — full per-destination state machine, or intent only? | **Intent only.** `Message.additional_properties["hosting"]["intended_targets"]` is a single immutable write that records the resolved destination set (after `ResponseTarget` + `LinkPolicy` filtering). Operational state — attempt count, last error, success timestamp, channel-issued id — lives in the `DurableTaskRunner` and is observed via the runner's backend. This eliminates the previous `deliveries[]` status state machine (`pending`/`delivered`/`failed`/`skipped`), the `SupportsDeliveryTracking` provider capability, and the Foundry `update_item` service ask. See [Intended targets + durable delivery](#intended-targets--durable-delivery). |
 
 ### Decisions-driven follow-ups
 
@@ -1809,3 +1857,4 @@ The following resolutions imply prose / API edits elsewhere in the spec body (no
 - **Q16** — Collapse `IdentityLinker` into a Channel specialisation in the spec body (architecture diagrams, contracts, examples).
 - **Q20** — ✅ Done. `ContinuationToken` type carries an opaque `token: str`; routes use `/{continuation_token}`; Invocations channel gets equivalent continuation-token support; persistence via `HostStateStore` (v1 default file-based).
 - **Q32** — Spec text added (see [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam) and req #22). Code lands in two waves: Wave 1 (Protocol + `NativeIdAllowlist` + config validator + `AuthorizationOutcome` types) ships with the next core PR ahead of the linker; Wave 2 (full `host.authorize(...)` pipeline + `LinkedClaimAllowlist` enforcement + `AuthPolicy` factories) ships with the `IdentityLinker` core PR.
+- **Q33 / Q34 / Q35** — Spec text added: new top-level §[Runtime modes](#runtime-modes), rewritten §[Intended targets + durable delivery](#intended-targets--durable-delivery), new §[Durable task runner](#durable-task-runner). Code lands in this core PR: `DurableTaskRunner` Protocol + `InProcessTaskRunner` + `runtime_mode` constructor parameter + auto-detection. Durable runner adapters (`agent-framework-hosting-durabletask`, Foundry adapter) are separate follow-up packages tracked under §[Decisions-driven follow-ups](#decisions-driven-follow-ups). Bumping req #14 (background runs) to share the same runner is a non-goal of this PR — the `ContinuationToken` machinery and the runner can be wired together in a later pass without re-shaping either contract.
