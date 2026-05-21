@@ -25,6 +25,11 @@ public static class AnsiEscapes
     public static string MoveCursor(int row, int column) => $"\x1b[{row};{column}H";
 
     /// <summary>
+    /// Erases the current line from the cursor position to the end of the line (EL 0).
+    /// </summary>
+    public static string EraseToEndOfLine => "\x1b[0K";
+
+    /// <summary>
     /// Erases the entire current line (EL 2).
     /// </summary>
     public static string EraseEntireLine => "\x1b[2K";

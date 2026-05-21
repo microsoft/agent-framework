@@ -5,7 +5,7 @@ namespace Harness.Shared.Console;
 /// <summary>
 /// Represents the type of an output entry in the console conversation.
 /// </summary>
-public enum OutputEntryType
+internal enum OutputEntryType
 {
     /// <summary>User input echo (e.g. "You: hello").</summary>
     UserInput,
@@ -25,9 +25,10 @@ public enum OutputEntryType
 
 /// <summary>
 /// Represents a single output entry in the console conversation history.
-/// These entries are rendered by the <see cref="HarnessAppComponent"/> via its render delegate.
+/// Used internally by <see cref="HarnessConsoleUXStateDriver"/> to track
+/// the in-progress streaming entry and last-entry type for spacing decisions.
 /// </summary>
 /// <param name="Type">The type of output entry.</param>
 /// <param name="Text">The text content of the entry.</param>
 /// <param name="Color">Optional foreground color for rendering.</param>
-public record OutputEntry(OutputEntryType Type, string Text, ConsoleColor? Color = null);
+internal sealed record OutputEntry(OutputEntryType Type, string Text, ConsoleColor? Color = null);

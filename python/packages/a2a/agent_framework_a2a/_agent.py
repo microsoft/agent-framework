@@ -157,9 +157,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
         except Exception as transport_error:
             # Transport negotiation failed - fall back to minimal agent card with JSONRPC
-            fallback_url = (
-                agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url
-            )
+            fallback_url = agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url
             if not fallback_url:
                 raise ValueError(
                     "A2A transport negotiation failed and no fallback URL is available. "
@@ -365,6 +363,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         all_updates: list[AgentResponseUpdate] = []
         streamed_artifact_ids_by_task: dict[str, set[str]] = {}
+        # In non-streaming mode, accumulate intermediate status content so it
+        # can be surfaced when the terminal event arrives (mirroring v0.3.x
+        # behavior where the full Task history was available at completion).
+        pending_updates_by_task: dict[str, list[AgentResponseUpdate]] = {}
         async for item in a2a_stream:
             payload_type = item.WhichOneof("payload")
             if payload_type == "message":
@@ -391,27 +393,55 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 )
                 if task.status.state in TERMINAL_TASK_STATES:
                     streamed_artifact_ids_by_task.pop(task.id, None)
+                    # If the terminal Task has no content, flush accumulated updates
+                    if not updates or all(not u.contents for u in updates):
+                        pending = pending_updates_by_task.pop(task.id, [])
+                        for update in pending:
+                            all_updates.append(update)
+                            yield update
+                    else:
+                        pending_updates_by_task.pop(task.id, None)
                 for update in updates:
                     all_updates.append(update)
                     yield update
             elif payload_type == "status_update":
                 status_event = item.status_update
                 updates = self._updates_from_task_update_event(status_event)
+                is_terminal = status_event.status.state in TERMINAL_TASK_STATES
                 if emit_intermediate:
                     for update in updates:
                         all_updates.append(update)
                         yield update
+                elif is_terminal:
+                    if updates:
+                        # Terminal event with content — discard accumulated intermediates
+                        pending_updates_by_task.pop(status_event.task_id, None)
+                        for update in updates:
+                            all_updates.append(update)
+                            yield update
+                    else:
+                        # Terminal event with NO content — flush accumulated updates
+                        pending = pending_updates_by_task.pop(status_event.task_id, [])
+                        for update in pending:
+                            all_updates.append(update)
+                            yield update
+                else:
+                    # Non-streaming intermediate: accumulate for later
+                    if updates:
+                        pending_updates_by_task.setdefault(status_event.task_id, []).extend(updates)
             elif payload_type == "artifact_update":
                 artifact_event = item.artifact_update
                 updates = self._updates_from_task_update_event(artifact_event)
+                # Always yield artifact updates — they carry actual response
+                # content (files, data).  Track IDs so that a subsequent
+                # terminal Task doesn't duplicate the same artifacts.
                 if updates:
                     streamed_artifact_ids_by_task.setdefault(artifact_event.task_id, set()).add(
                         artifact_event.artifact.artifact_id
                     )
-                if emit_intermediate:
-                    for update in updates:
-                        all_updates.append(update)
-                        yield update
+                for update in updates:
+                    all_updates.append(update)
+                    yield update
             else:
                 raise NotImplementedError(f"Unsupported StreamResponse payload: {payload_type}")
 

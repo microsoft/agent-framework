@@ -16,7 +16,7 @@ Status is grouped into these buckets:
 | --- | --- | --- |
 | `agent-framework` | `python/` | `released` |
 | `agent-framework-a2a` | `python/packages/a2a` | `beta` |
-| `agent-framework-ag-ui` | `python/packages/ag-ui` | `beta` |
+| `agent-framework-ag-ui` | `python/packages/ag-ui` | `rc` |
 | `agent-framework-anthropic` | `python/packages/anthropic` | `beta` |
 | `agent-framework-azure-contentunderstanding` | `python/packages/azure-contentunderstanding` | `alpha` |
 | `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` |
@@ -37,6 +37,7 @@ Status is grouped into these buckets:
 | `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` |
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |
+| `agent-framework-monty` | `python/packages/monty` | `alpha` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |
 | `agent-framework-orchestrations` | `python/packages/orchestrations` | `beta` |

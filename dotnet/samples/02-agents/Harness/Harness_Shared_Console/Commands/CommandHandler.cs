@@ -23,7 +23,7 @@ public abstract class CommandHandler
     /// </summary>
     /// <param name="input">The raw user input string.</param>
     /// <param name="session">The current agent session.</param>
-    /// <param name="ux">The UX container for rendering output.</param>
+    /// <param name="ux">The UX state driver for rendering output.</param>
     /// <returns><see langword="true"/> if this handler handled the input; <see langword="false"/> otherwise.</returns>
-    public abstract ValueTask<bool> TryHandleAsync(string input, AgentSession session, HarnessUXContainer ux);
+    public abstract ValueTask<bool> TryHandleAsync(string input, AgentSession session, IUXStateDriver ux);
 }

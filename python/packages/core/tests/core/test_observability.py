@@ -1015,11 +1015,25 @@ def test_observability_settings_is_setup_initial(monkeypatch):
     assert settings.is_setup is False
 
 
-# region Test enable_instrumentation function
+def test_enable_sensitive_telemetry_function(monkeypatch):
+    """Test enable_sensitive_telemetry function enables instrumentation."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+
+    observability.enable_sensitive_telemetry()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
 
 
 def test_enable_instrumentation_function(monkeypatch):
-    """Test enable_instrumentation function enables instrumentation."""
+    """Test enable_instrumentation function enables instrumentation when disabled via env."""
     import importlib
 
     monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
@@ -1032,10 +1046,12 @@ def test_enable_instrumentation_function(monkeypatch):
 
     observability.enable_instrumentation()
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    # Sensitive data should remain False when not explicitly enabled
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
 
 
 def test_enable_instrumentation_with_sensitive_data(monkeypatch):
-    """Test enable_instrumentation function with sensitive_data parameter."""
+    """Test enable_instrumentation function with explicit sensitive_data parameter."""
     import importlib
 
     monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
@@ -1047,111 +1063,6 @@ def test_enable_instrumentation_with_sensitive_data(monkeypatch):
     observability.enable_instrumentation(enable_sensitive_data=True)
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
-
-
-def test_enable_instrumentation_reads_env_sensitive_data(monkeypatch):
-    """Test enable_instrumentation re-reads ENABLE_SENSITIVE_DATA from os.environ when not explicitly passed."""
-    import importlib
-
-    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
-    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
-
-    observability = importlib.import_module("agent_framework.observability")
-    importlib.reload(observability)
-
-    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
-
-    # Simulate load_dotenv() setting env var after import
-    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
-
-    observability.enable_instrumentation()
-    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
-    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
-
-
-def test_configure_otel_providers_reads_env_sensitive_data(monkeypatch):
-    """Test configure_otel_providers re-reads ENABLE_SENSITIVE_DATA from os.environ when not explicitly passed."""
-    import importlib
-
-    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
-    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
-    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
-    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
-    for key in [
-        "OTEL_EXPORTER_OTLP_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-    ]:
-        monkeypatch.delenv(key, raising=False)
-
-    observability = importlib.import_module("agent_framework.observability")
-    importlib.reload(observability)
-
-    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
-
-    # Simulate load_dotenv() setting env var after import
-    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
-
-    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
-        observability.configure_otel_providers()
-    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
-    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
-
-
-def test_configure_otel_providers_reads_env_vs_code_port(monkeypatch):
-    """Test configure_otel_providers re-reads VS_CODE_EXTENSION_PORT from os.environ when not explicitly passed."""
-    import importlib
-    from unittest.mock import patch as mock_patch
-
-    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
-    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
-    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
-    for key in [
-        "OTEL_EXPORTER_OTLP_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-    ]:
-        monkeypatch.delenv(key, raising=False)
-
-    observability = importlib.import_module("agent_framework.observability")
-    importlib.reload(observability)
-
-    assert observability.OBSERVABILITY_SETTINGS.vs_code_extension_port is None
-
-    # Simulate load_dotenv() setting env var after import
-    monkeypatch.setenv("VS_CODE_EXTENSION_PORT", "4317")
-
-    # Mock _configure to avoid needing optional OTLP gRPC exporter dependency
-    with mock_patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
-        observability.configure_otel_providers()
-    assert observability.OBSERVABILITY_SETTINGS.vs_code_extension_port == 4317
-
-
-def test_configure_otel_providers_explicit_param_overrides_env(monkeypatch):
-    """Test that explicit parameters to configure_otel_providers override env vars."""
-    import importlib
-
-    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
-    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
-    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
-    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
-    for key in [
-        "OTEL_EXPORTER_OTLP_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-    ]:
-        monkeypatch.delenv(key, raising=False)
-
-    observability = importlib.import_module("agent_framework.observability")
-    importlib.reload(observability)
-
-    # Explicit False should override the env var True
-    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
-        observability.configure_otel_providers(enable_sensitive_data=False)
-    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
 
 
 def test_enable_instrumentation_explicit_param_overrides_env(monkeypatch):
@@ -1269,6 +1180,161 @@ def test_enable_instrumentation_preserves_console_exporters_after_env_removed(mo
     assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
 
 
+def test_configure_otel_providers_reads_env_sensitive_data(monkeypatch):
+    """Test configure_otel_providers re-reads ENABLE_SENSITIVE_DATA from os.environ when not explicitly passed."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
+    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+    # Simulate load_dotenv() setting env var after import
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+def test_configure_otel_providers_reads_env_vs_code_port(monkeypatch):
+    """Test configure_otel_providers re-reads VS_CODE_EXTENSION_PORT from os.environ when not explicitly passed."""
+    import importlib
+    from unittest.mock import patch as mock_patch
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    assert observability.OBSERVABILITY_SETTINGS.vs_code_extension_port is None
+
+    # Simulate load_dotenv() setting env var after import
+    monkeypatch.setenv("VS_CODE_EXTENSION_PORT", "4317")
+
+    # Mock _configure to avoid needing optional OTLP gRPC exporter dependency
+    with mock_patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers()
+    assert observability.OBSERVABILITY_SETTINGS.vs_code_extension_port == 4317
+
+
+def test_configure_otel_providers_explicit_param_overrides_env(monkeypatch):
+    """Test that explicit parameters to configure_otel_providers override env vars."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    # Explicit False should override the env var True
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(enable_sensitive_data=False)
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_enable_sensitive_telemetry_does_not_touch_console_exporters(monkeypatch):
+    """Test enable_sensitive_telemetry does not modify enable_console_exporters (it is an exporter concern)."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is False
+
+    # Simulate load_dotenv() setting env var after import
+    monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
+
+    observability.enable_sensitive_telemetry()
+    # enable_console_exporters is not managed by enable_sensitive_telemetry;
+    # it is only read by configure_otel_providers.
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is False
+
+
+def test_enable_sensitive_telemetry_does_not_clobber_console_exporters(monkeypatch):
+    """Test enable_sensitive_telemetry does not reset enable_console_exporters set by prior configure call."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    # Set console exporters via configure_otel_providers
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(enable_console_exporters=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
+
+    # Calling enable_sensitive_telemetry should not clobber the value
+    observability.enable_sensitive_telemetry()
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
+
+
+def test_enable_sensitive_telemetry_preserves_console_exporters_after_env_removed(monkeypatch):
+    """Test enable_sensitive_telemetry preserves enable_console_exporters when env var is removed after reload."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
+
+    # Remove the env var after reload
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
+
+    # enable_sensitive_telemetry should not reset the value
+    observability.enable_sensitive_telemetry()
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
+
+
 def test_configure_otel_providers_reads_env_console_exporters(monkeypatch):
     """Test configure_otel_providers re-reads ENABLE_CONSOLE_EXPORTERS from os.environ when not explicitly passed."""
     import importlib
@@ -1319,6 +1385,189 @@ def test_configure_otel_providers_explicit_console_exporters_overrides_env(monke
     with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
         observability.configure_otel_providers(enable_console_exporters=False)
     assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is False
+
+
+# region Test default-on instrumentation
+
+
+def test_observability_settings_defaults_instrumentation_true(monkeypatch):
+    """ENABLE_INSTRUMENTATION unset → ObservabilitySettings defaults to True."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    settings = ObservabilitySettings()
+    assert settings.enable_instrumentation is True
+
+
+def test_enable_instrumentation_reads_env_sensitive_data(monkeypatch):
+    """No-arg enable_instrumentation() re-reads ENABLE_SENSITIVE_DATA from env at call time.
+
+    Covers the fallback branch where the env var is set AFTER import (e.g. via load_dotenv()).
+    """
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    # Simulate load_dotenv() setting the env var after import
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+    observability.enable_instrumentation()
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+# region Test disable_instrumentation sticky behavior
+
+
+def test_disable_instrumentation_flips_settings_off(monkeypatch):
+    """disable_instrumentation() immediately turns instrumentation and sensitive data off."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.enable_sensitive_telemetry()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+    assert observability.OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED is True
+
+    observability.disable_instrumentation()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+    assert observability.OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED is False
+    assert observability.OBSERVABILITY_SETTINGS.ENABLED is False
+
+
+def test_disable_instrumentation_is_sticky_against_enable_instrumentation(monkeypatch):
+    """Sticky disable: enable_instrumentation() without force is a no-op after disable."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_instrumentation(enable_sensitive_data=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_disable_instrumentation_is_sticky_against_enable_sensitive_telemetry(monkeypatch):
+    """Sticky disable: enable_sensitive_telemetry() without force is a no-op after disable."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_sensitive_telemetry()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_disable_instrumentation_is_sticky_against_configure_otel_providers(monkeypatch):
+    """Sticky disable: configure_otel_providers() does not flip instrumentation back on."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(enable_sensitive_data=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_disable_instrumentation_intercepts_direct_attribute_writes(monkeypatch):
+    """Sticky disable: direct OBSERVABILITY_SETTINGS.enable_instrumentation = True is intercepted."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.OBSERVABILITY_SETTINGS.enable_instrumentation = True
+    observability.OBSERVABILITY_SETTINGS.enable_sensitive_data = True
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_enable_instrumentation_force_clears_disable(monkeypatch):
+    """enable_instrumentation(force=True) clears the sticky disable."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_instrumentation(force=True, enable_sensitive_data=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+def test_enable_sensitive_telemetry_force_clears_disable(monkeypatch):
+    """enable_sensitive_telemetry(force=True) clears the sticky disable."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_sensitive_telemetry(force=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+def test_disable_instrumentation_persists_after_force_until_redisabled(monkeypatch):
+    """After force-enable then disable again, the sticky disable is re-armed."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_instrumentation(force=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+
+    observability.disable_instrumentation()
+    observability.enable_instrumentation()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+
+
+def test_disable_instrumentation_in_all(monkeypatch):
+    """disable_instrumentation must be re-exported from the module's __all__."""
+    import agent_framework.observability as observability
+
+    assert "disable_instrumentation" in observability.__all__
+    assert callable(observability.disable_instrumentation)
 
 
 # region Test _to_otel_part content types
@@ -3797,3 +4046,135 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
     agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
     assert len(agent_spans) == 1
     assert agent_spans[0].status.status_code == StatusCode.ERROR
+
+
+# region Test heavy operations skipped when span is not recording
+#
+# When ``ENABLE_INSTRUMENTATION`` is on (the default) but no OpenTelemetry
+# tracer provider has been configured, the global provider is the
+# ``ProxyTracerProvider`` which returns non-recording spans. The telemetry
+# layers gate sensitive-data serialization (``_capture_messages``) on
+# ``span.is_recording()`` so that we don't pay the JSON-serialization cost
+# when the span is going to be dropped anyway. The tests below verify that
+# behavior by patching ``get_tracer`` to return a ``NoOpTracer``.
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_capture_messages_skipped_when_span_not_recording(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Heavy message serialization is skipped when no provider is configured (non-streaming)."""
+    from opentelemetry.trace import NoOpTracer
+
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        response = await client.get_response(messages=messages, options={"model": "Test"})
+
+    assert response is not None
+    # Sensitive-data serialization must be skipped because span.is_recording() is False.
+    assert mock_capture_messages.call_count == 0
+    # _capture_response still runs so that metric histograms continue to record.
+    assert mock_capture_response.call_count == 1
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_streaming_capture_messages_skipped_when_span_not_recording(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Heavy message serialization is skipped when no provider is configured (streaming)."""
+    from opentelemetry.trace import NoOpTracer
+
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        updates: list[ChatResponseUpdate] = []
+        stream = client.get_response(messages=messages, stream=True, options={"model": "Test"})
+        async for update in stream:
+            updates.append(update)
+        await stream.get_final_response()
+
+    assert len(updates) == 2
+    assert mock_capture_messages.call_count == 0
+    assert mock_capture_response.call_count == 1
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_capture_messages_skipped_when_span_not_recording(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Agent heavy serialization is skipped when no provider is configured (non-streaming)."""
+    from opentelemetry.trace import NoOpTracer
+
+    agent = mock_chat_agent()
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        response = await agent.run("Test message")
+
+    assert response is not None
+    assert mock_capture_messages.call_count == 0
+    assert mock_capture_response.call_count == 1
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_capture_messages_skipped_when_span_not_recording(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Agent heavy serialization is skipped when no provider is configured (streaming)."""
+    from opentelemetry.trace import NoOpTracer
+
+    agent = mock_chat_agent()
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        updates: list[Any] = []
+        stream = agent.run("Test message", stream=True)
+        async for update in stream:
+            updates.append(update)
+        await stream.get_final_response()
+
+    assert len(updates) == 2
+    assert mock_capture_messages.call_count == 0
+    assert mock_capture_response.call_count == 1
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_capture_messages_called_when_span_recording(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Sanity check: with a real recording provider, sensitive-data capture still runs."""
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        response = await client.get_response(messages=messages, options={"model": "Test"})
+
+    assert response is not None
+    # Two _capture_messages calls: one for input, one for output messages.
+    assert mock_capture_messages.call_count == 2
+    assert mock_capture_response.call_count == 1

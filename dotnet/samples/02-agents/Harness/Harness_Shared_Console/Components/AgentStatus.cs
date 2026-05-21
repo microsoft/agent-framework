@@ -35,6 +35,7 @@ public class AgentStatus : ConsoleReactiveComponent<AgentStatusProps, AgentStatu
     ];
 
     private readonly Timer _timer;
+    private AgentStatusProps? _previousProps;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentStatus"/> class.
@@ -85,7 +86,12 @@ public class AgentStatus : ConsoleReactiveComponent<AgentStatusProps, AgentStatu
         }
 
         System.Console.Write(AnsiEscapes.SaveCursor);
-        System.Console.Write(AnsiEscapes.MoveAndEraseLine(this.Y));
+        System.Console.Write(AnsiEscapes.MoveCursor(props.Y, props.X));
+        if (props != this._previousProps)
+        {
+            System.Console.Write(AnsiEscapes.EraseToEndOfLine);
+            this._previousProps = props;
+        }
 
         if (props.ShowSpinner)
         {

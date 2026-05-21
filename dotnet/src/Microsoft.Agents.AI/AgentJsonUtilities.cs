@@ -74,9 +74,11 @@ internal static partial class AgentJsonUtilities
     [JsonSerializable(typeof(TodoState))]
     [JsonSerializable(typeof(TodoItem))]
     [JsonSerializable(typeof(TodoItemInput))]
+    [JsonSerializable(typeof(TodoCompleteInput))]
     [JsonSerializable(typeof(List<int>), TypeInfoPropertyName = "IntList")]
     [JsonSerializable(typeof(List<TodoItem>), TypeInfoPropertyName = "TodoItemList")]
     [JsonSerializable(typeof(List<TodoItemInput>), TypeInfoPropertyName = "TodoItemInputList")]
+    [JsonSerializable(typeof(List<TodoCompleteInput>), TypeInfoPropertyName = "TodoCompleteInputList")]
 
     // AgentModeProvider types
     [JsonSerializable(typeof(AgentModeState))]
@@ -95,12 +97,12 @@ internal static partial class AgentJsonUtilities
     [JsonSerializable(typeof(FileListEntry))]
     [JsonSerializable(typeof(List<FileListEntry>), TypeInfoPropertyName = "FileListEntryList")]
 
-    // SubAgentsProvider types
-    [JsonSerializable(typeof(SubAgentState))]
-    [JsonSerializable(typeof(SubAgentRuntimeState))]
-    [JsonSerializable(typeof(SubTaskInfo))]
-    [JsonSerializable(typeof(SubTaskStatus))]
-    [JsonSerializable(typeof(List<SubTaskInfo>), TypeInfoPropertyName = "SubTaskInfoList")]
+    // BackgroundAgentsProvider types
+    [JsonSerializable(typeof(BackgroundAgentState))]
+    [JsonSerializable(typeof(BackgroundAgentRuntimeState))]
+    [JsonSerializable(typeof(BackgroundTaskInfo))]
+    [JsonSerializable(typeof(BackgroundTaskStatus))]
+    [JsonSerializable(typeof(List<BackgroundTaskInfo>), TypeInfoPropertyName = "BackgroundTaskInfoList")]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
