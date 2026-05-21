@@ -844,8 +844,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     def _get_conversation_id(
         self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
     ) -> str | None:
-        """Get the conversation ID from the response if store is True."""
-        if store is False:
+        """Get the server-managed conversation identifier when ``store=True`` is set.
+
+        Only returns a non-None value when ``store=True`` is explicitly set to opt into
+        server-managed conversation mode (OpenAI native). In that mode, this returns
+        ``response.conversation.id`` when present; otherwise it falls back to
+        ``response.id``. When ``store`` is ``None`` (the default) or ``False``,
+        returns ``None`` so the executor uses full-history mode, which is compatible
+        with providers that do not support ``previous_response_id`` (e.g. OpenRouter).
+        """
+        if store is not True:
             return None
         # If conversation ID exists, it means that we operate with conversation
         # so we use conversation ID as input and output.
