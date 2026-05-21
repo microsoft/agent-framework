@@ -87,6 +87,42 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[2].text == "done"
 
 
+async def test_base_client_with_function_calling_preserves_null_arguments(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    seen_unit: str | None = "not-called"
+
+    @tool(name="get_weather", approval_mode="never_require")
+    def get_weather(location: str, unit: str | None) -> str:
+        nonlocal seen_unit
+        seen_unit = unit
+        return f"{location}:{unit}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1",
+                        name="get_weather",
+                        arguments='{"location": "Seattle", "unit": null}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["weather?"])], options={"tool_choice": "auto", "tools": [get_weather]}
+    )
+
+    assert seen_unit is None
+    assert response.messages[1].contents[0].type == "function_result"
+    assert response.messages[1].contents[0].result == "Seattle:None"
+
+
 async def test_base_client_with_function_calling_string_input(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 

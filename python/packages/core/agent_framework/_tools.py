@@ -237,6 +237,15 @@ def _annotation_includes_function_invocation_context(annotation: Any) -> bool:
 ClassT = TypeVar("ClassT", bound="SerializationMixin")
 
 
+def _dump_tool_arguments(model: BaseModel, *, include_none_from: Iterable[str] | None = None) -> dict[str, Any]:
+    arguments = model.model_dump(exclude_none=True)
+    field_names = type(model).model_fields
+    for name in include_none_from if include_none_from is not None else model.model_fields_set:
+        if name in field_names and getattr(model, name, None) is None:
+            arguments[name] = None
+    return arguments
+
+
 class FunctionTool(SerializationMixin):
     """A tool that wraps a Python function to make it callable by AI models.
 
@@ -635,8 +644,9 @@ class FunctionTool(SerializationMixin):
                 if isinstance(arguments, Mapping):
                     parsed_arguments = dict(arguments)
                     if self.input_model is not None and not self._schema_supplied:
-                        parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
-                            exclude_none=True
+                        parsed_arguments = _dump_tool_arguments(
+                            self.input_model.model_validate(parsed_arguments),
+                            include_none_from=parsed_arguments,
                         )
                 elif isinstance(arguments, BaseModel):
                     if (
@@ -645,7 +655,7 @@ class FunctionTool(SerializationMixin):
                         and not isinstance(arguments, self.input_model)
                     ):
                         raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                    parsed_arguments = arguments.model_dump(exclude_none=True)
+                    parsed_arguments = _dump_tool_arguments(arguments)
                 else:
                     raise TypeError(
                         f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -1492,7 +1502,7 @@ async def _auto_invoke_function(
         runtime_kwargs["session"] = invocation_session
     try:
         if not cast(bool, getattr(tool, "_schema_supplied", False)) and tool.input_model is not None:
-            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_none=True)
+            args = _dump_tool_arguments(tool.input_model.model_validate(parsed_args), include_none_from=parsed_args)
         else:
             args = dict(parsed_args)
         args = _validate_arguments_against_schema(
