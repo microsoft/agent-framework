@@ -98,7 +98,7 @@ class A2AAgentSession(AgentSession):
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "A2AAgentSession":
+    def from_dict(cls, data: dict[str, Any]) -> A2AAgentSession:
         """Restore session from a previously serialized dict.
 
         Args:
