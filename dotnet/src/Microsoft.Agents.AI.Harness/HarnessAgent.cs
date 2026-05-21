@@ -6,6 +6,9 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using Microsoft.Agents.AI.Compaction;
+#if NET
+using Microsoft.Agents.AI.Tools.Shell;
+#endif
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -201,6 +204,14 @@ public sealed class HarnessAgent : DelegatingAIAgent
             result.Tools.Add(new HostedWebSearchTool());
         }
 
+#if NET
+        if (options?.ShellExecutor is ShellExecutor shellExecutor)
+        {
+            result.Tools ??= [];
+            result.Tools.Add(shellExecutor.AsAIFunction());
+        }
+#endif
+
         return result;
     }
 
@@ -258,6 +269,13 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 providers.Add(new BackgroundAgentsProvider(materializedAgents, options.BackgroundAgentsProviderOptions));
             }
         }
+
+#if NET
+        if (options?.ShellExecutor is ShellExecutor shellExecutor)
+        {
+            providers.Add(new ShellEnvironmentProvider(shellExecutor, options.ShellEnvironmentProviderOptions));
+        }
+#endif
 
         if (options?.AIContextProviders is IEnumerable<AIContextProvider> userProviders)
         {

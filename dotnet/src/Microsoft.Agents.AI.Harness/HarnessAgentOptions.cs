@@ -2,6 +2,9 @@
 
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+#if NET
+using Microsoft.Agents.AI.Tools.Shell;
+#endif
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 
@@ -240,4 +243,27 @@ public sealed class HarnessAgentOptions
     /// This property is ignored when <see cref="BackgroundAgents"/> is <see langword="null"/> or empty.
     /// </remarks>
     public BackgroundAgentsProviderOptions? BackgroundAgentsProviderOptions { get; set; }
+
+#if NET
+    /// <summary>
+    /// Gets or sets the shell executor used to enable shell tool and environment probing via <see cref="ShellEnvironmentProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// When non-null, a <see cref="ShellEnvironmentProvider"/> is automatically included in the agent's context
+    /// providers (injecting OS/shell/CWD information into the system prompt), and the executor's
+    /// <see cref="ShellExecutor.AsAIFunction"/> is registered as a callable tool.
+    /// When <see langword="null"/> (the default), no shell features are enabled.
+    /// </remarks>
+    public ShellExecutor? ShellExecutor { get; set; }
+
+    /// <summary>
+    /// Gets or sets optional configuration for the <see cref="ShellEnvironmentProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// Use this to customize which tools are probed, the probe timeout, shell family override,
+    /// or the instructions formatter.
+    /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
+    /// </remarks>
+    public ShellEnvironmentProviderOptions? ShellEnvironmentProviderOptions { get; set; }
+#endif
 }
