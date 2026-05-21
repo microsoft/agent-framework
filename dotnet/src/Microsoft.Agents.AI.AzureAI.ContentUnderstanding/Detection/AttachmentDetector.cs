@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
@@ -162,15 +163,17 @@ internal static class AttachmentDetector
 
     private static string ResolveDataFilename(DataContent dc, string mediaType, byte[] bytes)
     {
-        if (!string.IsNullOrEmpty(dc.Name))
-        {
-            return dc.Name!;
-        }
+        string? candidate = !string.IsNullOrEmpty(dc.Name)
+            ? dc.Name
+            : TryGetFilenameFromProperties(dc.AdditionalProperties);
 
-        string? fromProps = TryGetFilenameFromProperties(dc.AdditionalProperties);
-        if (!string.IsNullOrEmpty(fromProps))
+        if (!string.IsNullOrEmpty(candidate))
         {
-            return fromProps!;
+            string cleaned = SanitizeFilename(candidate!);
+            if (!string.IsNullOrEmpty(cleaned))
+            {
+                return cleaned;
+            }
         }
 
         return Synthesize(bytes, mediaType);
@@ -181,7 +184,11 @@ internal static class AttachmentDetector
         string? fromProps = TryGetFilenameFromProperties(uc.AdditionalProperties);
         if (!string.IsNullOrEmpty(fromProps))
         {
-            return fromProps!;
+            string cleaned = SanitizeFilename(fromProps!);
+            if (!string.IsNullOrEmpty(cleaned))
+            {
+                return cleaned;
+            }
         }
 
         // Fall back to the URI's last segment when it looks like a real filename.
@@ -189,7 +196,11 @@ internal static class AttachmentDetector
         last = last?.Trim('/');
         if (!string.IsNullOrEmpty(last) && last!.Contains('.'))
         {
-            return last;
+            string cleaned = SanitizeFilename(last);
+            if (!string.IsNullOrEmpty(cleaned))
+            {
+                return cleaned;
+            }
         }
 
         // Synthesize from a hash of the URI string when no real filename can be derived.
@@ -210,6 +221,51 @@ internal static class AttachmentDetector
         }
 
         return null;
+    }
+
+    private const int MaxFilenameLength = 255;
+
+    private static readonly char[] SpaceSplit = [' '];
+
+    // Removes control chars, path separators, and ".." segments from a caller-supplied filename;
+    // collapses whitespace runs; caps length. Mirrors Python's sanitize_doc_key (_detection.py) with
+    // added path-traversal hardening — the resolved filename is interpolated into LLM-visible markdown
+    // (AnalysisRenderer YAML front-matter "source:" and per-document vector-store notes), so raw control
+    // chars / newlines / backticks would let an attacker-controlled filename break those framings and
+    // inject pseudo-instructions. Returns empty when nothing usable remains; caller falls back to Synthesize.
+    private static string SanitizeFilename(string raw)
+    {
+        if (string.IsNullOrEmpty(raw))
+        {
+            return string.Empty;
+        }
+
+        StringBuilder sb = new(raw.Length);
+        foreach (char ch in raw)
+        {
+            if (ch == '/' || ch == '\\' || ch < 0x20 || (ch >= 0x7F && ch <= 0x9F))
+            {
+                sb.Append(' ');
+                continue;
+            }
+
+            sb.Append(ch);
+        }
+
+        string[] tokens = sb.ToString().Split(SpaceSplit, StringSplitOptions.RemoveEmptyEntries);
+        List<string> keep = new(tokens.Length);
+        foreach (string token in tokens)
+        {
+            if (token == "..")
+            {
+                continue;
+            }
+
+            keep.Add(token);
+        }
+
+        string joined = string.Join(" ", keep);
+        return joined.Length > MaxFilenameLength ? joined.Substring(0, MaxFilenameLength) : joined;
     }
 
     private static string Synthesize(byte[] bytes, string mediaType)

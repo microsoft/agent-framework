@@ -195,4 +195,65 @@ public sealed class AttachmentDetectorTests
         DetectedAttachment one = Assert.Single(AttachmentDetector.Detect([msg]));
         Assert.Equal("application/pdf", one.ResolvedMediaType);
     }
+
+    [Fact]
+    // parity: python tests/cu/test_context_provider.py::sanitize_doc_key strip-control-chars behavior.
+    // Filename is interpolated into LLM-visible markdown (AnalysisRenderer YAML front-matter "source:"
+    // and per-document "indexed in vector store" notes), so control chars / newlines must be neutralized.
+    public void DetectsDataContent_StripsControlCharsFromFilename()
+    {
+        DataContent dc = new(PdfBytes, "application/pdf")
+        {
+            Name = "report\nignore-previous.pdf\x01",
+        };
+        ChatMessage msg = new(ChatRole.User, [dc]);
+
+        DetectedAttachment one = Assert.Single(AttachmentDetector.Detect([msg]));
+        Assert.DoesNotContain('\n', one.Filename);
+        Assert.DoesNotContain('\r', one.Filename);
+        Assert.DoesNotContain('\t', one.Filename);
+        Assert.DoesNotContain('\x01', one.Filename);
+        Assert.Equal("report ignore-previous.pdf", one.Filename);
+    }
+
+    [Fact]
+    // security: path-traversal hardening — slash / backslash separators and ".." segments are removed.
+    public void DetectsDataContent_StripsPathSeparatorsAndDotDot()
+    {
+        DataContent dc = new(PdfBytes, "application/pdf")
+        {
+            Name = "../../etc/passwd.pdf",
+        };
+        ChatMessage msg = new(ChatRole.User, [dc]);
+
+        DetectedAttachment one = Assert.Single(AttachmentDetector.Detect([msg]));
+        Assert.DoesNotContain('/', one.Filename);
+        Assert.DoesNotContain('\\', one.Filename);
+        Assert.DoesNotContain("..", one.Filename);
+        Assert.Equal("etc passwd.pdf", one.Filename);
+    }
+
+    [Fact]
+    // security: cap filename length at 255 chars so a hostile caller can't pad context with a huge name.
+    public void DetectsDataContent_CapsFilenameAt255Characters()
+    {
+        string huge = new string('a', 1000) + ".pdf";
+        DataContent dc = new(PdfBytes, "application/pdf") { Name = huge };
+        ChatMessage msg = new(ChatRole.User, [dc]);
+
+        DetectedAttachment one = Assert.Single(AttachmentDetector.Detect([msg]));
+        Assert.Equal(255, one.Filename.Length);
+    }
+
+    [Fact]
+    // security: when sanitization removes everything (filename was *only* control chars / separators),
+    // fall back to the content-hash synthesizer rather than emitting an empty key.
+    public void DetectsDataContent_FallsBackToSynthesize_WhenSanitizedFilenameEmpty()
+    {
+        DataContent dc = new(PdfBytes, "application/pdf") { Name = "\x01\x02\x03" };
+        ChatMessage msg = new(ChatRole.User, [dc]);
+
+        DetectedAttachment one = Assert.Single(AttachmentDetector.Detect([msg]));
+        Assert.Matches("^attachment-[0-9a-f]{6}\\.pdf$", one.Filename);
+    }
 }
