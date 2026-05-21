@@ -80,7 +80,7 @@ def to_prompt_agent(agent: Agent) -> PromptAgentDefinition:
 
 
 @experimental(feature_id=ExperimentalFeature.TO_PROMPT_AGENT)
-async def deploy_as_prompt_agent(
+async def create_prompt_agent(
     agent: Agent,
     *,
     metadata: Mapping[str, str] | None = None,
