@@ -2153,24 +2153,23 @@ def _capture_messages(
     finish_reason: FinishReason | None = None,
 ) -> None:
     """Log messages with extra information."""
-    from ._types import normalize_messages, prepend_instructions_to_messages
+    from ._types import normalize_messages
 
     normalized_messages = normalize_messages(messages)
-    # For logging: prepend framework instructions as messages so the log record
-    # mirrors the full message list as sent to the provider.
-    log_messages = prepend_instructions_to_messages(normalized_messages, system_instructions)
-    for index, message in enumerate(log_messages):
+    otel_messages: list[dict[str, Any]] = []
+    for index, message in enumerate(normalized_messages):
+        # Reuse the otel message representation for logging instead of calling to_dict()
+        # to avoid expensive Pydantic serialization overhead
+        otel_message = _to_otel_message(message)
         logger.info(
-            _to_otel_message(message),
+            otel_message,
             extra={
                 OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
                 OtelAttr.PROVIDER_NAME: provider_name,
                 MessageListTimestampFilter.INDEX_KEY: index,
             },
         )
-    # For the span attribute, only include the original chat history so that
-    # framework/options instructions are not duplicated into gen_ai.input.messages.
-    otel_messages: list[dict[str, Any]] = [_to_otel_message(message) for message in normalized_messages]
+        otel_messages.append(otel_message)
     if finish_reason:
         otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
     span.set_attribute(
