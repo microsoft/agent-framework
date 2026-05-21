@@ -467,6 +467,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 msg = item.message
                 if msg.task_id:
                     last_task_id = msg.task_id
+                if msg.context_id:
+                    last_context_id = msg.context_id
                 contents = self._parse_contents_from_a2a(msg.parts)
                 metadata = MessageToDict(msg.metadata) if msg.metadata else None
                 update = AgentResponseUpdate(
@@ -556,7 +558,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
 
         # Persist A2A protocol state on the session for follow-up message linking.
-        if isinstance(session, A2AAgentSession) and last_task_id:
+        if isinstance(session, A2AAgentSession) and (last_task_id or last_context_id):
             # Validate context_id consistency
             if session.context_id is not None and last_context_id and session.context_id != last_context_id:
                 raise RuntimeError(
@@ -567,8 +569,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if session.context_id is None and last_context_id:
                 session.context_id = last_context_id
                 session.service_session_id = last_context_id
-            session.task_id = last_task_id
-            session.task_state = last_task_state
+            if last_task_id:
+                session.task_id = last_task_id
+                session.task_state = last_task_state
 
         await self._run_after_providers(session=session, context=session_context)
 

@@ -1808,6 +1808,29 @@ async def test_context_id_assigned_from_response(mock_a2a_client: MockA2AClient)
 
 
 @mark.asyncio
+async def test_context_id_tracked_from_message_payload(mock_a2a_client: MockA2AClient) -> None:
+    """Test that context_id is captured from message-only responses (no task payload)."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+
+    # Simulate a response with only a message that has context_id but no task_id
+    message_with_context = A2AMessage(
+        message_id="msg-ctx-only",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Hello!")],
+        context_id="server-ctx-123",
+    )
+    mock_a2a_client.responses.append(StreamResponse(message=message_with_context))
+
+    session = A2AAgentSession()
+    await agent.run("Hi", session=session)
+
+    # context_id should be captured even without a task_id
+    assert session.context_id == "server-ctx-123"
+    assert session.service_session_id == "server-ctx-123"
+    assert session.task_id is None
+
+
+@mark.asyncio
 async def test_context_id_mismatch_raises_error(mock_a2a_client: MockA2AClient) -> None:
     """Test that a context_id mismatch between session and response raises an error."""
     agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
