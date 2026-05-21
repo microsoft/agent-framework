@@ -60,35 +60,20 @@ internal static class WorkflowDiagnostics
     {
         foreach (VariableInformationDiagnostic variableDiagnostic in semanticModel.GetVariables(schemaName).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic()))
         {
-            // Use the same PropertyPath fallback/remap as runtime reads/writes so dotted
-            // refs like "Local.Triage" (which ObjectModel 2026.2.4.1 returns with null
-            // VariableName/NamespaceAlias) and the "Local" scope alias are not silently
-            // dropped from the initial state.
-            // TODO(https://github.com/microsoft/agent-framework/issues/5905): drop the
-            // workaround once the ObjectModel regression is fixed.
-            PropertyPath? path = variableDiagnostic?.Path;
-            if (path is null)
+            if (variableDiagnostic?.Path?.VariableName is null)
             {
                 continue;
             }
 
-            string? variableName = path.GetVariableName();
-            if (variableName is null)
+            FormulaValue defaultValue = variableDiagnostic.ConstantValue?.ToFormula() ?? variableDiagnostic.Type.NewBlank();
+
+            if (variableDiagnostic.Path.NamespaceAlias?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) is true &&
+                !SystemScope.AllNames.Contains(variableDiagnostic.Path.VariableName))
             {
-                continue;
+                throw new DeclarativeModelException($"Variable '{variableDiagnostic.Path.VariableName}' is not a supported system variable.");
             }
 
-            string? scopeName = path.GetNamespaceAlias();
-
-            FormulaValue defaultValue = variableDiagnostic!.ConstantValue?.ToFormula() ?? variableDiagnostic.Type.NewBlank();
-
-            if (scopeName?.Equals(VariableScopeNames.System, StringComparison.OrdinalIgnoreCase) is true &&
-                !SystemScope.AllNames.Contains(variableName))
-            {
-                throw new DeclarativeModelException($"Variable '{variableName}' is not a supported system variable.");
-            }
-
-            scopes.Set(variableName, defaultValue, scopeName ?? WorkflowFormulaState.DefaultScopeName);
+            scopes.Set(variableDiagnostic.Path.VariableName, defaultValue, variableDiagnostic.Path.NamespaceAlias ?? WorkflowFormulaState.DefaultScopeName);
         }
     }
 

@@ -21,7 +21,7 @@ internal static class IWorkflowContextExtensions
         context.AddEventAsync(new DeclarativeActionCompletedEvent(action), cancellationToken);
 
     public static FormulaValue ReadState(this IWorkflowContext context, PropertyPath variablePath) =>
-        context.ReadState(Throw.IfNull(variablePath.GetVariableName()), Throw.IfNull(variablePath.GetNamespaceAlias()));
+        context.ReadState(Throw.IfNull(variablePath.VariableName), Throw.IfNull(variablePath.NamespaceAlias));
 
     public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null) =>
         DeclarativeContext(context).State.Get(key, scopeName);
@@ -33,10 +33,10 @@ internal static class IWorkflowContextExtensions
         context.SendMessageAsync(new ActionExecutorResult(id, result), targetId: null, cancellationToken);
 
     public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath, CancellationToken cancellationToken = default) =>
-        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.GetVariableName()), UnassignedValue.Instance, Throw.IfNull(variablePath.GetNamespaceAlias()), cancellationToken);
+        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.NamespaceAlias), cancellationToken);
 
     public static ValueTask QueueStateUpdateAsync<TValue>(this IWorkflowContext context, PropertyPath variablePath, TValue? value, CancellationToken cancellationToken = default) =>
-        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.GetVariableName()), value, Throw.IfNull(variablePath.GetNamespaceAlias()), cancellationToken);
+        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.NamespaceAlias), cancellationToken);
 
     public static async ValueTask QueueEnvironmentUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default)
     {
