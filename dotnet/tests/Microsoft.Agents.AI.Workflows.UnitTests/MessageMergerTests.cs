@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 
@@ -43,6 +44,47 @@ public class MessageMergerTests
     }
 
     [Fact]
+    public void Test_MessageMerger_PreservesFunctionCallOrderingWhenToolResultHasCreatedAt()
+    {
+        // Arrange
+        string responseId = Guid.NewGuid().ToString("N");
+        string functionCallMessageId = Guid.NewGuid().ToString("N");
+        string functionResultMessageId = Guid.NewGuid().ToString("N");
+        string callId = Guid.NewGuid().ToString("N");
+        DateTimeOffset toolResultCreatedAt = DateTimeOffset.UtcNow;
+
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = functionCallMessageId,
+            AgentId = TestAgentId1,
+            Role = ChatRole.Assistant,
+            Contents = [new FunctionCallContent(callId, "handoff_to_TestAgent2")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = functionResultMessageId,
+            AgentId = TestAgentId1,
+            CreatedAt = toolResultCreatedAt,
+            Role = ChatRole.Tool,
+            Contents = [new FunctionResultContent(callId, "Transferred.")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseId);
+
+        // Assert
+        response.Messages.Should().HaveCount(2);
+        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
+        response.Messages[0].Contents.Should().ContainSingle().Which.Should().BeOfType<FunctionCallContent>();
+        response.Messages[1].Role.Should().Be(ChatRole.Tool);
+        response.Messages[1].Contents.Should().ContainSingle().Which.Should().BeOfType<FunctionResultContent>();
+    }
+
+    [Fact]
     public void Test_MessageMerger_PropagatesFinishReasonFromUpdates()
     {
         // Arrange
@@ -71,4 +113,494 @@ public class MessageMergerTests
         // Assert - FinishReason from the update should propagate through
         response.FinishReason.Should().Be(ChatFinishReason.ContentFilter);
     }
+
+    #region Invariant 2: Output Order Preservation Tests
+
+    [Fact]
+    public void Test_MessageMerger_PreservesInsertionOrder_WhenNoTimestamps()
+    {
+        // Arrange: Multiple updates without CreatedAt, in specific order A, B, C
+        string responseId = Guid.NewGuid().ToString("N");
+        string messageIdA = Guid.NewGuid().ToString("N");
+        string messageIdB = Guid.NewGuid().ToString("N");
+        string messageIdC = Guid.NewGuid().ToString("N");
+
+        MessageMerger merger = new();
+
+        // Add updates without CreatedAt in order A, B, C
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdA,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Message A")],
+            // No CreatedAt
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdB,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Message B")],
+            // No CreatedAt
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdC,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Message C")],
+            // No CreatedAt
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseId);
+
+        // Assert: Output order should be A, B, C (insertion order)
+        response.Messages.Should().HaveCount(3);
+        response.Messages[0].Text.Should().Be("Message A");
+        response.Messages[1].Text.Should().Be("Message B");
+        response.Messages[2].Text.Should().Be("Message C");
+    }
+
+    [Fact]
+    public void Test_MessageMerger_PreservesInsertionOrder_WhenMixedTimestamps()
+    {
+        // Arrange: Updates with OUT-OF-ORDER timestamps relative to emission order.
+        // Emission order: A, B, C.
+        // Timestamp order: C (oldest), A, B (newest) - reverse of emission.
+        // Per Invariant 2, emission order wins; timestamps are ignored for ordering.
+        string responseId = Guid.NewGuid().ToString("N");
+        string messageIdA = Guid.NewGuid().ToString("N");
+        string messageIdB = Guid.NewGuid().ToString("N");
+        string messageIdC = Guid.NewGuid().ToString("N");
+
+        DateTimeOffset timeOldest = DateTimeOffset.UtcNow.AddMinutes(-10);
+        DateTimeOffset timeMiddle = DateTimeOffset.UtcNow.AddMinutes(-5);
+        DateTimeOffset timeNewest = DateTimeOffset.UtcNow;
+
+        MessageMerger merger = new();
+
+        // Emit A first but stamp it with timeMiddle.
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdA,
+            Role = ChatRole.Assistant,
+            CreatedAt = timeMiddle,
+            Contents = [new TextContent("Message A")],
+        });
+        // Emit B second, without a timestamp.
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdB,
+            Role = ChatRole.Assistant,
+            // No CreatedAt
+            Contents = [new TextContent("Message B")],
+        });
+        // Emit C third but stamp it with timeOldest - if we sorted by timestamp,
+        // C would come first; the new merger MUST keep emission order (A, B, C).
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdC,
+            Role = ChatRole.Assistant,
+            CreatedAt = timeOldest,
+            Contents = [new TextContent("Message C")],
+        });
+        // Stamp a fourth message with the newest timestamp - it should still come last
+        // because it was emitted last, not because of its timestamp.
+        string messageIdD = Guid.NewGuid().ToString("N");
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdD,
+            Role = ChatRole.Assistant,
+            CreatedAt = timeNewest,
+            Contents = [new TextContent("Message D")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseId);
+
+        // Assert: Emission order wins; CreatedAt is ignored for ordering.
+        response.Messages.Should().HaveCount(4);
+        response.Messages[0].Text.Should().Be("Message A");
+        response.Messages[1].Text.Should().Be("Message B");
+        response.Messages[2].Text.Should().Be("Message C");
+        response.Messages[3].Text.Should().Be("Message D");
+    }
+
+    [Fact]
+    public void Test_MessageMerger_ReproducibleOrdering_WithMixedTimestamps()
+    {
+        // Arrange: 3+ messages with mixed null/non-null CreatedAt values
+        // This tests that the same input sequence produces the same output
+        // (run-to-run reproducibility for a fixed input)
+        string responseId = Guid.NewGuid().ToString("N");
+        string messageIdA = Guid.NewGuid().ToString("N");
+        string messageIdB = Guid.NewGuid().ToString("N");
+        string messageIdC = Guid.NewGuid().ToString("N");
+
+        DateTimeOffset time10 = DateTimeOffset.UtcNow.AddSeconds(10);
+        DateTimeOffset time5 = DateTimeOffset.UtcNow.AddSeconds(5);
+
+        MessageMerger merger = new();
+
+        // A: CreatedAt = time10, idx=0
+        // B: CreatedAt = null, idx=1
+        // C: CreatedAt = time5, idx=2
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdA,
+            Role = ChatRole.Assistant,
+            CreatedAt = time10,
+            Contents = [new TextContent("Message A (T=10)")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdB,
+            Role = ChatRole.Assistant,
+            // No CreatedAt
+            Contents = [new TextContent("Message B (no timestamp)")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdC,
+            Role = ChatRole.Assistant,
+            CreatedAt = time5,
+            Contents = [new TextContent("Message C (T=5)")],
+        });
+
+        // Act - Run multiple times to verify reproducibility
+        AgentResponse response1 = merger.ComputeMerged(responseId);
+
+        // Create a fresh merger with same data to verify reproducibility
+        MessageMerger merger2 = new();
+        merger2.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdA,
+            Role = ChatRole.Assistant,
+            CreatedAt = time10,
+            Contents = [new TextContent("Message A (T=10)")],
+        });
+        merger2.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdB,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Message B (no timestamp)")],
+        });
+        merger2.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdC,
+            Role = ChatRole.Assistant,
+            CreatedAt = time5,
+            Contents = [new TextContent("Message C (T=5)")],
+        });
+        AgentResponse response2 = merger2.ComputeMerged(responseId);
+
+        // Assert: Result is reproducible and consistent across runs with same input order.
+        // Per Invariant 2, both runs must produce emission order (A, B, C) regardless
+        // of the messages' CreatedAt values.
+        response1.Messages.Should().HaveCount(3);
+        response2.Messages.Should().HaveCount(3);
+
+        response1.Messages.Select(m => m.Text).Should().ContainInOrder(
+            "Message A (T=10)", "Message B (no timestamp)", "Message C (T=5)");
+
+        // Both runs should produce identical ordering
+        for (int i = 0; i < 3; i++)
+        {
+            response1.Messages[i].Text.Should().Be(response2.Messages[i].Text);
+        }
+    }
+
+    #endregion
+
+    #region Invariant 3: Agent Message Grouping Tests
+
+    [Fact]
+    public void Test_MessageMerger_GroupsMessagesByResponseId_InMultiAgentScenario()
+    {
+        // Arrange: Interleaved updates from Agent1 (R1) and Agent2 (R2)
+        string responseIdR1 = Guid.NewGuid().ToString("N");
+        string responseIdR2 = Guid.NewGuid().ToString("N");
+        string messageIdA1M1 = Guid.NewGuid().ToString("N");
+        string messageIdA1M2 = Guid.NewGuid().ToString("N");
+        string messageIdA2M1 = Guid.NewGuid().ToString("N");
+        string messageIdA2M2 = Guid.NewGuid().ToString("N");
+
+        MessageMerger merger = new();
+
+        // Interleaved arrival: A1-msg1, A2-msg1, A1-msg2, A2-msg2
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR1,
+            MessageId = messageIdA1M1,
+            AgentId = TestAgentId1,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent1 Message 1")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR2,
+            MessageId = messageIdA2M1,
+            AgentId = TestAgentId2,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent2 Message 1")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR1,
+            MessageId = messageIdA1M2,
+            AgentId = TestAgentId1,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent1 Message 2")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR2,
+            MessageId = messageIdA2M2,
+            AgentId = TestAgentId2,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent2 Message 2")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseIdR1);
+
+        // Assert: Messages should be grouped by ResponseId (which groups by agent)
+        // Output should be either [A1-msg1, A1-msg2, A2-msg1, A2-msg2] or [A2-msg1, A2-msg2, A1-msg1, A1-msg2]
+        // The key invariant: Agent1's messages are contiguous, Agent2's messages are contiguous
+        response.Messages.Should().HaveCount(4);
+
+        // Verify grouping - collect message texts and verify they're grouped by agent
+        var messageTexts = response.Messages.Select(m => m.Text).ToList();
+
+        // Find first Agent1 message index and first Agent2 message index
+        int firstA1Index = messageTexts.FindIndex(t => t.StartsWith("Agent1", StringComparison.Ordinal));
+        int firstA2Index = messageTexts.FindIndex(t => t.StartsWith("Agent2", StringComparison.Ordinal));
+
+        // Assert both indices are valid (messages were found)
+        firstA1Index.Should().BeGreaterThanOrEqualTo(0, "Agent1 messages should be present in response");
+        firstA2Index.Should().BeGreaterThanOrEqualTo(0, "Agent2 messages should be present in response");
+
+        // All Agent1 messages should be contiguous (either at start or after all Agent2 messages)
+        var a1Messages = messageTexts.Where(t => t.StartsWith("Agent1", StringComparison.Ordinal)).ToList();
+        var a2Messages = messageTexts.Where(t => t.StartsWith("Agent2", StringComparison.Ordinal)).ToList();
+
+        a1Messages.Should().HaveCount(2);
+        a2Messages.Should().HaveCount(2);
+
+        // Verify no interleaving: if A1 comes first, A2 should come after all A1 messages
+        if (firstA1Index < firstA2Index)
+        {
+            // A1 messages at indices 0, 1 and A2 messages at indices 2, 3
+            messageTexts[0].Should().StartWith("Agent1");
+            messageTexts[1].Should().StartWith("Agent1");
+            messageTexts[2].Should().StartWith("Agent2");
+            messageTexts[3].Should().StartWith("Agent2");
+        }
+        else
+        {
+            // A2 messages at indices 0, 1 and A1 messages at indices 2, 3
+            messageTexts[0].Should().StartWith("Agent2");
+            messageTexts[1].Should().StartWith("Agent2");
+            messageTexts[2].Should().StartWith("Agent1");
+            messageTexts[3].Should().StartWith("Agent1");
+        }
+    }
+
+    [Fact]
+    public void Test_MessageMerger_MaintainsAgentGrouping_WithDifferentResponseIds()
+    {
+        // Arrange: Agent1 uses ResponseId=R1, Agent2 uses ResponseId=R2
+        // Multiple messages per ResponseId to properly test contiguity
+        string responseIdR1 = Guid.NewGuid().ToString("N");
+        string responseIdR2 = Guid.NewGuid().ToString("N");
+        string messageIdA1M1 = Guid.NewGuid().ToString("N");
+        string messageIdA1M2 = Guid.NewGuid().ToString("N");
+        string messageIdA1M3 = Guid.NewGuid().ToString("N");
+        string messageIdA2M1 = Guid.NewGuid().ToString("N");
+        string messageIdA2M2 = Guid.NewGuid().ToString("N");
+        string messageIdA2M3 = Guid.NewGuid().ToString("N");
+
+        MessageMerger merger = new();
+
+        // Interleaved arrival: A1-1, A2-1, A1-2, A2-2, A1-3, A2-3
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR1,
+            MessageId = messageIdA1M1,
+            AgentId = TestAgentId1,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent1 Response 1")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR2,
+            MessageId = messageIdA2M1,
+            AgentId = TestAgentId2,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent2 Response 1")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR1,
+            MessageId = messageIdA1M2,
+            AgentId = TestAgentId1,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent1 Response 2")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR2,
+            MessageId = messageIdA2M2,
+            AgentId = TestAgentId2,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent2 Response 2")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR1,
+            MessageId = messageIdA1M3,
+            AgentId = TestAgentId1,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent1 Response 3")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR2,
+            MessageId = messageIdA2M3,
+            AgentId = TestAgentId2,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent2 Response 3")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseIdR1);
+
+        // Assert: Messages from each agent are contiguous (not interleaved)
+        response.Messages.Should().HaveCount(6);
+
+        var messageTexts = response.Messages.Select(m => m.Text).ToList();
+
+        // Verify all messages are present
+        messageTexts.Should().Contain("Agent1 Response 1");
+        messageTexts.Should().Contain("Agent1 Response 2");
+        messageTexts.Should().Contain("Agent1 Response 3");
+        messageTexts.Should().Contain("Agent2 Response 1");
+        messageTexts.Should().Contain("Agent2 Response 2");
+        messageTexts.Should().Contain("Agent2 Response 3");
+
+        // Find indices to verify contiguity
+        int firstA1Index = messageTexts.FindIndex(t => t.StartsWith("Agent1", StringComparison.Ordinal));
+        int lastA1Index = messageTexts.FindLastIndex(t => t.StartsWith("Agent1", StringComparison.Ordinal));
+        int firstA2Index = messageTexts.FindIndex(t => t.StartsWith("Agent2", StringComparison.Ordinal));
+        int lastA2Index = messageTexts.FindLastIndex(t => t.StartsWith("Agent2", StringComparison.Ordinal));
+
+        // Assert indices are valid
+        firstA1Index.Should().BeGreaterThanOrEqualTo(0, "Agent1 messages should be present");
+        firstA2Index.Should().BeGreaterThanOrEqualTo(0, "Agent2 messages should be present");
+
+        // Verify contiguity: all Agent1 messages should span exactly 3 consecutive indices
+        (lastA1Index - firstA1Index).Should().Be(2, "Agent1 messages should be contiguous (3 messages spanning 2 index gaps)");
+        (lastA2Index - firstA2Index).Should().Be(2, "Agent2 messages should be contiguous (3 messages spanning 2 index gaps)");
+
+        // Verify no interleaving: ranges should not overlap
+        bool a1BeforeA2 = lastA1Index < firstA2Index;
+        bool a2BeforeA1 = lastA2Index < firstA1Index;
+        (a1BeforeA2 || a2BeforeA1).Should().BeTrue("Agent message blocks should not interleave");
+    }
+
+    #endregion
+
+    #region Step Ordering Tests (workflow goals)
+
+    [Fact]
+    public void Test_MessageMerger_OrdersStepsBeforeNextStep_AndGroupsAgentsWithinStep()
+    {
+        // Scenario mirroring the workflow ordering goals:
+        //   Step 1: Agent1 alone emits 2 updates.
+        //   Step 2: Agent1 and Agent2 emit updates interleaved (concurrent in the step).
+        //   Step 3: Agent2 alone emits 2 updates.
+        // Each agent invocation has its own ResponseId, so per-ResponseId grouping
+        // yields per-agent grouping. Steps are naturally serialized in emission
+        // order (the next step cannot emit until the prior step's updates arrive),
+        // so the first-seen-ResponseId ordering preserves step boundaries.
+        const string step1Agent1 = "step1-agent1";
+        const string step2Agent1 = "step2-agent1";
+        const string step2Agent2 = "step2-agent2";
+        const string step3Agent2 = "step3-agent2";
+
+        MessageMerger merger = new();
+
+        // Step 1: Agent1 emits 2 messages.
+        AddSimpleUpdate(merger, step1Agent1, TestAgentId1, "S1-A1-m1");
+        AddSimpleUpdate(merger, step1Agent1, TestAgentId1, "S1-A1-m2");
+
+        // Step 2: Agent1 and Agent2 emit interleaved (A1, A2, A1, A2).
+        AddSimpleUpdate(merger, step2Agent1, TestAgentId1, "S2-A1-m1");
+        AddSimpleUpdate(merger, step2Agent2, TestAgentId2, "S2-A2-m1");
+        AddSimpleUpdate(merger, step2Agent1, TestAgentId1, "S2-A1-m2");
+        AddSimpleUpdate(merger, step2Agent2, TestAgentId2, "S2-A2-m2");
+
+        // Step 3: Agent2 emits 2 messages.
+        AddSimpleUpdate(merger, step3Agent2, TestAgentId2, "S3-A2-m1");
+        AddSimpleUpdate(merger, step3Agent2, TestAgentId2, "S3-A2-m2");
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(step1Agent1);
+
+        // Assert: expected output order
+        //   Step 1 block (Agent1):  S1-A1-m1, S1-A1-m2
+        //   Step 2 Agent1 block:    S2-A1-m1, S2-A1-m2
+        //   Step 2 Agent2 block:    S2-A2-m1, S2-A2-m2
+        //   Step 3 block (Agent2):  S3-A2-m1, S3-A2-m2
+        response.Messages.Should().HaveCount(8);
+        var texts = response.Messages.Select(m => m.Text).ToList();
+        texts.Should().ContainInOrder(
+            "S1-A1-m1", "S1-A1-m2",
+            "S2-A1-m1", "S2-A1-m2",
+            "S2-A2-m1", "S2-A2-m2",
+            "S3-A2-m1", "S3-A2-m2");
+
+        // Step boundaries: no step-2 or step-3 message may appear before the last step-1 message.
+        int lastStep1Index = texts.FindLastIndex(t => t.StartsWith("S1-", StringComparison.Ordinal));
+        int firstStep2Index = texts.FindIndex(t => t.StartsWith("S2-", StringComparison.Ordinal));
+        int lastStep2Index = texts.FindLastIndex(t => t.StartsWith("S2-", StringComparison.Ordinal));
+        int firstStep3Index = texts.FindIndex(t => t.StartsWith("S3-", StringComparison.Ordinal));
+        lastStep1Index.Should().BeLessThan(firstStep2Index, "all step-1 messages precede step-2");
+        lastStep2Index.Should().BeLessThan(firstStep3Index, "all step-2 messages precede step-3");
+
+        // Within step 2 (multi-agent), per-agent blocks must be contiguous.
+        int firstS2A1 = texts.FindIndex(t => t.StartsWith("S2-A1", StringComparison.Ordinal));
+        int lastS2A1 = texts.FindLastIndex(t => t.StartsWith("S2-A1", StringComparison.Ordinal));
+        int firstS2A2 = texts.FindIndex(t => t.StartsWith("S2-A2", StringComparison.Ordinal));
+        int lastS2A2 = texts.FindLastIndex(t => t.StartsWith("S2-A2", StringComparison.Ordinal));
+        (lastS2A1 - firstS2A1).Should().Be(1, "Agent1 step-2 messages should be contiguous");
+        (lastS2A2 - firstS2A2).Should().Be(1, "Agent2 step-2 messages should be contiguous");
+        (lastS2A1 < firstS2A2 || lastS2A2 < firstS2A1).Should().BeTrue("agent blocks within a step must not interleave");
+
+        static void AddSimpleUpdate(MessageMerger m, string responseId, string agentId, string text)
+        {
+            m.AddUpdate(new AgentResponseUpdate
+            {
+                ResponseId = responseId,
+                MessageId = Guid.NewGuid().ToString("N"),
+                AgentId = agentId,
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent(text)],
+            });
+        }
+    }
+
+    #endregion
 }
