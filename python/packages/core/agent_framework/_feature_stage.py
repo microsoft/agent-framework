@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import abc
 import asyncio.coroutines
+import contextlib
 import functools
 import inspect
+import os
 import sys
+import typing
 import warnings
 from collections.abc import Callable
 from enum import Enum
@@ -73,6 +77,34 @@ class ExperimentalWarning(FeatureStageWarning):
     """Warning emitted when an experimental API is used."""
 
 
+def _install_feature_stage_formatter() -> None:
+    """Install a single-line formatter for FeatureStageWarning categories.
+
+    The stdlib default formatter emits two lines (header + source snippet)
+    which is noisy for our warnings — the offending class/function name is
+    already in the message, so a one-line ``file:lineno: Category: message``
+    is enough. Other warning categories are delegated to the original
+    formatter so we never change behaviour for unrelated warnings.
+    """
+    original = warnings.formatwarning
+
+    def _formatwarning(
+        message: Warning | str,
+        category: type[Warning],
+        filename: str,
+        lineno: int,
+        line: str | None = None,
+    ) -> str:
+        if issubclass(category, FeatureStageWarning):
+            return f"{filename}:{lineno}: {category.__name__}: {message}\n"
+        return original(message, category, filename, lineno, line)
+
+    warnings.formatwarning = _formatwarning
+
+
+_install_feature_stage_formatter()
+
+
 def _normalize_feature_id(feature_id: str | Enum) -> str:
     return str(feature_id.value if isinstance(feature_id, Enum) else feature_id)
 
@@ -107,23 +139,82 @@ def _set_feature_stage_metadata(obj: Any, *, stage: FeatureStageName, feature_id
     setattr(obj, _FEATURE_ID_ATTR, feature_id)
 
 
+_INTERNAL_FRAME_FILE = os.path.normcase(__file__)
+# Module names whose frames we never want to surface as the caller. ``abc`` is
+# the big one (its ``__new__`` shows up as ``<frozen abc>:106`` for ABC-driven
+# subclass creation on modern CPython, so we cannot rely on filename matching).
+# ``functools``/``typing``/``contextlib`` are added because they often wrap our
+# decorators or appear in the metaclass call path.
+_INTERNAL_FRAME_MODULES: frozenset[str] = frozenset({
+    abc.__name__,
+    functools.__name__,
+    typing.__name__,
+    contextlib.__name__,
+})
+
+
+def _is_internal_frame(frame: Any) -> bool:
+    if os.path.normcase(frame.f_code.co_filename) == _INTERNAL_FRAME_FILE:
+        return True
+    module_name = frame.f_globals.get("__name__", "")
+    if module_name in _INTERNAL_FRAME_MODULES:
+        return True
+    # Submodules of the skipped stdlib packages (``typing.ext``, ``functools``
+    # wrappers under ``concurrent.futures._base``, etc.) are also wrappers we
+    # don't want to surface.
+    return any(module_name.startswith(prefix + ".") for prefix in _INTERNAL_FRAME_MODULES)
+
+
+def _resolve_user_frame() -> tuple[str, int, str] | None:
+    """Resolve the user frame that triggered an experimental warning.
+
+    Walk the stack and return ``(filename, lineno, module_name)`` for the first
+    frame outside this module and the wrapping/metaclass machinery.
+
+    Returns ``None`` if no such frame is found; callers fall back to plain
+    ``warnings.warn`` with a fixed stacklevel.
+    """
+    frame = inspect.currentframe()
+    if frame is None:
+        return None
+    # Skip _resolve_user_frame itself + the warn helper that called it.
+    frame = frame.f_back.f_back if frame.f_back and frame.f_back.f_back else None
+    while frame is not None:
+        if not _is_internal_frame(frame):
+            return (
+                frame.f_code.co_filename,
+                frame.f_lineno,
+                frame.f_globals.get("__name__", "<unknown>"),
+            )
+        frame = frame.f_back
+    return None
+
+
 def _warn_on_feature_use(
     *,
     stage: FeatureStageName,
     feature_id: str,
     object_name: str,
     category: type[Warning],
-    stacklevel: int,
 ) -> None:
     warning_key = (category, feature_id)
     if warning_key in _WARNED_FEATURES:
         return
 
-    warnings.warn(
-        _build_stage_warning_message(stage=stage, feature_id=feature_id, object_name=object_name),
-        category=category,
-        stacklevel=stacklevel,
-    )
+    message = _build_stage_warning_message(stage=stage, feature_id=feature_id, object_name=object_name)
+    user_frame = _resolve_user_frame()
+    if user_frame is None:
+        # Last-resort fallback: emit at the immediate caller of this helper.
+        warnings.warn(message, category=category, stacklevel=2)
+    else:
+        filename, lineno, module = user_frame
+        warnings.warn_explicit(
+            message,
+            category=category,
+            filename=filename,
+            lineno=lineno,
+            module=module,
+        )
     _WARNED_FEATURES.add(warning_key)
 
 
@@ -148,7 +239,6 @@ def _add_runtime_warning(
                     feature_id=feature_id,
                     object_name=object_name,
                     category=category,
-                    stacklevel=3,
                 )
             if original_new is not object.__new__:
                 return original_new(cls, *args, **kwargs)
@@ -169,7 +259,6 @@ def _add_runtime_warning(
                     feature_id=feature_id,
                     object_name=object_name,
                     category=category,
-                    stacklevel=3,
                 )
                 return original_init_subclass_func(*args, **kwargs)
 
@@ -183,7 +272,6 @@ def _add_runtime_warning(
                     feature_id=feature_id,
                     object_name=object_name,
                     category=category,
-                    stacklevel=3,
                 )
                 return original_init_subclass(*args, **kwargs)
 
@@ -198,7 +286,6 @@ def _add_runtime_warning(
             feature_id=feature_id,
             object_name=object_name,
             category=category,
-            stacklevel=3,
         )
         return obj(*args, **kwargs)
 
