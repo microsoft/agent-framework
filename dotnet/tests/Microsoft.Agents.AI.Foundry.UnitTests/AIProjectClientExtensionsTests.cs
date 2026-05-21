@@ -23,9 +23,9 @@ namespace Microsoft.Agents.AI.Foundry.UnitTests;
 
 #pragma warning disable CS0618
 /// <summary>
-/// Unit tests for the <see cref="AzureAIProjectChatClientExtensions"/> class.
+/// Unit tests for the <see cref="AIProjectClientExtensions"/> class.
 /// </summary>
-public sealed class AzureAIProjectChatClientExtensionsTests
+public sealed class AIProjectClientExtensionsTests
 {
     #region AsAIAgent(AIProjectClient, model, instructions) Tests
 
@@ -71,7 +71,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         Assert.Equal("test-agent", agent.Name);
         Assert.Equal("A test agent", agent.Description);
         Assert.NotNull(agent.GetService<IChatClient>());
-        Assert.Null(agent.GetService<AIProjectClient>());
+        // After the FoundryChatClient consolidation the inner chat-client now exposes the
+        // AIProjectClient via GetService — Foundry callers can walk to the project client from
+        // the agent without holding their own reference. (Previously this path returned null
+        // because AsAIAgent(model, instructions) skipped the decorator entirely.)
+        Assert.NotNull(agent.GetService<AIProjectClient>());
     }
 
     /// <summary>
@@ -123,7 +127,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         Assert.NotNull(agent);
         Assert.Equal("options-agent", agent.Name);
         Assert.Equal("Agent from options", agent.Description);
-        Assert.Null(agent.GetService<AIProjectClient>());
+        // After the FoundryChatClient consolidation the inner chat-client now exposes the
+        // AIProjectClient via GetService — see twin assertion in
+        // AsAIAgent_Rapi_WithModelAndInstructions_CreatesChatClientAgent for the rationale.
+        Assert.NotNull(agent.GetService<AIProjectClient>());
     }
 
     /// <summary>
@@ -183,6 +190,106 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.True(userAgentFound, "MEAI user-agent header was not found in any request");
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload now wraps with FoundryChatClient
+    /// (regression-prevention for the previously-untagged extension path).
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_Rapi_WithModelAndInstructions_ExposesFoundryChatClientAndProviderName()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent("gpt-4o-mini", "You are helpful.");
+
+        // Assert: FoundryChatClient is internal-sealed and reachable via GetService<IChatClient>().
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+
+        // Provider tag is "microsoft.foundry" (previously this path had no Foundry tag at all).
+        var metadata = chatClient!.GetService<ChatClientMetadata>();
+        Assert.NotNull(metadata);
+        Assert.Equal("microsoft.foundry", metadata!.ProviderName);
+        Assert.Equal("gpt-4o-mini", metadata.DefaultModelId);
+
+        // Reaching the FoundryChatClient by type (via InternalsVisibleTo).
+        Assert.NotNull(agent.GetService<FoundryChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the options-based non-versioned AsAIAgent overload now wraps with FoundryChatClient.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_Rapi_WithOptions_ExposesFoundryChatClientAndProviderName()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        ChatClientAgentOptions options = new()
+        {
+            Name = "options-agent",
+            ChatOptions = new ChatOptions { ModelId = "gpt-4o-mini", Instructions = "x" },
+        };
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(options);
+
+        // Assert
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var metadata = chatClient!.GetService<ChatClientMetadata>();
+        Assert.NotNull(metadata);
+        Assert.Equal("microsoft.foundry", metadata!.ProviderName);
+        Assert.NotNull(agent.GetService<FoundryChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload stamps the
+    /// agent-framework-dotnet/{version} segment on outbound requests via the new
+    /// AgentFrameworkUserAgentPolicy registered by FoundryChatClient.
+    /// </summary>
+    [Fact]
+    public async Task AsAIAgent_Rapi_WithModelAndInstructions_StampsAgentFrameworkUserAgentSegmentAsync()
+    {
+        bool afSeen = false;
+        using HttpHandlerAssert httpHandler = new(request =>
+        {
+            if (request.Headers.TryGetValues("User-Agent", out IEnumerable<string>? values))
+            {
+                foreach (string value in values)
+                {
+                    if (value.Contains("agent-framework-dotnet/"))
+                    {
+                        afSeen = true;
+                    }
+                }
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(TestDataUtil.GetOpenAIDefaultResponseJson(), Encoding.UTF8, "application/json")
+            };
+        });
+
+#pragma warning disable CA5399
+        using HttpClient httpClient = new(httpHandler);
+#pragma warning restore CA5399
+
+        AIProjectClient aiProjectClient = new(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        ChatClientAgent agent = aiProjectClient.AsAIAgent("gpt-4o-mini", "You are helpful.");
+
+        // Act
+        AgentSession session = await agent.CreateSessionAsync();
+        await agent.RunAsync("Hello", session);
+
+        // Assert
+        Assert.True(afSeen, "Expected agent-framework-dotnet/{version} segment on outbound requests from AsAIAgent(model, instructions).");
     }
 
     #endregion

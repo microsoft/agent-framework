@@ -37,6 +37,8 @@ public class HarnessAgentOptionsTests
         Assert.Null(options.FileAccessStore);
         Assert.Null(options.AgentModeProviderOptions);
         Assert.Null(options.AgentSkillsSource);
+        Assert.Null(options.BackgroundAgents);
+        Assert.Null(options.BackgroundAgentsProviderOptions);
     }
 
     /// <summary>
@@ -52,6 +54,8 @@ public class HarnessAgentOptionsTests
         var fileAccessStore = new Mock<AgentFileStore>().Object;
         var agentModeOptions = new AgentModeProviderOptions();
         var skillsSource = new Mock<AgentSkillsSource>().Object;
+        var backgroundAgents = new AIAgent[] { new Mock<AIAgent>().Object };
+        var backgroundAgentsOptions = new BackgroundAgentsProviderOptions();
 
         // Act
         var options = new HarnessAgentOptions
@@ -77,6 +81,8 @@ public class HarnessAgentOptionsTests
             AgentSkillsSource = skillsSource,
             DisableOpenTelemetry = true,
             OpenTelemetrySourceName = "custom-source",
+            BackgroundAgents = backgroundAgents,
+            BackgroundAgentsProviderOptions = backgroundAgentsOptions,
         };
 
         // Assert
@@ -103,5 +109,7 @@ public class HarnessAgentOptionsTests
         Assert.Same(skillsSource, options.AgentSkillsSource);
         Assert.True(options.DisableOpenTelemetry);
         Assert.Equal("custom-source", options.OpenTelemetrySourceName);
+        Assert.Same(backgroundAgents, options.BackgroundAgents);
+        Assert.Same(backgroundAgentsOptions, options.BackgroundAgentsProviderOptions);
     }
 }

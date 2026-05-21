@@ -29,7 +29,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -49,7 +49,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 01-get-started --save-report --report-name 01-get-started
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-01-get-started
@@ -82,7 +82,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -111,7 +111,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents --exclude providers --save-report --report-name 02-agents
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents
@@ -130,7 +130,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -152,7 +152,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/openai --save-report --report-name 02-agents-openai
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents-openai
@@ -170,7 +170,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -191,7 +191,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure --save-report --report-name 02-agents-azure
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents-azure
@@ -208,7 +208,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -228,7 +228,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/anthropic --save-report --report-name 02-agents-anthropic
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents-anthropic
@@ -242,7 +242,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -257,7 +257,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/github_copilot --save-report --report-name 02-agents-github-copilot
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents-github-copilot
@@ -274,7 +274,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -289,7 +289,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/amazon --save-report --report-name 02-agents-amazon
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents-amazon
@@ -306,7 +306,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -321,7 +321,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/ollama --save-report --report-name 02-agents-ollama
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents-ollama
@@ -341,7 +341,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -363,7 +363,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/foundry --save-report --report-name 02-agents-foundry
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents-foundry
@@ -383,7 +383,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -405,7 +405,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/copilotstudio --save-report --report-name 02-agents-copilotstudio
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents-copilotstudio
@@ -419,7 +419,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -434,7 +434,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/custom --save-report --report-name 02-agents-custom
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents-custom
@@ -451,7 +451,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -471,7 +471,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 03-workflows --save-report --report-name 03-workflows
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-03-workflows
@@ -491,7 +491,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -506,7 +506,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 04-hosting --save-report --report-name 04-hosting
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-04-hosting
@@ -534,7 +534,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -549,7 +549,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 05-end-to-end --save-report --report-name 05-end-to-end
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-05-end-to-end
@@ -574,7 +574,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -599,7 +599,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-autogen-migration
@@ -633,7 +633,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -662,7 +662,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir semantic-kernel-migration --save-report --report-name semantic-kernel-migration
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-semantic-kernel-migration
@@ -690,10 +690,10 @@ jobs:
       - validate-autogen-migration
       - validate-semantic-kernel-migration
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Download all validation reports
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: validation-report-*
           path: reports/
@@ -701,7 +701,7 @@ jobs:
 
       - name: Restore validation history
         id: cache-restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: validation-history/
           key: validation-history-${{ github.run_id }}
@@ -719,13 +719,13 @@ jobs:
         run: cat trend-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save validation history
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: validation-history/
           key: validation-history-${{ github.run_id }}
 
       - name: Upload trend report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-trend-report
