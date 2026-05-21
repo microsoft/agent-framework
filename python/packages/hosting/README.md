@@ -19,6 +19,11 @@ The base package contains only the channel-neutral plumbing:
   commands, and lifecycle callbacks
 - `ChannelRunHook` / `ChannelStreamTransformHook` — the per-request
   customization seams
+- `DurableTaskRunner` + `InProcessTaskRunner` — the seam used to
+  dispatch non-originating push fan-out; the in-process runner is the
+  default. Plug in a durable adapter (e.g.
+  `agent-framework-hosting-durabletask`) for `runtime_mode="ephemeral"`
+  deployments.
 
 Concrete channels live in their own packages so you only install what
 you use:

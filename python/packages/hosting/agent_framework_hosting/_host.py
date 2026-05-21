@@ -27,10 +27,10 @@ import asyncio
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from agent_framework import (
     AgentResponse,
@@ -58,6 +58,7 @@ from ._isolation import (
     reset_current_isolation_keys,
     set_current_isolation_keys,
 )
+from ._runner import InProcessTaskRunner
 from ._types import (
     Channel,
     ChannelIdentity,
@@ -66,6 +67,7 @@ from ._types import (
     ChannelResponseContext,
     ChannelResponseHook,
     DeliveryReport,
+    DurableTaskRunner,
     HostedRunResult,
     ResponseTargetKind,
     apply_response_hook,
@@ -75,6 +77,43 @@ if TYPE_CHECKING:
     from agent_framework._workflows._workflow import WorkflowRunResult
 
 logger = logging.getLogger("agent_framework.hosting")
+
+
+# Environment markers that auto-detect ``runtime_mode="ephemeral"``. Order
+# matters only for telemetry — the first match wins and is logged at
+# startup. Adding a new marker is a non-breaking change; consumers can
+# always override via the ``runtime_mode`` constructor parameter.
+_EPHEMERAL_RUNTIME_MARKERS: tuple[str, ...] = (
+    "FOUNDRY_HOSTING_ENVIRONMENT",
+    "AZURE_FUNCTIONS_ENVIRONMENT",
+    "AWS_LAMBDA_FUNCTION_NAME",
+)
+
+
+RuntimeMode = Literal["long_running", "ephemeral"]
+
+
+def _detect_runtime_mode(env: Mapping[str, str] | None = None) -> tuple[RuntimeMode, str | None]:
+    """Inspect deployment markers and return ``(mode, matched_marker_or_None)``.
+
+    Pure / side-effect-free so the host can call it once at construction
+    and tests can pass a synthetic env. ``env`` defaults to
+    :data:`os.environ`. Returns ``"long_running"`` when nothing matches —
+    that's the sensible default for local dev and always-on container
+    deployments.
+    """
+    source = env if env is not None else os.environ
+    for marker in _EPHEMERAL_RUNTIME_MARKERS:
+        if source.get(marker):
+            return ("ephemeral", marker)
+    return ("long_running", None)
+
+
+# Internal name the host uses when registering the push handler on the
+# durable task runner. Exposed as a module constant so adapter packages
+# (and the future background-run wiring under req #14) can use the same
+# name for cross-runner observability.
+HOSTING_PUSH_TASK_NAME = "hosting.push"
 
 
 def _checkpoint_path_for_isolation_key(root: Path, isolation_key: str) -> Path:
@@ -400,6 +439,8 @@ class AgentFrameworkHost:
         channels: Sequence[Channel],
         debug: bool = False,
         checkpoint_location: str | os.PathLike[str] | CheckpointStorage | None = None,
+        runtime_mode: RuntimeMode | None = None,
+        durable_task_runner: DurableTaskRunner | None = None,
     ) -> None:
         """Create a host for ``target`` and its channels.
 
@@ -431,6 +472,30 @@ class AgentFrameworkHost:
                 refuses to start so ownership of checkpointing is
                 unambiguous. Ignored for ``SupportsAgentRun`` targets (a
                 warning is emitted).
+
+        Keyword Args:
+            runtime_mode: Hint that drives the *defaults* for runtime-shape
+                dependent components (currently the durable task runner,
+                and — by extension — anything that wants to know whether
+                the process is expected to outlive a single request).
+                ``"long_running"`` (containers, OpenClaw-style always-on
+                deployments, local dev) → in-process / in-memory defaults.
+                ``"ephemeral"`` (Foundry Hosted Agents, Azure Functions,
+                AWS Lambda) → the host expects a durable runner to be
+                supplied via ``durable_task_runner`` and logs a warning
+                otherwise. ``None`` (the default) auto-detects from
+                deployment environment markers (currently
+                ``FOUNDRY_HOSTING_ENVIRONMENT``, ``AZURE_FUNCTIONS_ENVIRONMENT``,
+                ``AWS_LAMBDA_FUNCTION_NAME``); falls back to
+                ``"long_running"``.
+            durable_task_runner: The runner used to dispatch
+                non-originating push fan-out. Defaults to a process-local
+                :class:`InProcessTaskRunner` (asyncio + bounded retry, no
+                persistence) — appropriate for ``runtime_mode="long_running"``
+                deployments. Ephemeral deployments should pass a durable
+                adapter (e.g. ``agent-framework-hosting-durabletask``,
+                or a Foundry-native adapter once available) so scheduled
+                pushes survive process restarts.
         """
         self.target: SupportsAgentRun | Workflow = target
         self._is_workflow = isinstance(target, Workflow)
@@ -457,6 +522,39 @@ class AgentFrameworkHost:
                     # ``CheckpointStorage`` is a non-runtime-checkable Protocol,
                     # so we cannot ``isinstance``-check it directly.
                     self._checkpoint_location = checkpoint_location
+        # Runtime mode + durable task runner. We resolve mode first
+        # because the warning-on-ephemeral-without-runner only fires
+        # when both are at their defaults.
+        if runtime_mode is None:
+            resolved_mode, matched_marker = _detect_runtime_mode()
+            self._runtime_mode: RuntimeMode = resolved_mode
+            self._runtime_mode_source: str = (
+                f"auto-detected from {matched_marker}" if matched_marker is not None else "auto-detected default"
+            )
+        else:
+            self._runtime_mode = runtime_mode
+            self._runtime_mode_source = "explicit"
+        if durable_task_runner is None:
+            self._durable_task_runner: DurableTaskRunner = InProcessTaskRunner()
+            self._owns_runner = True
+            if self._runtime_mode == "ephemeral":
+                logger.warning(
+                    "AgentFrameworkHost is running in ephemeral runtime mode "
+                    "with the default InProcessTaskRunner — non-originating "
+                    "push deliveries will be lost if the process is recycled "
+                    "mid-flight. Pass `durable_task_runner=...` (e.g. an "
+                    "agent-framework-hosting-durabletask runner) for "
+                    "production deployments."
+                )
+        else:
+            self._durable_task_runner = durable_task_runner
+            self._owns_runner = False
+        # Register the internal push handler eagerly so it is available
+        # whether callers invoke ``_deliver_response`` directly (e.g.
+        # tests) or through the lifespan-managed ASGI app. Doing this
+        # in ``__init__`` is safe because runner handler registration
+        # has no I/O — it only associates a name with a callable.
+        self._durable_task_runner.register(HOSTING_PUSH_TASK_NAME, self._handle_push_task)
         # Per-isolation_key session cache. The real spec backs this with a
         # pluggable session store; this base host keeps it in-process.
         self._sessions: dict[str, Any] = {}
@@ -480,6 +578,33 @@ class AgentFrameworkHost:
         if self._app is None:
             self._app = self._build_app()
         return self._app
+
+    @property
+    def runtime_mode(self) -> RuntimeMode:
+        """The resolved runtime mode for this host.
+
+        Either ``"long_running"`` or ``"ephemeral"``. Resolved at
+        construction from the ``runtime_mode`` constructor argument or
+        — when unset — auto-detected from deployment environment
+        markers; see :func:`_detect_runtime_mode`. Advisory: the value
+        drives the *defaults* selected for runtime-shape-dependent
+        components (today, the durable task runner) and is logged at
+        startup for operator visibility.
+        """
+        return self._runtime_mode
+
+    @property
+    def durable_task_runner(self) -> DurableTaskRunner:
+        """The durable task runner used to dispatch non-originating pushes.
+
+        Defaults to a process-local :class:`InProcessTaskRunner` when no
+        runner was supplied at construction. Adapter packages may
+        replace this with a durable backend (e.g. Foundry-native
+        scheduling, ``agent-framework-hosting-durabletask``); the host
+        itself only relies on the :class:`DurableTaskRunner` Protocol
+        surface so any conforming implementation is usable.
+        """
+        return self._durable_task_runner
 
     def serve(
         self,
@@ -570,13 +695,17 @@ class AgentFrameworkHost:
         )
         is_hosted = bool(os.environ.get("FOUNDRY_HOSTING_ENVIRONMENT"))
         logger.info(
-            "AgentFrameworkHost starting: target=%s (%s) bind=%s:%d workers=%d hosted=%s channels=[%s]",
+            "AgentFrameworkHost starting: target=%s (%s) bind=%s:%d workers=%d hosted=%s "
+            "runtime_mode=%s (%s) runner=%s channels=[%s]",
             target_name,
             target_kind,
             host,
             port,
             workers,
             is_hosted,
+            self._runtime_mode,
+            self._runtime_mode_source,
+            type(self._durable_task_runner).__name__,
             channels_repr or "<none>",
         )
 
@@ -621,6 +750,11 @@ class AgentFrameworkHost:
             # Starlette / the ASGI server still aborts boot — and log
             # every other failure so operators can see them all in one
             # log scrape rather than discovering them turn-by-turn.
+            # (The hosting.push handler is registered eagerly in
+            # ``__init__`` rather than here, so ``_deliver_response``
+            # can be called without first entering the lifespan — e.g.
+            # in tests, or by callers driving the host without an ASGI
+            # server.)
             startup_errors: list[tuple[str, BaseException]] = []
             for cb in on_startup:
                 try:
@@ -654,6 +788,18 @@ class AgentFrameworkHost:
                         name = getattr(cb, "__qualname__", repr(cb))
                         logger.exception("lifespan shutdown: callback %s failed", name)
                         shutdown_errors.append((name, exc))
+                # Drain the host-owned runner after channel shutdowns —
+                # channels may legitimately schedule a final push while
+                # tearing down (e.g. a goodbye message), and we want
+                # those tasks to get a chance to complete before we
+                # cancel pending work. For caller-supplied runners we
+                # leave lifecycle to the caller.
+                if self._owns_runner and isinstance(self._durable_task_runner, InProcessTaskRunner):
+                    try:
+                        await self._durable_task_runner.shutdown(timeout=5.0)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.exception("lifespan shutdown: durable task runner shutdown failed")
+                        shutdown_errors.append(("InProcessTaskRunner.shutdown", exc))
                 if shutdown_errors:
                     _, first_exc = shutdown_errors[0]
                     if len(shutdown_errors) > 1:
@@ -1170,31 +1316,128 @@ class AgentFrameworkHost:
         await channel.push(identity, shaped)
         return shaped
 
+    async def _handle_push_task(self, payload: Mapping[str, Any]) -> None:
+        """Runner-side handler for ``hosting.push`` tasks.
+
+        Unpacks a single per-destination push payload (one channel, one
+        identity) and runs the echo (when present) followed by the
+        response push. Echo failures are logged and swallowed — the
+        user-visible failure mode is "response delivered without
+        echo", *not* "no response at all". Response-push failures
+        re-raise so the runner can retry per the configured
+        :class:`RetryPolicy`.
+
+        Payload shape (built by :meth:`_deliver_response`):
+
+        - ``channel_name`` (str)
+        - ``identity`` (:class:`ChannelIdentity`)
+        - ``result`` (:class:`HostedRunResult`)
+        - ``request`` (:class:`ChannelRequest`)
+        - ``echo_result`` (:class:`HostedRunResult` or ``None``)
+
+        With the default :class:`InProcessTaskRunner` we pass these
+        object references through directly (no serialization). Durable
+        runner adapters must serialize the payload at schedule time and
+        deserialize before invoking this handler; the keys above are
+        the stable wire contract.
+        """
+        channel_name = cast(str, payload["channel_name"])
+        identity = cast(ChannelIdentity, payload["identity"])
+        result = cast(HostedRunResult[Any], payload["result"])
+        echo_result = cast("HostedRunResult[Any] | None", payload.get("echo_result"))
+        request = cast(ChannelRequest, payload["request"])
+
+        by_name = {ch.name: ch for ch in self.channels}
+        channel = by_name.get(channel_name)
+        if channel is None or not isinstance(channel, ChannelPush):
+            # Channel was validated at schedule time; if we ever land
+            # here it means the host's channel list mutated mid-flight,
+            # which we don't support. Log loudly and drop — re-raising
+            # would just cause the runner to retry forever.
+            logger.error(
+                "hosting.push: channel %r is no longer a ChannelPush; dropping task",
+                channel_name,
+            )
+            return
+        push_channel = cast(ChannelPush, channel)
+
+        if echo_result is not None:
+            try:
+                await self._deliver_payload_to_channel(
+                    push_channel,
+                    identity,
+                    echo_result,
+                    request=request,
+                    is_echo=True,
+                )
+            except Exception:
+                logger.exception(
+                    "hosting.push: echo push failed for channel=%s native_id=%s",
+                    channel_name,
+                    identity.native_id,
+                )
+            else:
+                logger.info(
+                    "hosting.push: echoed user message",
+                    extra={"channel": channel_name, "native_id": identity.native_id},
+                )
+
+        # Response phase — raise on failure so the runner retries per
+        # the configured retry policy. The runner is responsible for
+        # terminal-failure bookkeeping.
+        await self._deliver_payload_to_channel(
+            push_channel,
+            identity,
+            result,
+            request=request,
+            is_echo=False,
+        )
+        logger.info(
+            "hosting.push: pushed agent response",
+            extra={"channel": channel_name, "native_id": identity.native_id},
+        )
+
     async def _deliver_response(self, request: ChannelRequest, payload: HostedRunResult[Any]) -> DeliveryReport:
-        """Resolve ``request.response_target`` and call ``ChannelPush.push`` on each.
+        """Resolve ``request.response_target`` and schedule a push per destination.
 
-        Per SPEC-002 §"ResponseTarget": for any non-``originating`` target,
-        the originating channel returns an acknowledgment and the actual
-        agent reply lands on the destination channel(s). When a destination
-        cannot be resolved (no known native id) or doesn't implement
-        ``ChannelPush``, it is dropped and surfaced in
-        :class:`DeliveryReport.skipped`. If every destination drops, we
-        fall back to delivering on the originating channel (matching the
-        spec's policy default).
+        Per SPEC-002 §"Intended targets + durable delivery": for any
+        non-``originating`` target, the originating channel returns an
+        acknowledgement and the actual agent reply is dispatched
+        **asynchronously** via the host's :class:`DurableTaskRunner` —
+        one scheduled task per destination, with the runner owning
+        retry / terminal-failure / replay semantics.
 
-        When ``request.response_target.echo_input`` is True the host first
-        builds a user-message payload (see :meth:`_build_echo_payload`)
-        and pushes it to each non-originating destination *before* the
-        agent response. Echo failures land in :class:`DeliveryReport`
-        ``echo_failed`` and do not abort the corresponding agent-response
-        push — channels that drop echoes (or whose echo phase fails) are
-        still expected to accept the response push.
+        When a destination cannot be resolved (no known native id), or
+        the destination channel doesn't implement :class:`ChannelPush`,
+        or no channel by that name is registered, it is dropped
+        synchronously and surfaced in :class:`DeliveryReport.skipped`.
+        When a destination resolves but
+        :meth:`DurableTaskRunner.schedule` itself raises, the
+        destination lands in :class:`DeliveryReport.failed` — this
+        indicates a host-side outage (runner backend unreachable) and
+        is *not* the same as a downstream channel-push failure (the
+        runner handles those).
 
-        Each per-destination push goes through
-        :meth:`_deliver_payload_to_channel`, which clones the payload and
-        applies the channel's optional ``response_hook`` so per-channel
-        transforms (e.g. flatten multi-modal to text for a text-only
-        wire) can't leak across destinations.
+        If every destination drops at resolution time we fall back to
+        delivering on the originating channel so the user is never left
+        without a reply. We do **not** fall back when every destination
+        fails to schedule — the originating channel can read
+        :class:`DeliveryReport.failed` and decide whether to surface a
+        degraded reply itself, rather than double-delivering on a
+        host-side outage that might resolve on its own.
+
+        When ``request.response_target.echo_input`` is True the echo
+        payload (the originating user message) is bundled into the
+        same per-destination task as the agent response — see
+        :meth:`_handle_push_task`. The echo is dispatched *before* the
+        response within that task; an echo failure does not abort the
+        response push.
+
+        Each per-destination push (echo and response) goes through
+        :meth:`_deliver_payload_to_channel`, which clones the payload
+        and applies the channel's optional ``response_hook`` so
+        per-channel transforms (e.g. flatten multi-modal to text for a
+        text-only wire) can't leak across destinations.
         """
         target = request.response_target
         kind = target.kind
@@ -1253,18 +1496,15 @@ class AgentFrameworkHost:
                         continue
                     destinations.append((entry, known.get(entry)))
 
-        # Dispatch.
+        # Schedule per-destination push tasks via the durable runner.
         by_name = {ch.name: ch for ch in self.channels}
         pushed: list[str] = []
         skipped: list[str] = []
         # ``(target_token, error_summary)`` for each destination whose
-        # ``ChannelPush.push`` raised. Distinct from ``skipped`` so the
-        # caller can tell an outage (every destination push raised) from
-        # the documented "no link recorded" drop (no identity yet
-        # mapped to that channel for this isolation_key).
+        # ``runner.schedule(...)`` itself raised. This is a *host-side*
+        # outage (e.g. the durable backend is unreachable), not a
+        # downstream push failure (those are owned by the runner).
         failed: list[tuple[str, str]] = []
-        echoed: list[str] = []
-        echo_failed: list[tuple[str, str]] = []
         echo_payload = self._build_echo_payload(request) if target.echo_input else None
         for channel_name, dest_identity in destinations:
             channel = by_name.get(channel_name)
@@ -1289,59 +1529,37 @@ class AgentFrameworkHost:
                 )
                 skipped.append(token)
                 continue
-            push_channel = cast(ChannelPush, channel)
-            # Echo phase — fire-and-record. A failure here does NOT abort
-            # the response push: the user-visible failure mode is
-            # "response delivered without echo" rather than "no response
-            # at all".
-            if echo_payload is not None:
-                try:
-                    await self._deliver_payload_to_channel(
-                        push_channel,
-                        dest_identity,
-                        echo_payload,
-                        request=request,
-                        is_echo=True,
-                    )
-                except Exception as exc:
-                    logger.exception("deliver_response: echo push failed for target=%s", token)
-                    echo_failed.append((token, f"{type(exc).__name__}: {exc}"))
-                else:
-                    echoed.append(token)
-                    logger.info(
-                        "deliver_response: echoed user message",
-                        extra={"target": token, "channel": channel_name},
-                    )
-            # Response phase.
+            task_payload: dict[str, Any] = {
+                "channel_name": channel_name,
+                "identity": dest_identity,
+                "result": payload,
+                "echo_result": echo_payload,
+                "request": request,
+            }
             try:
-                await self._deliver_payload_to_channel(
-                    push_channel,
-                    dest_identity,
-                    payload,
-                    request=request,
-                    is_echo=False,
-                )
+                await self._durable_task_runner.schedule(HOSTING_PUSH_TASK_NAME, task_payload)
             except Exception as exc:
-                logger.exception("deliver_response: push failed for target=%s", token)
+                logger.exception("deliver_response: failed to schedule push for target=%s", token)
                 failed.append((token, f"{type(exc).__name__}: {exc}"))
                 continue
             pushed.append(token)
             logger.info(
-                "deliver_response: pushed agent response",
+                "deliver_response: scheduled push",
                 extra={"target": token, "channel": channel_name},
             )
 
         if not pushed and not include_originating:
-            # Spec policy: if every destination drops *without ever
-            # raising*, deliver to originating so the user gets a
-            # response. When the drop reason is a push outage (every
-            # ``failed`` entry), we don't fall back — the originating
-            # channel can inspect ``DeliveryReport.failed`` and decide
-            # whether to surface a degraded reply itself rather than
-            # double-delivering on a flaky link.
+            # Spec policy: if every destination drops at resolution time
+            # *without ever scheduling*, deliver to originating so the
+            # user gets a response. When the drop reason is a
+            # schedule-time outage (every ``failed`` entry), we don't
+            # fall back — the originating channel can inspect
+            # ``DeliveryReport.failed`` and decide whether to surface a
+            # degraded reply itself rather than double-delivering on a
+            # host-side outage that may resolve on its own.
             if failed:
                 logger.warning(
-                    "deliver_response: every destination push raised — surfacing failures via "
+                    "deliver_response: every destination failed to schedule — surfacing failures via "
                     "DeliveryReport.failed (no originating fallback)"
                 )
             else:
@@ -1353,8 +1571,6 @@ class AgentFrameworkHost:
             pushed=tuple(pushed),
             skipped=tuple(skipped),
             failed=tuple(failed),
-            echoed=tuple(echoed),
-            echo_failed=tuple(echo_failed),
         )
 
 

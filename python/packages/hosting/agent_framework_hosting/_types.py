@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from agent_framework import (
     AgentResponse,
@@ -335,23 +335,31 @@ class DeliveryReport:
     destinations) or to return only an acknowledgement (``False`` — when
     the target lists only out-of-band destinations).
 
-    ``skipped`` and ``failed`` are intentionally distinct so callers can
-    tell a structural drop (no link recorded for the destination
-    channel — ``skipped``) from a transport / runtime failure
-    (``ChannelPush.push`` raised — ``failed``). A non-empty ``failed``
-    indicates an outage / outage-like condition (Telegram, Teams,
-    expired credentials, rate limits) and is the right signal for a
-    caller that wants to surface a degraded reply to the originating
-    user instead of treating the request as fully delivered.
+    Non-originating destinations are dispatched **asynchronously** via the
+    host's :class:`DurableTaskRunner`. ``pushed`` lists the destinations
+    whose push task was **scheduled successfully** — not necessarily yet
+    delivered. The runner owns subsequent retry, terminal-failure
+    bookkeeping, and (for durable runners) cross-restart replay; operators
+    inspect runner-backend state for live delivery outcome rather than
+    this report.
 
-    When ``ResponseTarget.echo_input`` is set the host first pushes the
-    user message to each non-originating destination *before* the agent
-    response. ``echoed`` records the destinations that received the echo
-    successfully; ``echo_failed`` mirrors ``failed`` for the echo phase
-    so callers can tell "echo succeeded, response failed" from "both
-    succeeded" or "echo failed, response succeeded". The agent-response
-    push is still attempted even when the echo push raised — channels
-    that drop echoes are expected to keep accepting the response push.
+    ``skipped`` records destinations dropped at resolution time, *before*
+    any scheduling attempt — typically because the destination channel
+    does not implement :class:`ChannelPush`, the host has no recorded
+    identity for that channel under the current ``isolation_key``, or the
+    channel name is unknown. ``failed`` records destinations whose
+    :meth:`DurableTaskRunner.schedule` call itself raised (a configuration
+    or runner-internal failure — *not* a delivery failure, which the
+    runner handles). A non-empty ``failed`` indicates a host-side outage
+    (e.g. the runner backend is unreachable) and is the right signal for
+    a caller that wants to surface a degraded reply to the originating
+    user instead of treating the request as fully dispatched.
+
+    Echo phase. When ``ResponseTarget.echo_input`` is set the originating
+    user message is dispatched to each non-originating destination *before*
+    the agent reply, within the same per-destination push task. Echo
+    outcome is not reported back to the originating channel — it lives in
+    the runner's own log alongside the agent-reply outcome.
     """
 
     def __init__(
@@ -360,28 +368,21 @@ class DeliveryReport:
         pushed: tuple[str, ...] = (),
         skipped: tuple[str, ...] = (),
         failed: tuple[tuple[str, str], ...] = (),
-        echoed: tuple[str, ...] = (),
-        echo_failed: tuple[tuple[str, str], ...] = (),
     ) -> None:
         self.include_originating = include_originating
-        self.pushed = pushed  # destination tokens delivered to (e.g. "telegram:123")
-        self.skipped = (
-            skipped  # destinations dropped without a push attempt (no identity / no ChannelPush / unknown channel)
-        )
-        # destinations whose ``ChannelPush.push`` raised — each entry is
-        # ``(target_token, error_summary)`` so callers can distinguish
-        # the "all destinations down" outage case from the documented
-        # "no link recorded" drop case (which lands in ``skipped``).
+        # Destination tokens whose push task was *scheduled* with the
+        # durable task runner. Not yet (necessarily) delivered.
+        self.pushed = pushed
+        # Destinations dropped at resolution time — no channel of that
+        # name, channel doesn't implement ``ChannelPush``, or no
+        # identity recorded for that channel under the current
+        # ``isolation_key``.
+        self.skipped = skipped
+        # Destinations whose ``runner.schedule(...)`` itself raised —
+        # a configuration / runner-side failure, *not* a delivery
+        # failure (the runner handles those). Each entry is
+        # ``(target_token, error_summary)``.
         self.failed = failed
-        # When ``ResponseTarget.echo_input`` is set the host also pushes
-        # the originating user message to each non-originating
-        # destination *before* the agent response. We track the
-        # successful echoes separately from ``pushed`` so callers can
-        # distinguish "input echo + response both succeeded" from
-        # "response pushed twice"; ``echo_failed`` mirrors ``failed``
-        # for the echo phase.
-        self.echoed = echoed
-        self.echo_failed = echo_failed
 
 
 # A transform hook runs over each AgentResponseUpdate as the channel consumes
@@ -584,6 +585,114 @@ class ChannelPush(Protocol):
     async def push(self, identity: ChannelIdentity, payload: HostedRunResult[Any]) -> None: ...
 
 
+# --------------------------------------------------------------------------- #
+# Durable task runner — pluggable seam for non-originating push fan-out and
+# (in v1 fast-follow) background runs. See spec §"Durable task runner".
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """Retry contract a :class:`DurableTaskRunner` honours per scheduled task.
+
+    Defaults are deliberately conservative — five attempts on a 1s/2x/60s
+    exponential backoff — so a transient channel outage (Telegram returning
+    502, Activity Protocol token refresh) is rerouted to retry without the
+    operator wiring anything. Adapter backends (TaskHub, Foundry durable
+    tasks) MAY translate this into their native retry primitive; the
+    in-process runner implements it directly via ``asyncio.sleep``.
+    """
+
+    max_attempts: int = 5
+    initial_backoff_seconds: float = 1.0
+    backoff_multiplier: float = 2.0
+    max_backoff_seconds: float = 60.0
+
+
+@dataclass(frozen=True)
+class TaskHandle:
+    """Opaque, runner-issued handle for a scheduled task.
+
+    Callers receive one of these from :meth:`DurableTaskRunner.schedule` and
+    pass it back to :meth:`DurableTaskRunner.get` to poll status. ``task_id``
+    is opaque — its shape is implementation-defined (UUID for the in-process
+    runner, instance id for TaskHub, scheduled-task arn for Foundry). The
+    ``name`` mirrors the handler name supplied to :meth:`schedule` so the
+    caller does not have to track it separately.
+    """
+
+    task_id: str
+    name: str
+
+
+TaskStatus = Literal["scheduled", "running", "succeeded", "failed", "cancelled"]
+
+
+@runtime_checkable
+class DurableTaskRunner(Protocol):
+    """Pluggable seam the host uses to schedule out-of-band work.
+
+    The host registers a single internal handler — ``"hosting.push"`` — at
+    startup; each non-originating push destination becomes a
+    ``runner.schedule("hosting.push", payload)`` call. The handler resolves
+    the destination channel, runs its ``response_hook`` (if any), and calls
+    :meth:`ChannelPush.push`. Failures inside the handler are caught by the
+    runner, retried per the supplied :class:`RetryPolicy`, and ultimately
+    marked terminal-failed when ``max_attempts`` is exhausted.
+
+    Two implementations ship in the framework: an in-process default
+    (``InProcessTaskRunner``, asyncio + bounded retry, no cross-restart
+    persistence) suitable for ``runtime_mode="long_running"`` deployments,
+    plus adapter packages (``agent-framework-hosting-durabletask``, a future
+    Foundry adapter) for ``runtime_mode="ephemeral"`` deployments that need
+    cross-restart durability.
+    """
+
+    def register(
+        self,
+        name: str,
+        handler: Callable[[Mapping[str, Any]], Awaitable[None]],
+    ) -> None:
+        """Register a named handler the runner will invoke when a task fires.
+
+        Re-registering under the same name replaces the previous handler.
+        Implementations SHOULD raise :class:`RuntimeError` if called after
+        the runner has been started, to avoid silent reorderings of in-flight
+        work; the in-process runner enforces this.
+        """
+        ...
+
+    async def schedule(
+        self,
+        name: str,
+        payload: Mapping[str, Any],
+        *,
+        retry_policy: RetryPolicy | None = None,
+    ) -> TaskHandle:
+        """Schedule a previously-registered handler invocation.
+
+        ``name`` MUST match a name previously passed to :meth:`register`. The
+        ``payload`` is forwarded verbatim to the handler; implementations
+        MUST treat it as opaque (no introspection, no normalization).
+        ``retry_policy`` overrides the runner's default for this task only;
+        ``None`` means "use the runner-wide default".
+
+        Returns a :class:`TaskHandle` the caller may use with :meth:`get` to
+        poll status. Returning the handle MUST NOT wait for the task to run
+        — scheduling is fire-and-forget from the caller's perspective.
+        """
+        ...
+
+    async def get(self, handle: TaskHandle) -> TaskStatus | None:
+        """Return the current status of a scheduled task.
+
+        Returns ``None`` if the runner no longer has any record of the task
+        (e.g. it was scheduled in a prior process and the runner has no
+        persistent backing). Otherwise one of the :data:`TaskStatus` values.
+        """
+        ...
+
+
 __all__ = [
     "AgentResponse",
     "AgentResponseUpdate",
@@ -600,10 +709,14 @@ __all__ = [
     "ChannelSession",
     "ChannelStreamTransformHook",
     "DeliveryReport",
+    "DurableTaskRunner",
     "HostedRunResult",
     "ResponseStream",
     "ResponseTarget",
     "ResponseTargetKind",
+    "RetryPolicy",
+    "TaskHandle",
+    "TaskStatus",
     "apply_response_hook",
     "apply_run_hook",
 ]

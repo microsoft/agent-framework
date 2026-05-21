@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,8 +24,12 @@ from agent_framework_hosting import (
     ChannelPush,
     ChannelRequest,
     ChannelSession,
+    DurableTaskRunner,
     HostedRunResult,
     ResponseTarget,
+    RetryPolicy,
+    TaskHandle,
+    TaskStatus,
 )
 
 
@@ -113,6 +117,67 @@ class _NoPushChannel:
 
     def contribute(self, context: ChannelContext) -> ChannelContribution:
         return ChannelContribution()
+
+
+class _SyncTaskRunner(DurableTaskRunner):
+    """A :class:`DurableTaskRunner` that runs handlers inline.
+
+    Tests of the delivery routing want deterministic, synchronous
+    behaviour. The real :class:`InProcessTaskRunner` schedules via
+    ``asyncio.create_task`` so push side effects only land *after*
+    the test has yielded control — awkward for assertions that read
+    a channel's recorded pushes immediately after
+    :meth:`ChannelContext.deliver_response` returns.
+
+    Two knobs control failure handling:
+
+    - ``schedule_raises``: when set, every call to :meth:`schedule`
+      raises this exception. Mimics a host-side outage (the durable
+      backend is unreachable).
+    - ``swallow_handler_errors`` (default ``True``): when the
+      handler raises, the error is recorded in
+      :attr:`handler_errors` but :meth:`schedule` still returns
+      successfully — matching the real durable contract that
+      "scheduled" is a separate signal from "delivered". Set to
+      ``False`` to surface handler exceptions through
+      :meth:`schedule` for the few tests that want to assert on
+      handler-raised failures inline.
+    """
+
+    def __init__(self, *, swallow_handler_errors: bool = True) -> None:
+        self._handlers: dict[str, Callable[[Mapping[str, Any]], Awaitable[None]]] = {}
+        self.scheduled: list[tuple[str, Mapping[str, Any]]] = []
+        self.handler_errors: list[BaseException] = []
+        self.schedule_raises: BaseException | None = None
+        self.swallow_handler_errors = swallow_handler_errors
+
+    def register(
+        self,
+        name: str,
+        handler: Callable[[Mapping[str, Any]], Awaitable[None]],
+    ) -> None:
+        self._handlers[name] = handler
+
+    async def schedule(
+        self,
+        name: str,
+        payload: Mapping[str, Any],
+        *,
+        retry_policy: RetryPolicy | None = None,
+    ) -> TaskHandle:
+        if self.schedule_raises is not None:
+            raise self.schedule_raises
+        self.scheduled.append((name, payload))
+        try:
+            await self._handlers[name](payload)
+        except Exception as exc:
+            self.handler_errors.append(exc)
+            if not self.swallow_handler_errors:
+                raise
+        return TaskHandle(task_id=f"sync-{len(self.scheduled)}", name=name)
+
+    async def get(self, handle: TaskHandle) -> TaskStatus | None:  # pragma: no cover - unused
+        return "succeeded"
 
 
 def _assistant_response(text: str) -> AgentResponse:
@@ -624,14 +689,22 @@ class TestHostWorkflowCheckpointingPathTraversal:
 # --------------------------------------------------------------------------- #
 
 
-def _make_host_with_two_channels() -> tuple[AgentFrameworkHost, _RecordingChannel, _RecordingChannel, ChannelContext]:
+def _make_host_with_two_channels(
+    *,
+    runner: DurableTaskRunner | None = None,
+) -> tuple[AgentFrameworkHost, _RecordingChannel, _RecordingChannel, ChannelContext, _SyncTaskRunner]:
     agent = _FakeAgent()
     a = _RecordingChannel(name="responses", path="/r")
     b = _RecordingChannel(name="telegram", path="/t")
-    host = AgentFrameworkHost(target=agent, channels=[a, b])
+    sync_runner = runner if isinstance(runner, _SyncTaskRunner) else _SyncTaskRunner()
+    host = AgentFrameworkHost(
+        target=agent,
+        channels=[a, b],
+        durable_task_runner=runner or sync_runner,
+    )
     _ = host.app
     assert a.context is not None
-    return host, a, b, a.context
+    return host, a, b, a.context, sync_runner
 
 
 def _record_identity_on(host: AgentFrameworkHost, isolation_key: str, channel: str, native_id: str) -> None:
@@ -642,7 +715,7 @@ def _record_identity_on(host: AgentFrameworkHost, isolation_key: str, channel: s
 
 class TestDeliverResponse:
     async def test_originating_returns_include_originating(self) -> None:
-        _, _, _, ctx = _make_host_with_two_channels()
+        _, _, _, ctx, _runner = _make_host_with_two_channels()
         req = ChannelRequest(channel="responses", operation="op", input="x")
         report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is True
@@ -650,7 +723,7 @@ class TestDeliverResponse:
         assert report.skipped == ()
 
     async def test_none_suppresses_everything(self) -> None:
-        _, _, _, ctx = _make_host_with_two_channels()
+        _, _, _, ctx, _runner = _make_host_with_two_channels()
         req = ChannelRequest(
             channel="responses",
             operation="op",
@@ -663,7 +736,7 @@ class TestDeliverResponse:
         assert report.skipped == ()
 
     async def test_active_pushes_to_other_channel(self) -> None:
-        host, a, b, ctx = _make_host_with_two_channels()
+        host, a, b, ctx, _runner = _make_host_with_two_channels()
         # Alice was last seen on telegram.
         _record_identity_on(host, "alice", "telegram", "42")
         # Now she sends a message via responses; ResponseTarget.active should
@@ -681,7 +754,7 @@ class TestDeliverResponse:
         assert b.pushes and b.pushes[0][0].native_id == "42"
 
     async def test_active_falls_back_to_originating_when_self(self) -> None:
-        host, _a, _b, ctx = _make_host_with_two_channels()
+        host, _a, _b, ctx, _runner = _make_host_with_two_channels()
         _record_identity_on(host, "alice", "responses", "user:1")
         req = ChannelRequest(
             channel="responses",
@@ -694,7 +767,7 @@ class TestDeliverResponse:
         assert report.include_originating is True
 
     async def test_channels_with_unknown_identity_skipped(self) -> None:
-        _, _, _, ctx = _make_host_with_two_channels()
+        _, _, _, ctx, _runner = _make_host_with_two_channels()
         # No prior identity seeded for telegram on alice.
         req = ChannelRequest(
             channel="responses",
@@ -710,7 +783,7 @@ class TestDeliverResponse:
         assert report.pushed == ()
 
     async def test_channels_with_explicit_native_id_token(self) -> None:
-        _, _, b, ctx = _make_host_with_two_channels()
+        _, _, b, ctx, _runner = _make_host_with_two_channels()
         req = ChannelRequest(
             channel="responses",
             operation="op",
@@ -723,7 +796,7 @@ class TestDeliverResponse:
         assert b.pushes[0][0].native_id == "99"
 
     async def test_channels_originating_pseudo_includes_origin(self) -> None:
-        host, _a, _b, ctx = _make_host_with_two_channels()
+        host, _a, _b, ctx, _runner = _make_host_with_two_channels()
         _record_identity_on(host, "alice", "telegram", "42")
         req = ChannelRequest(
             channel="responses",
@@ -737,7 +810,7 @@ class TestDeliverResponse:
         assert report.pushed == ("telegram:42",)
 
     async def test_channels_unknown_channel_name_skipped(self) -> None:
-        _, _, _, ctx = _make_host_with_two_channels()
+        _, _, _, ctx, _runner = _make_host_with_two_channels()
         req = ChannelRequest(
             channel="responses",
             operation="op",
@@ -770,7 +843,7 @@ class TestDeliverResponse:
         assert report.include_originating is True  # fallback
 
     async def test_all_linked_pushes_to_every_other_channel(self) -> None:
-        host, _a, b, ctx = _make_host_with_two_channels()
+        host, _a, b, ctx, _runner = _make_host_with_two_channels()
         # Alice on responses (originating) and telegram.
         host._identities.setdefault("alice", {})
         host._identities["alice"]["responses"] = ChannelIdentity(channel="responses", native_id="user:1")
@@ -788,7 +861,7 @@ class TestDeliverResponse:
         assert b.pushes and b.pushes[0][1].result.text == "reply"
 
     async def test_all_linked_no_other_channels_falls_back(self) -> None:
-        host, _a, _b, ctx = _make_host_with_two_channels()
+        host, _a, _b, ctx, _runner = _make_host_with_two_channels()
         req = ChannelRequest(
             channel="responses",
             operation="op",
@@ -800,17 +873,18 @@ class TestDeliverResponse:
         assert report.include_originating is True
         assert report.pushed == ()
 
-    async def test_push_exception_lands_in_failed_no_fallback(self) -> None:
-        """Push-raised destinations land in ``DeliveryReport.failed`` (with
-        an ``error_summary``) and do NOT trigger the originating-fallback.
+    async def test_handler_exception_does_not_abort_schedule(self) -> None:
+        """When ``ChannelPush.push`` raises *inside the runner handler*
+        the destination is still considered ``pushed`` from the host's
+        perspective — ``DurableTaskRunner.schedule`` accepted the work,
+        and downstream delivery outcome (success / retry / terminal
+        failure) is owned by the runner.
 
-        Distinct from a "no link recorded" drop — that lands in
-        ``skipped`` (and DOES trigger the fallback). The originating
-        channel is meant to inspect ``failed`` and decide whether to
-        surface a degraded reply itself rather than double-delivering
-        on a flaky link.
+        Compare with :meth:`test_schedule_exception_lands_in_failed`:
+        ``DeliveryReport.failed`` is reserved for *host-side* outages
+        (the runner refused the work), not downstream push failures.
         """
-        host, _a, b, ctx = _make_host_with_two_channels()
+        host, _a, b, ctx, runner = _make_host_with_two_channels()
         b._push_raises = RuntimeError("boom")  # type: ignore[attr-defined]
         host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
         req = ChannelRequest(
@@ -821,22 +895,60 @@ class TestDeliverResponse:
             response_target=ResponseTarget.channel("telegram"),
         )
         report = await ctx.deliver_response(req, _make_reply("reply"))
-        # Push raised → ``failed``, NOT ``skipped``.
+        # Schedule succeeded → ``pushed``, ``failed`` is for host-side
+        # outages only.
+        assert report.pushed == ("telegram:42",)
+        assert report.failed == ()
+        assert report.skipped == ()
+        # Handler raised — runner captured the error (in the real
+        # runner it would be retried; the sync runner records it).
+        assert runner.handler_errors and isinstance(runner.handler_errors[0], RuntimeError)
+        assert str(runner.handler_errors[0]) == "boom"
+        # No fallback: the handler is responsible for any user-visible
+        # surface after schedule returned.
+        assert report.include_originating is False
+
+    async def test_schedule_exception_lands_in_failed_no_fallback(self) -> None:
+        """When :meth:`DurableTaskRunner.schedule` itself raises (the
+        runner backend is unreachable) the destination lands in
+        ``DeliveryReport.failed`` with an error summary. This is the
+        host-side outage signal — distinct from a "no link recorded"
+        drop (``skipped``) and from a downstream channel-push failure
+        (owned by the runner).
+
+        No originating-fallback fires when every destination fails to
+        schedule — the originating channel is meant to inspect
+        ``failed`` and decide whether to surface a degraded reply
+        itself rather than double-delivering on a host-side outage
+        that may resolve on its own.
+        """
+        host, _a, _b, ctx, runner = _make_host_with_two_channels()
+        runner.schedule_raises = RuntimeError("runner backend unreachable")
+        host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="x",
+            session=ChannelSession(isolation_key="alice"),
+            response_target=ResponseTarget.channel("telegram"),
+        )
+        report = await ctx.deliver_response(req, _make_reply("reply"))
+        assert report.pushed == ()
         assert report.skipped == ()
         assert len(report.failed) == 1
         token, summary = report.failed[0]
         assert token == "telegram:42"
         assert "RuntimeError" in summary
-        assert "boom" in summary
-        # No fallback: caller decides whether to surface a degraded reply.
+        assert "runner backend unreachable" in summary
         assert report.include_originating is False
 
     async def test_echo_input_pushes_user_message_then_response(self) -> None:
-        """``echo_input=True`` triggers two pushes per destination: the
-        originating user message first, then the agent reply. Channels
-        downstream of a workflow that emits to multiple channels need this
-        to keep their UI state coherent with the user's actual prompt."""
-        host, _a, b, ctx = _make_host_with_two_channels()
+        """``echo_input=True`` triggers two pushes per destination,
+        bundled into the same scheduled task: the originating user
+        message first, then the agent reply. Channels downstream of a
+        workflow that emits to multiple channels need this to keep
+        their UI state coherent with the user's actual prompt."""
+        host, _a, b, ctx, runner = _make_host_with_two_channels()
         host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
         req = ChannelRequest(
             channel="responses",
@@ -846,10 +958,13 @@ class TestDeliverResponse:
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
         report = await ctx.deliver_response(req, _make_reply("reply"))
+        # One scheduled task per destination; the handler does echo then response inline.
         assert report.pushed == ("telegram:42",)
-        assert report.echoed == ("telegram:42",)
-        assert report.echo_failed == ()
-        # Two pushes: echo first, then response.
+        assert len(runner.scheduled) == 1
+        # The single task contained both echo_result and result.
+        _, payload = runner.scheduled[0]
+        assert payload["echo_result"] is not None
+        # Two pushes landed on the channel: echo first, then response.
         assert len(b.pushes) == 2
         echo_identity, echo_payload = b.pushes[0]
         assert echo_identity.native_id == "42"
@@ -861,12 +976,16 @@ class TestDeliverResponse:
         assert str(resp_payload.result.messages[0].role) == "assistant"
 
     async def test_echo_input_failure_does_not_block_response(self) -> None:
-        """An echo push that raises lands in ``echo_failed`` but the
-        response push must still be attempted on the same destination."""
+        """An echo push that raises inside the handler is logged and
+        swallowed; the response push must still be attempted on the
+        same destination so the user-visible failure mode is
+        "response delivered without echo" rather than "no response at
+        all"."""
         agent = _FakeAgent()
         a = _RecordingChannel(name="responses", path="/r")
         b = _RecordingChannel(name="telegram", path="/t")
-        host = AgentFrameworkHost(target=agent, channels=[a, b])
+        runner = _SyncTaskRunner()
+        host = AgentFrameworkHost(target=agent, channels=[a, b], durable_task_runner=runner)
         _ = host.app
         assert a.context is not None
 
@@ -892,12 +1011,13 @@ class TestDeliverResponse:
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
         report = await a.context.deliver_response(req, _make_reply("reply"))
-        assert report.echo_failed and report.echo_failed[0][0] == "telegram:42"
-        assert "RuntimeError" in report.echo_failed[0][1]
-        assert report.echoed == ()
-        # Response push attempted and succeeded despite the echo failure.
+        # Schedule succeeded; handler swallowed the echo failure and
+        # the response push landed on the channel.
         assert report.pushed == ("telegram:42",)
         assert b.pushes and b.pushes[0][1].result.text == "reply"
+        # Handler did not raise (echo failure was swallowed inside
+        # the handler), so the runner saw no error.
+        assert runner.handler_errors == []
 
 
 # --------------------------------------------------------------------------- #
@@ -931,7 +1051,7 @@ class TestResponseHookFanOut:
             )
 
         b.response_hook = telegram_hook  # type: ignore[attr-defined]
-        host = AgentFrameworkHost(target=agent, channels=[a, b])
+        host = AgentFrameworkHost(target=agent, channels=[a, b], durable_task_runner=_SyncTaskRunner())
         _ = host.app
         assert a.context is not None
 
@@ -966,7 +1086,7 @@ class TestResponseHookFanOut:
             return result.replace(result=AgentResponse(messages=[]))
 
         b.response_hook = hook_that_rebinds  # type: ignore[attr-defined]
-        host = AgentFrameworkHost(target=agent, channels=[a, b, c])
+        host = AgentFrameworkHost(target=agent, channels=[a, b, c], durable_task_runner=_SyncTaskRunner())
         _ = host.app
         assert a.context is not None
 
@@ -1009,7 +1129,7 @@ class TestResponseHookFanOut:
             return result
 
         b.response_hook = telegram_hook  # type: ignore[attr-defined]
-        host = AgentFrameworkHost(target=agent, channels=[a, b])
+        host = AgentFrameworkHost(target=agent, channels=[a, b], durable_task_runner=_SyncTaskRunner())
         _ = host.app
         assert a.context is not None
 
