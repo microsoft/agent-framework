@@ -336,6 +336,94 @@ async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
         )
 
 
+async def test_resumed_workflow_keeps_previous_checkpoint_id_chain():
+    """New checkpoints created after resume should chain to the restored checkpoint."""
+    from typing_extensions import Never
+
+    from agent_framework import WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._executor import Executor
+
+    class StartExecutor(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message, target_id="middle")
+
+    class MiddleExecutor(Executor):
+        @handler
+        async def process(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message + "-processed", target_id="finish")
+
+    class FinishExecutor(Executor):
+        @handler
+        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+            await ctx.yield_output(message + "-done")
+
+    storage = InMemoryCheckpointStorage()
+
+    start = StartExecutor(id="start")
+    middle = MiddleExecutor(id="middle")
+    finish = FinishExecutor(id="finish")
+
+    workflow_name = "resume-chain-workflow"
+
+    workflow = (
+        WorkflowBuilder(
+            max_iterations=10,
+            name=workflow_name,
+            start_executor=start,
+            checkpoint_storage=storage,
+        )
+        .add_edge(start, middle)
+        .add_edge(middle, finish)
+        .build()
+    )
+
+    _ = [event async for event in workflow.run("hello", stream=True)]
+
+    initial_checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda c: c.timestamp,
+    )
+    assert len(initial_checkpoints) >= 2, (
+        f"Expected at least 2 checkpoints before resume, got {len(initial_checkpoints)}"
+    )
+
+    restore_checkpoint = initial_checkpoints[1]
+    initial_ids = {checkpoint.checkpoint_id for checkpoint in initial_checkpoints}
+
+    resumed_start = StartExecutor(id="start")
+    resumed_middle = MiddleExecutor(id="middle")
+    resumed_finish = FinishExecutor(id="finish")
+
+    resumed_workflow = (
+        WorkflowBuilder(
+            max_iterations=10,
+            name=workflow_name,
+            start_executor=resumed_start,
+            checkpoint_storage=storage,
+        )
+        .add_edge(resumed_start, resumed_middle)
+        .add_edge(resumed_middle, resumed_finish)
+        .build()
+    )
+
+    _ = [event async for event in resumed_workflow.run(checkpoint_id=restore_checkpoint.checkpoint_id, stream=True)]
+
+    all_checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda c: c.timestamp,
+    )
+    resumed_checkpoints = [
+        checkpoint for checkpoint in all_checkpoints if checkpoint.checkpoint_id not in initial_ids
+    ]
+
+    assert resumed_checkpoints, "Expected at least one new checkpoint after resume"
+    assert resumed_checkpoints[0].previous_checkpoint_id == restore_checkpoint.checkpoint_id
+
+    for i in range(1, len(resumed_checkpoints)):
+        assert resumed_checkpoints[i].previous_checkpoint_id == resumed_checkpoints[i - 1].checkpoint_id
+
+
 async def test_memory_checkpoint_storage_roundtrip_json_native_types():
     """Test that JSON-native types (str, int, float, bool, None) roundtrip correctly."""
     storage = InMemoryCheckpointStorage()
