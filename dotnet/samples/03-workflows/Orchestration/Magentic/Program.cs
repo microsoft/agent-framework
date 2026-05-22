@@ -4,8 +4,6 @@
 // A Magentic workflow coordinates a researcher and a coder, streams orchestration
 // events as the plan evolves, and prints the final conversation transcript.
 
-#pragma warning disable OPENAI001
-
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
