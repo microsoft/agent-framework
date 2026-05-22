@@ -123,6 +123,7 @@ from ._middleware import (
     chat_middleware,
     function_middleware,
 )
+
 from ._sessions import (
     AgentSession,
     ContextProvider,
@@ -429,6 +430,9 @@ __all__ = [
     "Runner",
     "RunnerContext",
     "SecretString",
+    "SecureAgentConfig",
+    "SecureMCPToolProxy",
+    "apply_mcp_security_labels",
     "SelectiveToolCallCompactionStrategy",
     "SessionContext",
     "SingleEdgeGroup",

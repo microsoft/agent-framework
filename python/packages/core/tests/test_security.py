@@ -437,6 +437,92 @@ class TestLabelTrackingMiddleware:
         # label from input (tier 3) — the tool's declaration is authoritative
         assert label.integrity == IntegrityLabel.TRUSTED
 
+    @pytest.mark.asyncio
+    async def test_bracketed_variable_reference_expanded_before_call_next(self, middleware):
+        """Bracketed variable placeholders should be expanded before tool execution."""
+
+        class MessageArgs(BaseModel):
+            summary: str
+
+        async def send_message(summary: str) -> str:
+            return summary
+
+        message_tool = FunctionTool(
+            fn=send_message,
+            name="SendMessagetoSelf",
+            description="Send message",
+            args_schema=MessageArgs,
+        )
+
+        expected_summary = "Expanded quarantined summary"
+        variable_id = middleware.get_variable_store().store(
+            expected_summary,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        context = FunctionInvocationContext(
+            function=message_tool,
+            arguments=message_tool.args_schema(summary=f"[{variable_id}]"),
+        )
+
+        async def next_fn() -> None:
+            current_args = context.arguments
+            if isinstance(current_args, BaseModel):
+                summary = current_args.model_dump()["summary"]
+            else:
+                summary = current_args["summary"]
+            assert summary == expected_summary
+            context.result = [Content.from_text("sent")]
+
+        await middleware.process(context, next_fn)
+
+    @pytest.mark.asyncio
+    async def test_json_string_variable_reference_expands_only_response_before_call_next(self, middleware):
+        """JSON-serialized hidden payloads should expose only the response text to tools."""
+
+        class MessageArgs(BaseModel):
+            summary: str
+
+        async def send_message(summary: str) -> str:
+            return summary
+
+        message_tool = FunctionTool(
+            fn=send_message,
+            name="SendMessagetoSelf",
+            description="Send message",
+            args_schema=MessageArgs,
+        )
+
+        response_text = "Expanded quarantined summary"
+        stored_payload = json.dumps(
+            {
+                "response": response_text,
+                "security_label": {"integrity": "untrusted", "confidentiality": "public"},
+                "metadata": {},
+                "quarantined": True,
+                "variables_processed": ["var_1"],
+                "content_summary": ["var_1: 10 chars"],
+            }
+        )
+        variable_id = middleware.get_variable_store().store(
+            stored_payload,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        context = FunctionInvocationContext(
+            function=message_tool,
+            arguments=message_tool.args_schema(summary=f"Security review complete. [{variable_id}]"),
+        )
+
+        async def next_fn() -> None:
+            current_args = context.arguments
+            if isinstance(current_args, BaseModel):
+                summary = current_args.model_dump()["summary"]
+            else:
+                summary = current_args["summary"]
+            assert summary == f"Security review complete. {response_text}"
+            assert '"response"' not in summary
+            context.result = [Content.from_text("sent")]
+
+        await middleware.process(context, next_fn)
 
 class TestPolicyEnforcementMiddleware:
     """Tests for PolicyEnforcementFunctionMiddleware."""
@@ -868,6 +954,55 @@ class TestAutomaticHiding:
         content, label = store.retrieve(var_id)
         assert content == "hidden content"
         assert label.integrity == IntegrityLabel.UNTRUSTED
+
+    @pytest.mark.asyncio
+    async def test_inspect_variable_bypasses_auto_hide_and_taints_context(self, middleware_auto_hide):
+        """inspect_variable should expose content and taint context even when auto-hide is enabled."""
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        # Seed variable store with untrusted data to inspect.
+        var_id = middleware_auto_hide.get_variable_store().store(
+            "raw untrusted payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PRIVATE),
+        )
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": var_id, "reason": "validate exposure behavior"},
+        )
+
+        async def next_fn():
+            context.result = [
+                Content.from_text(
+                    json.dumps(
+                        {
+                            "inspected": True,
+                            "variable_id": var_id,
+                            "content": "raw untrusted payload",
+                        }
+                    )
+                )
+            ]
+
+        assert middleware_auto_hide.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+        await middleware_auto_hide.process(context, next_fn)
+
+        # Result should stay visible (no variable-reference replacement).
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        item = context.result[0]
+        assert item.additional_properties.get("_variable_reference") is not True
+
+        payload = json.loads(item.text)
+        assert payload["inspected"] is True
+        assert payload["variable_id"] == var_id
+        assert payload["content"] == "raw untrusted payload"
+
+        # Since content entered context, integrity should taint to UNTRUSTED.
+        assert middleware_auto_hide.get_context_label().integrity == IntegrityLabel.UNTRUSTED
 
     @pytest.mark.asyncio
     async def test_multiple_calls_accumulate_variables(self, middleware_auto_hide, mock_function):

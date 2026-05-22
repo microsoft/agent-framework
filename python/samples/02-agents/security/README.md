@@ -1,7 +1,6 @@
 # FIDES security samples
 
-This folder contains two runnable FIDES samples that use
-`agent_framework.foundry.FoundryChatClient`. Keep this README as the quick
+This folder contains runnable FIDES samples. Keep this README as the quick
 entry point for choosing and running a sample; use
 [FIDES_DEVELOPER_GUIDE.md](FIDES_DEVELOPER_GUIDE.md) for the architecture,
 security model, middleware behavior, and API reference.
@@ -12,6 +11,7 @@ security model, middleware behavior, and API reference.
 |--------|-------|--------------|
 | `email_security_example.py` | Prompt injection defense | `SecureAgentConfig`, Foundry-backed email handling, `quarantined_llm`, and approval on policy violations |
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
+| `github_mcp_labels_example.py` | GitHub MCP metadata label parsing | `MCPStdioTool`, GitHub MCP label extraction, security label parsing, and post-tool-call policy enforcement |
 
 ## Prerequisites
 
@@ -23,8 +23,14 @@ environment available.
 - `FOUNDRY_MODEL` set in your environment for the main agent deployment
 - Local dev environment installed (for example, `uv sync --dev`)
 
-Both samples use `FOUNDRY_MODEL` for the main agent and keep the quarantine
-client pinned to `gpt-4o-mini`.
+These samples use Azure OpenAI for the main agent and keep the quarantine
+client pinned to `gpt-4o-mini` where applicable.
+
+For `github_mcp_labels_example.py`, set:
+
+- `GITHUB_MCP_SERVER_PATH` (full path to the GitHub MCP server binary)
+- `AZURE_OPENAI_ENDPOINT` or `AZURE_ENDPOINT`
+- GitHub Personal Access Token in `samples/02-agents/security/.github_token`
 
 ## Suppressing the experimental warning
 
@@ -71,6 +77,24 @@ What to look for:
 - Reading public content keeps the context public
 - Reading private content taints the context as private
 - Posting private data to a public destination triggers an approval request
+
+### `github_mcp_labels_example.py`
+
+This sample connects to the local GitHub MCP server binary through
+`MCPStdioTool`, reads security labels returned in MCP metadata, and shows how
+FIDES middleware can enforce policy after tool calls.
+
+Run it with:
+
+```bash
+uv run samples/02-agents/security/github_mcp_labels_example.py
+```
+
+What to look for:
+
+- GitHub MCP responses include per-field security labels in metadata
+- Untrusted fields are parsed and tracked by the security middleware
+- Write attempts from tainted context can be blocked by policy enforcement
 
 ## Where to find the details
 
