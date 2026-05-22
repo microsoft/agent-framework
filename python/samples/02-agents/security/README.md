@@ -12,6 +12,7 @@ security model, middleware behavior, and API reference.
 | `email_security_example.py` | Prompt injection defense | `SecureAgentConfig`, Foundry-backed email handling, `quarantined_llm`, and approval on policy violations |
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
 | `github_mcp_labels_example.py` | GitHub MCP metadata label parsing | `MCPStdioTool`, GitHub MCP label extraction, security label parsing, and post-tool-call policy enforcement |
+| `mcp_url_fides_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
 
 ## Prerequisites
 
@@ -31,6 +32,12 @@ For `github_mcp_labels_example.py`, set:
 - `GITHUB_MCP_SERVER_PATH` (full path to the GitHub MCP server binary)
 - `AZURE_OPENAI_ENDPOINT` or `AZURE_ENDPOINT`
 - GitHub Personal Access Token in `samples/02-agents/security/.github_token`
+
+For `mcp_url_fides_example.py`, set:
+
+- `GITHUB_PAT` (GitHub Personal Access Token)
+- `FOUNDRY_PROJECT_ENDPOINT` (Foundry project endpoint)
+- `FOUNDRY_MODEL` (optional model override)
 
 ## Suppressing the experimental warning
 
@@ -52,7 +59,13 @@ Run it with:
 ```bash
 uv run samples/02-agents/security/email_security_example.py --cli
 uv run samples/02-agents/security/email_security_example.py --devui
+uv run samples/02-agents/security/email_security_example.py --cli --debug
 ```
+
+When you run the DevUI variant, the sample prints the active DevUI bearer token
+before starting the server.
+
+Add `--debug` to enable verbose tool and security middleware logging.
 
 What to look for:
 
@@ -71,6 +84,9 @@ Run it with:
 uv run samples/02-agents/security/repo_confidentiality_example.py --cli
 uv run samples/02-agents/security/repo_confidentiality_example.py --devui
 ```
+
+When you run the DevUI variant, the sample prints the active DevUI bearer token
+before starting the server.
 
 What to look for:
 
@@ -95,6 +111,25 @@ What to look for:
 - GitHub MCP responses include per-field security labels in metadata
 - Untrusted fields are parsed and tracked by the security middleware
 - Write attempts from tainted context can be blocked by policy enforcement
+
+### `mcp_url_fides_example.py`
+
+This sample connects directly to `https://api.githubcopilot.com/mcp/` through
+`MCPStreamableHTTPTool`, then wraps the MCP client in `SecureMCPToolProxy` so
+FIDES middleware can inspect tool results and enforce policy locally.
+
+Run it with:
+
+```bash
+uv run samples/02-agents/security/mcp_url_fides_example.py
+uv run samples/02-agents/security/mcp_url_fides_example.py --attack
+```
+
+What to look for:
+
+- MCP tools are auto-labeled from remote annotations
+- Untrusted tool output is tracked by FIDES label middleware
+- Attack-mode write attempts can trigger policy enforcement or approval
 
 ## Where to find the details
 

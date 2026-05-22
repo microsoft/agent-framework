@@ -1346,7 +1346,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         original_items = self._ensure_content_list(context.result)
 
         # Process items — apply per-item labels + hide untrusted items
-        processed, result_label = self._process_result_with_embedded_labels(
+        processed, result_label, visible_result_label = self._process_result_with_embedded_labels(
             original_items,
             function_name,
             fallback_label=fallback_label,
@@ -1355,16 +1355,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         context.result = processed
         context.metadata["result_label"] = result_label
 
-        # Determine whether the entire result was hidden (all items became
-        # variable references that were NOT variable references before).
-        entire_result_hidden = all(self._is_variable_reference(item) for item in processed) and not all(
-            self._is_variable_reference(item) for item in original_items
-        )
-
-        if entire_result_hidden:
-            # Untrusted content is NOT in the LLM context — don't taint integrity.
-            # However, confidentiality MUST be updated: even hidden PRIVATE data
-            # could be revealed by approving the variable reference.
+        # Hidden items never enter the main LLM context, so only visible items
+        # may affect integrity taint. Confidentiality still reflects the most
+        # restrictive label across the entire tool result, including hidden items.
+        if visible_result_label is None:
             if result_label.confidentiality != self._context_label.confidentiality:
                 old_conf = self._context_label.confidentiality
                 hidden_label = ContentLabel(
@@ -1384,8 +1378,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                     f"{self._context_label.confidentiality.value}"
                 )
         else:
-            # Some content entered context — update context label fully
-            self._update_context_label(result_label)
+            # Only visible content can taint integrity; hidden content still
+            # contributes confidentiality to later policy decisions.
+            exposed_label = ContentLabel(
+                integrity=visible_result_label.integrity,
+                confidentiality=result_label.confidentiality,
+            )
+            self._update_context_label(exposed_label)
             logger.info(
                 f"Context label after processing '{function_name}': "
                 f"{self._context_label.integrity.value}, "
@@ -1421,7 +1420,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         items: list[Content],
         function_name: str,
         fallback_label: ContentLabel,
-    ) -> tuple[list[Content], ContentLabel]:
+    ) -> tuple[list[Content], ContentLabel, ContentLabel | None]:
         """Process Content items, respecting per-item embedded labels.
 
         This implements the first tier of the label propagation priority:
@@ -1443,12 +1442,16 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             fallback_label: Label to use when an item has no embedded label.
 
         Returns:
-            Tuple of (processed_content_list, combined_label).
+            Tuple of (processed_content_list, combined_label, visible_combined_label).
             - processed_content_list: list[Content] with untrusted items replaced
             - combined_label: Most restrictive label across all items
+            - visible_combined_label: Most restrictive label across items that
+              remained visible to the LLM after hiding, or ``None`` if every
+              result item was hidden behind a variable reference
         """
         processed: list[Content] = []
         item_labels: list[ContentLabel] = []
+        visible_item_labels: list[ContentLabel] = []
 
         for item in items:
             item_label = self._extract_content_label(item, fallback_label)
@@ -1461,9 +1464,11 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 # Attach this item's own label (preserves per-item granularity)
                 item.additional_properties["security_label"] = item_label.to_dict()
                 processed.append(item)
+                visible_item_labels.append(item_label)
 
         combined = combine_labels(*item_labels) if item_labels else fallback_label
-        return processed, combined
+        visible_combined = combine_labels(*visible_item_labels) if visible_item_labels else None
+        return processed, combined, visible_combined
 
     def _extract_content_label(
         self,
@@ -2826,7 +2831,7 @@ def get_security_tools() -> list[FunctionTool]:
                 tools=[my_tool, *get_security_tools()],
             )
     """
-    return [quarantined_llm, inspect_variable]
+    return [quarantined_llm , inspect_variable]
 
 
 # =============================================================================

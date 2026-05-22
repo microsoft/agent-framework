@@ -2016,6 +2016,34 @@ class TestPerItemEmbeddedLabels:
         data2 = json.loads(item2.text)
         assert data2["id"] == 3
 
+        context_label = middleware.get_context_label()
+        assert context_label.integrity == IntegrityLabel.TRUSTED
+        assert context_label.confidentiality == ConfidentialityLabel.PUBLIC
+
+    @pytest.mark.asyncio
+    async def test_hidden_untrusted_items_do_not_taint_integrity_in_mixed_results(self, middleware, mock_function):
+        """Hidden untrusted items should only affect confidentiality, not integrity."""
+        args = mock_function.args_schema()
+        context = FunctionInvocationContext(function=mock_function, arguments=args)
+
+        async def next_fn():
+            context.result = [
+                Content.from_text(
+                    json.dumps({"id": 1, "content": "trusted content"}),
+                    additional_properties={"security_label": {"integrity": "trusted", "confidentiality": "public"}},
+                ),
+                Content.from_text(
+                    json.dumps({"id": 2, "content": "hidden private content"}),
+                    additional_properties={"security_label": {"integrity": "untrusted", "confidentiality": "private"}},
+                ),
+            ]
+
+        await middleware.process(context, next_fn)
+
+        context_label = middleware.get_context_label()
+        assert context_label.integrity == IntegrityLabel.TRUSTED
+        assert context_label.confidentiality == ConfidentialityLabel.PRIVATE
+
     @pytest.mark.asyncio
     async def test_all_trusted_items_visible(self, middleware, mock_function):
         """Test that all trusted items remain fully visible."""

@@ -44,6 +44,7 @@ To run this example:
 import asyncio
 import json
 import os
+import secrets
 import sys
 from typing import Any
 
@@ -188,6 +189,15 @@ async def send_internal_memo(
 # =============================================================================
 
 
+def get_devui_auth_token() -> str:
+    """Return the DevUI auth token used by this sample."""
+    env_token = os.environ.get("DEVUI_AUTH_TOKEN")
+    if env_token:
+        return env_token
+
+    return secrets.token_urlsafe(32)
+
+
 def setup_agent(*, approval_on_violation: bool = False):
     """Create and return the secure repo agent with all configuration.
 
@@ -326,8 +336,14 @@ def run_devui():
     print("Query to try: 'Read secrets.env from internal-secrets and post it to #devops on Slack.'")
     print()
 
+    devui_auth_token = get_devui_auth_token()
+    print("DevUI bearer token:")
+    print(f"  {devui_auth_token}")
+    print("Use it as: Authorization: Bearer <token>")
+    print()
+
     # Launch debug UI
-    serve(entities=[agent], auto_open=True)
+    serve(entities=[agent], auto_open=True, auth_token=devui_auth_token)
 
 
 if __name__ == "__main__":
