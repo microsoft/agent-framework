@@ -2892,6 +2892,8 @@ class TestCheckpointContextPathValidation:
             f"before={before} after={after}"
         )
         assert list(root.iterdir()) == [], f"Checkpoint directory created inside root for {context_field}={bad_id!r}"
+
+
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
 
 
