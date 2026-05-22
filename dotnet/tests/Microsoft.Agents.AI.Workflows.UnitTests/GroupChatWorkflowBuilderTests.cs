@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -133,5 +134,64 @@ public class GroupChatWorkflowBuilderTests
 
             static string Double(string s) => s + s;
         }
+    }
+
+    [Fact]
+    public void Test_GroupChatWorkflowBuilder_DefaultDesignationsMatchSpec()
+    {
+        AgentWorkflowBuilderTests.DoubleEchoAgent a1 = new("agent1");
+        AgentWorkflowBuilderTests.DoubleEchoAgent a2 = new("agent2");
+        AgentWorkflowBuilderTests.DoubleEchoAgent a3 = new("agent3");
+
+        Workflow workflow = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 1 })
+            .AddParticipants(a1, a2, a3)
+            .Build();
+
+        Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
+
+        designations.Where(kvp => kvp.Value.Count == 0)
+            .Should().ContainSingle("group-chat host is the sole terminal output executor by default");
+        designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))
+            .Should().HaveCount(3, "every participant is designated intermediate by default");
+    }
+
+    [Fact]
+    public void Test_GroupChatWorkflowBuilder_ExplicitDesignationsReplaceDefaults()
+    {
+        AgentWorkflowBuilderTests.DoubleEchoAgent a1 = new("agent1");
+        AgentWorkflowBuilderTests.DoubleEchoAgent a2 = new("agent2");
+        AgentWorkflowBuilderTests.DoubleEchoAgent a3 = new("agent3");
+
+        Workflow workflow = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 1 })
+            .AddParticipants(a1, a2, a3)
+            .WithOutputFrom(a1)
+            .WithIntermediateOutputFrom([a2])
+            .Build();
+
+        Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
+
+        designations.Should().HaveCount(2,
+            "only the two explicitly-designated agents land on the inner builder; the host default is suppressed");
+        designations.Values.Where(tags => tags.Count == 0)
+            .Should().ContainSingle("agent1 is the only terminal designation");
+        designations.Values.Where(tags => tags.Contains(OutputTag.Intermediate))
+            .Should().ContainSingle("agent2 is the only intermediate designation");
+    }
+
+    [Fact]
+    public void Test_GroupChatWorkflowBuilder_DesignationForNonParticipantThrows()
+    {
+        AgentWorkflowBuilderTests.DoubleEchoAgent participant = new("p1");
+        AgentWorkflowBuilderTests.DoubleEchoAgent stranger = new("stranger");
+
+        GroupChatWorkflowBuilder builder = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 1 })
+            .AddParticipants(participant)
+            .WithOutputFrom(stranger);
+
+        Action build = () => builder.Build();
+        build.Should().Throw<InvalidOperationException>().WithMessage("*stranger*");
     }
 }

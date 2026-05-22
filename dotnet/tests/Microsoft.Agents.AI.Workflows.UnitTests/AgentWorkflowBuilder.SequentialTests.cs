@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -61,6 +62,29 @@ public static partial class AgentWorkflowBuilderTests
 
                 static string Double(string s) => s + s;
             }
+        }
+
+        [Fact]
+        public void Test_BuildSequential_DefaultDesignationsMatchSpec()
+        {
+            Workflow workflow = AgentWorkflowBuilder.BuildSequential(
+                new DoubleEchoAgent("agent1"),
+                new DoubleEchoAgent("agent2"),
+                new DoubleEchoAgent("agent3"));
+
+            // Defaults: every agent executor is intermediate; exactly one terminal entry (the OutputMessagesExecutor).
+            Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
+            designations.Should().NotBeEmpty();
+
+            List<KeyValuePair<string, HashSet<OutputTag>>> terminals = designations
+                .Where(kvp => kvp.Value.Count == 0)
+                .ToList();
+            terminals.Should().ContainSingle("Sequential has exactly one terminal output executor (OutputMessagesExecutor)");
+
+            List<KeyValuePair<string, HashSet<OutputTag>>> intermediates = designations
+                .Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))
+                .ToList();
+            intermediates.Should().HaveCount(3, "every agent in the pipeline is designated intermediate");
         }
     }
 }

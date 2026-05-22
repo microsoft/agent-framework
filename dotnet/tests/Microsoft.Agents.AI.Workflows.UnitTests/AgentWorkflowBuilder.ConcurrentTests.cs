@@ -2,9 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 #pragma warning disable SYSLIB1045 // Use GeneratedRegex
@@ -50,6 +52,26 @@ public static partial class AgentWorkflowBuilderTests
                 Assert.Equal(4, Regex.Matches(updateText, "abc").Count);
                 Assert.Equal(2, result.Count);
             }
+        }
+
+        [Fact]
+        public void Test_BuildConcurrent_DefaultDesignationsMatchSpec()
+        {
+            Workflow workflow = AgentWorkflowBuilder.BuildConcurrent(
+                [new DoubleEchoAgent("agent1"), new DoubleEchoAgent("agent2"), new DoubleEchoAgent("agent3")]);
+
+            Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
+
+            List<KeyValuePair<string, HashSet<OutputTag>>> terminals = designations
+                .Where(kvp => kvp.Value.Count == 0)
+                .ToList();
+            terminals.Should().ContainSingle("Concurrent has exactly one terminal output executor (ConcurrentEndExecutor)");
+
+            List<KeyValuePair<string, HashSet<OutputTag>>> intermediates = designations
+                .Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))
+                .ToList();
+            intermediates.Should().HaveCount(6,
+                "every concurrent agent (3) and its per-agent accumulator (3) are designated intermediate");
         }
     }
 }

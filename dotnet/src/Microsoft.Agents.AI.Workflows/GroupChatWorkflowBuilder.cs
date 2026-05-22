@@ -19,6 +19,8 @@ public sealed class GroupChatWorkflowBuilder
     private string _name = string.Empty;
     private string _description = string.Empty;
 
+    private Dictionary<AIAgent, HashSet<OutputTag>>? _outputDesignations;
+
     internal GroupChatWorkflowBuilder(Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) =>
         this._managerFactory = managerFactory;
 
@@ -67,6 +69,48 @@ public sealed class GroupChatWorkflowBuilder
     }
 
     /// <summary>
+    /// Designates the given <paramref name="agents"/> as sources of terminal workflow output.
+    /// Calling any output-designation method (this or <see cref="WithIntermediateOutputFrom"/>)
+    /// suppresses the orchestration-specific defaults: only the user-specified designations
+    /// reach the inner <see cref="WorkflowBuilder"/>.
+    /// </summary>
+    public GroupChatWorkflowBuilder WithOutputFrom(params IEnumerable<AIAgent> agents)
+    {
+        Throw.IfNull(agents);
+        this._outputDesignations ??= new(AIAgentIDEqualityComparer.Instance);
+        foreach (AIAgent agent in agents)
+        {
+            Throw.IfNull(agent, nameof(agents));
+            if (!this._outputDesignations.ContainsKey(agent))
+            {
+                this._outputDesignations[agent] = [];
+            }
+        }
+        return this;
+    }
+
+    /// <summary>
+    /// Designates the given <paramref name="agents"/> as sources of <b>intermediate</b> workflow output.
+    /// See <see cref="WithOutputFrom"/> for the defaults-suppression semantics.
+    /// </summary>
+    public GroupChatWorkflowBuilder WithIntermediateOutputFrom(IEnumerable<AIAgent> agents)
+    {
+        Throw.IfNull(agents);
+        this._outputDesignations ??= new(AIAgentIDEqualityComparer.Instance);
+        foreach (AIAgent agent in agents)
+        {
+            Throw.IfNull(agent, nameof(agents));
+            if (!this._outputDesignations.TryGetValue(agent, out HashSet<OutputTag>? tags))
+            {
+                tags = [];
+                this._outputDesignations[agent] = tags;
+            }
+            tags.Add(OutputTag.Intermediate);
+        }
+        return this;
+    }
+
+    /// <summary>
     /// Builds a <see cref="Workflow"/> composed of agents that operate via group chat, with the next
     /// agent to process messages selected by the group chat manager.
     /// </summary>
@@ -106,6 +150,47 @@ public sealed class GroupChatWorkflowBuilder
                 .AddEdge(participant, host);
         }
 
-        return builder.WithOutputFrom(host).Build();
+        this.ApplyOutputDesignations(builder, host, agentMap);
+        return builder.Build();
+    }
+
+    private void ApplyOutputDesignations(
+        WorkflowBuilder builder,
+        ExecutorBinding host,
+        Dictionary<AIAgent, ExecutorBinding> agentMap)
+    {
+        if (this._outputDesignations is null)
+        {
+            // Defaults (matches Python group-chat orchestration):
+            //   host        -> terminal output
+            //   participants-> intermediate output
+            builder.WithOutputFrom(host);
+            if (agentMap.Count > 0)
+            {
+                builder.WithIntermediateOutputFrom([.. agentMap.Values]);
+            }
+            return;
+        }
+
+        foreach ((AIAgent agent, HashSet<OutputTag> tags) in this._outputDesignations)
+        {
+            if (!agentMap.TryGetValue(agent, out ExecutorBinding? binding))
+            {
+                throw new InvalidOperationException(
+                    $"Output designation references agent '{agent.Name ?? agent.Id}', which is not a participant in this group chat workflow.");
+            }
+
+            if (tags.Count == 0)
+            {
+                builder.WithOutputFrom(binding);
+            }
+            else
+            {
+                foreach (OutputTag tag in tags)
+                {
+                    builder.WithOutputFrom(binding, tag);
+                }
+            }
+        }
     }
 }
