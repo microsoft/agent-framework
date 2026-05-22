@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 public sealed class AgentClassSkillTests
 {
     [Fact]
-    public void MinimalClassSkill_HasNullOverrides_AndSynthesizesContent()
+    public async Task MinimalClassSkill_HasNullOverrides_AndSynthesizesContentAsync()
     {
         // Arrange
         var skill = new MinimalClassSkill();
@@ -26,18 +26,18 @@ public sealed class AgentClassSkillTests
         // Act & Assert — null overrides
         Assert.Equal("minimal", skill.Frontmatter.Name);
         Assert.Null(skill.Resources);
-        Assert.Null(skill.Scripts);
+        Assert.False(skill.HasScripts);
 
         // Act & Assert — synthesized XML content
-        Assert.Contains("<name>minimal</name>", skill.Content);
-        Assert.Contains("<description>A minimal skill.</description>", skill.Content);
-        Assert.Contains("<instructions>", skill.Content);
-        Assert.Contains("Minimal skill body.", skill.Content);
-        Assert.Contains("</instructions>", skill.Content);
+        Assert.Contains("<name>minimal</name>", await skill.GetContentAsync());
+        Assert.Contains("<description>A minimal skill.</description>", await skill.GetContentAsync());
+        Assert.Contains("<instructions>", await skill.GetContentAsync());
+        Assert.Contains("Minimal skill body.", await skill.GetContentAsync());
+        Assert.Contains("</instructions>", await skill.GetContentAsync());
     }
 
     [Fact]
-    public void FullClassSkill_ReturnsOverriddenLists_AndCachesContent()
+    public async Task FullClassSkill_ReturnsOverriddenLists_AndCachesContentAsync()
     {
         // Arrange
         var skill = new FullClassSkill();
@@ -50,15 +50,15 @@ public sealed class AgentClassSkillTests
         Assert.Equal("TestScript", skill.Scripts![0].Name);
 
         // Act & Assert — Content is cached
-        Assert.Same(skill.Content, skill.Content);
+        Assert.Same(await skill.GetContentAsync(), await skill.GetContentAsync());
 
         // Act & Assert — Content includes parameter schema from typed script
-        Assert.Contains("parameters_schema", skill.Content);
-        Assert.Contains("value", skill.Content);
+        Assert.Contains("parameters_schema", await skill.GetContentAsync());
+        Assert.Contains("value", await skill.GetContentAsync());
     }
 
     [Fact]
-    public void ResourcesAndScripts_CanBeLazyLoaded_AndCached()
+    public async Task ResourcesAndScripts_CanBeLazyLoaded_AndCachedAsync()
     {
         // Arrange
         var skill = new LazyLoadedSkill();
@@ -104,7 +104,7 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public void PartialOverrides_OneCollectionNull_OtherHasValues()
+    public async Task PartialOverrides_OneCollectionNull_OtherHasValuesAsync()
     {
         // Arrange
         var resourceOnly = new ResourceOnlySkill();
@@ -115,6 +115,156 @@ public sealed class AgentClassSkillTests
         Assert.Null(resourceOnly.Scripts);
         Assert.Null(scriptOnly.Resources);
         Assert.Single(scriptOnly.Scripts!);
+    }
+
+    [Fact]
+    public void HasResources_ReturnsTrue_WhenSkillHasResources()
+    {
+        // Arrange
+        var skill = new FullClassSkill();
+
+        // Act & Assert
+        Assert.True(skill.HasResources);
+    }
+
+    [Fact]
+    public void HasResources_ReturnsFalse_WhenSkillHasNoResources()
+    {
+        // Arrange
+        var skill = new MinimalClassSkill();
+
+        // Act & Assert
+        Assert.False(skill.HasResources);
+    }
+
+    [Fact]
+    public void HasScripts_ReturnsTrue_WhenSkillHasScripts()
+    {
+        // Arrange
+        var skill = new FullClassSkill();
+
+        // Act & Assert
+        Assert.True(skill.HasScripts);
+    }
+
+    [Fact]
+    public void HasScripts_ReturnsFalse_WhenSkillHasNoScripts()
+    {
+        // Arrange
+        var skill = new MinimalClassSkill();
+
+        // Act & Assert
+        Assert.False(skill.HasScripts);
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_ExistingName_ReturnsResourceAsync()
+    {
+        // Arrange
+        var skill = new FullClassSkill();
+
+        // Act
+        var resource = await skill.GetResourceAsync("test-resource");
+
+        // Assert
+        Assert.NotNull(resource);
+        Assert.Equal("test-resource", resource!.Name);
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_NonExistingName_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new FullClassSkill();
+
+        // Act
+        var resource = await skill.GetResourceAsync("missing");
+
+        // Assert
+        Assert.Null(resource);
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_NoResources_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new MinimalClassSkill();
+
+        // Act
+        var resource = await skill.GetResourceAsync("anything");
+
+        // Assert
+        Assert.Null(resource);
+    }
+
+    [Fact]
+    public async Task GetScriptAsync_ExistingName_ReturnsScriptAsync()
+    {
+        // Arrange
+        var skill = new FullClassSkill();
+
+        // Act
+        var script = await skill.GetScriptAsync("TestScript");
+
+        // Assert
+        Assert.NotNull(script);
+        Assert.Equal("TestScript", script!.Name);
+    }
+
+    [Fact]
+    public async Task GetScriptAsync_NonExistingName_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new FullClassSkill();
+
+        // Act
+        var script = await skill.GetScriptAsync("missing");
+
+        // Assert
+        Assert.Null(script);
+    }
+
+    [Fact]
+    public async Task GetScriptAsync_NoScripts_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new MinimalClassSkill();
+
+        // Act
+        var script = await skill.GetScriptAsync("anything");
+
+        // Assert
+        Assert.Null(script);
+    }
+
+    [Fact]
+    public async Task ConcurrentAccess_ToReflectedResourcesScriptsAndContent_InvokesDiscoveryOnceAsync()
+    {
+        // Regression test for thread-safety of Lazy<T> initialization in AgentClassSkill<TSelf>.
+        // AttributedFullSkill uses attribute-based discovery (no override), so it exercises
+        // the base class's Lazy<T> fields rather than a subclass's own caching.
+        var skill = new AttributedFullSkill();
+
+        const int Concurrency = 32;
+        var resourcesResults = new IReadOnlyList<AgentSkillResource>?[Concurrency];
+        var scriptsResults = new IReadOnlyList<AgentSkillScript>?[Concurrency];
+        var contentResults = new string[Concurrency];
+
+        // Act — invoke all three accessors concurrently from many threads.
+        await Task.WhenAll(Enumerable.Range(0, Concurrency).Select(i => Task.Run(async () =>
+        {
+            resourcesResults[i] = skill.Resources;
+            scriptsResults[i] = skill.Scripts;
+            contentResults[i] = await skill.GetContentAsync();
+        })));
+
+        // Assert — every thread observed the same cached instances (no torn state).
+        for (int i = 1; i < Concurrency; i++)
+        {
+            Assert.Same(resourcesResults[0], resourcesResults[i]);
+            Assert.Same(scriptsResults[0], scriptsResults[i]);
+            Assert.Same(contentResults[0], contentResults[i]);
+        }
     }
 
     [Fact]
@@ -146,22 +296,19 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public void Scripts_DiscoveredViaAttribute_WithCorrectNamesAndDescriptions()
+    public async Task Scripts_DiscoveredViaAttribute_WithCorrectNamesAndDescriptionsAsync()
     {
         // Arrange
         var skill = new AttributedScriptsSkill();
 
-        // Act
-        var scripts = skill.Scripts;
+        // Act & Assert — all scripts discovered with correct metadata
+        Assert.NotNull(skill.Scripts);
+        Assert.Equal(4, skill.Scripts!.Count);
+        Assert.Contains(skill.Scripts, s => s.Name == "do-work");
+        Assert.Contains(skill.Scripts, s => s.Name == "DefaultNamed");
+        Assert.Contains(skill.Scripts, s => s.Name == "append");
 
-        // Assert — all scripts discovered with correct metadata
-        Assert.NotNull(scripts);
-        Assert.Equal(4, scripts!.Count);
-        Assert.Contains(scripts, s => s.Name == "do-work");
-        Assert.Contains(scripts, s => s.Name == "DefaultNamed");
-        Assert.Contains(scripts, s => s.Name == "append");
-
-        var processScript = scripts.First(s => s.Name == "process");
+        var processScript = skill.Scripts.First(s => s.Name == "process");
         Assert.Equal("Processes the input.", processScript.Description);
     }
 
@@ -272,16 +419,16 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public void AttributedFullSkill_IncludesContentWithSchema_AndCachesMembers()
+    public async Task AttributedFullSkill_IncludesContentWithSchema_AndCachesMembersAsync()
     {
         // Arrange
         var skill = new AttributedFullSkill();
 
         // Act & Assert — Content includes reflected resources and scripts
-        Assert.Contains("<resources>", skill.Content);
-        Assert.Contains("conversion-table", skill.Content);
-        Assert.Contains("<scripts>", skill.Content);
-        Assert.Contains("convert", skill.Content);
+        Assert.Contains("<resources>", await skill.GetContentAsync());
+        Assert.Contains("conversion-table", await skill.GetContentAsync());
+        Assert.Contains("<scripts>", await skill.GetContentAsync());
+        Assert.Contains("convert", await skill.GetContentAsync());
 
         // Act & Assert — discovered members are cached
         Assert.Same(skill.Resources, skill.Resources);
@@ -299,37 +446,37 @@ public sealed class AgentClassSkillTests
         // Arrange — skill with no attributes and no overrides; base discovery returns null (not empty list)
         var skill = new NoAttributesNoOverridesSkill();
         var baseType = typeof(AgentClassSkill<NoAttributesNoOverridesSkill>);
-        var resourcesDiscoveredField = baseType.GetField("_resourcesDiscovered", BindingFlags.Instance | BindingFlags.NonPublic);
-        var scriptsDiscoveredField = baseType.GetField("_scriptsDiscovered", BindingFlags.Instance | BindingFlags.NonPublic);
-        var reflectedResourcesField = baseType.GetField("_reflectedResources", BindingFlags.Instance | BindingFlags.NonPublic);
-        var reflectedScriptsField = baseType.GetField("_reflectedScripts", BindingFlags.Instance | BindingFlags.NonPublic);
+        var resourcesField = baseType.GetField("_resources", BindingFlags.Instance | BindingFlags.NonPublic);
+        var scriptsField = baseType.GetField("_scripts", BindingFlags.Instance | BindingFlags.NonPublic);
 
-        Assert.NotNull(resourcesDiscoveredField);
-        Assert.NotNull(scriptsDiscoveredField);
-        Assert.NotNull(reflectedResourcesField);
-        Assert.NotNull(reflectedScriptsField);
-        Assert.False((bool)resourcesDiscoveredField!.GetValue(skill)!);
-        Assert.False((bool)scriptsDiscoveredField!.GetValue(skill)!);
+        Assert.NotNull(resourcesField);
+        Assert.NotNull(scriptsField);
+
+        var resourcesLazy = (Lazy<IReadOnlyList<AgentSkillResource>?>)resourcesField!.GetValue(skill)!;
+        var scriptsLazy = (Lazy<IReadOnlyList<AgentSkillScript>?>)scriptsField!.GetValue(skill)!;
+
+        Assert.False(resourcesLazy.IsValueCreated);
+        Assert.False(scriptsLazy.IsValueCreated);
 
         // Act & Assert
         Assert.Null(skill.Resources);
         Assert.Null(skill.Scripts);
-        Assert.True((bool)resourcesDiscoveredField.GetValue(skill)!);
-        Assert.True((bool)scriptsDiscoveredField.GetValue(skill)!);
-        Assert.Null(reflectedResourcesField!.GetValue(skill));
-        Assert.Null(reflectedScriptsField!.GetValue(skill));
+        Assert.True(resourcesLazy.IsValueCreated);
+        Assert.True(scriptsLazy.IsValueCreated);
+        Assert.Null(resourcesLazy.Value);
+        Assert.Null(scriptsLazy.Value);
 
         // Repeated access should not re-trigger discovery even when discovered value is null.
         Assert.Null(skill.Resources);
         Assert.Null(skill.Scripts);
-        Assert.True((bool)resourcesDiscoveredField.GetValue(skill)!);
-        Assert.True((bool)scriptsDiscoveredField.GetValue(skill)!);
-        Assert.Null(reflectedResourcesField.GetValue(skill));
-        Assert.Null(reflectedScriptsField.GetValue(skill));
+        Assert.True(resourcesLazy.IsValueCreated);
+        Assert.True(scriptsLazy.IsValueCreated);
+        Assert.Null(resourcesLazy.Value);
+        Assert.Null(scriptsLazy.Value);
     }
 
     [Fact]
-    public void SubclassOverride_TakesPrecedence_OverAttributes()
+    public async Task SubclassOverride_TakesPrecedence_OverAttributesAsync()
     {
         // Arrange — skill has attributes AND overrides Resources/Scripts
         var skill = new AttributedWithOverrideSkill();
@@ -382,7 +529,7 @@ public sealed class AgentClassSkillTests
         var jso = SkillTestJsonContext.Default.Options;
 
         // Act & Assert — script with custom JSO
-        var script = skill.Scripts![0];
+        var script = skill.Scripts!.First(s => s.Name == "lookup");
         var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 3 }, jso);
         using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
         var args = argsDoc.RootElement;
@@ -398,13 +545,13 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public void Content_IncludesDescription_ForReflectedResources()
+    public async Task Content_IncludesDescription_ForReflectedResourcesAsync()
     {
         // Arrange
         var skill = new AttributedResourcePropertiesSkill();
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert — descriptions from [Description] attribute appear in synthesized content
         Assert.Contains("Some important data.", content);

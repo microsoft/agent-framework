@@ -186,8 +186,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             return await base.ProvideAIContextAsync(context, cancellationToken).ConfigureAwait(false);
         }
 
-        bool hasScripts = skills.Any(s => s.Scripts is { Count: > 0 });
-        bool hasResources = skills.Any(s => s.Resources is { Count: > 0 });
+        bool hasScripts = skills.Any(s => s.HasScripts);
+        bool hasResources = skills.Any(s => s.HasResources);
 
         return new AIContext
         {
@@ -224,7 +224,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         IList<AIFunction> tools =
         [
             AIFunctionFactory.Create(
-                (string skillName) => this.LoadSkill(skills, skillName),
+                (string skillName, CancellationToken cancellationToken) => this.LoadSkillAsync(skills, skillName, cancellationToken),
                 name: "load_skill",
                 description: "Loads the full content of a specific skill"),
         ];
@@ -288,14 +288,14 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             .ToString();
     }
 
-    private string LoadSkill(IList<AgentSkill> skills, string skillName)
+    private async Task<string> LoadSkillAsync(IList<AgentSkill> skills, string skillName, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(skillName))
         {
             return "Error: Skill name cannot be empty.";
         }
 
-        var skill = skills?.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
+        var skill = skills.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
         if (skill == null)
         {
             return $"Error: Skill '{skillName}' not found.";
@@ -303,7 +303,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
 
         LogSkillLoading(this._logger, skillName);
 
-        return skill.Content;
+        return await skill.GetContentAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<object?> ReadSkillResourceAsync(IList<AgentSkill> skills, string skillName, string resourceName, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default)
@@ -318,20 +318,20 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             return "Error: Resource name cannot be empty.";
         }
 
-        var skill = skills?.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
+        var skill = skills.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
         if (skill == null)
         {
             return $"Error: Skill '{skillName}' not found.";
         }
 
-        var resource = skill.Resources?.FirstOrDefault(resource => resource.Name == resourceName);
-        if (resource is null)
-        {
-            return $"Error: Resource '{resourceName}' not found in skill '{skillName}'.";
-        }
-
         try
         {
+            var resource = await skill.GetResourceAsync(resourceName, cancellationToken).ConfigureAwait(false);
+            if (resource is null)
+            {
+                return $"Error: Resource '{resourceName}' not found in skill '{skillName}'.";
+            }
+
             return await resource.ReadAsync(serviceProvider, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -353,13 +353,13 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             return "Error: Script name cannot be empty.";
         }
 
-        var skill = skills?.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
+        var skill = skills.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
         if (skill == null)
         {
             return $"Error: Skill '{skillName}' not found.";
         }
 
-        var script = skill.Scripts?.FirstOrDefault(resource => resource.Name == scriptName);
+        var script = await skill.GetScriptAsync(scriptName, cancellationToken).ConfigureAwait(false);
         if (script is null)
         {
             return $"Error: Script '{scriptName}' not found in skill '{skillName}'.";
