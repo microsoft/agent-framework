@@ -27,7 +27,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// This attribute is compatible with Native AOT when used with <see cref="AgentClassSkill{TSelf}"/>.
-/// Alternatively, override <see cref="AgentSkill.GetResourceAsync"/> and <see cref="AgentSkill.HasResources"/> and use
+/// Alternatively, override <see cref="AgentClassSkill{TSelf}.Resources"/> and use
 /// <see cref="AgentClassSkill{TSelf}.CreateResource(string, object, string?)"/> instead.
 /// </para>
 /// </remarks>

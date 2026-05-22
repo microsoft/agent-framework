@@ -359,14 +359,14 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             return $"Error: Skill '{skillName}' not found.";
         }
 
-        var script = await skill.GetScriptAsync(scriptName, cancellationToken).ConfigureAwait(false);
-        if (script is null)
-        {
-            return $"Error: Script '{scriptName}' not found in skill '{skillName}'.";
-        }
-
         try
         {
+            var script = await skill.GetScriptAsync(scriptName, cancellationToken).ConfigureAwait(false);
+            if (script is null)
+            {
+                return $"Error: Script '{scriptName}' not found in skill '{skillName}'.";
+            }
+
             return await script.RunAsync(skill, arguments, serviceProvider, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)

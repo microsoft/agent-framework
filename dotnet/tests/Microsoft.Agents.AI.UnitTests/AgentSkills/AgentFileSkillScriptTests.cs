@@ -105,7 +105,7 @@ public sealed class AgentFileSkillScriptTests
     }
 
     [Fact]
-    public async Task Content_WithScripts_AppendsPerScriptEntries()
+    public async Task Content_WithScripts_AppendsPerScriptEntriesAsync()
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
@@ -232,7 +232,7 @@ public sealed class AgentFileSkillScriptTests
     }
 
     [Fact]
-    public async Task Content_WithScripts_ContainsDefaultParametersSchema()
+    public async Task Content_WithScripts_ContainsDefaultParametersSchemaAsync()
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);

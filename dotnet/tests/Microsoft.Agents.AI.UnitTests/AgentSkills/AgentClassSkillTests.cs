@@ -58,7 +58,7 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public async Task ResourcesAndScripts_CanBeLazyLoaded_AndCachedAsync()
+    public void ResourcesAndScripts_CanBeLazyLoaded_AndCached()
     {
         // Arrange
         var skill = new LazyLoadedSkill();
@@ -104,7 +104,7 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public async Task PartialOverrides_OneCollectionNull_OtherHasValuesAsync()
+    public void PartialOverrides_OneCollectionNull_OtherHasValues()
     {
         // Arrange
         var resourceOnly = new ResourceOnlySkill();
@@ -296,7 +296,7 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public async Task Scripts_DiscoveredViaAttribute_WithCorrectNamesAndDescriptionsAsync()
+    public void Scripts_DiscoveredViaAttribute_WithCorrectNamesAndDescriptions()
     {
         // Arrange
         var skill = new AttributedScriptsSkill();
@@ -476,7 +476,7 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public async Task SubclassOverride_TakesPrecedence_OverAttributesAsync()
+    public void SubclassOverride_TakesPrecedence_OverAttributes()
     {
         // Arrange — skill has attributes AND overrides Resources/Scripts
         var skill = new AttributedWithOverrideSkill();
