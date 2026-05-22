@@ -69,10 +69,13 @@ from agent_framework_hosting import (
     ChannelContribution,
     ChannelIdentity,
     ChannelRequest,
+    ChannelResponseContext,
+    ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
     ChannelStreamTransformHook,
     HostedRunResult,
+    apply_response_hook,
     apply_run_hook,
     logger,
 )
@@ -318,6 +321,7 @@ class TeamsChannel:
         path: str = "/teams/messages",
         skip_auth: bool = False,
         run_hook: ChannelRunHook | None = None,
+        response_hook: ChannelResponseHook | None = None,
         outbound_transform: TeamsOutboundTransform | None = None,
         feedback_handler: TeamsFeedbackHandler | None = None,
         stream_transform_hook: ChannelStreamTransformHook | None = None,
@@ -342,10 +346,13 @@ class TeamsChannel:
             run_hook: Optional channel run hook (mutates the
                 :class:`ChannelRequest` before it hits the host). Receives
                 ``protocol_request`` set to the inbound :class:`MessageActivity`.
+            response_hook: Optional channel response hook (mutates the
+                :class:`HostedRunResult` before the originating Teams
+                reply is serialized).
             outbound_transform: Optional callable that turns the
                 agent's :class:`HostedRunResult` into a
                 :class:`TeamsOutboundPayload`. Default behaviour is to
-                send ``result.text`` as a plain text reply.
+                send ``result.result.text`` as a plain text reply.
             feedback_handler: Optional callable invoked when a user
                 submits a thumbs-up / thumbs-down rating. When supplied
                 the channel registers ``on_message_submit_feedback`` on
@@ -367,6 +374,7 @@ class TeamsChannel:
         """
         self.path = path
         self._run_hook = run_hook
+        self.response_hook = response_hook
         self._outbound_transform = outbound_transform
         self._feedback_handler = feedback_handler
         self._stream_transform_hook = stream_transform_hook
@@ -554,8 +562,10 @@ class TeamsChannel:
             await self._run_streaming(request, activity_context)
         else:
             result = await self._ctx.run(request)
-            await self._ctx.deliver_response(request, result)
-            await self._send_outbound(request, activity_context, result)
+            include_originating = await self._ctx.deliver_response(request, result)
+            if include_originating:
+                result = await self._apply_response_hook(result, request)
+                await self._send_outbound(request, activity_context, result)
 
     async def _run_streaming(
         self,
@@ -613,20 +623,40 @@ class TeamsChannel:
             except Exception:  # pragma: no cover - best effort
                 logger.exception("TeamsChannel stream close failed")
             result = _text_result("".join(accumulated))
+            include_originating = True
             try:
-                await self._ctx.deliver_response(request, result)
+                include_originating = await self._ctx.deliver_response(request, result)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("TeamsChannel deliver_response failed after stream finalise")
-            if not stream_failed and self._outbound_transform is not None:
+            if not stream_failed and include_originating and self._outbound_transform is not None:
                 # Outbound transform applies the same way as the
                 # non-streaming path so cards / citations / rewrites
                 # stay symmetric. The SDK's ``send`` posts a follow-up
                 # final message; Teams treats this as the canonical
                 # response and replaces the streamed deltas.
                 try:
+                    result = await self._apply_response_hook(result, request)
                     await self._send_outbound(request, activity_context, result)
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("TeamsChannel outbound transform failed after stream close")
+
+    async def _apply_response_hook(
+        self,
+        result: HostedRunResult[AgentResponse],
+        request: ChannelRequest,
+    ) -> HostedRunResult[AgentResponse]:
+        """Apply the channel-level response hook for an originating reply."""
+        if self.response_hook is None:
+            return result
+        context = ChannelResponseContext(
+            request=request,
+            channel_name=self.name,
+            destination_identity=None,
+            originating=True,
+            is_echo=False,
+        )
+        shaped = await apply_response_hook(self.response_hook, result, context=context)
+        return cast("HostedRunResult[AgentResponse]", shaped)
 
     # -- outbound: message ------------------------------------------------- #
 

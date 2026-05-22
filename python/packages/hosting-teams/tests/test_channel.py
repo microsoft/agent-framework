@@ -272,9 +272,9 @@ class _FakeChannelContext:
 
         return _gen()
 
-    async def deliver_response(self, request: ChannelRequest, payload: HostedRunResult) -> Any:
+    async def deliver_response(self, request: ChannelRequest, payload: HostedRunResult) -> bool:
         self.delivered.append((request, payload))
-        return None
+        return True
 
 
 def _run_result(text: str) -> HostedRunResult[AgentResponse]:
@@ -362,6 +362,27 @@ async def test_on_message_invokes_run_hook_with_protocol_request() -> None:
 
     assert seen["protocol_type"] == "MessageActivity"
     assert seen["target_passed"] is True
+
+
+async def test_on_message_applies_response_hook_before_sending() -> None:
+    contexts: list[Any] = []
+
+    def hook(result: HostedRunResult, **kwargs: Any) -> HostedRunResult:
+        contexts.append(kwargs["context"])
+        return _run_result(result.result.text.upper())
+
+    channel = _make_channel(response_hook=hook)
+    ctx = _FakeChannelContext()
+    channel.contribute(ctx)  # type: ignore[arg-type]
+
+    activity_ctx = _FakeActivityContext(_make_message_activity("ping"))
+    await channel._on_message_activity(activity_ctx)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+    assert activity_ctx.sent == ["AGENT-REPLY"]
+    assert contexts
+    assert contexts[0].channel_name == "teams"
+    assert contexts[0].originating is True
+    assert contexts[0].destination_identity is None
 
 
 async def test_outbound_transform_can_return_card() -> None:
