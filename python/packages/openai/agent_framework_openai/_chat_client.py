@@ -2880,11 +2880,14 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     if ann_url:
                         ann_start = _get_ann_value("start_index")
                         ann_end = _get_ann_value("end_index")
+                        additional_properties: dict[str, Any] = {"annotation_index": event.annotation_index}
+                        if ann_get_url := _get_ann_value("get_url"):
+                            additional_properties["get_url"] = ann_get_url
                         annotation_obj = Annotation(
                             type="citation",
                             title=_get_ann_value("title") or "",
                             url=str(ann_url),
-                            additional_properties={"annotation_index": event.annotation_index},
+                            additional_properties=additional_properties,
                             raw_representation=annotation,
                         )
                         if ann_start is not None and ann_end is not None:

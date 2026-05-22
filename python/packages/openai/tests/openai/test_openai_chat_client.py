@@ -3410,6 +3410,7 @@ def test_streaming_annotation_added_with_url_citation() -> None:
     mock_event.annotation = {
         "type": "url_citation",
         "url": "https://example.sharepoint.com/sites/my-site/doc.pdf",
+        "get_url": "https://example.search.windows.net/indexes/docs/documents/doc-123?api-version=2024-07-01",
         "title": "doc.pdf",
         "start_index": 100,
         "end_index": 112,
@@ -3427,6 +3428,10 @@ def test_streaming_annotation_added_with_url_citation() -> None:
     assert annotation["title"] == "doc.pdf"
     assert annotation["url"] == "https://example.sharepoint.com/sites/my-site/doc.pdf"
     assert annotation["additional_properties"]["annotation_index"] == 0
+    assert (
+        annotation["additional_properties"]["get_url"]
+        == "https://example.search.windows.net/indexes/docs/documents/doc-123?api-version=2024-07-01"
+    )
     assert annotation["raw_representation"] == mock_event.annotation
     assert annotation["annotated_regions"] is not None
     assert len(annotation["annotated_regions"]) == 1
