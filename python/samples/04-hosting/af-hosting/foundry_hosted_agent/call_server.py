@@ -80,8 +80,7 @@ async def call_via_foundry_hosted_agent(prompt: str) -> None:
     project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not project_endpoint:
         raise SystemExit(
-            "FOUNDRY_PROJECT_ENDPOINT must be set; e.g. "
-            "https://<project>.services.ai.azure.com/api/projects/agents"
+            "FOUNDRY_PROJECT_ENDPOINT must be set; e.g. https://<project>.services.ai.azure.com/api/projects/agents"
         )
     agent_name = os.environ.get("FOUNDRY_HOSTED_AGENT_NAME", "agent-framework-hosting-sample")
     # Optional: continue a prior conversation by passing FOUNDRY_HOSTED_SESSION_ID.

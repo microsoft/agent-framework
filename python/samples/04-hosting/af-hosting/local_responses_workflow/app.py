@@ -167,9 +167,7 @@ def build_host() -> AgentFrameworkHost:
     writer = Agent(
         client=client,
         name="writer",
-        instructions=(
-            "You are an excellent slogan writer. You create new slogans based on the given topic."
-        ),
+        instructions=("You are an excellent slogan writer. You create new slogans based on the given topic."),
     )
     legal = Agent(
         client=client,

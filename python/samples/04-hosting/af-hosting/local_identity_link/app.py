@@ -272,10 +272,7 @@ def make_commands(
             # authorize URL, OAuth would complete, and the store would
             # gain a poisoned `telegram:None` entry that any later
             # chat_id-less message would collapse onto. Refuse instead.
-            await ctx.reply(
-                "Couldn't determine your Telegram chat id; please retry "
-                "from a 1:1 chat with the bot."
-            )
+            await ctx.reply("Couldn't determine your Telegram chat id; please retry from a 1:1 chat with the bot.")
             return
         url = linker.authorize_url_for("telegram", str(chat_id))
         await ctx.reply("Open this link to bind this chat to your Microsoft account:\n" + url)

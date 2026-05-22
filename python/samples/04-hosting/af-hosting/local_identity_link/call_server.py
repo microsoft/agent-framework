@@ -38,9 +38,7 @@ BASE_URL = "http://127.0.0.1:8000"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--safety-identifier", default="local-dev")
     parser.add_argument("--previous-response-id", default=None)
     parser.add_argument("--telegram-chat-id", default=None)
