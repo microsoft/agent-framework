@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from agent_framework import AgentResponse, Content, Message
 from agent_framework_hosting import (
     AgentFrameworkHost,
     ChannelCommand,
@@ -117,6 +118,10 @@ class _FakeAgent:
         return _coro()
 
 
+def _run_result(text: str) -> HostedRunResult[AgentResponse]:
+    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
+
+
 def _make_telegram(stream_default: bool = False) -> tuple[TelegramChannel, _FakeAgent]:
     agent = _FakeAgent("hi")
     ch = TelegramChannel(
@@ -170,7 +175,7 @@ class TestPushAndCommand:
         ch, _agent = _make_telegram()
         from agent_framework_hosting import ChannelIdentity
 
-        await ch.push(ChannelIdentity(channel="telegram", native_id="42"), HostedRunResult(text="hi"))
+        await ch.push(ChannelIdentity(channel="telegram", native_id="42"), _run_result("hi"))
         assert ch._http is not None
         ch._http.post.assert_called()  # type: ignore[attr-defined]
         args, kwargs = ch._http.post.call_args  # type: ignore[attr-defined]

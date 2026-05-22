@@ -789,7 +789,7 @@ class TelegramChannel:
 
     # -- ChannelPush -------------------------------------------------------- #
 
-    async def push(self, identity: ChannelIdentity, payload: HostedRunResult) -> None:
+    async def push(self, identity: ChannelIdentity, payload: HostedRunResult[AgentResponse]) -> None:
         """Proactive delivery to a Telegram chat.
 
         Implements :class:`host.ChannelPush` so other channels' callers can
@@ -804,7 +804,7 @@ class TelegramChannel:
             raise ValueError(f"Telegram push requires an int chat_id, got {identity.native_id!r}") from exc
         if self._http is None:
             raise RuntimeError("TelegramChannel.push called before startup")
-        await self._send(chat_id, payload.text)
+        await self._send(chat_id, payload.result.text)
 
     async def _send_photo(self, chat_id: int, photo_url: str, caption: str | None = None) -> None:
         """POST a ``sendPhoto`` to Telegram with an optional caption."""
