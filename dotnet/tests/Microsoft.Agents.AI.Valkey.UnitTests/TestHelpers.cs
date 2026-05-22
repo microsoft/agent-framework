@@ -41,17 +41,4 @@ internal static class TestHelpers
             responseMessages);
 #pragma warning restore MAAI001
     }
-
-    internal static AIContextProvider.InvokedContext CreateContextProviderInvokedContext(
-        IEnumerable<ChatMessage> requestMessages,
-        IEnumerable<ChatMessage> responseMessages)
-    {
-#pragma warning disable MAAI001
-        return new AIContextProvider.InvokedContext(
-            MockAgent,
-            new TestAgentSession(),
-            requestMessages,
-            responseMessages);
-#pragma warning restore MAAI001
-    }
 }

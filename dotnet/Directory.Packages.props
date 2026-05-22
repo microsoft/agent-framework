@@ -138,8 +138,8 @@
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Mcp" Version="1.0.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" />
-    <!-- Redis -->
-    <PackageVersion Include="StackExchange.Redis" Version="2.10.1" />
+    <!-- Valkey -->
+    <PackageVersion Include="Valkey.Glide" Version="1.1.0" />
     <!-- Console UX -->
     <PackageVersion Include="Spectre.Console" Version="0.49.1" />
     <!-- AWS -->

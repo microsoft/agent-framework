@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
-using StackExchange.Redis;
+using Valkey.Glide;
 
 namespace Microsoft.Agents.AI.Valkey;
 
@@ -20,12 +20,12 @@ namespace Microsoft.Agents.AI.Valkey;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Uses basic Valkey list operations via StackExchange.Redis (protocol-compatible with Valkey).
-/// No search module is required — this provider works with any Valkey or Redis OSS server.
+/// Uses basic Valkey list operations via Valkey.Glide.
+/// No search module is required — this provider works with any Valkey server.
 /// </para>
 /// <para>
 /// <strong>Data retention:</strong> Stored messages have no TTL and persist indefinitely.
-/// Use <see cref="MaxMessages"/> to limit per-conversation storage, and <see cref="ClearMessagesAsync"/>
+/// Use <see cref="ValkeyChatHistoryProviderOptions.MaxMessages"/> to limit per-conversation storage, and <see cref="ClearMessagesAsync"/>
 /// for explicit cleanup. Callers are responsible for implementing data retention policies.
 /// </para>
 /// <para>
@@ -33,102 +33,45 @@ namespace Microsoft.Agents.AI.Valkey;
 /// <list type="bullet">
 /// <item><description><strong>PII and sensitive data:</strong> Chat history stored in Valkey may contain PII and sensitive
 /// conversation content. Ensure the Valkey server is configured with appropriate access controls and encryption in transit
-/// (TLS). The <see cref="MaxMessages"/> property can limit stored messages per conversation.</description></item>
+/// (TLS). The <see cref="ValkeyChatHistoryProviderOptions.MaxMessages"/> property can limit stored messages per conversation.</description></item>
 /// <item><description><strong>Compromised store risks:</strong> Agent Framework does not validate or filter messages loaded
 /// from the store — they are accepted as-is. If the Valkey store is compromised, adversarial content could be injected
 /// into the conversation context.</description></item>
 /// </list>
 /// </para>
 /// </remarks>
-[RequiresUnreferencedCode("The ValkeyChatHistoryProvider uses JSON serialization which is incompatible with trimming.")]
-[RequiresDynamicCode("The ValkeyChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
-public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider, IAsyncDisposable
+public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
 {
     private readonly ProviderSessionState<State> _sessionState;
     private IReadOnlyList<string>? _stateKeys;
     private readonly IConnectionMultiplexer _connection;
-    private readonly bool _ownsConnection;
     private readonly string _keyPrefix;
+    private readonly int? _maxMessages;
+    private readonly int? _maxMessagesToRetrieve;
     private readonly ILogger<ValkeyChatHistoryProvider>? _logger;
-    private bool _disposed;
 
     /// <summary>
-    /// Gets or sets the maximum number of messages to retain per conversation.
-    /// When exceeded, oldest messages are automatically trimmed. Null means unlimited.
-    /// </summary>
-    public int? MaxMessages { get; set; }
-
-    /// <summary>
-    /// Gets or sets the maximum number of messages to retrieve from the provider.
-    /// Null means no limit.
-    /// </summary>
-    public int? MaxMessagesToRetrieve { get; set; }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ValkeyChatHistoryProvider"/> class using a connection string.
-    /// </summary>
-    /// <param name="connectionString">The Valkey connection string (e.g., "localhost:6379").</param>
-    /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation.</param>
-    /// <param name="keyPrefix">Prefix for Valkey keys. Defaults to "chat_history".</param>
-    /// <param name="stateKey">An optional key for storing state in the session's StateBag.</param>
-    /// <param name="loggerFactory">Optional logger factory.</param>
-    /// <param name="provideOutputMessageFilter">An optional filter for messages when retrieving from history.</param>
-    /// <param name="storeInputRequestMessageFilter">An optional filter for request messages before storing.</param>
-    /// <param name="storeInputResponseMessageFilter">An optional filter for response messages before storing.</param>
-    /// <remarks>
-    /// This constructor opens a synchronous connection to Valkey. For ASP.NET Core / DI scenarios,
-    /// prefer the <see cref="IConnectionMultiplexer"/> overload with a pre-connected instance to
-    /// avoid blocking the thread pool.
-    /// </remarks>
-    public ValkeyChatHistoryProvider(
-        string connectionString,
-        Func<AgentSession?, State> stateInitializer,
-        string keyPrefix = "chat_history",
-        string? stateKey = null,
-        ILoggerFactory? loggerFactory = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
-        : base(provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
-    {
-        Throw.IfNullOrWhitespace(connectionString);
-        this._sessionState = new ProviderSessionState<State>(
-            Throw.IfNull(stateInitializer),
-            stateKey ?? this.GetType().Name);
-        this._connection = ConnectionMultiplexer.Connect(connectionString);
-        this._ownsConnection = true;
-        this._keyPrefix = keyPrefix;
-        this._logger = loggerFactory?.CreateLogger<ValkeyChatHistoryProvider>();
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ValkeyChatHistoryProvider"/> class using an existing connection.
+    /// Initializes a new instance of the <see cref="ValkeyChatHistoryProvider"/> class.
     /// </summary>
     /// <param name="connection">An existing <see cref="IConnectionMultiplexer"/> instance.</param>
     /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation.</param>
-    /// <param name="keyPrefix">Prefix for Valkey keys. Defaults to "chat_history".</param>
-    /// <param name="stateKey">An optional key for storing state in the session's StateBag.</param>
+    /// <param name="options">Optional configuration options.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
-    /// <param name="provideOutputMessageFilter">An optional filter for messages when retrieving from history.</param>
-    /// <param name="storeInputRequestMessageFilter">An optional filter for request messages before storing.</param>
-    /// <param name="storeInputResponseMessageFilter">An optional filter for response messages before storing.</param>
     public ValkeyChatHistoryProvider(
         IConnectionMultiplexer connection,
         Func<AgentSession?, State> stateInitializer,
-        string keyPrefix = "chat_history",
-        string? stateKey = null,
-        ILoggerFactory? loggerFactory = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
-        : base(provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
+        ValkeyChatHistoryProviderOptions? options = null,
+        ILoggerFactory? loggerFactory = null)
+        : base(options?.ProvideOutputMessageFilter, options?.StoreInputRequestMessageFilter, options?.StoreInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<State>(
             Throw.IfNull(stateInitializer),
-            stateKey ?? this.GetType().Name);
+            options?.StateKey ?? this.GetType().Name,
+            options?.JsonSerializerOptions);
         this._connection = Throw.IfNull(connection);
-        this._ownsConnection = false;
-        this._keyPrefix = keyPrefix;
+        this._keyPrefix = options?.KeyPrefix ?? "chat_history";
+        this._maxMessages = options?.MaxMessages;
+        this._maxMessagesToRetrieve = options?.MaxMessagesToRetrieve;
         this._logger = loggerFactory?.CreateLogger<ValkeyChatHistoryProvider>();
     }
 
@@ -136,10 +79,11 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider, IAsyncDispo
     public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <inheritdoc />
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "ChatMessage serialization uses known types.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "ChatMessage serialization uses known types.")]
     protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
-        this.ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
 
         var state = this._sessionState.GetOrInitializeState(context.Session);
@@ -147,10 +91,10 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider, IAsyncDispo
         var key = this.BuildKey(state);
 
         // Fetch only the tail when MaxMessagesToRetrieve is set [Low: avoid fetching all then trimming]
-        RedisValue[] values;
-        if (this.MaxMessagesToRetrieve.HasValue)
+        ValkeyValue[] values;
+        if (this._maxMessagesToRetrieve.HasValue)
         {
-            values = await db.ListRangeAsync(key, -this.MaxMessagesToRetrieve.Value, -1).ConfigureAwait(false);
+            values = await db.ListRangeAsync(key, -this._maxMessagesToRetrieve.Value, -1).ConfigureAwait(false);
         }
         else
         {
@@ -191,10 +135,11 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider, IAsyncDispo
     }
 
     /// <inheritdoc />
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "ChatMessage serialization uses known types.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "ChatMessage serialization uses known types.")]
     protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
-        this.ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
 
         var state = this._sessionState.GetOrInitializeState(context.Session);
@@ -208,7 +153,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider, IAsyncDispo
         var key = this.BuildKey(state);
 
         // Batch push — single round-trip [Medium-8]
-        var serialized = new RedisValue[messageList.Count];
+        var serialized = new ValkeyValue[messageList.Count];
         for (int i = 0; i < messageList.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -218,9 +163,9 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider, IAsyncDispo
         await db.ListRightPushAsync(key, serialized).ConfigureAwait(false);
 
         // Trim to max messages if configured
-        if (this.MaxMessages.HasValue)
+        if (this._maxMessages.HasValue)
         {
-            await db.ListTrimAsync(key, -this.MaxMessages.Value, -1).ConfigureAwait(false);
+            await db.ListTrimAsync(key, -this._maxMessages.Value, -1).ConfigureAwait(false);
         }
 
         this._logger?.LogInformation(
@@ -236,7 +181,6 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider, IAsyncDispo
     /// <returns>A task representing the asynchronous operation.</returns>
     public async Task ClearMessagesAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
-        this.ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
         var state = this._sessionState.GetOrInitializeState(session);
         var db = this._connection.GetDatabase();
@@ -252,7 +196,6 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider, IAsyncDispo
     /// <returns>The number of stored messages.</returns>
     public async Task<long> GetMessageCountAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
-        this.ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
         var state = this._sessionState.GetOrInitializeState(session);
         var db = this._connection.GetDatabase();
@@ -261,35 +204,6 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider, IAsyncDispo
     }
 
     private string BuildKey(State state) => $"{this._keyPrefix}:{state.ConversationId}";
-
-    private void ThrowIfDisposed()
-    {
-#if NET8_0_OR_GREATER
-        ObjectDisposedException.ThrowIf(this._disposed, this);
-#else
-        if (this._disposed)
-        {
-            throw new ObjectDisposedException(this.GetType().Name);
-        }
-#endif
-    }
-
-    /// <inheritdoc />
-    public async ValueTask DisposeAsync()
-    {
-        if (this._disposed)
-        {
-            return;
-        }
-
-        this._disposed = true;
-
-        if (this._ownsConnection)
-        {
-            await this._connection.CloseAsync().ConfigureAwait(false);
-            this._connection.Dispose();
-        }
-    }
 
     /// <summary>
     /// Represents the per-session state of a <see cref="ValkeyChatHistoryProvider"/>.

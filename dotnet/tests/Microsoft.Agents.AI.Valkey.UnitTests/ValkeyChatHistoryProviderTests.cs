@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
-using StackExchange.Redis;
+using Valkey.Glide;
 
 namespace Microsoft.Agents.AI.Valkey.UnitTests;
 
@@ -20,7 +20,7 @@ public sealed class ValkeyChatHistoryProviderTests
     {
         var mockConnection = new Mock<IConnectionMultiplexer>();
         dbMock ??= new Mock<IDatabase>();
-        mockConnection.Setup(c => c.GetDatabase(It.IsAny<int>(), It.IsAny<object>())).Returns(dbMock.Object);
+        mockConnection.Setup(c => c.GetDatabase()).Returns(dbMock.Object);
         return mockConnection;
     }
 
@@ -33,12 +33,10 @@ public sealed class ValkeyChatHistoryProviderTests
         var provider = new ValkeyChatHistoryProvider(
             CreateMockConnection().Object,
             static (_) => new ValkeyChatHistoryProvider.State("conv-1"),
-            keyPrefix: "test_prefix");
+            new ValkeyChatHistoryProviderOptions { KeyPrefix = "test_prefix" });
 
         // Assert
         Assert.NotNull(provider);
-        Assert.Null(provider.MaxMessages);
-        Assert.Null(provider.MaxMessagesToRetrieve);
     }
 
     [Fact]
@@ -47,7 +45,7 @@ public sealed class ValkeyChatHistoryProviderTests
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
             new ValkeyChatHistoryProvider(
-                (IConnectionMultiplexer)null!,
+                null!,
                 static (_) => new ValkeyChatHistoryProvider.State("conv-1")));
     }
 
@@ -117,62 +115,11 @@ public sealed class ValkeyChatHistoryProviderTests
         var provider = new ValkeyChatHistoryProvider(
             CreateMockConnection().Object,
             _ => new ValkeyChatHistoryProvider.State("conv-1"),
-            stateKey: "custom_key");
+            new ValkeyChatHistoryProviderOptions { StateKey = "custom_key" });
 
         var keys = provider.StateKeys;
         Assert.Single(keys);
         Assert.Equal("custom_key", keys[0]);
-    }
-
-    // --- Property tests ---
-
-    [Fact]
-    public void MaxMessages_CanBeSet()
-    {
-        var provider = new ValkeyChatHistoryProvider(
-            CreateMockConnection().Object,
-            _ => new ValkeyChatHistoryProvider.State("conv-1"))
-        {
-            MaxMessages = 50
-        };
-
-        Assert.Equal(50, provider.MaxMessages);
-    }
-
-    // --- Dispose tests ---
-
-    [Fact]
-    public async Task DisposeAsync_OwnedConnection_ClosesAndDisposesAsync()
-    {
-        // Arrange
-        var mockConnection = CreateMockConnection();
-        mockConnection.Setup(c => c.CloseAsync()).Returns(Task.CompletedTask);
-        mockConnection.Setup(c => c.Dispose());
-
-        // We can't easily test the connection-string constructor without a server,
-        // so we test the IConnectionMultiplexer overload (ownsConnection=false) doesn't close.
-        var provider = new ValkeyChatHistoryProvider(
-            mockConnection.Object,
-            _ => new ValkeyChatHistoryProvider.State("conv-1"));
-
-        // Act
-        await provider.DisposeAsync();
-
-        // Assert — non-owned connection should NOT be closed
-        mockConnection.Verify(c => c.CloseAsync(), Times.Never);
-    }
-
-    [Fact]
-    public async Task DisposeAsync_CalledTwice_NoOpAsync()
-    {
-        // Arrange
-        var provider = new ValkeyChatHistoryProvider(
-            CreateMockConnection().Object,
-            _ => new ValkeyChatHistoryProvider.State("conv-1"));
-
-        // Act — should not throw
-        await provider.DisposeAsync();
-        await provider.DisposeAsync();
     }
 
     // --- ProvideChatHistoryAsync tests ---
@@ -184,12 +131,12 @@ public sealed class ValkeyChatHistoryProviderTests
         var dbMock = new Mock<IDatabase>();
         var msg1 = new ChatMessage(ChatRole.User, "hello");
         var msg2 = new ChatMessage(ChatRole.Assistant, "hi there");
-        var values = new RedisValue[]
+        var values = new ValkeyValue[]
         {
             JsonSerializer.Serialize(msg1),
             JsonSerializer.Serialize(msg2)
         };
-        dbMock.Setup(d => d.ListRangeAsync(It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<long>(), It.IsAny<CommandFlags>()))
+        dbMock.Setup(d => d.ListRangeAsync(It.IsAny<ValkeyKey>(), It.IsAny<long>(), It.IsAny<long>()))
             .ReturnsAsync(values);
 
         var provider = new ValkeyChatHistoryProvider(
@@ -211,15 +158,13 @@ public sealed class ValkeyChatHistoryProviderTests
     {
         // Arrange
         var dbMock = new Mock<IDatabase>();
-        dbMock.Setup(d => d.ListRangeAsync(It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<long>(), It.IsAny<CommandFlags>()))
+        dbMock.Setup(d => d.ListRangeAsync(It.IsAny<ValkeyKey>(), It.IsAny<long>(), It.IsAny<long>()))
             .ReturnsAsync([]);
 
         var provider = new ValkeyChatHistoryProvider(
             CreateMockConnection(dbMock).Object,
-            _ => new ValkeyChatHistoryProvider.State("conv-1"))
-        {
-            MaxMessagesToRetrieve = 5
-        };
+            _ => new ValkeyChatHistoryProvider.State("conv-1"),
+            new ValkeyChatHistoryProviderOptions { MaxMessagesToRetrieve = 5 });
 
         var context = TestHelpers.CreateChatHistoryInvokingContext();
 
@@ -228,7 +173,7 @@ public sealed class ValkeyChatHistoryProviderTests
 
         // Assert — should use -5, -1 range
         dbMock.Verify(d => d.ListRangeAsync(
-            It.IsAny<RedisKey>(), -5, -1, It.IsAny<CommandFlags>()), Times.Once);
+            It.IsAny<ValkeyKey>(), -5, -1), Times.Once);
     }
 
     [Fact]
@@ -256,7 +201,7 @@ public sealed class ValkeyChatHistoryProviderTests
     {
         // Arrange
         var dbMock = new Mock<IDatabase>();
-        dbMock.Setup(d => d.ListRightPushAsync(It.IsAny<RedisKey>(), It.IsAny<RedisValue[]>(), It.IsAny<When>(), It.IsAny<CommandFlags>()))
+        dbMock.Setup(d => d.ListRightPushAsync(It.IsAny<ValkeyKey>(), It.IsAny<ValkeyValue[]>()))
             .ReturnsAsync(2);
 
         var provider = new ValkeyChatHistoryProvider(
@@ -272,7 +217,7 @@ public sealed class ValkeyChatHistoryProviderTests
 
         // Assert — batch push called once with array
         dbMock.Verify(d => d.ListRightPushAsync(
-            It.IsAny<RedisKey>(), It.IsAny<RedisValue[]>(), It.IsAny<When>(), It.IsAny<CommandFlags>()), Times.Once);
+            It.IsAny<ValkeyKey>(), It.IsAny<ValkeyValue[]>()), Times.Once);
     }
 
     [Fact]
@@ -280,17 +225,15 @@ public sealed class ValkeyChatHistoryProviderTests
     {
         // Arrange
         var dbMock = new Mock<IDatabase>();
-        dbMock.Setup(d => d.ListRightPushAsync(It.IsAny<RedisKey>(), It.IsAny<RedisValue[]>(), It.IsAny<When>(), It.IsAny<CommandFlags>()))
+        dbMock.Setup(d => d.ListRightPushAsync(It.IsAny<ValkeyKey>(), It.IsAny<ValkeyValue[]>()))
             .ReturnsAsync(1);
-        dbMock.Setup(d => d.ListTrimAsync(It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<long>(), It.IsAny<CommandFlags>()))
+        dbMock.Setup(d => d.ListTrimAsync(It.IsAny<ValkeyKey>(), It.IsAny<long>(), It.IsAny<long>()))
             .Returns(Task.CompletedTask);
 
         var provider = new ValkeyChatHistoryProvider(
             CreateMockConnection(dbMock).Object,
-            _ => new ValkeyChatHistoryProvider.State("conv-1"))
-        {
-            MaxMessages = 10
-        };
+            _ => new ValkeyChatHistoryProvider.State("conv-1"),
+            new ValkeyChatHistoryProviderOptions { MaxMessages = 10 });
 
         var context = TestHelpers.CreateChatHistoryInvokedContext(
             [new ChatMessage(ChatRole.User, "hello")],
@@ -301,25 +244,6 @@ public sealed class ValkeyChatHistoryProviderTests
 
         // Assert — trim called unconditionally when MaxMessages is set
         dbMock.Verify(d => d.ListTrimAsync(
-            It.IsAny<RedisKey>(), -10, -1, It.IsAny<CommandFlags>()), Times.Once);
-    }
-
-    // --- Disposed state tests ---
-
-    [Fact]
-    public async Task ProvideChatHistoryAsync_AfterDispose_ThrowsAsync()
-    {
-        // Arrange
-        var provider = new ValkeyChatHistoryProvider(
-            CreateMockConnection().Object,
-            _ => new ValkeyChatHistoryProvider.State("conv-1"));
-
-        await provider.DisposeAsync();
-
-        var context = TestHelpers.CreateChatHistoryInvokingContext();
-
-        // Act & Assert
-        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
-            provider.InvokingAsync(context).AsTask());
+            It.IsAny<ValkeyKey>(), -10, -1), Times.Once);
     }
 }
