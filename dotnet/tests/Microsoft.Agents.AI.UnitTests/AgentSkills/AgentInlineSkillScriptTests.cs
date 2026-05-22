@@ -44,6 +44,22 @@ public sealed class AgentInlineSkillScriptTests
     }
 
     [Fact]
+    public async Task RunAsync_WithStringEncodedObjectArguments_PassesArgumentsAsync()
+    {
+        // Arrange
+        var script = new AgentInlineSkillScript("add", (int a, int b) => a + b);
+        var skill = new AgentInlineSkill("calc-skill", "Calc.", "Instructions.");
+        using var argsDoc = JsonDocument.Parse("\"{\\\"a\\\":3,\\\"b\\\":7}\"");
+        var args = argsDoc.RootElement;
+
+        // Act
+        var result = await script.RunAsync(skill, args, null, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(10, int.Parse(result?.ToString()!));
+    }
+
+    [Fact]
     public void ParametersSchema_NoParameters_ReturnsSchema()
     {
         // Arrange
