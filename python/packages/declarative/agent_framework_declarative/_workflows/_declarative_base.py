@@ -32,7 +32,7 @@ import re
 import sys
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal as _Decimal
 from enum import Enum
 from types import MappingProxyType
@@ -93,7 +93,7 @@ class DeclarativeEnvConfig:
             unrelated environment variables never enter the PowerFx scope.
     """
 
-    values: Mapping[str, str] = _EMPTY_ENV_VALUES
+    values: Mapping[str, str] = field(default_factory=lambda: _EMPTY_ENV_VALUES)
     restrict_to_configuration: bool = True
     referenced_names: frozenset[str] = _EMPTY_ENV_REFERENCES
 
@@ -126,11 +126,11 @@ def discover_env_references(node: Any) -> set[str]:
                 names.update(_ENV_REFERENCE_RE.findall(value))
             return
         if isinstance(value, Mapping):
-            for inner in cast(Mapping[Any, Any], value).values():
+            for inner in cast(Mapping[Any, Any], value).values():  # type: ignore[redundant-cast]
                 visit(inner)
             return
         if isinstance(value, list):
-            for item in cast(list[Any], value):
+            for item in cast(list[Any], value):  # type: ignore[redundant-cast]
                 visit(item)
 
     visit(node)
