@@ -2,7 +2,6 @@
 
 using System;
 using Azure.AI.Projects;
-using Microsoft.Extensions.AI;
 using OpenAI;
 
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;

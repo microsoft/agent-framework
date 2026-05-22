@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using Azure.AI.ContentUnderstanding;
 
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;

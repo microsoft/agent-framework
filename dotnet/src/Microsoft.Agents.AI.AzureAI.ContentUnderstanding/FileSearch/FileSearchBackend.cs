@@ -32,8 +32,8 @@ public abstract class FileSearchBackend
     /// <param name="payload">UTF-8 markdown content to upload.</param>
     /// <param name="cancellationToken">Token to honor for cancellation and timeout. Implementations <b>must</b> poll until <see langword="cancelled"/> if the index has not reached <c>Completed</c>.</param>
     /// <returns>The file id of the newly uploaded file (caller must hand this back to <see cref="DeleteAsync"/> for cleanup).</returns>
-    /// <exception cref="System.InvalidOperationException">Indexing reached a terminal-failure state.</exception>
-    /// <exception cref="System.OperationCanceledException"><paramref name="cancellationToken"/> was signaled before indexing completed.</exception>
+    /// <exception cref="InvalidOperationException">Indexing reached a terminal-failure state.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was signaled before indexing completed.</exception>
     public abstract Task<string> UploadAsync(
         string vectorStoreId,
         string filename,

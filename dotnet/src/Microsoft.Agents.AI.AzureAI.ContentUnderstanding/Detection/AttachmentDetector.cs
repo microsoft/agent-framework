@@ -204,7 +204,7 @@ internal static class AttachmentDetector
         }
 
         // Synthesize from a hash of the URI string when no real filename can be derived.
-        byte[] uriBytes = System.Text.Encoding.UTF8.GetBytes(uc.Uri.ToString());
+        byte[] uriBytes = Encoding.UTF8.GetBytes(uc.Uri.ToString());
         return Synthesize(uriBytes, mediaType);
     }
 

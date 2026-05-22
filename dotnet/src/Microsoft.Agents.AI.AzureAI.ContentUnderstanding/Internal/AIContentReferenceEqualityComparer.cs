@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// distinguishable.
 /// </summary>
 /// <remarks>
-/// <see cref="System.Collections.Generic.ReferenceEqualityComparer"/> is internal/protected on
+/// <see cref="ReferenceEqualityComparer"/> is internal/protected on
 /// netstandard2.0 and net472 — this hand-rolled comparer keeps the provider portable across
 /// every TFM in the package.
 /// </remarks>

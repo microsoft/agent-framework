@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.ContentUnderstanding;
 
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 

@@ -1,6 +1,5 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using Azure.AI.ContentUnderstanding;
 
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;

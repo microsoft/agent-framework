@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Collections.Generic;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;

@@ -3,7 +3,6 @@
 using System;
 using System.Threading;
 using Azure.AI.ContentUnderstanding;
-using Azure.Core;
 
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 
