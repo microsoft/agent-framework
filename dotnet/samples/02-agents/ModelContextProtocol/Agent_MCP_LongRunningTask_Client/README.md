@@ -6,7 +6,7 @@ This sample demonstrates Microsoft Agent Framework's MCP long-running task suppo
 
 - Using `McpClient.ListAgentToolsWithTaskSupportAsync(...)` (in `Microsoft.Agents.AI.Mcp`) to wrap MCP tools with task-aware behavior.
 - Configuring `McpTaskOptions.DefaultTimeToLive` to bound the server-side task.
-- Hosting a small MCP server (in this same executable, launched with `--server`) that advertises `execution.taskSupport=optional` on a tool that sleeps for ~15 seconds.
+- Hosting a small MCP server (in this same executable, launched with `--server`) that advertises `execution.taskSupport=required` on a tool that sleeps for ~15 seconds.
 - No application-level polling, continuation tokens, or `AllowBackgroundResponses` flag are required.
 
 The decorator drives the lifecycle internally:

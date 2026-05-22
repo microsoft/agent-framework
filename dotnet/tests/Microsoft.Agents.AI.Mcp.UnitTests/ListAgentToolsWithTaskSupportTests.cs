@@ -34,8 +34,8 @@ public class ListAgentToolsWithTaskSupportTests
         AIFunction forb = result.Single(f => f.Name == "forb");
         AIFunction none = result.Single(f => f.Name == "none");
 
-        opt.Should().BeOfType<TaskAwareMcpClientAIFunction>("Optional tools must be wrapped");
         req.Should().BeOfType<TaskAwareMcpClientAIFunction>("Required tools must be wrapped");
+        opt.Should().NotBeOfType<TaskAwareMcpClientAIFunction>("Optional tools must not be wrapped; inline invocation is preserved by default");
         forb.Should().NotBeOfType<TaskAwareMcpClientAIFunction>("Forbidden tools must not be wrapped");
         none.Should().NotBeOfType<TaskAwareMcpClientAIFunction>("Tools without execution metadata must not be wrapped");
     }

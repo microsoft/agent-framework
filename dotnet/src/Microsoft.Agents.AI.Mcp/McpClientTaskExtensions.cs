@@ -18,9 +18,11 @@ public static class McpClientTaskExtensions
 {
     /// <summary>
     /// Lists tools advertised by the connected MCP server and returns each as an
-    /// <see cref="AIFunction"/>. Tools that declare <see cref="ToolTaskSupport.Optional"/> or
-    /// <see cref="ToolTaskSupport.Required"/> are wrapped with task-aware behavior so an agent
-    /// can transparently drive long-running invocations. All other tools are returned as-is.
+    /// <see cref="AIFunction"/>. Tools that declare <see cref="ToolTaskSupport.Required"/>
+    /// are wrapped with task-aware behavior so an agent can transparently drive long-running
+    /// invocations. All other tools — including those that declare
+    /// <see cref="ToolTaskSupport.Optional"/> — are returned as-is, preserving inline
+    /// (synchronous) invocation semantics by default.
     /// </summary>
     /// <param name="client">The connected MCP client.</param>
     /// <param name="options">
@@ -44,7 +46,7 @@ public static class McpClientTaskExtensions
         for (int i = 0; i < tools.Count; i++)
         {
             ToolTaskSupport? taskSupport = tools[i].ProtocolTool.Execution?.TaskSupport;
-            if (taskSupport is ToolTaskSupport.Optional or ToolTaskSupport.Required)
+            if (taskSupport is ToolTaskSupport.Required)
             {
                 result[i] = new TaskAwareMcpClientAIFunction(client, tools[i], effectiveOptions);
             }

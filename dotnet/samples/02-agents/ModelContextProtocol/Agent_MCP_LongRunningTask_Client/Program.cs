@@ -54,8 +54,9 @@ await using var mcpClient = await McpClient.CreateAsync(new StdioClientTransport
 }));
 
 // Wrap each MCP tool with task-aware behavior. The wrapper inspects the server's
-// execution.taskSupport on each tool and, if Optional/Required, drives the task lifecycle
-// transparently within the agent's tool loop.
+// execution.taskSupport on each tool and, when it is Required, drives the task lifecycle
+// transparently within the agent's tool loop. Tools that don't require task semantics are
+// returned as-is and invoked inline.
 var taskOptions = new McpTaskOptions
 {
     DefaultTimeToLive = TimeSpan.FromMinutes(5),
@@ -131,7 +132,7 @@ static async Task RunMcpServerAsync()
 internal sealed class DatasetAnalysisTools
 #pragma warning restore CA1812
 {
-    [McpServerTool(Name = "AnalyzeDataset", TaskSupport = ToolTaskSupport.Optional)]
+    [McpServerTool(Name = "AnalyzeDataset", TaskSupport = ToolTaskSupport.Required)]
     [Description("Analyze a tabular dataset and return summary statistics. This tool simulates a long-running analytic job (~15 seconds).")]
     public static async Task<string> AnalyzeDatasetAsync(
         [Description("The dataset identifier, e.g. 'sales-2025-q1'.")] string datasetName,

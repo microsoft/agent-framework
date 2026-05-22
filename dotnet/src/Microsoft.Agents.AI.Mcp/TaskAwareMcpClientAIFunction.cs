@@ -31,13 +31,12 @@ namespace Microsoft.Agents.AI.Mcp;
 /// </para>
 /// <para>
 /// This wrapper is intended to be applied only to tools whose
-/// <see cref="ToolExecution.TaskSupport"/> is <see cref="ToolTaskSupport.Optional"/> or
-/// <see cref="ToolTaskSupport.Required"/> (selected by
-/// <see cref="McpClientTaskExtensions.ListAgentToolsWithTaskSupportAsync"/>). As a defensive
-/// fallback, if the server still rejects the task-augmented call with JSON-RPC error
-/// <c>-32601</c> (e.g. because tool-level capabilities changed between <c>tools/list</c> and
-/// invocation), the wrapper transparently falls back to a non-augmented call through the
-/// inner <see cref="McpClientTool"/>.
+/// <see cref="ToolExecution.TaskSupport"/> is <see cref="ToolTaskSupport.Required"/>
+/// (selected by <see cref="McpClientTaskExtensions.ListAgentToolsWithTaskSupportAsync"/>).
+/// As a defensive fallback, if the server still rejects the task-augmented call with
+/// <see cref="McpErrorCode.MethodNotFound"/> (e.g. because tool-level capabilities changed
+/// between <c>tools/list</c> and invocation), the wrapper transparently falls back to a
+/// non-augmented call through the inner <see cref="McpClientTool"/>.
 /// </para>
 /// </remarks>
 internal sealed class TaskAwareMcpClientAIFunction : AIFunction
@@ -96,7 +95,7 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
                 options: null,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-        catch (McpProtocolException ex) when ((int)ex.ErrorCode == -32601)
+        catch (McpProtocolException ex) when (ex.ErrorCode == McpErrorCode.MethodNotFound)
         {
             // Defensive fallback: the server's advertised TaskSupport indicated this tool
             // could be invoked as a task, but the server now rejects task augmentation for it

@@ -15,27 +15,6 @@ namespace Microsoft.Agents.AI.Mcp.UnitTests;
 public class TaskAwareMcpClientAIFunctionTests
 {
     [Fact]
-    public async Task InvokeAsync_OptionalTool_HappyPath_ReturnsResultAsync()
-    {
-        // Arrange
-        McpServerPrimitiveCollection<McpServerTool> tools = [
-            TestTools.Create("opt", ToolTaskSupport.Optional, () => "optional-result"),
-        ];
-        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
-        var result = await fixture.Client.ListAgentToolsWithTaskSupportAsync();
-        AIFunction opt = result.Single(f => f.Name == "opt");
-        opt.Should().BeOfType<TaskAwareMcpClientAIFunction>();
-
-        // Act
-        object? invokeResult = await opt.InvokeAsync(arguments: null, CancellationToken.None);
-
-        // Assert — wrapper returns a JsonElement containing the serialized CallToolResult
-        // (same wire shape as McpClientTool.InvokeAsync).
-        JsonElement payload = invokeResult.Should().BeOfType<JsonElement>().Subject;
-        ExtractTextContent(payload).Should().Be("optional-result");
-    }
-
-    [Fact]
     public async Task InvokeAsync_RequiredTool_HappyPath_ReturnsResultAsync()
     {
         // Arrange
