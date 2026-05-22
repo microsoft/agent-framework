@@ -57,8 +57,12 @@ from ._authorization import (
     AuthorizationContext,
     AuthorizationOutcome,
     ChannelConfigurationError,
+    ClaimValue,
     Denied,
     IdentityAllowlist,
+    IdentityLinker,
+    LinkChallenge,
+    LinkRequired,
 )
 from ._isolation import (
     ISOLATION_HEADER_CHAT,
@@ -488,7 +492,7 @@ class AgentFrameworkHost:
         durable_task_runner: DurableTaskRunner | None = None,
         allow_in_process_runner: bool = False,
         default_allowlist: IdentityAllowlist | None = None,
-        identity_linker: Any = None,
+        identity_linker: IdentityLinker | None = None,
         state_dir: str | os.PathLike[str] | HostStatePaths | Mapping[str, str | os.PathLike[str]] | None = None,
     ) -> None:
         """Create a host for ``target`` and its channels.
@@ -564,12 +568,13 @@ class AgentFrameworkHost:
                 (the default) means the channel is open unless it sets
                 its own ``allowlist``. Channels can opt out of the host
                 default by setting ``allowlist=None`` explicitly.
-            identity_linker: Reserved for the Wave-2 :class:`IdentityLinker`
-                stack. Wave 1 only inspects this for the startup
-                validator: channels with ``require_link=True`` or
-                allowlists that declare ``requires_linked_claims=True``
-                require a linker to be configured, otherwise the host
-                would silently deny everyone.
+            identity_linker: Optional :class:`IdentityLinker` used to
+                resolve channel-native identities into verified IdP-backed
+                identities, or to return a :class:`LinkChallenge` the
+                channel can render when the user still needs to sign in.
+                Channels with ``require_link=True`` require this to be
+                configured unless they provide their own native verified
+                claims.
             state_dir: Opt-in disk persistence for host-managed state.
                 When set, the host writes the in-process task runner's
                 pending queue and the session-related dicts
@@ -785,10 +790,10 @@ class AgentFrameworkHost:
         # double-log the banner; remains ``False`` when callers mount
         # ``host.app`` under their own ASGI server.
         self._startup_logged: bool = False
-        # Authorization seam (Wave 1: types + validator + native-id
-        # allowlists; the full pipeline lands with the linker).
+        # Authorization seam: allowlists, optional identity linker, and
+        # construction-time validation for fail-fast misconfigurations.
         self._default_allowlist: IdentityAllowlist | None = default_allowlist
-        self._identity_linker: Any = identity_linker
+        self._identity_linker: IdentityLinker | None = identity_linker
         self._validate_channel_authorization()
 
     @property
@@ -861,9 +866,7 @@ class AgentFrameworkHost:
            claims will ever reach :meth:`evaluate` and the allowlist
            would always ``ABSTAIN`` / ``DENY``.
         2. If any channel has ``require_link=True``, an
-           ``identity_linker`` must be configured. Wave 1 does not
-           ship a linker, so this rule fires whenever a channel
-           opts into link enforcement without one. Silent
+           ``identity_linker`` must be configured. Silent
            deny-everyone is the worst possible default.
         3. ``NativeIdAllowlist(channel=<other>)`` must reference a
            channel name that exists on this host — typo-detection.
@@ -907,7 +910,7 @@ class AgentFrameworkHost:
         *,
         require_link: bool = False,
         allowlist: IdentityAllowlist | None = None,
-        verified_claims: Mapping[str, str] | None = None,
+        verified_claims: Mapping[str, ClaimValue] | None = None,
     ) -> AuthorizationOutcome:
         """Evaluate authorization for ``identity`` against ``allowlist``.
 
@@ -919,21 +922,23 @@ class AgentFrameworkHost:
         through their native UX (refusal message, link challenge)
         rather than a generic error.
 
-        Wave 1 supports the **open** and **native-allowlist** profiles
-        end-to-end. ``require_link=True`` is rejected at construction
-        when no linker is configured. ``LinkedClaimAllowlist`` is
-        exported but its :meth:`evaluate` raises
-        :class:`NotImplementedError` until the linker stack lands.
+        Supports open, native-id allowlist, and verified-claim allowlist
+        profiles. ``require_link=True`` or claim-based allowlists use
+        the configured :class:`IdentityLinker`; channels that natively
+        authenticate users may pass ``verified_claims`` directly.
 
         Returns:
             One of :class:`Allowed`, :class:`LinkRequired`, or
             :class:`Denied`.
         """
-        claims: Mapping[str, str] = verified_claims or {}
+        claims: Mapping[str, ClaimValue] = verified_claims or {}
         claim_source: Literal["linker", "channel", "none"] = "channel" if claims else "none"
+        auto_isolation_key = self._auto_issue_isolation_key(identity)
         if allowlist is None:
             # Open profile (or explicitly carved-out channel).
-            return Allowed(isolation_key=self._auto_issue_isolation_key(identity))
+            if require_link:
+                return await self._resolve_required_link(identity)
+            return Allowed(isolation_key=auto_isolation_key, verified_claims=claims, claim_source=claim_source)
         pre_context = AuthorizationContext(
             identity=identity,
             phase="pre_link",
@@ -943,15 +948,9 @@ class AgentFrameworkHost:
         )
         decision = await allowlist.evaluate(pre_context)
         if decision is AllowlistDecision.ALLOW:
-            if require_link and self._identity_linker is None:
-                # Defensive: validator should have caught this.
-                return Denied(
-                    reason_code="link_required_without_linker",
-                    user_message="Sign-in is not configured for this bot.",
-                    log_details={"channel": identity.channel},
-                )
-            # Wave 1: with no linker we proceed without enforcing link state.
-            return Allowed(isolation_key=self._auto_issue_isolation_key(identity))
+            if require_link:
+                return await self._resolve_required_link(identity)
+            return Allowed(isolation_key=auto_isolation_key, verified_claims=claims, claim_source=claim_source)
         if decision is AllowlistDecision.DENY:
             return Denied(
                 reason_code="allowlist_denied_pre_link",
@@ -961,29 +960,127 @@ class AgentFrameworkHost:
                     "phase": "pre_link",
                 },
             )
-        # ABSTAIN: in Wave 1 (no linker) this is treated as the open
-        # path when the allowlist does not require claims, and as a
-        # deny otherwise. The full post-link pipeline lands in Wave 2.
+        # ABSTAIN: claim-dependent allowlists need a post-link /
+        # verified-claim evaluation. Non-claim allowlists can fall
+        # through to the open path, while still honoring require_link.
         if getattr(allowlist, "requires_linked_claims", False):
+            if claims:
+                post_context = AuthorizationContext(
+                    identity=identity,
+                    phase="post_link",
+                    isolation_key=auto_isolation_key,
+                    verified_claims=claims,
+                    claim_source="channel",
+                )
+                post_decision = await allowlist.evaluate(post_context)
+                return self._authorization_outcome_from_post_link(
+                    identity=identity,
+                    isolation_key=auto_isolation_key,
+                    claims=claims,
+                    claim_source="channel",
+                    decision=post_decision,
+                )
+            return await self._resolve_and_evaluate_claim_allowlist(identity, allowlist)
+        if require_link:
+            return await self._resolve_required_link(identity)
+        return Allowed(isolation_key=auto_isolation_key, verified_claims=claims, claim_source=claim_source)
+
+    async def _resolve_required_link(self, identity: ChannelIdentity) -> AuthorizationOutcome:
+        """Resolve ``identity`` through the configured linker or request linking."""
+        linker = self._identity_linker
+        if linker is None:
+            # Defensive: the construction-time validator should catch this.
+            return Denied(
+                reason_code="link_required_without_linker",
+                user_message="Sign-in is not configured for this bot.",
+                log_details={"channel": identity.channel},
+            )
+        resolution = await linker.resolve(identity)
+        if isinstance(resolution, LinkChallenge):
+            return LinkRequired(challenge=resolution)
+        return Allowed(
+            isolation_key=resolution.isolation_key,
+            verified_claims=resolution.verified_claims,
+            claim_source=resolution.claim_source,
+        )
+
+    async def _resolve_and_evaluate_claim_allowlist(
+        self,
+        identity: ChannelIdentity,
+        allowlist: IdentityAllowlist,
+    ) -> AuthorizationOutcome:
+        """Resolve identity, then run a claim-dependent allowlist post-link."""
+        linker = self._identity_linker
+        if linker is None:
             return Denied(
                 reason_code="allowlist_requires_link",
                 user_message="Please link your account to continue.",
                 log_details={"channel": identity.channel, "phase": "pre_link"},
             )
-        return Allowed(isolation_key=self._auto_issue_isolation_key(identity))
+        resolution = await linker.resolve(identity)
+        if isinstance(resolution, LinkChallenge):
+            return LinkRequired(challenge=resolution)
+        post_context = AuthorizationContext(
+            identity=identity,
+            phase="post_link",
+            isolation_key=resolution.isolation_key,
+            verified_claims=resolution.verified_claims,
+            claim_source=resolution.claim_source,
+        )
+        post_decision = await allowlist.evaluate(post_context)
+        return self._authorization_outcome_from_post_link(
+            identity=identity,
+            isolation_key=resolution.isolation_key,
+            claims=resolution.verified_claims,
+            claim_source=resolution.claim_source,
+            decision=post_decision,
+        )
+
+    def _authorization_outcome_from_post_link(
+        self,
+        *,
+        identity: ChannelIdentity,
+        isolation_key: str,
+        claims: Mapping[str, ClaimValue],
+        claim_source: Literal["linker", "channel"],
+        decision: AllowlistDecision,
+    ) -> AuthorizationOutcome:
+        """Convert a post-link allowlist decision to a host outcome."""
+        if decision is AllowlistDecision.ALLOW:
+            return Allowed(isolation_key=isolation_key, verified_claims=claims, claim_source=claim_source)
+        if decision is AllowlistDecision.DENY:
+            return Denied(
+                reason_code="allowlist_denied_post_link",
+                user_message="You don't have access to this bot.",
+                log_details={
+                    "channel": identity.channel,
+                    "phase": "post_link",
+                    "claim_source": claim_source,
+                },
+            )
+        return Denied(
+            reason_code="allowlist_abstained_post_link",
+            user_message="You don't have access to this bot.",
+            log_details={
+                "channel": identity.channel,
+                "phase": "post_link",
+                "claim_source": claim_source,
+            },
+        )
 
     def _auto_issue_isolation_key(self, identity: ChannelIdentity) -> str:
         """Auto-issue a stable isolation key for ``identity``.
 
         Returns the existing key when ``(channel, native_id)`` has
         already been seen, or coins ``"<channel>:<native_id>"`` on
-        first contact. The full :class:`IdentityResolver` pipeline
-        lands with the linker; Wave 1 uses this lightweight default.
+        first contact. Configured :class:`IdentityLinker` instances can
+        return provider-backed isolation keys for flows that require
+        verified identity.
         """
         # Look for an existing isolation_key that has already linked
         # this (channel, native_id). Linear scan is fine for the
-        # in-process registry; Wave 2's IdentityResolver replaces this
-        # with an indexed lookup.
+        # in-process registry. Linker implementations can use their own
+        # indexed stores for provider-backed identities.
         for isolation_key, by_channel in self._identities.items():
             existing = by_channel.get(identity.channel)
             if existing is not None and existing.native_id == identity.native_id:

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for the Wave-1 authorization seam."""
+"""Tests for the authorization and identity-linking seam."""
 
 from __future__ import annotations
 
@@ -17,13 +17,17 @@ from agent_framework_hosting import (
     AllowlistDecision,
     AnyOfAllowlists,
     AuthorizationContext,
+    AuthPolicy,
     CallableAllowlist,
     ChannelConfigurationError,
     ChannelContext,
     ChannelContribution,
     ChannelIdentity,
     Denied,
+    LinkChallenge,
     LinkedClaimAllowlist,
+    LinkedIdentity,
+    LinkRequired,
     NativeIdAllowlist,
 )
 
@@ -63,6 +67,18 @@ class _AgentStub:
 
     async def run(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError
+
+
+class _StaticLinker:
+    """Test linker returning either a linked identity or a challenge."""
+
+    def __init__(self, result: LinkedIdentity | LinkChallenge) -> None:
+        self.result = result
+        self.calls: list[ChannelIdentity] = []
+
+    async def resolve(self, identity: ChannelIdentity) -> LinkedIdentity | LinkChallenge:
+        self.calls.append(identity)
+        return self.result
 
 
 def _ctx_pre_link(channel: str = "telegram", native_id: str = "42") -> AuthorizationContext:
@@ -135,18 +151,35 @@ class TestNativeIdAllowlist:
 
 
 class TestLinkedClaimAllowlist:
-    """Wave 1 ships the type for composition but its ``evaluate``
-    raises ``NotImplementedError`` — the host's startup validator
-    must catch the misconfig before runtime."""
+    """Claim allowlists abstain pre-link and decide once claims are available."""
 
     def test_declares_requires_linked_claims(self) -> None:
         a = LinkedClaimAllowlist("oid", ["abc"])
         assert a.requires_linked_claims is True
 
-    async def test_evaluate_raises_not_implemented(self) -> None:
+    async def test_pre_link_abstains(self) -> None:
         a = LinkedClaimAllowlist("oid", ["abc"])
-        with pytest.raises(NotImplementedError, match="Wave 2"):
-            await a.evaluate(_ctx_pre_link())
+        assert await a.evaluate(_ctx_pre_link()) is AllowlistDecision.ABSTAIN
+
+    async def test_post_link_allows_matching_claim(self) -> None:
+        a = LinkedClaimAllowlist("oid", ["abc"])
+        assert await a.evaluate(_ctx_post_link({"oid": "abc"})) is AllowlistDecision.ALLOW
+
+    async def test_post_link_allows_matching_multi_value_claim(self) -> None:
+        a = LinkedClaimAllowlist("groups", ["admins"])
+        ctx = AuthorizationContext(
+            identity=ChannelIdentity(channel="telegram", native_id="42"),
+            phase="post_link",
+            isolation_key="alice",
+            verified_claims={"groups": ("users", "admins")},
+            claim_source="linker",
+        )
+        assert await a.evaluate(ctx) is AllowlistDecision.ALLOW
+
+    async def test_post_link_denies_missing_or_nonmatching_claim(self) -> None:
+        a = LinkedClaimAllowlist("oid", ["abc"])
+        assert await a.evaluate(_ctx_post_link({"oid": "def"})) is AllowlistDecision.DENY
+        assert await a.evaluate(_ctx_post_link({"tid": "abc"})) is AllowlistDecision.DENY
 
 
 class TestAnyOfAllowlists:
@@ -219,6 +252,23 @@ class TestCallableAllowlist:
         assert a.requires_linked_claims is True
 
 
+class TestAuthPolicy:
+    async def test_factory_helpers_return_working_allowlists(self) -> None:
+        assert await AuthPolicy.open().evaluate(_ctx_pre_link()) is AllowlistDecision.ALLOW
+        assert await AuthPolicy.native_ids({"42"}).evaluate(_ctx_pre_link()) is AllowlistDecision.ALLOW
+        assert await AuthPolicy.linked_claim("oid", {"abc"}).evaluate(_ctx_post_link({"oid": "abc"})) is (
+            AllowlistDecision.ALLOW
+        )
+
+    async def test_custom_factory(self) -> None:
+        async def fn(_: AuthorizationContext) -> AllowlistDecision:
+            return AllowlistDecision.ALLOW
+
+        policy = AuthPolicy.custom(fn, requires_linked_claims=True)
+        assert policy.requires_linked_claims is True
+        assert await policy.evaluate(_ctx_pre_link()) is AllowlistDecision.ALLOW
+
+
 # --------------------------------------------------------------------------- #
 # Host configuration validator                                                 #
 # --------------------------------------------------------------------------- #
@@ -237,6 +287,14 @@ class TestChannelAuthorizationValidator:
                 target=_AgentStub(),
                 channels=[_ChannelStub(require_link=True)],
             )
+
+    def test_require_link_with_linker_passes(self) -> None:
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub(require_link=True)],
+            identity_linker=_StaticLinker(LinkedIdentity("alice", {"oid": "abc"})),
+        )
+        assert host.runtime_mode == "long_running"
 
     def test_linked_claim_allowlist_without_claim_source_raises(self) -> None:
         # The channel has no ``require_link=True`` AND doesn't emit
@@ -261,6 +319,14 @@ class TestChannelAuthorizationValidator:
             ],
         )
         assert host.default_allowlist is None
+
+    def test_linked_claim_allowlist_with_require_link_and_linker_passes(self) -> None:
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub(require_link=True, allowlist=LinkedClaimAllowlist("oid", ["abc"]))],
+            identity_linker=_StaticLinker(LinkedIdentity("alice", {"oid": "abc"})),
+        )
+        assert host.runtime_mode == "long_running"
 
     def test_native_id_allowlist_unknown_channel_raises(self) -> None:
         with pytest.raises(ChannelConfigurationError, match="unknown channel 'mystery'"):
@@ -329,9 +395,7 @@ class TestChannelAuthorizationValidator:
 
 
 class TestHostAuthorize:
-    """Wave-1 pipeline: open / native-allowlist end-to-end; claim-based
-    allowlist returns ``Denied(reason_code="allowlist_requires_link")``
-    in the absence of a linker."""
+    """Host authorization pipeline across open, native-id, and linked-claim profiles."""
 
     def _host(self) -> AgentFrameworkHost:
         return AgentFrameworkHost(target=_AgentStub(), channels=[_ChannelStub()])
@@ -364,12 +428,8 @@ class TestHostAuthorize:
         assert "telegram" not in (outcome.user_message or "")
 
     async def test_abstain_with_claim_requirement_yields_link_required_message(self) -> None:
-        # ``LinkedClaimAllowlist.evaluate`` raises in Wave 1, but the
-        # host should reject the configuration earlier — when wrapped
-        # in ``AnyOf`` with a claim source, the validator passes and
-        # the abstain branch is exercised at runtime. We synthesise
-        # this by using ``AllowAll`` combined with a
-        # ``requires_linked_claims=True`` callable that ABSTAINs.
+        # Without a linker and without channel-emitted claims, a claim-required
+        # allowlist cannot make progress and the host returns a safe denial.
         async def abstain(_: AuthorizationContext) -> AllowlistDecision:
             return AllowlistDecision.ABSTAIN
 
@@ -381,8 +441,6 @@ class TestHostAuthorize:
             ChannelIdentity(channel="telegram", native_id="42"),
             allowlist=CallableAllowlist(abstain, requires_linked_claims=True),
         )
-        # Wave-1 maps "claim-required allowlist abstaining without a
-        # linker" to a Denied(reason_code="allowlist_requires_link").
         assert isinstance(outcome, Denied)
         assert outcome.reason_code == "allowlist_requires_link"
 
@@ -400,8 +458,7 @@ class TestHostAuthorize:
     async def test_auto_issue_returns_existing_key_when_known(self) -> None:
         # When an identity has already been observed, the auto-issued
         # key matches the existing one rather than coining a fresh
-        # token. This is the linker-free Wave-1 equivalent of identity
-        # resolution.
+        # token. This is the linker-free equivalent of identity resolution.
         host = self._host()
         host._identities["alice"] = {"telegram": ChannelIdentity(channel="telegram", native_id="42")}
         outcome = await host.authorize(ChannelIdentity(channel="telegram", native_id="42"))
@@ -428,3 +485,96 @@ class TestHostAuthorize:
         assert len(seen) == 1
         assert seen[0].claim_source == "channel"
         assert dict(seen[0].verified_claims) == {"oid": "abc"}
+
+    async def test_require_link_returns_challenge_when_unlinked(self) -> None:
+        challenge = LinkChallenge("c1", url="https://login.example/c1")
+        linker = _StaticLinker(challenge)
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub(require_link=True)],
+            identity_linker=linker,
+        )
+        outcome = await host.authorize(
+            ChannelIdentity(channel="telegram", native_id="42"),
+            require_link=True,
+        )
+        assert isinstance(outcome, LinkRequired)
+        assert outcome.challenge is challenge
+        assert [call.native_id for call in linker.calls] == ["42"]
+
+    async def test_require_link_returns_linked_identity_when_resolved(self) -> None:
+        linked = LinkedIdentity("entra:abc", {"oid": "abc"})
+        linker = _StaticLinker(linked)
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub(require_link=True)],
+            identity_linker=linker,
+        )
+        outcome = await host.authorize(
+            ChannelIdentity(channel="telegram", native_id="42"),
+            require_link=True,
+        )
+        assert isinstance(outcome, Allowed)
+        assert outcome.isolation_key == "entra:abc"
+        assert dict(outcome.verified_claims) == {"oid": "abc"}
+        assert outcome.claim_source == "linker"
+        # authorize() is decision-only; identity registry writes remain on
+        # the request execution path.
+        assert host._identities == {}
+
+    async def test_linked_claim_allowlist_with_linker_allows_matching_claim(self) -> None:
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub(require_link=True, allowlist=LinkedClaimAllowlist("oid", ["abc"]))],
+            identity_linker=_StaticLinker(LinkedIdentity("entra:abc", {"oid": "abc"})),
+        )
+        outcome = await host.authorize(
+            ChannelIdentity(channel="telegram", native_id="42"),
+            require_link=True,
+            allowlist=LinkedClaimAllowlist("oid", ["abc"]),
+        )
+        assert isinstance(outcome, Allowed)
+        assert outcome.isolation_key == "entra:abc"
+
+    async def test_linked_claim_allowlist_with_linker_denies_nonmatching_claim(self) -> None:
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub(require_link=True, allowlist=LinkedClaimAllowlist("oid", ["abc"]))],
+            identity_linker=_StaticLinker(LinkedIdentity("entra:def", {"oid": "def"})),
+        )
+        outcome = await host.authorize(
+            ChannelIdentity(channel="telegram", native_id="42"),
+            require_link=True,
+            allowlist=LinkedClaimAllowlist("oid", ["abc"]),
+        )
+        assert isinstance(outcome, Denied)
+        assert outcome.reason_code == "allowlist_denied_post_link"
+
+    async def test_linked_claim_allowlist_with_linker_returns_challenge_when_unlinked(self) -> None:
+        challenge = LinkChallenge("c1")
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub(require_link=True, allowlist=LinkedClaimAllowlist("oid", ["abc"]))],
+            identity_linker=_StaticLinker(challenge),
+        )
+        outcome = await host.authorize(
+            ChannelIdentity(channel="telegram", native_id="42"),
+            require_link=True,
+            allowlist=LinkedClaimAllowlist("oid", ["abc"]),
+        )
+        assert isinstance(outcome, LinkRequired)
+        assert outcome.challenge is challenge
+
+    async def test_linked_claim_allowlist_uses_channel_verified_claims_without_linker(self) -> None:
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub(emits_verified_claims=True, allowlist=LinkedClaimAllowlist("oid", ["abc"]))],
+        )
+        outcome = await host.authorize(
+            ChannelIdentity(channel="activity", native_id="aad-user"),
+            allowlist=LinkedClaimAllowlist("oid", ["abc"]),
+            verified_claims={"oid": "abc"},
+        )
+        assert isinstance(outcome, Allowed)
+        assert outcome.isolation_key == "activity:aad-user"
+        assert outcome.claim_source == "channel"

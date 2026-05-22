@@ -1,14 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Authorization seam (Wave 1) — :class:`IdentityAllowlist` Protocol and outcomes.
+"""Authorization seam — :class:`IdentityAllowlist`, :class:`IdentityLinker`, and outcomes.
 
 Channels that emit a :class:`ChannelIdentity` compose authorization from
 two **orthogonal** parameters set per channel:
 
-- ``require_link: bool`` — "identity must be linked to an IdP claim". Owned
-  by the Wave-2 :class:`IdentityLinker` stack; Wave-1 only enforces that
-  ``require_link=True`` paired with a host that has no linker is rejected
-  at construction (silent-deny-everyone is the worst possible default).
+- ``require_link: bool`` — "identity must be linked to an IdP claim". The
+  host delegates this to the configured :class:`IdentityLinker`; pairing
+  ``require_link=True`` with no linker is rejected at construction
+  (silent-deny-everyone is the worst possible default).
 - ``allowlist: IdentityAllowlist | Literal["inherit"] | None`` — "identity
   is on the accept list". The host evaluates the allowlist on every
   inbound message via :func:`AgentFrameworkHost.authorize`.
@@ -20,19 +20,19 @@ a verified IdP claim post-link). See
 ``docs/specs/002-python-hosting-channels.md`` §
 "Authorization profiles and the IdentityAllowlist seam".
 
-This module ships **Wave 1**: the Protocol, the enum, the built-in
-allowlists (with :class:`LinkedClaimAllowlist` raising at runtime —
-its enforcement lands with the linker), the outcome types, and the
-exception the host's startup validator raises. Wave 2 will add the
-end-to-end pipeline through the linker; the public types are stable.
+This module ships the channel-neutral core pieces. Provider-specific
+linking channels (for example Entra OAuth helpers) can implement
+:class:`IdentityLinker` without the core package taking a dependency on
+their transport or identity-provider SDKs.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from ._types import ChannelIdentity
 
@@ -55,7 +55,11 @@ class AllowlistDecision(str, Enum):
     ABSTAIN = "abstain"
 
 
-def _empty_str_mapping() -> Mapping[str, str]:
+ClaimValue: TypeAlias = str | Sequence[str]
+"""Verified claim value shape understood by :class:`LinkedClaimAllowlist`."""
+
+
+def _empty_claim_mapping() -> Mapping[str, ClaimValue]:
     return {}
 
 
@@ -70,7 +74,7 @@ class AuthorizationContext:
     identity: ChannelIdentity
     phase: Literal["pre_link", "post_link"]
     isolation_key: str | None = None
-    verified_claims: Mapping[str, str] = field(default_factory=_empty_str_mapping)
+    verified_claims: Mapping[str, ClaimValue] = field(default_factory=_empty_claim_mapping)
     claim_source: Literal["linker", "channel", "none"] = "none"
 
 
@@ -170,10 +174,9 @@ class LinkedClaimAllowlist:
     """Accept only identities whose verified IdP claim is on the list.
 
     ``evaluate`` returns ``ABSTAIN`` at ``pre_link`` (no claims yet)
-    and ``ALLOW``/``DENY`` at ``post_link``. Wave 1 ships the type for
-    composition but **raises** :class:`NotImplementedError` at
-    runtime because the end-to-end pipeline depends on the
-    :class:`IdentityLinker` stack which lands in Wave 2.
+    and ``ALLOW``/``DENY`` at ``post_link``. Claim values may be plain
+    strings or a sequence of strings (for multi-valued claims such as
+    group ids); any intersection with ``values`` allows the identity.
 
     Keyword Args:
         claim: The verified-claim key to inspect (e.g. ``"oid"``,
@@ -188,16 +191,14 @@ class LinkedClaimAllowlist:
         self.values = frozenset(values)
 
     async def evaluate(self, context: AuthorizationContext) -> AllowlistDecision:
-        # Wave 1 fail-loud: surfacing the unimplemented gap is far
-        # better than silently allowing or denying. The host's startup
-        # validator should prevent this from being reached in
-        # production by requiring a configured linker.
-        raise NotImplementedError(
-            "LinkedClaimAllowlist is part of Wave 2 (IdentityLinker stack). "
-            "Configure a linker before using this allowlist; until then either "
-            "use NativeIdAllowlist or pair this with require_link=True on a "
-            "channel that natively emits verified claims."
-        )
+        if context.phase == "pre_link":
+            return AllowlistDecision.ABSTAIN
+        value = context.verified_claims.get(self.claim)
+        if value is None:
+            return AllowlistDecision.DENY
+        if isinstance(value, str):
+            return AllowlistDecision.ALLOW if value in self.values else AllowlistDecision.DENY
+        return AllowlistDecision.ALLOW if any(item in self.values for item in value) else AllowlistDecision.DENY
 
 
 class AnyOfAllowlists:
@@ -283,23 +284,78 @@ class CallableAllowlist:
 
 
 @dataclass(frozen=True)
+class LinkChallenge:
+    """Challenge a channel can render to complete an identity link.
+
+    Attributes:
+        challenge_id: Opaque linker-owned id for correlating the challenge
+            with the later completion callback.
+        url: Optional URL (OAuth authorization URL, device-flow URL, etc.)
+            the user should open.
+        expires_at: Optional challenge expiry time.
+        message: Optional safe text a channel may render with the challenge.
+        attributes: Linker-specific structured metadata. Channels should
+            only use keys documented by the concrete linker they integrate.
+    """
+
+    challenge_id: str
+    url: str | None = None
+    expires_at: datetime | None = None
+    message: str | None = None
+    attributes: Mapping[str, Any] = field(default_factory=_empty_any_mapping)
+
+
+@dataclass(frozen=True)
+class LinkedIdentity:
+    """Resolved IdP-backed identity returned by :class:`IdentityLinker`.
+
+    Attributes:
+        isolation_key: Stable key the host should use for the linked user.
+        verified_claims: Claims verified by the linker or by a channel that
+            natively authenticates the user.
+        claim_source: Where the claims came from.
+    """
+
+    isolation_key: str
+    verified_claims: Mapping[str, ClaimValue] = field(default_factory=_empty_claim_mapping)
+    claim_source: Literal["linker", "channel"] = "linker"
+
+
+LinkResolution: TypeAlias = LinkedIdentity | LinkChallenge
+"""Result returned by :meth:`IdentityLinker.resolve`."""
+
+
+class IdentityLinker(Protocol):
+    """Resolve a channel-native identity or return a challenge to link it.
+
+    Concrete linker packages own the storage, OAuth/device-code routes, and
+    provider-specific claim mapping. The core host only consumes the single
+    resolution call so authorization can be a one-round-trip decision.
+    """
+
+    async def resolve(self, identity: ChannelIdentity) -> LinkResolution:
+        """Return a linked identity or the challenge needed to create one."""
+        ...
+
+
+@dataclass(frozen=True)
 class Allowed:
     """The identity is authorized; ``isolation_key`` is its stable key."""
 
     isolation_key: str
+    verified_claims: Mapping[str, ClaimValue] = field(default_factory=_empty_claim_mapping)
+    claim_source: Literal["linker", "channel", "none"] = "none"
 
 
 @dataclass(frozen=True)
 class LinkRequired:
     """The identity must complete the link ceremony before proceeding.
 
-    ``challenge`` carries the Wave-2 ``LinkChallenge`` payload; in
-    Wave 1 it is untyped (``Any``) so the public surface can ship
-    ahead of the linker. Channels render it through their native UX
-    (the same path the ``link`` command already uses).
+    Channels render ``challenge`` through their native UX (the same
+    path the ``link`` command uses).
     """
 
-    challenge: Any
+    challenge: LinkChallenge
 
 
 @dataclass(frozen=True)
@@ -327,6 +383,53 @@ AuthorizationOutcome = Allowed | LinkRequired | Denied
 each variant through their native UX."""
 
 
+class AuthPolicy:
+    """Factory helpers for common authorization policies.
+
+    These helpers are thin wrappers over the concrete allowlist types; they
+    exist so application code can describe authorization intent without
+    importing each building block separately.
+    """
+
+    @staticmethod
+    def open() -> AllowAll:
+        """Allow every identity."""
+        return AllowAll()
+
+    @staticmethod
+    def native_ids(
+        native_ids: Collection[str] | Callable[[], Awaitable[Collection[str]]],
+        *,
+        channel: str | None = None,
+    ) -> NativeIdAllowlist:
+        """Allow listed channel-native ids."""
+        return NativeIdAllowlist(native_ids, channel=channel)
+
+    @staticmethod
+    def linked_claim(claim: str, values: Collection[str]) -> LinkedClaimAllowlist:
+        """Allow identities whose verified claim matches one of ``values``."""
+        return LinkedClaimAllowlist(claim, values)
+
+    @staticmethod
+    def any_of(*allowlists: IdentityAllowlist) -> AnyOfAllowlists:
+        """Allow when any child allowlist allows."""
+        return AnyOfAllowlists(*allowlists)
+
+    @staticmethod
+    def all_of(*allowlists: IdentityAllowlist) -> AllOfAllowlists:
+        """Allow only when every child allowlist allows."""
+        return AllOfAllowlists(*allowlists)
+
+    @staticmethod
+    def custom(
+        fn: Callable[[AuthorizationContext], Awaitable[AllowlistDecision]],
+        *,
+        requires_linked_claims: bool = False,
+    ) -> CallableAllowlist:
+        """Wrap a custom async allowlist function."""
+        return CallableAllowlist(fn, requires_linked_claims=requires_linked_claims)
+
+
 # --------------------------------------------------------------------------- #
 # Configuration error                                                          #
 # --------------------------------------------------------------------------- #
@@ -347,13 +450,19 @@ __all__ = [
     "Allowed",
     "AllowlistDecision",
     "AnyOfAllowlists",
+    "AuthPolicy",
     "AuthorizationContext",
     "AuthorizationOutcome",
     "CallableAllowlist",
     "ChannelConfigurationError",
+    "ClaimValue",
     "Denied",
     "IdentityAllowlist",
+    "IdentityLinker",
+    "LinkChallenge",
     "LinkRequired",
+    "LinkResolution",
     "LinkedClaimAllowlist",
+    "LinkedIdentity",
     "NativeIdAllowlist",
 ]
