@@ -15,11 +15,13 @@ export interface StreamingState {
   lastSequenceNumber: number;
   timestamp: number; // When this state was last updated
   completed: boolean; // Whether the stream completed successfully
-  accumulatedText?: string; // Accumulated text content for quick restoration
+  accumulatedText?: string; // Bounded tail preview for refresh restoration
+  accumulatedTextIsPreview?: boolean;
 }
 
 const STORAGE_KEY_PREFIX = "devui_streaming_state_";
 const STATE_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_ACCUMULATED_TEXT_PREVIEW_CHARS = 16 * 1024;
 
 interface CreateStreamingStateOptions {
   conversationId: string;
@@ -27,6 +29,7 @@ interface CreateStreamingStateOptions {
   lastMessageId?: string;
   lastSequenceNumber?: number;
   accumulatedText?: string;
+  accumulatedTextIsPreview?: boolean;
 }
 
 /**
@@ -68,6 +71,7 @@ export function createStreamingState({
   lastMessageId,
   lastSequenceNumber = -1,
   accumulatedText,
+  accumulatedTextIsPreview = false,
 }: CreateStreamingStateOptions): StreamingState {
   return {
     conversationId,
@@ -77,6 +81,7 @@ export function createStreamingState({
     timestamp: Date.now(),
     completed: false,
     accumulatedText,
+    accumulatedTextIsPreview,
   };
 }
 
@@ -108,7 +113,15 @@ export function applyStreamingEventToState(
     typeof event.delta === "string" &&
     event.delta.length > 0
   ) {
-    nextState.accumulatedText = `${state.accumulatedText ?? ""}${event.delta}`;
+    const accumulatedText = `${state.accumulatedText ?? ""}${event.delta}`;
+    const isPreview =
+      state.accumulatedTextIsPreview ||
+      accumulatedText.length > MAX_ACCUMULATED_TEXT_PREVIEW_CHARS;
+
+    nextState.accumulatedText = isPreview
+      ? accumulatedText.slice(-MAX_ACCUMULATED_TEXT_PREVIEW_CHARS)
+      : accumulatedText;
+    nextState.accumulatedTextIsPreview = isPreview;
   }
 
   return nextState;
