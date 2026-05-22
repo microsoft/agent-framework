@@ -179,7 +179,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.0.0rc2"
+version = "1.0.0rc3"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -768,7 +768,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-orchestrations"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 source = { editable = "packages/orchestrations" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },

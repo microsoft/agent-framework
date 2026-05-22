@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.6.0] - 2026-05-21
 
 ### Added
+- **agent-framework-core**: Shell tool with support for local and Docker execution ([#5664](https://github.com/microsoft/agent-framework/pull/5664))
 - **agent-framework-monty**: New Monty-backed CodeAct provider package ([#5915](https://github.com/microsoft/agent-framework/pull/5915))
 - **agent-framework-foundry**: Add experimental hosted tool factories on `FoundryChatClient` ([#5958](https://github.com/microsoft/agent-framework/pull/5958))
 - **agent-framework-foundry**: Include tool definitions for Foundry agent evals ([#5974](https://github.com/microsoft/agent-framework/pull/5974))
