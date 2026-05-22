@@ -448,11 +448,31 @@ internal static class ChatResponseUpdateAGUIExtensions
         };
 
         string? currentMessageId = null;
+        ChatRole? currentMessageRole = null;
         string? textStreamingFallback = null;
         bool textInFallback = false;
         string? currentReasoningBaseId = null;
         string? currentReasoningId = null;
         string? currentReasoningMessageId = null;
+
+        TextMessageEndEvent? CloseCurrentTextMessage()
+        {
+            if (currentMessageId is null)
+            {
+                return null;
+            }
+
+            var textEnd = new TextMessageEndEvent
+            {
+                MessageId = currentMessageId
+            };
+            currentMessageId = null;
+            currentMessageRole = null;
+            textStreamingFallback = null;
+            textInFallback = false;
+            return textEnd;
+        }
+
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             // The text-event surface (TextMessageStart/Content/End) requires a non-empty
@@ -476,10 +496,9 @@ internal static class ChatResponseUpdateAGUIExtensions
             }
 
             if (chatResponse is { Contents.Count: > 0 } &&
-                chatResponse.Contents[0] is TextContent &&
-                !string.Equals(currentMessageId, textMessageId, StringComparison.Ordinal))
+                chatResponse.Contents[0] is TextContent)
             {
-                // Close any open reasoning block before opening a text message, so AG-UI
+                // Close any open reasoning block before emitting text, so AG-UI
                 // events are properly bracketed. MEAI providers share one MessageId across
                 // reasoning and text content, so the reasoning-block state alone wouldn't
                 // detect the transition.
@@ -497,14 +516,17 @@ internal static class ChatResponseUpdateAGUIExtensions
                     currentReasoningId = null;
                     currentReasoningMessageId = null;
                 }
+            }
 
+            if (chatResponse is { Contents.Count: > 0 } &&
+                chatResponse.Contents[0] is TextContent &&
+                (currentMessageId is null ||
+                    (chatResponse.Role is { } role && currentMessageRole is { } currentRole && role != currentRole)))
+            {
                 // End the previous message if there was one
-                if (currentMessageId is not null)
+                if (CloseCurrentTextMessage() is { } textEnd)
                 {
-                    yield return new TextMessageEndEvent
-                    {
-                        MessageId = currentMessageId
-                    };
+                    yield return textEnd;
                 }
 
                 // Start the new message
@@ -515,6 +537,7 @@ internal static class ChatResponseUpdateAGUIExtensions
                 };
 
                 currentMessageId = textMessageId;
+                currentMessageRole = chatResponse.Role;
             }
 
             // Emit text content if present
@@ -535,6 +558,11 @@ internal static class ChatResponseUpdateAGUIExtensions
                 {
                     if (content is FunctionCallContent functionCallContent)
                     {
+                        if (CloseCurrentTextMessage() is { } textEnd)
+                        {
+                            yield return textEnd;
+                        }
+
                         // Close any open reasoning block before emitting tool events.
                         if (currentReasoningMessageId is not null)
                         {
@@ -573,6 +601,11 @@ internal static class ChatResponseUpdateAGUIExtensions
                     }
                     else if (content is FunctionResultContent functionResultContent)
                     {
+                        if (CloseCurrentTextMessage() is { } textEnd)
+                        {
+                            yield return textEnd;
+                        }
+
                         // Close any open reasoning block before emitting tool result events.
                         if (currentReasoningMessageId is not null)
                         {
@@ -719,12 +752,9 @@ internal static class ChatResponseUpdateAGUIExtensions
         }
 
         // End the last message if there was one
-        if (currentMessageId is not null)
+        if (CloseCurrentTextMessage() is { } finalTextEnd)
         {
-            yield return new TextMessageEndEvent
-            {
-                MessageId = currentMessageId
-            };
+            yield return finalTextEnd;
         }
 
         yield return new RunFinishedEvent
