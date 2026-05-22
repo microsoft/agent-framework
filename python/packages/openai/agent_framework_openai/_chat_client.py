@@ -64,6 +64,7 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
+from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types.responses import FunctionShellTool
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
@@ -771,7 +772,18 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
             if text_config and "format" in text_config:
                 raise ChatClientInvalidRequestException("response_format cannot be combined with explicit text.format.")
-            return response_format, text_config
+
+            # Convert Pydantic model to JSON schema and then to Responses format.
+            # Using the SDK's internal converter is safer as it handles complex types and strict mode.
+            res = type_to_response_format_param(response_format)
+            format_config = {
+                "type": "json_schema",
+                "name": res["json_schema"]["name"],
+                "schema": res["json_schema"]["schema"],
+                "strict": res["json_schema"].get("strict", True),
+            }
+
+            return format_config, text_config
 
         if isinstance(response_format, Mapping):
             format_config = self._convert_response_format(cast("Mapping[str, Any]", response_format))
