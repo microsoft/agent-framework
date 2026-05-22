@@ -31,6 +31,10 @@ public sealed class ToolCallDisplayObserver : ConsoleObserver
         {
             await ux.WriteInfoLineAsync($"🔧 Calling tool: {ToolCallFormatter.Format(this._formatters, functionCall)}...", ConsoleColor.DarkYellow);
         }
+        else if (content is WebSearchToolCallContent)
+        {
+            // Handled by OpenAIResponsesWebSearchDisplayObserver when present; skip here to avoid duplication.
+        }
         else if (content is ToolCallContent toolCall)
         {
             await ux.WriteInfoLineAsync($"🔧 Calling tool: {toolCall}...", ConsoleColor.DarkYellow);

@@ -157,9 +157,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
         except Exception as transport_error:
             # Transport negotiation failed - fall back to minimal agent card with JSONRPC
-            fallback_url = (
-                agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url
-            )
+            fallback_url = agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url
             if not fallback_url:
                 raise ValueError(
                     "A2A transport negotiation failed and no fallback URL is available. "

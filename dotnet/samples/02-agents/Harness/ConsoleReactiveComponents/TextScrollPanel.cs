@@ -52,7 +52,7 @@ public class TextScrollPanel : ConsoleReactiveComponent<TextScrollPanelProps, Te
         }
 
         // Move cursor to the bottom of the scroll area
-        Console.Write(AnsiEscapes.MoveCursor(this.Y + this.Height - 1, this.X));
+        Console.Write(AnsiEscapes.MoveCursor(props.Y + props.Height - 1, props.X));
 
         // Output only new items since last rendered
         for (int i = state.RenderedCount; i < props.Items.Count; i++)

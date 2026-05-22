@@ -16,6 +16,7 @@ from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     WorkflowEvent,
     WorkflowRunState,
+    _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
 from ._executor import Executor, handler
 from ._request_info_mixin import response_handler
@@ -552,10 +553,12 @@ class WorkflowExecutor(Executor):
         # Collect all events from the workflow
         request_info_events = result.get_request_info_events()
         outputs = result.get_outputs()
+        intermediate_outputs = result.get_intermediate_outputs()
         workflow_run_state = result.get_final_state()
         logger.debug(
             f"WorkflowExecutor {self.id} processing workflow result with "
-            f"{len(outputs)} outputs and {len(request_info_events)} request info events. "
+            f"{len(outputs)} outputs, {len(intermediate_outputs)} intermediate outputs, "
+            f"and {len(request_info_events)} request info events. "
             f"Workflow run state: {workflow_run_state}"
         )
 
@@ -565,6 +568,19 @@ class WorkflowExecutor(Executor):
             await asyncio.gather(*[ctx.yield_output(output) for output in outputs])
         else:
             await asyncio.gather(*[ctx.send_message(output) for output in outputs])
+
+        # Pipe sub-workflow intermediate emissions up through the parent's event stream.
+        # Bypasses the parent's yield-output classifier so the 'intermediate' label is preserved
+        # across the encapsulation boundary; uses this WorkflowExecutor's id as the source
+        # so outer callers don't need to know the sub-workflow's internal executor layout.
+        if intermediate_outputs:
+
+            async def _forward_intermediate_output(output: Any) -> None:
+                with _framework_event_origin():
+                    event = WorkflowEvent("intermediate", executor_id=self.id, data=output)
+                await ctx.add_event(event)
+
+            await asyncio.gather(*[_forward_intermediate_output(output) for output in intermediate_outputs])
 
         # Process request info events
         for event in request_info_events:

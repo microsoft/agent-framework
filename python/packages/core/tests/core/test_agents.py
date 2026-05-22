@@ -2567,10 +2567,15 @@ async def test_shared_local_storage_cross_provider_responses_history_does_not_le
     responses_second.incomplete = None
     responses_second.output = [responses_text_item]
 
+    def _as_raw(resp: MagicMock) -> MagicMock:
+        resp.parse = MagicMock(return_value=resp)
+        resp.headers = {}
+        return resp
+
     with patch.object(
-        responses_client.client.responses,
+        responses_client.client.responses.with_raw_response,
         "create",
-        side_effect=[responses_first, responses_second],
+        side_effect=[_as_raw(responses_first), _as_raw(responses_second)],
     ) as mock_responses_create:
         responses_result = await responses_agent.run("Find me a hotel in Paris", session=session)
 

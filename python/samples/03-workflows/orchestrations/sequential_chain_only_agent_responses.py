@@ -66,13 +66,13 @@ async def main() -> None:
     workflow = SequentialBuilder(
         participants=[writer, translator, reviewer],
         chain_only_agent_responses=True,
-        intermediate_outputs=True,
+        intermediate_output_from=[writer, translator],
     ).build()
 
     # 3) Run and collect outputs
     last_agent: str | None = None
     async for event in workflow.run("Write a tagline for a budget-friendly eBike.", stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+        if event.type in ("intermediate", "output") and isinstance(event.data, AgentResponseUpdate):
             if event.data.author_name != last_agent:
                 last_agent = event.data.author_name
                 print()

@@ -116,7 +116,7 @@ public class TodoProviderTests
         await addTodos.InvokeAsync(new AIFunctionArguments() { ["todos"] = new List<TodoItemInput> { new() { Title = "Test", Description = null } } });
 
         // Act
-        object? result = await completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1 } });
+        object? result = await completeTodos.InvokeAsync(new AIFunctionArguments() { ["items"] = new List<TodoCompleteInput> { new() { Id = 1, Reason = "Done" } } });
 
         // Assert
         Assert.True(state.Items[0].IsComplete);
@@ -139,7 +139,7 @@ public class TodoProviderTests
         });
 
         // Act
-        object? result = await completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1, 3 } });
+        object? result = await completeTodos.InvokeAsync(new AIFunctionArguments() { ["items"] = new List<TodoCompleteInput> { new() { Id = 1, Reason = "Done" }, new() { Id = 3, Reason = "Done" } } });
 
         // Assert
         Assert.True(state.Items[0].IsComplete);
@@ -159,10 +159,33 @@ public class TodoProviderTests
         AIFunction completeTodos = GetTool(tools, "TodoList_Complete");
 
         // Act
-        object? result = await completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 999 } });
+        object? result = await completeTodos.InvokeAsync(new AIFunctionArguments() { ["items"] = new List<TodoCompleteInput> { new() { Id = 999, Reason = "Done" } } });
 
         // Assert
         Assert.Equal(0, GetIntResult(result));
+    }
+
+    /// <summary>
+    /// Verify that CompleteTodos accepts an optional reason parameter.
+    /// </summary>
+    [Fact]
+    public async Task CompleteTodos_AcceptsReasonParameterAsync()
+    {
+        // Arrange
+        var (tools, state) = await CreateToolsWithStateAsync();
+        AIFunction addTodos = GetTool(tools, "TodoList_Add");
+        AIFunction completeTodos = GetTool(tools, "TodoList_Complete");
+        await addTodos.InvokeAsync(new AIFunctionArguments() { ["todos"] = new List<TodoItemInput> { new() { Title = "Research topic" } } });
+
+        // Act
+        object? result = await completeTodos.InvokeAsync(new AIFunctionArguments()
+        {
+            ["items"] = new List<TodoCompleteInput> { new() { Id = 1, Reason = "Found the answer in the documentation." } },
+        });
+
+        // Assert
+        Assert.True(state.Items[0].IsComplete);
+        Assert.Equal(1, GetIntResult(result));
     }
 
     #endregion
@@ -249,7 +272,7 @@ public class TodoProviderTests
         {
             ["todos"] = new List<TodoItemInput> { new() { Title = "Done", Description = null }, new() { Title = "Pending", Description = null } },
         });
-        await completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1 } });
+        await completeTodos.InvokeAsync(new AIFunctionArguments() { ["items"] = new List<TodoCompleteInput> { new() { Id = 1, Reason = "Done" } } });
 
         // Act
         object? result = await getRemainingTodos.InvokeAsync(new AIFunctionArguments());
@@ -279,7 +302,7 @@ public class TodoProviderTests
         {
             ["todos"] = new List<TodoItemInput> { new() { Title = "Done", Description = null }, new() { Title = "Pending", Description = null } },
         });
-        await completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1 } });
+        await completeTodos.InvokeAsync(new AIFunctionArguments() { ["items"] = new List<TodoCompleteInput> { new() { Id = 1, Reason = "Done" } } });
 
         // Act
         object? result = await getAllTodos.InvokeAsync(new AIFunctionArguments());
@@ -376,7 +399,7 @@ public class TodoProviderTests
         {
             ["todos"] = new List<TodoItemInput> { new() { Title = "Done", Description = null }, new() { Title = "Pending", Description = null } },
         });
-        await completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1 } });
+        await completeTodos.InvokeAsync(new AIFunctionArguments() { ["items"] = new List<TodoCompleteInput> { new() { Id = 1, Reason = "Done" } } });
 
         // Act
         var remaining = await provider.GetRemainingTodosAsync(session);
@@ -543,7 +566,7 @@ public class TodoProviderTests
                 new() { Title = "Second", Description = "Has details" },
             },
         });
-        await completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1 } });
+        await completeTodos.InvokeAsync(new AIFunctionArguments() { ["items"] = new List<TodoCompleteInput> { new() { Id = 1, Reason = "Done" } } });
 
         // Act — second invocation should see the updated list in messages
         AIContext result2 = await provider.InvokingAsync(context);
@@ -762,7 +785,7 @@ public class TodoProviderTests
             {
                 ["todos"] = new List<TodoItemInput> { new() { Title = "New C" } },
             }).AsTask(),
-            completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1, 2, 3 } }).AsTask());
+            completeTodos.InvokeAsync(new AIFunctionArguments() { ["items"] = new List<TodoCompleteInput> { new() { Id = 1, Reason = "Done" }, new() { Id = 2, Reason = "Done" }, new() { Id = 3, Reason = "Done" } } }).AsTask());
 
         // Assert
         object? allResult = await getAllTodos.InvokeAsync(new AIFunctionArguments());

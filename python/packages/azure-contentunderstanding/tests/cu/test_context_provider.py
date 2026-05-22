@@ -1710,15 +1710,16 @@ class TestWarningsExtraction:
         We exercise the filter directly because reproducing the upstream SDK bug
         (telemetry strings leaking as top-level list items of ``rai_warnings``)
         from a synthetic ``AnalysisResult`` is impractical — the SDK normalises
-        warnings through structured ``code``/``message`` fields. The regex is
+        warnings through structured ``code``/``message`` fields. The helper is
         a defensive belt that runs on the SDK output before it reaches the LLM.
         """
         from agent_framework_azure_contentunderstanding._context_provider import (
-            _RAI_TELEMETRY_LINE_RE,
+            _strip_rai_telemetry,
         )
 
         sample = (
             "---\n"
+            "source: doc.pdf\n"
             "rai_warnings:\n"
             "  - LLMStats: completion_calls=2; embedding_calls=1; latency=7.71s\n"
             "  - code: ContentFiltered\n"
@@ -1726,7 +1727,7 @@ class TestWarningsExtraction:
             "---\n"
             "# Body\n"
         )
-        cleaned = _RAI_TELEMETRY_LINE_RE.sub("", sample)
+        cleaned = _strip_rai_telemetry(sample)
 
         # The telemetry list item is gone.
         assert "LLMStats:" not in cleaned
@@ -1735,6 +1736,58 @@ class TestWarningsExtraction:
         assert "code: ContentFiltered" in cleaned
         # The markdown body is untouched.
         assert "# Body" in cleaned
+
+    def test_llm_stats_in_body_is_preserved(self) -> None:
+        """Decision C1 scope: ``- LLMStats:`` bullets in the markdown body must survive.
+
+        Without scoping the substitution to the YAML front-matter ``rai_warnings:``
+        block, the defensive filter would silently delete user content that
+        happens to use the same shape as the SDK telemetry line.
+        """
+        from agent_framework_azure_contentunderstanding._context_provider import (
+            _strip_rai_telemetry,
+        )
+
+        sample = (
+            "---\n"
+            "source: doc.pdf\n"
+            "rai_warnings:\n"
+            "  - LLMStats: completion_calls=2; embedding_calls=1; latency=7.71s\n"
+            "  - code: ContentFiltered\n"
+            "    message: Real warning message\n"
+            "---\n"
+            "# Notes\n"
+            "- LLMStats: this is a real markdown bullet authored by a user\n"
+            "- Another bullet\n"
+        )
+        cleaned = _strip_rai_telemetry(sample)
+
+        # Telemetry inside the front-matter list is stripped.
+        assert "completion_calls=2" not in cleaned
+        # Body bullet that happens to match the telemetry pattern is preserved.
+        assert "- LLMStats: this is a real markdown bullet authored by a user" in cleaned
+        assert "- Another bullet" in cleaned
+        # Sibling content stays intact.
+        assert "code: ContentFiltered" in cleaned
+        assert "Real warning message" in cleaned
+
+    def test_strip_rai_telemetry_noop_without_front_matter(self) -> None:
+        """The helper must not touch text that has no YAML front matter at all."""
+        from agent_framework_azure_contentunderstanding._context_provider import (
+            _strip_rai_telemetry,
+        )
+
+        sample = "Just a body\n- LLMStats: looks like telemetry but isn't in front matter\n"
+        assert _strip_rai_telemetry(sample) == sample
+
+    def test_strip_rai_telemetry_noop_without_rai_warnings(self) -> None:
+        """The helper must not touch front matter that has no ``rai_warnings:`` key."""
+        from agent_framework_azure_contentunderstanding._context_provider import (
+            _strip_rai_telemetry,
+        )
+
+        sample = "---\nsource: doc.pdf\nfields:\n  Vendor: Contoso\n---\n# Body\n"
+        assert _strip_rai_telemetry(sample) == sample
 
 
 class TestCategoryExtraction:
@@ -1803,9 +1856,7 @@ class TestCategoryExtraction:
         assert "ProductDemo" in rendered
         assert "Testimonial" in rendered
         # Segments must be rendered in source order, not arbitrary.
-        assert rendered.index("Opening scene with product showcase.") < rendered.index(
-            "Customer testimonial segment."
-        )
+        assert rendered.index("Opening scene with product showcase.") < rendered.index("Customer testimonial segment.")
         # Category-to-segment mapping must be correct. The SDK separates segments
         # with a ``*****`` line, so split on it and verify each block carries the
         # right category alongside the right markdown body.
