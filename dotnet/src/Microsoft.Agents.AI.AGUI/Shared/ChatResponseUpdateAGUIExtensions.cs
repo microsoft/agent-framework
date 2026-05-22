@@ -448,6 +448,7 @@ internal static class ChatResponseUpdateAGUIExtensions
         };
 
         string? currentMessageId = null;
+        string? currentMessageRole = null;
         string? streamingMessageId = null;
         string? currentReasoningBaseId = null;
         string? currentReasoningId = null;
@@ -464,45 +465,51 @@ internal static class ChatResponseUpdateAGUIExtensions
             }
 
             if (chatResponse is { Contents.Count: > 0 } &&
-                chatResponse.Contents[0] is TextContent &&
-                !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
+                chatResponse.Contents[0] is TextContent)
             {
-                // Close any open reasoning block before opening a text message, so AG-UI
-                // events are properly bracketed. MEAI providers share one MessageId across
-                // reasoning and text content, so the reasoning-block state alone wouldn't
-                // detect the transition.
-                if (currentReasoningMessageId is not null)
+                string chatResponseRole = chatResponse.Role!.Value.Value;
+                bool startTextMessage = currentMessageId is null ||
+                    !string.Equals(currentMessageRole, chatResponseRole, StringComparison.Ordinal);
+                if (startTextMessage)
                 {
-                    yield return new ReasoningMessageEndEvent
+                    // Close any open reasoning block before opening a text message, so AG-UI
+                    // events are properly bracketed. MEAI providers share one MessageId across
+                    // reasoning and text content, so the reasoning-block state alone wouldn't
+                    // detect the transition.
+                    if (currentReasoningMessageId is not null)
                     {
-                        MessageId = currentReasoningMessageId
-                    };
-                    yield return new ReasoningEndEvent
+                        yield return new ReasoningMessageEndEvent
+                        {
+                            MessageId = currentReasoningMessageId
+                        };
+                        yield return new ReasoningEndEvent
+                        {
+                            MessageId = currentReasoningId!
+                        };
+                        currentReasoningBaseId = null;
+                        currentReasoningId = null;
+                        currentReasoningMessageId = null;
+                    }
+
+                    // End the previous message if there was one
+                    if (currentMessageId is not null)
                     {
-                        MessageId = currentReasoningId!
+                        yield return new TextMessageEndEvent
+                        {
+                            MessageId = currentMessageId
+                        };
+                    }
+
+                    // Start the new message
+                    yield return new TextMessageStartEvent
+                    {
+                        MessageId = chatResponse.MessageId!,
+                        Role = chatResponseRole
                     };
-                    currentReasoningBaseId = null;
-                    currentReasoningId = null;
-                    currentReasoningMessageId = null;
+
+                    currentMessageId = chatResponse.MessageId;
+                    currentMessageRole = chatResponseRole;
                 }
-
-                // End the previous message if there was one
-                if (currentMessageId is not null)
-                {
-                    yield return new TextMessageEndEvent
-                    {
-                        MessageId = currentMessageId
-                    };
-                }
-
-                // Start the new message
-                yield return new TextMessageStartEvent
-                {
-                    MessageId = chatResponse.MessageId!,
-                    Role = chatResponse.Role!.Value.Value
-                };
-
-                currentMessageId = chatResponse.MessageId;
             }
 
             // Emit text content if present
