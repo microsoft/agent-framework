@@ -120,6 +120,7 @@ internal static class OpenAIHostingJsonUtilities
 [JsonSerializable(typeof(ResponsesDeveloperMessageItemParam))]
 [JsonSerializable(typeof(FunctionToolCallItemParam))]
 [JsonSerializable(typeof(FunctionToolCallOutputItemParam))]
+[JsonSerializable(typeof(FunctionApprovalResponseItemParam))]
 [JsonSerializable(typeof(FileSearchToolCallItemParam))]
 [JsonSerializable(typeof(ComputerToolCallItemParam))]
 [JsonSerializable(typeof(ComputerToolCallOutputItemParam))]

@@ -30,6 +30,7 @@ internal sealed class ItemParamConverter : JsonConverter<ItemParam>
             "message" => doc.Deserialize(OpenAIHostingJsonContext.Default.ResponsesMessageItemParam),
             "function_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.FunctionToolCallItemParam),
             "function_call_output" => doc.Deserialize(OpenAIHostingJsonContext.Default.FunctionToolCallOutputItemParam),
+            "function_approval_response" => doc.Deserialize(OpenAIHostingJsonContext.Default.FunctionApprovalResponseItemParam),
             "file_search_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.FileSearchToolCallItemParam),
             "computer_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.ComputerToolCallItemParam),
             "computer_call_output" => doc.Deserialize(OpenAIHostingJsonContext.Default.ComputerToolCallOutputItemParam),

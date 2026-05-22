@@ -111,10 +111,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
             messages.AddRange(conversationHistory);
         }
 
-        foreach (var inputMessage in request.Input.GetInputMessages())
-        {
-            messages.Add(inputMessage.ToChatMessage());
-        }
+        messages.AddRange(request.Input.GetChatMessages());
 
         await foreach (var streamingEvent in agent.RunStreamingAsync(messages, options: options, cancellationToken: cancellationToken)
             .ToStreamingResponseAsync(request, context, cancellationToken).ConfigureAwait(false))

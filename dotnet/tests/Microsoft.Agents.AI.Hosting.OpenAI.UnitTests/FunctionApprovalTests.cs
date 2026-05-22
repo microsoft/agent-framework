@@ -3,9 +3,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Tests;
 using Microsoft.Extensions.AI;
 
@@ -174,6 +176,48 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     #endregion
 
     #region ToolApprovalResponseContent Tests
+
+    [Fact]
+    public async Task FunctionApprovalResponseInput_IsAcceptedAndForwardedAsync()
+    {
+        // Arrange
+        const string AgentName = "approval-response-input-agent";
+        const string RequestId = "req-devui-123";
+        HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
+            [new TextContent("approval response accepted")]);
+
+        string requestJson = $$"""
+            {
+              "model": "gpt-4o-mini",
+              "input": [
+                {
+                  "type": "function_approval_response",
+                  "approval_request_id": "{{RequestId}}",
+                  "approve": true,
+                  "reason": "approved in DevUI"
+                }
+              ],
+              "stream": true
+            }
+            """;
+
+        CreateResponse? parsedRequest = JsonSerializer.Deserialize(requestJson, OpenAIHostingJsonContext.Default.CreateResponse);
+        ToolApprovalResponseContent parsedApproval = parsedRequest!.Input.GetChatMessages()
+            .Single()
+            .Contents
+            .OfType<ToolApprovalResponseContent>()
+            .Single();
+
+        // Act
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, requestJson);
+        _ = await httpResponse.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, httpResponse.StatusCode);
+        Assert.Equal(RequestId, parsedApproval.RequestId);
+        Assert.True(parsedApproval.Approved);
+        Assert.Equal("approved in DevUI", parsedApproval.Reason);
+    }
 
     [Fact]
     public async Task FunctionApprovalResponse_Approved_GeneratesCorrectEvent_SuccessAsync()

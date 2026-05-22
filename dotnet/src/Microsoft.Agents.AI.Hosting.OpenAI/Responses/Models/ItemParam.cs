@@ -182,6 +182,38 @@ internal sealed class FunctionToolCallOutputItemParam : ItemParam
 }
 
 /// <summary>
+/// A function approval response item parameter.
+/// </summary>
+internal sealed class FunctionApprovalResponseItemParam : ItemParam
+{
+    /// <summary>
+    /// The constant item type identifier for function approval response items.
+    /// </summary>
+    public const string ItemType = "function_approval_response";
+
+    /// <inheritdoc/>
+    public override string Type => ItemType;
+
+    /// <summary>
+    /// The ID of the approval request being answered.
+    /// </summary>
+    [JsonPropertyName("approval_request_id")]
+    public required string ApprovalRequestId { get; init; }
+
+    /// <summary>
+    /// Whether the request was approved.
+    /// </summary>
+    [JsonPropertyName("approve")]
+    public bool Approve { get; init; }
+
+    /// <summary>
+    /// Optional reason for the decision.
+    /// </summary>
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
+}
+
+/// <summary>
 /// A file search tool call item parameter.
 /// </summary>
 internal sealed class FileSearchToolCallItemParam : ItemParam

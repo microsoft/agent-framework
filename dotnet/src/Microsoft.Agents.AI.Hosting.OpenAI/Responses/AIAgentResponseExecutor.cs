@@ -60,10 +60,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
             messages.AddRange(conversationHistory);
         }
 
-        foreach (var inputMessage in request.Input.GetInputMessages())
-        {
-            messages.Add(inputMessage.ToChatMessage());
-        }
+        messages.AddRange(request.Input.GetChatMessages());
 
         // Use the extension method to convert streaming updates to streaming response events
         await foreach (var streamingEvent in this._agent.RunStreamingAsync(messages, options: options, cancellationToken: cancellationToken)
