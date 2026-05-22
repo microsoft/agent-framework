@@ -58,7 +58,9 @@ public static partial class AgentWorkflowBuilder
         }
 
         OutputMessagesExecutor end = new();
-        builder = builder.AddEdge(previous, end).WithOutputFrom(end);
+        builder = builder.AddEdge(previous, end)
+                         .WithOutputFrom(end)
+                         .WithIntermediateOutputFrom(agentExecutors);
         if (workflowName is not null)
         {
             builder = builder.WithName(workflowName);
@@ -138,7 +140,8 @@ public static partial class AgentWorkflowBuilder
 
         builder.AddFanInBarrierEdge(accumulators, end);
 
-        builder = builder.WithOutputFrom(end);
+        builder = builder.WithOutputFrom(end)
+                         .WithIntermediateOutputFrom([.. agentExecutors, .. accumulators]);
         if (workflowName is not null)
         {
             builder = builder.WithName(workflowName);

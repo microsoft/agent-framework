@@ -75,6 +75,16 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     private Func<IReadOnlyList<ChatMessage>, ValueTask<bool>>? _terminationCondition;
 
     /// <summary>
+    /// Memoized output designations. <see langword="null"/> means the user has not made any
+    /// explicit designation, and the orchestration-specific defaults will be applied at
+    /// <see cref="Build"/> time. A non-null (possibly empty) dictionary means the user took
+    /// control and only these designations will be replayed onto the inner
+    /// <see cref="WorkflowBuilder"/>. An entry's value is the set of tags requested for the
+    /// agent — an empty set encodes a terminal-only designation.
+    /// </summary>
+    private Dictionary<AIAgent, HashSet<OutputTag>>? _outputDesignations;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="HandoffsWorkflowBuilder"/> class with no handoff relationships.
     /// </summary>
     /// <param name="initialAgent">The first agent to be invoked (prior to any handoff).</param>
@@ -172,6 +182,48 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     public TBuilder EnableReturnToPrevious()
     {
         this._returnToPrevious = true;
+        return (TBuilder)this;
+    }
+
+    /// <summary>
+    /// Designates the given <paramref name="agents"/> as sources of terminal workflow output.
+    /// Calling any output-designation method (this or <see cref="WithIntermediateOutputFrom"/>)
+    /// suppresses the orchestration-specific defaults: only the user-specified designations
+    /// reach the inner <see cref="WorkflowBuilder"/>. To restore defaults, build a fresh builder.
+    /// </summary>
+    public TBuilder WithOutputFrom(params IEnumerable<AIAgent> agents)
+    {
+        Throw.IfNull(agents);
+        this._outputDesignations ??= new(AIAgentIDEqualityComparer.Instance);
+        foreach (AIAgent agent in agents)
+        {
+            Throw.IfNull(agent, nameof(agents));
+            if (!this._outputDesignations.ContainsKey(agent))
+            {
+                this._outputDesignations[agent] = [];
+            }
+        }
+        return (TBuilder)this;
+    }
+
+    /// <summary>
+    /// Designates the given <paramref name="agents"/> as sources of <b>intermediate</b> workflow
+    /// output. See <see cref="WithOutputFrom"/> for the defaults-suppression semantics.
+    /// </summary>
+    public TBuilder WithIntermediateOutputFrom(IEnumerable<AIAgent> agents)
+    {
+        Throw.IfNull(agents);
+        this._outputDesignations ??= new(AIAgentIDEqualityComparer.Instance);
+        foreach (AIAgent agent in agents)
+        {
+            Throw.IfNull(agent, nameof(agents));
+            if (!this._outputDesignations.TryGetValue(agent, out HashSet<OutputTag>? tags))
+            {
+                tags = [];
+                this._outputDesignations[agent] = tags;
+            }
+            tags.Add(OutputTag.Intermediate);
+        }
         return (TBuilder)this;
     }
 
@@ -641,6 +693,53 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
             builder.WithDescription(this._description);
         }
 
-        return builder.WithOutputFrom(end).Build();
+        // Ensure the end executor is bound regardless of whether it ends up as an output
+        // designation source — the user may take full control of output designations.
+        builder.BindExecutor(end);
+
+        this.ApplyOutputDesignations(builder, end, executors);
+        return builder.Build();
+    }
+
+    private void ApplyOutputDesignations(
+        WorkflowBuilder builder,
+        HandoffEndExecutor end,
+        Dictionary<string, ExecutorBinding> executors)
+    {
+        if (this._outputDesignations is null)
+        {
+            // Defaults (matches Python's Handoff orchestration):
+            //   end                       -> terminal output (Output)
+            //   every handoff agent       -> intermediate output (Intermediate)
+            builder.WithOutputFrom(end);
+            List<ExecutorBinding> agentBindings = [.. executors.Values];
+            if (agentBindings.Count > 0)
+            {
+                builder.WithIntermediateOutputFrom(agentBindings);
+            }
+            return;
+        }
+
+        // User took control — replay only their designations, in dictionary order.
+        foreach ((AIAgent agent, HashSet<OutputTag> tags) in this._outputDesignations)
+        {
+            if (!executors.TryGetValue(agent.Id, out ExecutorBinding? binding))
+            {
+                throw new InvalidOperationException(
+                    $"Output designation references agent '{agent.Name ?? agent.Id}', which is not a participant in this handoff workflow.");
+            }
+
+            if (tags.Count == 0)
+            {
+                builder.WithOutputFrom(binding);
+            }
+            else
+            {
+                foreach (OutputTag tag in tags)
+                {
+                    builder.WithOutputFrom(binding, tag);
+                }
+            }
+        }
     }
 }
