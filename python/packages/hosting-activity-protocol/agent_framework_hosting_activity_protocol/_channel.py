@@ -195,7 +195,7 @@ class ActivityProtocolChannel:
     ) -> None:
         """Configure the Teams channel.
 
-        Args:
+        Keyword Args:
             path: Mount path. The webhook lives at ``{path}/messages``.
             app_id: Bot Framework / Entra application (client) id. Required
                 whenever any credential is supplied.
