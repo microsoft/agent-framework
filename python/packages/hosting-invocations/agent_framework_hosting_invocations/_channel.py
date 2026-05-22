@@ -16,9 +16,13 @@ from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
     ChannelRequest,
+    ChannelResponseContext,
+    ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
     ChannelStreamTransformHook,
+    HostedRunResult,
+    apply_response_hook,
     apply_run_hook,
     logger,
 )
@@ -42,6 +46,7 @@ class InvocationsChannel:
         *,
         path: str = "/invocations",
         run_hook: ChannelRunHook | None = None,
+        response_hook: ChannelResponseHook | None = None,
         stream_transform_hook: ChannelStreamTransformHook | None = None,
     ) -> None:
         """Configure the invocations endpoint.
@@ -51,11 +56,14 @@ class InvocationsChannel:
         ``run_hook`` may rewrite the :class:`ChannelRequest` before the host
         invokes the target — typically to attach session metadata or
         translate the wire payload into ``Message`` instances.
+        ``response_hook`` may rewrite the :class:`HostedRunResult` before
+        the channel serializes it to JSON for the originating caller.
         ``stream_transform_hook`` lets callers map or drop individual
         ``AgentResponseUpdate`` chunks while streaming.
         """
         self.path = path
         self._hook = run_hook
+        self.response_hook = response_hook
         self._stream_transform_hook = stream_transform_hook
         self._ctx: ChannelContext | None = None
 
@@ -123,7 +131,25 @@ class InvocationsChannel:
             )
 
         result = await self._ctx.run(channel_request)
+        result = await self._apply_response_hook(result, channel_request)
         return JSONResponse({"response": result.result.text, "session_id": session_id})
+
+    async def _apply_response_hook(
+        self,
+        result: HostedRunResult[Any],
+        request: ChannelRequest,
+    ) -> HostedRunResult[Any]:
+        """Apply the channel-level response hook for an originating reply."""
+        if self.response_hook is None:
+            return result
+        context = ChannelResponseContext(
+            request=request,
+            channel_name=self.name,
+            destination_identity=None,
+            originating=True,
+            is_echo=False,
+        )
+        return await apply_response_hook(self.response_hook, result, context=context)
 
     async def _stream(self, request: ChannelRequest) -> AsyncIterator[str]:
         r"""Yield bare ``data:`` SSE lines for each text chunk + a final ``[DONE]``.

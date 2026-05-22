@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from typing import Any
 
-from agent_framework_hosting import AgentFrameworkHost, ChannelRequest
+from agent_framework_hosting import AgentFrameworkHost, ChannelRequest, HostedRunResult
 from starlette.testclient import TestClient
 
 from agent_framework_hosting_invocations import InvocationsChannel
@@ -142,6 +142,26 @@ class TestInvocations:
         # we get JSON back, not SSE.
         assert r.headers["content-type"].startswith("application/json")
         assert captured and captured[0].channel == "invocations"
+
+    def test_response_hook_can_rewrite_originating_reply(self) -> None:
+        contexts: list[Any] = []
+
+        def hook(result: HostedRunResult, **kwargs: Any) -> HostedRunResult:
+            contexts.append(kwargs["context"])
+            return HostedRunResult(_FakeAgentResponse(text=f"hooked:{result.result.text}"), session=result.session)
+
+        agent = _FakeAgent(reply="pong")
+        host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel(response_hook=hook)])
+
+        with TestClient(host.app) as client:
+            r = client.post("/invocations/invoke", json={"message": "ping"})
+
+        assert r.status_code == 200
+        assert r.json() == {"response": "hooked:pong", "session_id": None}
+        assert contexts
+        assert contexts[0].channel_name == "invocations"
+        assert contexts[0].originating is True
+        assert contexts[0].destination_identity is None
 
     def test_stream_transform_hook_can_rewrite_chunks(self) -> None:
         agent = _FakeAgent(chunks=["foo", "bar"])
