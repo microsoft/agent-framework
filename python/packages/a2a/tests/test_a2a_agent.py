@@ -1356,10 +1356,10 @@ async def test_streaming_status_update_event_yields_content(
 
 
 @mark.asyncio
-async def test_streaming_input_required_sets_flag(
+async def test_streaming_input_required_emits_content(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
-    """Test that input-required status updates set the input_required flag in additional_properties."""
+    """Test that input-required status updates emit content (gated states that pass through)."""
     update_event = TaskStatusUpdateEvent(
         task_id="task-status",
         context_id="ctx-status",
@@ -1380,7 +1380,6 @@ async def test_streaming_input_required_sets_flag(
 
     assert len(updates) == 1
     assert updates[0].text == "What is your name?"
-    assert updates[0].additional_properties["input_required"] is True
 
 
 @mark.asyncio
@@ -1904,11 +1903,12 @@ async def test_no_session_does_not_crash_reference_task_ids(mock_a2a_client: Moc
 
 
 @mark.asyncio
-async def test_task_id_tracked_from_message_payload(mock_a2a_client: MockA2AClient) -> None:
-    """Test that task_id is tracked from message payloads that include a task_id."""
+async def test_task_id_not_tracked_from_message_payload(mock_a2a_client: MockA2AClient) -> None:
+    """Test that task_id is NOT tracked from message payloads (simple interactions without task tracking)."""
     agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
 
-    # Simulate a response that is a message with task_id set (no task/status_update events)
+    # Simulate a response that is a message with task_id set (no task/status_update events).
+    # Per A2A spec, a Message response indicates simple interaction — task_id should not be persisted.
     message_with_task = A2AMessage(
         message_id="msg-with-task",
         role=A2ARole.ROLE_AGENT,
@@ -1920,7 +1920,7 @@ async def test_task_id_tracked_from_message_payload(mock_a2a_client: MockA2AClie
     session = A2AAgentSession()
     await agent.run("Hello", session=session)
 
-    assert session.task_id == "task-from-message"
+    assert session.task_id is None
 
 
 @mark.asyncio

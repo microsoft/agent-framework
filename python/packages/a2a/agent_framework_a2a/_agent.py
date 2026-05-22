@@ -479,8 +479,6 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if payload_type == "message":
                 # Process A2A Message
                 msg = item.message
-                if msg.task_id:
-                    last_task_id = msg.task_id
                 if msg.context_id:
                     last_context_id = msg.context_id
                 contents = self._parse_contents_from_a2a(msg.parts)
@@ -521,7 +519,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     yield update
             elif payload_type == "status_update":
                 status_event = item.status_update
-                last_task_id = status_event.task_id or last_task_id
+                last_task_id = status_event.task_id
                 if status_event.context_id:
                     last_context_id = status_event.context_id
                 last_task_state = status_event.status.state
@@ -551,7 +549,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         pending_updates_by_task.setdefault(status_event.task_id, []).extend(updates)
             elif payload_type == "artifact_update":
                 artifact_event = item.artifact_update
-                last_task_id = artifact_event.task_id or last_task_id
+                last_task_id = artifact_event.task_id
                 if artifact_event.context_id:
                     last_context_id = artifact_event.context_id
                 updates = self._updates_from_task_update_event(artifact_event)
@@ -724,18 +722,12 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
         merged_metadata = {**msg_meta, **event_meta} or None
 
-        additional_properties: dict[str, Any] = {}
-        if merged_metadata:
-            additional_properties["a2a_metadata"] = merged_metadata
-        if state == TaskState.TASK_STATE_INPUT_REQUIRED:
-            additional_properties["input_required"] = True
-
         return [
             AgentResponseUpdate(
                 contents=contents,
                 role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
                 response_id=update_event.task_id,
-                additional_properties=additional_properties or None,
+                additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
                 raw_representation=update_event,
             )
         ]
