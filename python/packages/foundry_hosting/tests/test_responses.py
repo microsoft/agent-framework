@@ -26,6 +26,8 @@ from agent_framework import (
     Message,
     RawAgent,
     ResponseStream,
+    WorkflowCheckpoint,
+    WorkflowCheckpointException,
 )
 from azure.ai.agentserver.responses import InMemoryResponseProvider
 from mcp import McpError
@@ -2712,6 +2714,24 @@ class TestCheckpointContextPathValidation:
 
         return _checkpoint_storage_for_context
 
+    @staticmethod
+    def _checkpoint_with_azure_message_role() -> WorkflowCheckpoint:
+        from agent_framework._workflows._runner_context import WorkflowMessage
+        from azure.ai.agentserver.responses.models import MessageRole
+
+        return WorkflowCheckpoint(
+            workflow_name="wf",
+            graph_signature_hash="hash",
+            messages={
+                "executor": [
+                    WorkflowMessage(
+                        data=Message(role=MessageRole.USER, contents=[Content.from_text("hello")]),
+                        source_id="source",
+                    )
+                ]
+            },
+        )
+
     def test_valid_segment_creates_storage_under_root(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
@@ -2719,6 +2739,65 @@ class TestCheckpointContextPathValidation:
         storage = helper(str(root), "resp_abc123")
         assert storage.storage_path.is_dir()
         assert storage.storage_path.parent == root.resolve()
+
+    async def test_storage_allows_azure_message_role_checkpoint_restore(self, tmp_path: Any) -> None:
+        from azure.ai.agentserver.responses.models import MessageRole
+
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        storage = helper(str(root), "resp_abc123")
+        checkpoint = self._checkpoint_with_azure_message_role()
+
+        await storage.save(checkpoint)
+        loaded = await storage.load(checkpoint.checkpoint_id)
+
+        loaded_message = loaded.messages["executor"][0].data
+        assert isinstance(loaded_message, Message)
+        assert type(loaded_message.role) is MessageRole
+        assert loaded_message.role == MessageRole.USER
+        assert loaded_message.text == "hello"
+
+    async def test_plain_storage_blocks_azure_message_role_checkpoint_restore(self, tmp_path: Any) -> None:
+        storage = FileCheckpointStorage(tmp_path / "plain")
+        checkpoint = self._checkpoint_with_azure_message_role()
+
+        await storage.save(checkpoint)
+        with pytest.raises(WorkflowCheckpointException, match="MessageRole"):
+            await storage.load(checkpoint.checkpoint_id)
+
+    async def test_get_latest_restores_azure_message_role(self, tmp_path: Any) -> None:
+        from azure.ai.agentserver.responses.models import MessageRole
+
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        storage = helper(str(root), "resp_abc123")
+        checkpoint = self._checkpoint_with_azure_message_role()
+
+        await storage.save(checkpoint)
+        latest = await storage.get_latest(workflow_name="wf")
+
+        assert latest is not None
+        assert latest.checkpoint_id == checkpoint.checkpoint_id
+        latest_message = latest.messages["executor"][0].data
+        assert isinstance(latest_message, Message)
+        assert type(latest_message.role) is MessageRole
+
+    async def test_get_latest_silently_skips_without_allowlist(
+        self, tmp_path: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        storage = FileCheckpointStorage(tmp_path / "plain")
+        checkpoint = self._checkpoint_with_azure_message_role()
+
+        await storage.save(checkpoint)
+        with caplog.at_level(logging.WARNING, logger="agent_framework"):
+            latest = await storage.get_latest(workflow_name="wf")
+
+        assert latest is None
+        assert any("MessageRole" in record.message for record in caplog.records)
 
     @pytest.mark.parametrize(
         "bad_id",
@@ -2923,6 +3002,8 @@ class TestCheckpointContextPathValidation:
             f"before={before} after={after}"
         )
         assert list(root.iterdir()) == [], f"Checkpoint directory created inside root for {context_field}={bad_id!r}"
+
+
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
 
 

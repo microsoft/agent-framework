@@ -10,10 +10,9 @@ import os
 import tempfile
 import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Sequence
-from contextlib import suppress
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from typing import Protocol, cast
 
 from agent_framework import (
@@ -73,6 +72,7 @@ from azure.ai.agentserver.responses.models import (
     MessageContentOutputTextContent,
     MessageContentReasoningTextContent,
     MessageContentRefusalContent,
+    MessageRole,
     OAuthConsentRequestOutputItem,
     OutputItem,
     OutputItemApplyPatchToolCall,
@@ -250,7 +250,12 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
     storage_path = (root_path / context_id).resolve()
     if not storage_path.is_relative_to(root_path):
         raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
-    return FileCheckpointStorage(storage_path)
+    return FileCheckpointStorage(
+        storage_path,
+        # Keep this provider-specific allowlist narrow. Hosted workflow
+        # checkpoints can persist Azure's role enum inside Message objects.
+        allowed_checkpoint_types=[f"{MessageRole.__module__}:{MessageRole.__qualname__}"],
+    )
 
 
 # endregion Approval Storage
