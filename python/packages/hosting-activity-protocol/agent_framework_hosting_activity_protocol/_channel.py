@@ -83,9 +83,13 @@ from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
     ChannelRequest,
+    ChannelResponseContext,
+    ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
     ChannelStreamTransformHook,
+    HostedRunResult,
+    apply_response_hook,
     apply_run_hook,
     logger,
 )
@@ -181,6 +185,7 @@ class ActivityProtocolChannel:
         token_scope: str = _BOTFRAMEWORK_SCOPE,
         credential: AsyncTokenCredential | None = None,
         run_hook: ChannelRunHook | None = None,
+        response_hook: ChannelResponseHook | None = None,
         send_typing_action: bool = True,
         stream: bool = True,
         stream_transform_hook: ChannelStreamTransformHook | None = None,
@@ -210,6 +215,11 @@ class ActivityProtocolChannel:
                 ``DefaultAzureCredential`` configured elsewhere). Overrides
                 ``app_password`` / ``certificate_path``.
             run_hook: Optional rewrite of ``ChannelRequest`` before invocation.
+            response_hook: Optional rewrite of the
+                :class:`HostedRunResult` before the originating Activity
+                reply is serialized. The host also invokes this hook when
+                delivering to this channel as a non-originating push
+                destination.
             send_typing_action: Whether to send ``typing`` activities while
                 the agent runs.
             stream: Whether to stream by default. ``run_hook`` can flip per
@@ -251,6 +261,7 @@ class ActivityProtocolChannel:
         self._token_scope = token_scope
         self._tenant_id = tenant_id
         self._hook = run_hook
+        self.response_hook = response_hook
         self._send_typing_action = send_typing_action
         self._stream_default = stream
         self._stream_transform_hook = stream_transform_hook
@@ -494,12 +505,32 @@ class ActivityProtocolChannel:
 
         if not request.stream:
             result = await self._ctx.run(request)
-            text = getattr(result, "text", None) or "(no response)"
-            await self._send_message(inbound, text)
+            include_originating = await self._ctx.deliver_response(request, result)
+            if include_originating:
+                result = await self._apply_response_hook(result, request)
+                text = getattr(result.result, "text", None) or "(no response)"
+                await self._send_message(inbound, text)
             return
 
         stream = self._ctx.run_stream(request)
         await self._stream_to_conversation(inbound, stream)
+
+    async def _apply_response_hook(
+        self,
+        result: HostedRunResult[Any],
+        request: ChannelRequest,
+    ) -> HostedRunResult[Any]:
+        """Apply the channel-level response hook for an originating reply."""
+        if self.response_hook is None:
+            return result
+        context = ChannelResponseContext(
+            request=request,
+            channel_name=self.name,
+            destination_identity=None,
+            originating=True,
+            is_echo=False,
+        )
+        return await apply_response_hook(self.response_hook, result, context=context)
 
     async def _stream_to_conversation(
         self,

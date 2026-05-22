@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from agent_framework_hosting import AgentFrameworkHost
+from agent_framework_hosting import AgentFrameworkHost, HostedRunResult
 from starlette.testclient import TestClient
 
 from agent_framework_hosting_activity_protocol import ActivityProtocolChannel, activity_protocol_isolation_key
@@ -119,6 +119,30 @@ class TestTeamsWebhook:
         ch._http.post.assert_called()  # type: ignore[attr-defined]
         url, _ = ch._http.post.call_args[0], ch._http.post.call_args[1]  # type: ignore[attr-defined] # noqa: F841
         assert "/v3/conversations/" in ch._http.post.call_args[0][0]  # type: ignore[attr-defined]
+        body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert body["text"] == "hi there"
+
+    def test_response_hook_can_rewrite_originating_reply(self) -> None:
+        contexts: list[Any] = []
+
+        def hook(result: HostedRunResult, **kwargs: Any) -> HostedRunResult:
+            contexts.append(kwargs["context"])
+            return HostedRunResult(_FakeAgentResponse(text=result.result.text.upper()), session=result.session)
+
+        ch, agent = _make_teams()
+        ch.response_hook = hook
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=_VALID_ACTIVITY)
+
+        assert r.status_code == 200
+        assert ch._http is not None
+        body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert body["text"] == "HI THERE"
+        assert contexts
+        assert contexts[0].channel_name == "activity"
+        assert contexts[0].originating is True
 
     def test_non_message_activities_are_acked(self) -> None:
         ch, agent = _make_teams()
