@@ -636,7 +636,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             continuation_token["response_id"],
                             stream=True,
                         )
-                        served_model = self._extract_served_model(raw_stream_response.headers)
+                        # Read headers defensively: telemetry instrumentors (e.g. azure-ai-projects
+                        # experimental tracing) wrap the streaming response in objects that do not
+                        # proxy ``.headers``. Degrade gracefully so the served-model surfacing is
+                        # best-effort instead of crashing the whole call.
+                        served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
                         async with raw_stream_response.parse() as stream_response:
                             async for chunk in stream_response:
                                 update = self._parse_chunk_from_openai(
@@ -677,7 +681,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             raw_create_response = await client.responses.with_raw_response.create(
                                 stream=True, **run_options
                             )
-                            served_model = self._extract_served_model(raw_create_response.headers)
+                            # See note above on ``raw_stream_response.headers``.
+                            served_model = self._extract_served_model(getattr(raw_create_response, "headers", None))
                             async with raw_create_response.parse() as stream_response:
                                 async for chunk in stream_response:
                                     update = self._parse_chunk_from_openai(
@@ -706,7 +711,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 except Exception as ex:
                     self._handle_request_error(ex)
                 chat_response = self._parse_response_from_openai(response, options=validated_options)
-                served_model = self._extract_served_model(raw_response.headers)
+                # See note above on ``raw_stream_response.headers``.
+                served_model = self._extract_served_model(getattr(raw_response, "headers", None))
                 if served_model is not None:
                     chat_response.model = served_model
                 # Once the background response completes, drop the continuation_token from
@@ -728,7 +734,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             except Exception as ex:
                 self._handle_request_error(ex)
             chat_response = self._parse_response_from_openai(response, options=validated_options)
-            served_model = self._extract_served_model(raw_response.headers)
+            # See note above on ``raw_stream_response.headers``.
+            served_model = self._extract_served_model(getattr(raw_response, "headers", None))
             if served_model is not None:
                 chat_response.model = served_model
             return chat_response
