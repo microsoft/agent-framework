@@ -377,7 +377,7 @@ async def test_kwargs_preserved_on_response_continuation() -> None:
     from agent_framework import WorkflowBuilder
 
     agent = _ApprovalCapturingAgent()
-    workflow = WorkflowBuilder(start_executor=agent, output_executors=[agent]).build()
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[agent]).build()
 
     # Initial run with function_invocation_kwargs — workflow should pause for approval
     fi_kwargs = {"token": "abc"}

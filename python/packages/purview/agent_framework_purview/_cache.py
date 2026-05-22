@@ -161,7 +161,6 @@ class InMemoryCacheProvider:
         entry = self._cache.pop(key, None)
         if entry is not None:
             self._current_size_bytes -= entry[2]
-        self._cache.pop(key, None)
 
 
 def create_protection_scopes_cache_key(request: ProtectionScopesRequest) -> str:

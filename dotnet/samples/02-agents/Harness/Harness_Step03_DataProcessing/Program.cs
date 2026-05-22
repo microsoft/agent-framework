@@ -16,18 +16,21 @@
 #pragma warning disable MAAI001  // Suppress experimental API warnings for Agents AI experiments.
 
 using System.ClientModel.Primitives;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Harness.Shared.Console;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
-using OpenAI.Responses;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_OPENAI_ENDPOINT is not set.");
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
 
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
+const string TracingSourceName = "Harness.DataProcessing";
+
+// Set up OpenTelemetry tracing that writes spans to a text file.
+using var tracerProvider = HarnessTracing.CreateFileTracerProvider(TracingSourceName);
 
 var instructions =
     """
@@ -58,19 +61,18 @@ var instructions =
 // sample's working/ folder (copied to the output directory) so it works regardless of cwd.
 // Unused features are disabled.
 AIAgent agent =
-    new OpenAIClient(
-        new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
-        new OpenAIClientOptions()
-        {
-            Endpoint = new Uri(endpoint),
-            RetryPolicy = new ClientRetryPolicy(3)
-        })
+    new AIProjectClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
+        new AIProjectClientOptions { RetryPolicy = new ClientRetryPolicy(3) })
+    .GetProjectOpenAIClient()
     .GetResponsesClient()
-    .AsIChatClientWithStoredOutputDisabled(deploymentName)
+    .AsIChatClient(deploymentName)
     .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
     {
         Name = "DataAnalyst",
         Description = "A data analyst assistant that reads, analyzes, and processes data files.",
+        OpenTelemetrySourceName = TracingSourceName,
         FileAccessStore = new FileSystemAgentFileStore(Path.Combine(AppContext.BaseDirectory, "working")),
         DisableTodoProvider = true,
         DisableAgentModeProvider = true,

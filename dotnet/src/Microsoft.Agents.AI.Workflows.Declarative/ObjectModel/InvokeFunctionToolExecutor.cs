@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -102,6 +103,24 @@ internal sealed class InvokeFunctionToolExecutor(
 
         FunctionResultContent? matchingResult = functionResults
             .FirstOrDefault(r => r.CallId == this.Id);
+
+        // When the caller approved an approval-required function call but didn't execute it
+        // locally (the hosted Foundry scenario, where mcp_approval_response is converted to a
+        // ToolApprovalResponseContent only), invoke the registered AIFunction here so that the
+        // declarative workflow can capture the result and continue (e.g. for downstream
+        // SendActivity/PropertyPath consumers like {Local.Result}).
+        if (matchingResult is null)
+        {
+            ToolApprovalResponseContent? approval = response.Messages
+                .SelectMany(m => m.Contents)
+                .OfType<ToolApprovalResponseContent>()
+                .FirstOrDefault(r => r.RequestId == this.Id);
+
+            if (approval is { Approved: true })
+            {
+                matchingResult = await this.InvokeRegisteredFunctionAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
 
         if (matchingResult is not null)
         {
@@ -241,6 +260,48 @@ internal sealed class InvokeFunctionToolExecutor(
         return conversationIdValue.Length == 0 ? null : conversationIdValue;
     }
 
+    private async ValueTask<FunctionResultContent?> InvokeRegisteredFunctionAsync(CancellationToken cancellationToken)
+    {
+        string functionName = this.GetFunctionName();
+        AIFunction? function = agentProvider.Functions?.FirstOrDefault(
+            f => string.Equals(f.Name, functionName, StringComparison.Ordinal));
+
+        if (function is null)
+        {
+            return new FunctionResultContent(this.Id, result: null)
+            {
+                Exception = new InvalidOperationException(
+                    $"Function '{functionName}' is not registered with the agent provider."),
+            };
+        }
+
+        Dictionary<string, object?>? arguments = this.GetArguments();
+        AIFunctionArguments? functionArguments = arguments is null ? null : new AIFunctionArguments(arguments);
+
+        object? result;
+        try
+        {
+            result = await function.InvokeAsync(functionArguments, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new FunctionResultContent(this.Id, result: null) { Exception = ex };
+        }
+
+        // Match FunctionInvokingChatClient's serialization: pass strings through as-is and
+        // JSON-serialize anything else so structured results remain consumable by downstream
+        // PropertyPath consumers such as {Local.RefundResult}. Use AIJsonUtilities so the
+        // same trim/AOT-friendly serializer chain used elsewhere in the framework is applied.
+        string serialized = result switch
+        {
+            null => string.Empty,
+            string s => s,
+            _ => JsonSerializer.Serialize(result, AIJsonUtilities.DefaultOptions.GetTypeInfo(result.GetType())),
+        };
+
+        return new FunctionResultContent(this.Id, serialized);
+    }
+
     private bool GetRequireApproval()
     {
         if (this.Model.RequireApproval is null)
@@ -253,12 +314,16 @@ internal sealed class InvokeFunctionToolExecutor(
 
     private bool GetAutoSendValue()
     {
-        if (this.Model.Output?.AutoSend is null)
+        // InvokeToolOutput.AutoSend is never null — it returns a literal-false default
+        // when the YAML omits the field. Use AutoSendIsDefaultValue to distinguish an
+        // explicit autoSend value from the implicit default, and treat the implicit
+        // default as autoSend = true (the historical behavior).
+        if (this.Model.Output is { AutoSendIsDefaultValue: false } output)
         {
-            return true;
+            return this.Evaluator.GetValue(output.AutoSend).Value;
         }
 
-        return this.Evaluator.GetValue(this.Model.Output.AutoSend).Value;
+        return true;
     }
 
     private Dictionary<string, object?>? GetArguments()

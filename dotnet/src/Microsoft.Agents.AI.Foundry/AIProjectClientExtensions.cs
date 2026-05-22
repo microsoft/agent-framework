@@ -23,7 +23,7 @@ namespace Azure.AI.Projects;
 /// Provides extension methods for <see cref="AIProjectClient"/>.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
-public static partial class AzureAIProjectChatClientExtensions
+public static partial class AIProjectClientExtensions
 {
     /// <summary>
     /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="AgentReference"/>.
@@ -63,7 +63,43 @@ public static partial class AzureAIProjectChatClientExtensions
             clientFactory,
             services);
 
-        return new FoundryAgent(aiProjectClient, innerAgent);
+        return new FoundryAgent(innerAgent);
+    }
+
+    /// <summary>
+    /// Wraps an existing server side hosted agent as a <see cref="FoundryAgent"/> using the provided
+    /// <see cref="AIProjectClient"/> and an agent-specific endpoint URI.
+    /// </summary>
+    /// <param name="aiProjectClient">The <see cref="AIProjectClient"/> to use for project-level operations. Cannot be <see langword="null"/>.</param>
+    /// <param name="agentEndpoint">
+    /// The agent-specific endpoint URI of shape
+    /// <c>https://&lt;host&gt;/.../projects/&lt;project&gt;/agents/&lt;agentName&gt;/endpoint/protocols/openai</c>.
+    /// The agent name is parsed from this URI and the active agent version is resolved server side
+    /// from the endpoint's administrator-controlled version selector. Cannot be <see langword="null"/>.
+    /// </param>
+    /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    /// <returns>A <see cref="FoundryAgent"/> instance that routes calls through the supplied agent endpoint.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentEndpoint"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="agentEndpoint"/> does not match the expected agent-endpoint shape.</exception>
+    /// <remarks>
+    /// Agent version selection is controlled by the Foundry administrator through the endpoint's
+    /// version selector and cannot be overridden by the caller. Use the
+    /// <see cref="AsAIAgent(AIProjectClient, AgentReference, IList{AITool}?, Func{IChatClient, IChatClient}?, IServiceProvider?)"/>
+    /// overload when an explicit agent version pin is required.
+    /// </remarks>
+    public static FoundryAgent AsAIAgent(
+        this AIProjectClient aiProjectClient,
+        Uri agentEndpoint,
+        IList<AITool>? tools = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        IServiceProvider? services = null)
+    {
+        Throw.IfNull(aiProjectClient);
+        Throw.IfNull(agentEndpoint);
+
+        return new FoundryAgent(aiProjectClient, agentEndpoint, tools, clientFactory, services);
     }
 
     /// <summary>
@@ -96,7 +132,7 @@ public static partial class AzureAIProjectChatClientExtensions
             !allowDeclarativeMode,
             services);
 
-        return new FoundryAgent(aiProjectClient, innerAgent);
+        return new FoundryAgent(innerAgent);
     }
 
     /// <summary>
@@ -129,7 +165,7 @@ public static partial class AzureAIProjectChatClientExtensions
             !allowDeclarativeMode,
             services);
 
-        return new FoundryAgent(aiProjectClient, innerAgent);
+        return new FoundryAgent(innerAgent);
     }
 
     /// <summary>
@@ -210,7 +246,7 @@ public static partial class AzureAIProjectChatClientExtensions
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)
     {
-        IChatClient chatClient = new AzureAIProjectChatClient(aiProjectClient, agentVersion, agentOptions.ChatOptions);
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentVersion, agentOptions.ChatOptions);
 
         if (clientFactory is not null)
         {
@@ -232,10 +268,7 @@ public static partial class AzureAIProjectChatClientExtensions
         Throw.IfNull(agentOptions.ChatOptions);
         Throw.IfNullOrWhitespace(agentOptions.ChatOptions.ModelId);
 
-        IChatClient chatClient = aiProjectClient
-            .GetProjectOpenAIClient()
-            .GetResponsesClient()
-            .AsIChatClient(agentOptions.ChatOptions.ModelId);
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentOptions.ChatOptions.ModelId);
 
         if (clientFactory is not null)
         {
@@ -262,7 +295,7 @@ public static partial class AzureAIProjectChatClientExtensions
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)
     {
-        IChatClient chatClient = new AzureAIProjectChatClient(aiProjectClient, agentRecord, agentOptions.ChatOptions);
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentRecord, agentOptions.ChatOptions);
 
         if (clientFactory is not null)
         {
@@ -280,7 +313,7 @@ public static partial class AzureAIProjectChatClientExtensions
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)
     {
-        IChatClient chatClient = new AzureAIProjectChatClient(aiProjectClient, agentReference, defaultModelId: null, agentOptions.ChatOptions);
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentReference, defaultModelId: null, agentOptions.ChatOptions);
 
         if (clientFactory is not null)
         {
