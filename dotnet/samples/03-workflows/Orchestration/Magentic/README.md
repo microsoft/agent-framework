@@ -1,6 +1,6 @@
 ﻿# Magentic Orchestration Sample
 
-This sample ports the Python `magentic.py` workflow sample to .NET. It builds a `MagenticWorkflowBuilder` orchestration that coordinates three roles:
+This sample showcases the Magentic Orchestration Pattern in .NET, setting up a team with three roles:
 
 - **ResearcherAgent** gathers factual background information.
 - **CoderAgent** uses `HostedCodeInterpreterTool` for quantitative analysis.
