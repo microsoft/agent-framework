@@ -29,36 +29,18 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 /// <param name="managerAgent"></param>
 [Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
-public class MagenticWorkflowBuilder(AIAgent managerAgent)
+public class MagenticWorkflowBuilder(AIAgent managerAgent) : OrchestrationBuilderBase<MagenticWorkflowBuilder>
 {
     private readonly List<AIAgent> _team = new();
-    private string? _name;
-    private string? _description;
     private int _maxStalls = TaskLimits.DefaultMaxStallCount;
     private int? _maxRounds;
     private int? _maxResets;
     private bool _requirePlanSignoff = true;
 
-    private Dictionary<AIAgent, HashSet<OutputTag>>? _outputDesignations;
-
     /// <inheritdoc cref="GroupChatWorkflowBuilder.AddParticipants(IEnumerable{AIAgent})"/>
     public MagenticWorkflowBuilder AddParticipants(params IEnumerable<AIAgent> agents)
     {
         this._team.AddRange(agents);
-        return this;
-    }
-
-    /// <inheritdoc cref="WorkflowBuilder.WithName(string)"/>
-    public MagenticWorkflowBuilder WithName(string name)
-    {
-        this._name = name;
-        return this;
-    }
-
-    /// <inheritdoc cref="WorkflowBuilder.WithDescription(string)"/>
-    public MagenticWorkflowBuilder WithDescription(string description)
-    {
-        this._description = description;
         return this;
     }
 
@@ -103,48 +85,6 @@ public class MagenticWorkflowBuilder(AIAgent managerAgent)
         return this;
     }
 
-    /// <summary>
-    /// Designates the given <paramref name="agents"/> as sources of terminal workflow output.
-    /// Calling any output-designation method (this or <see cref="WithIntermediateOutputFrom"/>)
-    /// suppresses the orchestration-specific defaults: only the user-specified designations
-    /// reach the inner <see cref="WorkflowBuilder"/>.
-    /// </summary>
-    public MagenticWorkflowBuilder WithOutputFrom(params IEnumerable<AIAgent> agents)
-    {
-        Throw.IfNull(agents);
-        this._outputDesignations ??= new(AIAgentIDEqualityComparer.Instance);
-        foreach (AIAgent agent in agents)
-        {
-            Throw.IfNull(agent, nameof(agents));
-            if (!this._outputDesignations.ContainsKey(agent))
-            {
-                this._outputDesignations[agent] = [];
-            }
-        }
-        return this;
-    }
-
-    /// <summary>
-    /// Designates the given <paramref name="agents"/> as sources of <b>intermediate</b> workflow output.
-    /// See <see cref="WithOutputFrom"/> for the defaults-suppression semantics.
-    /// </summary>
-    public MagenticWorkflowBuilder WithIntermediateOutputFrom(IEnumerable<AIAgent> agents)
-    {
-        Throw.IfNull(agents);
-        this._outputDesignations ??= new(AIAgentIDEqualityComparer.Instance);
-        foreach (AIAgent agent in agents)
-        {
-            Throw.IfNull(agent, nameof(agents));
-            if (!this._outputDesignations.TryGetValue(agent, out HashSet<OutputTag>? tags))
-            {
-                tags = [];
-                this._outputDesignations[agent] = tags;
-            }
-            tags.Add(OutputTag.Intermediate);
-        }
-        return this;
-    }
-
     private WorkflowBuilder ReduceToWorkflowBuilder()
     {
         // Create a copy of the team so that improper modifications by using the builder after .Build() do not affect the
@@ -172,60 +112,18 @@ public class MagenticWorkflowBuilder(AIAgent managerAgent)
         }
 
         result.AddFanOutEdge(orchestrator, teamBindings);
-        this.ApplyOutputDesignations(result, orchestrator, teamMap);
 
-        if (!string.IsNullOrWhiteSpace(this._name))
+        this.ApplyOutputDesignations(result, teamMap, "Magentic", () =>
         {
-            result.WithName(this._name);
-        }
-
-        if (!string.IsNullOrWhiteSpace(this._description))
-        {
-            result.WithDescription(this._description);
-        }
-
-        return result;
-    }
-
-    private void ApplyOutputDesignations(
-        WorkflowBuilder builder,
-        ExecutorBinding orchestrator,
-        Dictionary<AIAgent, ExecutorBinding> teamMap)
-    {
-        if (this._outputDesignations is null)
-        {
-            // Defaults (matches Python Magentic orchestration):
-            //   orchestrator -> terminal output
-            //   team members -> intermediate output
-            builder.WithOutputFrom(orchestrator);
+            result.WithOutputFrom(orchestrator);
             if (teamMap.Count > 0)
             {
-                builder.WithIntermediateOutputFrom([.. teamMap.Values]);
+                result.WithIntermediateOutputFrom([.. teamMap.Values]);
             }
-            return;
-        }
+        });
 
-        foreach (AIAgent agent in this._outputDesignations.Keys)
-        {
-            if (!teamMap.TryGetValue(agent, out ExecutorBinding? binding))
-            {
-                throw new InvalidOperationException(
-                    $"Output designation references agent '{agent.Name ?? agent.Id}', which is not a participant in this Magentic workflow.");
-            }
-
-            HashSet<OutputTag> tags = this._outputDesignations[agent];
-            if (tags.Count == 0)
-            {
-                builder.WithOutputFrom(binding);
-            }
-            else
-            {
-                foreach (OutputTag tag in tags)
-                {
-                    builder.WithOutputFrom(binding, tag);
-                }
-            }
-        }
+        this.ApplyMetadata(result);
+        return result;
     }
 
     /// <inheritdoc cref="WorkflowBuilder.Build"/>

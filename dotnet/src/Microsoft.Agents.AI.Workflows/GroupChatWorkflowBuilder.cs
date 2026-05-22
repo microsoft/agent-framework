@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -12,14 +12,10 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Provides a builder for specifying group chat relationships between agents and building the resulting workflow.
 /// </summary>
-public sealed class GroupChatWorkflowBuilder
+public sealed class GroupChatWorkflowBuilder : OrchestrationBuilderBase<GroupChatWorkflowBuilder>
 {
     private readonly Func<IReadOnlyList<AIAgent>, GroupChatManager> _managerFactory;
     private readonly HashSet<AIAgent> _participants = new(AIAgentIDEqualityComparer.Instance);
-    private string _name = string.Empty;
-    private string _description = string.Empty;
-
-    private Dictionary<AIAgent, HashSet<OutputTag>>? _outputDesignations;
 
     internal GroupChatWorkflowBuilder(Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) =>
         this._managerFactory = managerFactory;
@@ -43,70 +39,6 @@ public sealed class GroupChatWorkflowBuilder
             this._participants.Add(agent);
         }
 
-        return this;
-    }
-
-    /// <summary>
-    /// Sets the human-readable name for the workflow.
-    /// </summary>
-    /// <param name="name">The name of the workflow.</param>
-    /// <returns>This instance of the <see cref="GroupChatWorkflowBuilder"/>.</returns>
-    public GroupChatWorkflowBuilder WithName(string name)
-    {
-        this._name = name;
-        return this;
-    }
-
-    /// <summary>
-    /// Sets the description for the workflow.
-    /// </summary>
-    /// <param name="description">The description of what the workflow does.</param>
-    /// <returns>This instance of the <see cref="GroupChatWorkflowBuilder"/>.</returns>
-    public GroupChatWorkflowBuilder WithDescription(string description)
-    {
-        this._description = description;
-        return this;
-    }
-
-    /// <summary>
-    /// Designates the given <paramref name="agents"/> as sources of terminal workflow output.
-    /// Calling any output-designation method (this or <see cref="WithIntermediateOutputFrom"/>)
-    /// suppresses the orchestration-specific defaults: only the user-specified designations
-    /// reach the inner <see cref="WorkflowBuilder"/>.
-    /// </summary>
-    public GroupChatWorkflowBuilder WithOutputFrom(params IEnumerable<AIAgent> agents)
-    {
-        Throw.IfNull(agents);
-        this._outputDesignations ??= new(AIAgentIDEqualityComparer.Instance);
-        foreach (AIAgent agent in agents)
-        {
-            Throw.IfNull(agent, nameof(agents));
-            if (!this._outputDesignations.ContainsKey(agent))
-            {
-                this._outputDesignations[agent] = [];
-            }
-        }
-        return this;
-    }
-
-    /// <summary>
-    /// Designates the given <paramref name="agents"/> as sources of <b>intermediate</b> workflow output.
-    /// See <see cref="WithOutputFrom"/> for the defaults-suppression semantics.
-    /// </summary>
-    public GroupChatWorkflowBuilder WithIntermediateOutputFrom(IEnumerable<AIAgent> agents)
-    {
-        Throw.IfNull(agents);
-        this._outputDesignations ??= new(AIAgentIDEqualityComparer.Instance);
-        foreach (AIAgent agent in agents)
-        {
-            Throw.IfNull(agent, nameof(agents));
-            if (!this._outputDesignations.TryGetValue(agent, out HashSet<OutputTag>? tags))
-            {
-                tags = [];
-                this._outputDesignations[agent] = tags;
-            }
-            tags.Add(OutputTag.Intermediate);
-        }
         return this;
     }
 
@@ -137,15 +69,7 @@ public sealed class GroupChatWorkflowBuilder
         ExecutorBinding host = groupChatHostFactory.BindExecutor(nameof(GroupChatHost));
         WorkflowBuilder builder = new(host);
 
-        if (!string.IsNullOrEmpty(this._name))
-        {
-            builder = builder.WithName(this._name);
-        }
-
-        if (!string.IsNullOrEmpty(this._description))
-        {
-            builder = builder.WithDescription(this._description);
-        }
+        this.ApplyMetadata(builder);
 
         foreach (var participant in agentMap.Values)
         {
@@ -154,48 +78,15 @@ public sealed class GroupChatWorkflowBuilder
                 .AddEdge(participant, host);
         }
 
-        this.ApplyOutputDesignations(builder, host, agentMap);
-        return builder.Build();
-    }
-
-    private void ApplyOutputDesignations(
-        WorkflowBuilder builder,
-        ExecutorBinding host,
-        Dictionary<AIAgent, ExecutorBinding> agentMap)
-    {
-        if (this._outputDesignations is null)
+        this.ApplyOutputDesignations(builder, agentMap, "group chat", () =>
         {
-            // Defaults (matches Python group-chat orchestration):
-            //   host        -> terminal output
-            //   participants-> intermediate output
             builder.WithOutputFrom(host);
             if (agentMap.Count > 0)
             {
                 builder.WithIntermediateOutputFrom([.. agentMap.Values]);
             }
-            return;
-        }
+        });
 
-        foreach (AIAgent agent in this._outputDesignations.Keys)
-        {
-            if (!agentMap.TryGetValue(agent, out ExecutorBinding? binding))
-            {
-                throw new InvalidOperationException(
-                    $"Output designation references agent '{agent.Name ?? agent.Id}', which is not a participant in this group chat workflow.");
-            }
-
-            HashSet<OutputTag> tags = this._outputDesignations[agent];
-            if (tags.Count == 0)
-            {
-                builder.WithOutputFrom(binding);
-            }
-            else
-            {
-                foreach (OutputTag tag in tags)
-                {
-                    builder.WithOutputFrom(binding, tag);
-                }
-            }
-        }
+        return builder.Build();
     }
 }

@@ -20,11 +20,11 @@ public class GroupChatWorkflowBuilderTests
     {
         Assert.Throws<ArgumentNullException>("managerFactory", () => AgentWorkflowBuilder.CreateGroupChatBuilderWith(null!));
 
-        var groupChat = AgentWorkflowBuilder.CreateGroupChatBuilderWith(_ => new RoundRobinGroupChatManager([new AgentWorkflowBuilderTests.DoubleEchoAgent("a1")]));
+        var groupChat = AgentWorkflowBuilder.CreateGroupChatBuilderWith(_ => new RoundRobinGroupChatManager([new OrchestrationTestHelpers.DoubleEchoAgent("a1")]));
         Assert.NotNull(groupChat);
         Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants(null!));
         Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants([null!]));
-        Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants(new AgentWorkflowBuilderTests.DoubleEchoAgent("a1"), null!));
+        Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants(new OrchestrationTestHelpers.DoubleEchoAgent("a1"), null!));
 
         Assert.Throws<ArgumentNullException>("agents", () => new RoundRobinGroupChatManager(null!));
     }
@@ -32,7 +32,7 @@ public class GroupChatWorkflowBuilderTests
     [Fact]
     public void GroupChatManager_MaximumIterationCount_Invalid_Throws()
     {
-        var manager = new RoundRobinGroupChatManager([new AgentWorkflowBuilderTests.DoubleEchoAgent("a1")]);
+        var manager = new RoundRobinGroupChatManager([new OrchestrationTestHelpers.DoubleEchoAgent("a1")]);
 
         const int DefaultMaxIterations = 40;
         Assert.Equal(DefaultMaxIterations, manager.MaximumIterationCount);
@@ -58,7 +58,7 @@ public class GroupChatWorkflowBuilderTests
 
         var workflow = AgentWorkflowBuilder
             .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 2 })
-            .AddParticipants(new AgentWorkflowBuilderTests.DoubleEchoAgent("agent1"), new AgentWorkflowBuilderTests.DoubleEchoAgent("agent2"))
+            .AddParticipants(new OrchestrationTestHelpers.DoubleEchoAgent("agent1"), new OrchestrationTestHelpers.DoubleEchoAgent("agent2"))
             .WithName(WorkflowName)
             .WithDescription(WorkflowDescription)
             .Build();
@@ -74,7 +74,7 @@ public class GroupChatWorkflowBuilderTests
 
         var workflow = AgentWorkflowBuilder
             .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 2 })
-            .AddParticipants(new AgentWorkflowBuilderTests.DoubleEchoAgent("agent1"))
+            .AddParticipants(new OrchestrationTestHelpers.DoubleEchoAgent("agent1"))
             .WithName(WorkflowName)
             .Build();
 
@@ -87,7 +87,7 @@ public class GroupChatWorkflowBuilderTests
     {
         var workflow = AgentWorkflowBuilder
             .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 2 })
-            .AddParticipants(new AgentWorkflowBuilderTests.DoubleEchoAgent("agent1"))
+            .AddParticipants(new OrchestrationTestHelpers.DoubleEchoAgent("agent1"))
             .Build();
 
         Assert.Null(workflow.Name);
@@ -104,14 +104,14 @@ public class GroupChatWorkflowBuilderTests
     {
         const int NumAgents = 3;
         var workflow = AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = maxIterations })
-            .AddParticipants(new AgentWorkflowBuilderTests.DoubleEchoAgent("agent1"), new AgentWorkflowBuilderTests.DoubleEchoAgent("agent2"))
-            .AddParticipants(new AgentWorkflowBuilderTests.DoubleEchoAgent("agent3"))
+            .AddParticipants(new OrchestrationTestHelpers.DoubleEchoAgent("agent1"), new OrchestrationTestHelpers.DoubleEchoAgent("agent2"))
+            .AddParticipants(new OrchestrationTestHelpers.DoubleEchoAgent("agent3"))
             .Build();
 
         for (int iter = 0; iter < 3; iter++)
         {
             const string UserInput = "abc";
-            (string updateText, List<ChatMessage>? result, _, _) = await AgentWorkflowBuilderTests.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+            (string updateText, List<ChatMessage>? result, _, _) = await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
 
             Assert.NotNull(result);
             Assert.Equal(maxIterations + 1, result.Count);
@@ -166,9 +166,9 @@ public class GroupChatWorkflowBuilderTests
     [Fact]
     public void Test_GroupChatWorkflowBuilder_DefaultDesignationsMatchSpec()
     {
-        AgentWorkflowBuilderTests.DoubleEchoAgent a1 = new("agent1");
-        AgentWorkflowBuilderTests.DoubleEchoAgent a2 = new("agent2");
-        AgentWorkflowBuilderTests.DoubleEchoAgent a3 = new("agent3");
+        OrchestrationTestHelpers.DoubleEchoAgent a1 = new("agent1");
+        OrchestrationTestHelpers.DoubleEchoAgent a2 = new("agent2");
+        OrchestrationTestHelpers.DoubleEchoAgent a3 = new("agent3");
 
         Workflow workflow = AgentWorkflowBuilder
             .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 1 })
@@ -186,9 +186,9 @@ public class GroupChatWorkflowBuilderTests
     [Fact]
     public void Test_GroupChatWorkflowBuilder_ExplicitDesignationsReplaceDefaults()
     {
-        AgentWorkflowBuilderTests.DoubleEchoAgent a1 = new("agent1");
-        AgentWorkflowBuilderTests.DoubleEchoAgent a2 = new("agent2");
-        AgentWorkflowBuilderTests.DoubleEchoAgent a3 = new("agent3");
+        OrchestrationTestHelpers.DoubleEchoAgent a1 = new("agent1");
+        OrchestrationTestHelpers.DoubleEchoAgent a2 = new("agent2");
+        OrchestrationTestHelpers.DoubleEchoAgent a3 = new("agent3");
 
         Workflow workflow = AgentWorkflowBuilder
             .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 1 })
@@ -210,8 +210,8 @@ public class GroupChatWorkflowBuilderTests
     [Fact]
     public void Test_GroupChatWorkflowBuilder_DesignationForNonParticipantThrows()
     {
-        AgentWorkflowBuilderTests.DoubleEchoAgent participant = new("p1");
-        AgentWorkflowBuilderTests.DoubleEchoAgent stranger = new("stranger");
+        OrchestrationTestHelpers.DoubleEchoAgent participant = new("p1");
+        OrchestrationTestHelpers.DoubleEchoAgent stranger = new("stranger");
 
         GroupChatWorkflowBuilder builder = AgentWorkflowBuilder
             .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 1 })
