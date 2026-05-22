@@ -142,6 +142,39 @@ def test_experimental_class_warns_on_instantiation_and_not_on_definition() -> No
     assert ExperimentalClass.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value
 
 
+def test_experimental_abc_subclass_warning_points_at_user_file() -> None:
+    """Subclassing an experimental ABC must report the warning at the user's
+    ``class Sub(...):`` line, not at internal abc.py / <frozen abc> frames.
+
+    Regression: previously the fixed ``stacklevel=3`` landed inside abc.py for
+    ABC-driven class creation, surfacing ``<frozen abc>:106`` to users.
+    """
+    from abc import ABC, abstractmethod
+
+    @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+    class ExperimentalABC(ABC):
+        @abstractmethod
+        def do(self) -> int: ...
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        subclass_line = inspect.currentframe().f_lineno + 1
+
+        class Concrete(ExperimentalABC):
+            def do(self) -> int:
+                return 1
+
+    assert len(caught) == 1
+    assert caught[0].filename == __file__
+    # __init_subclass__ fires at the end of the class body, so the lineno
+    # points somewhere inside the Concrete class definition rather than at
+    # the ``class Concrete`` header itself. The key behaviour we want to
+    # guarantee is that it is in the *user* file at all (not abc.py).
+    assert subclass_line <= caught[0].lineno <= subclass_line + 5
+    assert issubclass(caught[0].category, ExperimentalWarning)
+    assert Concrete().do() == 1
+
+
 def test_experimental_runtime_checkable_protocol_keeps_protocol_runtime_checks() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

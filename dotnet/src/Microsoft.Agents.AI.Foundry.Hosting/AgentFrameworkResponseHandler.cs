@@ -27,6 +27,12 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     private readonly FoundryToolboxService? _toolboxService;
 
     /// <summary>
+    /// Cached fallback used when no <see cref="HostedSessionIsolationKeyProvider"/> is registered in DI.
+    /// Avoids a per-request allocation on the request hot path.
+    /// </summary>
+    private static readonly HostedSessionIsolationKeyProvider s_defaultIsolationKeyProvider = new PlatformHostedSessionIsolationKeyProvider();
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
     /// that resolves agents from keyed DI services.
     /// </summary>
@@ -66,6 +72,42 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 : chatClientAgent is not null
                 ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
                 : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        // 2.5. Resolve and apply the per-request hosted session identity context.
+        // Fresh sessions are tagged once. Resumed sessions are validated against the live request
+        // to detect cross-user session leaks and in-process tampering of the persisted identity.
+        var isolationKeyProvider = this._serviceProvider.GetService<HostedSessionIsolationKeyProvider>()
+            ?? s_defaultIsolationKeyProvider;
+        var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
+        if (resolvedHostedContext is null)
+        {
+            throw new InvalidOperationException(
+                $"The registered {nameof(HostedSessionIsolationKeyProvider)} returned null for the current request. " +
+                "Ensure the Foundry platform is providing the x-agent-user-isolation-key and x-agent-chat-isolation-key headers, " +
+                "or register a custom provider that supplies fallback values for local development.");
+        }
+
+        if (session is not null)
+        {
+            var existingHostedContext = session.GetHostedContext();
+            if (existingHostedContext is null)
+            {
+                // Fresh path: the session has no hosted context yet (either freshly created here,
+                // or freshly loaded for a conversation_id that the platform supplied without any
+                // prior hosted-agent request having stamped a context). Stamp it now.
+                session.SetHostedContext(resolvedHostedContext);
+            }
+            else if (!string.Equals(existingHostedContext.UserId, resolvedHostedContext.UserId, StringComparison.Ordinal)
+                || !string.Equals(existingHostedContext.ChatId, resolvedHostedContext.ChatId, StringComparison.Ordinal))
+            {
+                // Resume path: the persisted identity must match the live request. A mismatch
+                // signals either a cross-user session leak or in-process tampering of the
+                // persisted identity. Reject the request hard.
+                throw new ResponsesApiException(
+                    new Error("hosted_session_identity_mismatch", "Hosted session identity context mismatch"),
+                    403);
+            }
+        }
 
         // 3. Create the SDK event stream builder
         var stream = new ResponseEventStream(context, request);

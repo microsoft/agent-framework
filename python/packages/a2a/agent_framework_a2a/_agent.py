@@ -129,6 +129,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         self._timeout_config = self._create_timeout_config(timeout)
         if client is not None:
             self.client = client
+            self._non_streaming_client: Client | None = None
             self._close_http_client = True
             return
         if agent_card is None:
@@ -144,22 +145,33 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             self._http_client = http_client  # Store for cleanup
             self._close_http_client = True
 
-        # Create A2A client using factory
-        config = ClientConfig(
+        interceptors = [auth_interceptor] if auth_interceptor is not None else None
+
+        # Create streaming client (SSE transport for stream=True)
+        streaming_config = ClientConfig(
             httpx_client=http_client,
+            streaming=True,
             supported_protocol_bindings=["JSONRPC"],
         )
-        factory = ClientFactory(config)
-        interceptors = [auth_interceptor] if auth_interceptor is not None else None
+        # Create non-streaming client (single request/response for stream=False)
+        non_streaming_config = ClientConfig(
+            httpx_client=http_client,
+            streaming=False,
+            supported_protocol_bindings=["JSONRPC"],
+        )
+        streaming_factory = ClientFactory(streaming_config)
+        non_streaming_factory = ClientFactory(non_streaming_config)
 
         # Attempt transport negotiation with the provided agent card
         try:
-            self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
+            self.client = streaming_factory.create(agent_card, interceptors=interceptors)  # type: ignore
+            self._non_streaming_client = non_streaming_factory.create(
+                agent_card,
+                interceptors=interceptors,  # type: ignore
+            )
         except Exception as transport_error:
             # Transport negotiation failed - fall back to minimal agent card with JSONRPC
-            fallback_url = (
-                agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url
-            )
+            fallback_url = agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url
             if not fallback_url:
                 raise ValueError(
                     "A2A transport negotiation failed and no fallback URL is available. "
@@ -168,7 +180,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 ) from transport_error
             fallback_card = minimal_agent_card(fallback_url, ["JSONRPC"])
             try:
-                self.client = factory.create(fallback_card, interceptors=interceptors)  # type: ignore
+                self.client = streaming_factory.create(fallback_card, interceptors=interceptors)  # type: ignore
+                self._non_streaming_client = non_streaming_factory.create(
+                    fallback_card,
+                    interceptors=interceptors,  # type: ignore
+                )
             except Exception as fallback_error:
                 raise RuntimeError(
                     f"A2A transport negotiation failed. "
@@ -284,6 +300,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         del function_invocation_kwargs, client_kwargs, kwargs
         normalized_messages = normalize_messages(messages)
 
+        # Use non-streaming transport for non-streaming calls when available.
+        # This sends a single HTTP request/response instead of opening an SSE
+        # connection, matching the protocol's intent for synchronous operations.
+        active_client = (
+            self._non_streaming_client if (not stream and self._non_streaming_client is not None) else self.client
+        )
+
         if continuation_token is not None:
             a2a_stream: AsyncIterable[A2AStreamItem] = self.client.subscribe(
                 SubscribeToTaskRequest(id=continuation_token["task_id"])
@@ -295,7 +318,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 normalized_messages[-1],
                 context_id=session.service_session_id if session else None,
             )
-            a2a_stream = self.client.send_message(SendMessageRequest(message=a2a_message))
+            request = SendMessageRequest(message=a2a_message)
+            if background and not stream:
+                # return_immediately only applies to non-streaming (message/send)
+                request.configuration.return_immediately = True
+            a2a_stream = active_client.send_message(request)
 
         provider_session = session
         if provider_session is None and self.context_providers:
@@ -365,6 +392,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         all_updates: list[AgentResponseUpdate] = []
         streamed_artifact_ids_by_task: dict[str, set[str]] = {}
+        # In non-streaming mode, accumulate intermediate status content so it
+        # can be surfaced when the terminal event arrives (mirroring v0.3.x
+        # behavior where the full Task history was available at completion).
+        pending_updates_by_task: dict[str, list[AgentResponseUpdate]] = {}
         async for item in a2a_stream:
             payload_type = item.WhichOneof("payload")
             if payload_type == "message":
@@ -391,27 +422,55 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 )
                 if task.status.state in TERMINAL_TASK_STATES:
                     streamed_artifact_ids_by_task.pop(task.id, None)
+                    # If the terminal Task has no content, flush accumulated updates
+                    if not updates or all(not u.contents for u in updates):
+                        pending = pending_updates_by_task.pop(task.id, [])
+                        for update in pending:
+                            all_updates.append(update)
+                            yield update
+                    else:
+                        pending_updates_by_task.pop(task.id, None)
                 for update in updates:
                     all_updates.append(update)
                     yield update
             elif payload_type == "status_update":
                 status_event = item.status_update
                 updates = self._updates_from_task_update_event(status_event)
+                is_terminal = status_event.status.state in TERMINAL_TASK_STATES
                 if emit_intermediate:
                     for update in updates:
                         all_updates.append(update)
                         yield update
+                elif is_terminal:
+                    if updates:
+                        # Terminal event with content — discard accumulated intermediates
+                        pending_updates_by_task.pop(status_event.task_id, None)
+                        for update in updates:
+                            all_updates.append(update)
+                            yield update
+                    else:
+                        # Terminal event with NO content — flush accumulated updates
+                        pending = pending_updates_by_task.pop(status_event.task_id, [])
+                        for update in pending:
+                            all_updates.append(update)
+                            yield update
+                else:
+                    # Non-streaming intermediate: accumulate for later
+                    if updates:
+                        pending_updates_by_task.setdefault(status_event.task_id, []).extend(updates)
             elif payload_type == "artifact_update":
                 artifact_event = item.artifact_update
                 updates = self._updates_from_task_update_event(artifact_event)
+                # Always yield artifact updates — they carry actual response
+                # content (files, data).  Track IDs so that a subsequent
+                # terminal Task doesn't duplicate the same artifacts.
                 if updates:
                     streamed_artifact_ids_by_task.setdefault(artifact_event.task_id, set()).add(
                         artifact_event.artifact.artifact_id
                     )
-                if emit_intermediate:
-                    for update in updates:
-                        all_updates.append(update)
-                        yield update
+                for update in updates:
+                    all_updates.append(update)
+                    yield update
             else:
                 raise NotImplementedError(f"Unsupported StreamResponse payload: {payload_type}")
 

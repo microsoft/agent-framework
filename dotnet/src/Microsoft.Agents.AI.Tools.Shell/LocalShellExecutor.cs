@@ -325,7 +325,7 @@ public sealed class LocalShellExecutor : ShellExecutor
     /// container where the tool itself is the boundary).
     /// </param>
     /// <returns>An <see cref="AIFunction"/> wrapping <see cref="RunAsync"/>.</returns>
-    public AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = true)
+    public override AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = true)
     {
         if (!requireApproval && !this._acknowledgeUnsafe)
         {

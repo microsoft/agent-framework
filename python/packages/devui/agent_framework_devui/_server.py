@@ -89,7 +89,7 @@ class DevServer:
             mode: Server mode - 'developer' (full access, verbose errors) or 'user' (restricted APIs, generic errors)
             auth_enabled: Whether to require Bearer token auth on /v1/* endpoints. Defaults to True.
             auth_token: Bearer token. If None and auth_enabled, falls back to the DEVUI_AUTH_TOKEN
-                environment variable, then to an auto-generated token (logged at startup).
+                environment variable. Loopback binds may use an auto-generated token logged at startup.
         """
         self.entities_dir = entities_dir
         self.port = port
@@ -106,7 +106,7 @@ class DevServer:
         self.ui_enabled = ui_enabled
         self.mode = mode
         self.auth_enabled = auth_enabled
-        self.auth_token = self._resolve_auth_token(auth_enabled, auth_token)
+        self.auth_token = self._resolve_auth_token(host, auth_enabled, auth_token)
         self.executor: AgentFrameworkExecutor | None = None
         self.openai_executor: OpenAIExecutor | None = None
         self.deployment_manager = DeploymentManager()
@@ -118,7 +118,13 @@ class DevServer:
         """Set in-memory entities to register on startup."""
         self._pending_entities = entities
 
+    _AUTH_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
     _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]", "::1"})
+
+    @classmethod
+    def _is_auth_loopback_host(cls, host: str) -> bool:
+        """Return True when unauthenticated DevUI may be limited to local loopback."""
+        return host.lower() in cls._AUTH_LOOPBACK_HOSTS
 
     def _loopback_allowed_hosts(self) -> frozenset[str] | None:
         """Return the Host-header allowlist when bound to a loopback interface, else None.
@@ -131,16 +137,25 @@ class DevServer:
             return None
         return self._LOOPBACK_HOSTS
 
-    @staticmethod
-    def _resolve_auth_token(auth_enabled: bool, auth_token: str | None) -> str | None:
+    @classmethod
+    def _resolve_auth_token(cls, host: str, auth_enabled: bool, auth_token: str | None) -> str | None:
         """Resolve the active Bearer token. Returns None when auth is disabled."""
+        is_loopback = cls._is_auth_loopback_host(host)
         if not auth_enabled:
+            if not is_loopback:
+                raise ValueError(
+                    "DevUI authentication cannot be disabled for non-loopback hosts. "
+                    "Bind to 127.0.0.1/localhost for no-auth local development, or enable auth and provide "
+                    "DEVUI_AUTH_TOKEN or auth_token for network-reachable binds."
+                )
             return None
         if auth_token:
             return auth_token
         env_token = os.getenv("DEVUI_AUTH_TOKEN")
         if env_token:
             return env_token
+        if not is_loopback:
+            raise ValueError("DEVUI_AUTH_TOKEN or auth_token is required when DevUI is bound to a non-loopback host.")
         generated = secrets.token_urlsafe(32)
         logger.info("=" * 70)
         logger.info("DevUI authentication enabled with auto-generated token:")

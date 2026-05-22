@@ -44,6 +44,7 @@ class MockA2AClient:
         self.subscribe_responses: list[StreamResponse] = []
         self.get_task_response: Task | None = None
         self.last_message: Any = None
+        self.last_request: Any = None
 
     def add_message_response(self, message_id: str, text: str, role: str = "agent") -> None:
         """Add a mock Message response."""
@@ -91,6 +92,7 @@ class MockA2AClient:
 
     async def send_message(self, request: Any) -> AsyncIterator[StreamResponse]:
         """Mock send_message method that yields responses."""
+        self.last_request = request
         self.last_message = getattr(request, "message", request)
         self.call_count += 1
 
@@ -743,6 +745,96 @@ async def test_working_task_no_token_without_background(a2a_agent: A2AAgent, moc
     response = await a2a_agent.run("Foreground task")
 
     assert response.continuation_token is None
+
+
+async def test_background_sets_return_immediately_on_request(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that background=True sets return_immediately=True on SendMessageRequest configuration."""
+    mock_a2a_client.add_in_progress_task_response("task-bg", state=TaskState.TASK_STATE_WORKING)
+
+    await a2a_agent.run("Background task", background=True)
+
+    assert mock_a2a_client.last_request.configuration.return_immediately is True
+
+
+async def test_foreground_does_not_set_return_immediately(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that background=False (default) does not set configuration on SendMessageRequest."""
+    mock_a2a_client.add_task_response("task-fg2", [{"id": "art-1", "content": "Done"}])
+
+    await a2a_agent.run("Foreground task")
+
+    assert mock_a2a_client.last_request.HasField("configuration") is False
+
+
+async def test_streaming_background_does_not_set_return_immediately(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that background=True with stream=True does not set return_immediately.
+
+    Per A2A spec, return_immediately only applies to non-streaming (message/send).
+    """
+    mock_a2a_client.add_task_response("task-sb", [{"id": "art-1", "content": "Streaming bg"}])
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Stream background", stream=True, background=True):
+        updates.append(update)
+
+    assert mock_a2a_client.last_request.HasField("configuration") is False
+
+
+async def test_non_streaming_run_uses_non_streaming_client() -> None:
+    """Test that stream=False uses the non-streaming client when available."""
+    streaming_client = MockA2AClient()
+    non_streaming_client = MockA2AClient()
+    non_streaming_client.add_task_response("task-ns", [{"id": "art-1", "content": "Non-streaming result"}])
+
+    agent = A2AAgent(name="Test Agent", id="test-ns", client=streaming_client, http_client=None)
+    agent._non_streaming_client = non_streaming_client  # type: ignore[assignment]
+
+    response = await agent.run("Hello")
+
+    # Non-streaming client should have been called
+    assert non_streaming_client.call_count == 1
+    assert streaming_client.call_count == 0
+    assert response.messages[0].text == "Non-streaming result"
+    assert non_streaming_client.last_request.HasField("configuration") is False
+
+
+async def test_streaming_run_uses_streaming_client() -> None:
+    """Test that stream=True always uses the streaming client."""
+    streaming_client = MockA2AClient()
+    non_streaming_client = MockA2AClient()
+    streaming_client.add_task_response("task-s", [{"id": "art-1", "content": "Streaming result"}])
+
+    agent = A2AAgent(name="Test Agent", id="test-s", client=streaming_client, http_client=None)
+    agent._non_streaming_client = non_streaming_client  # type: ignore[assignment]
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in agent.run("Hello", stream=True):
+        updates.append(update)
+
+    # Streaming client should have been called
+    assert streaming_client.call_count == 1
+    assert non_streaming_client.call_count == 0
+    assert updates[0].contents[0].text == "Streaming result"
+
+
+async def test_non_streaming_client_fallback_when_not_available(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that stream=False falls back to streaming client when non-streaming client is unavailable."""
+    mock_a2a_client.add_task_response("task-fb", [{"id": "art-1", "content": "Fallback result"}])
+
+    # a2a_agent is created with client= param so _non_streaming_client is None
+    assert a2a_agent._non_streaming_client is None
+
+    response = await a2a_agent.run("Hello")
+
+    assert mock_a2a_client.call_count == 1
+    assert response.messages[0].text == "Fallback result"
 
 
 async def test_completed_task_has_no_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -1568,6 +1660,104 @@ async def test_none_metadata_leaves_additional_properties_empty(
 
     response = await a2a_agent.run("hello")
     assert not response.additional_properties
+
+
+async def test_non_streaming_terminal_status_update_surfaces_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Non-streaming run() should surface content from terminal status_update events."""
+    completed_msg = A2AMessage(
+        message_id="msg-complete",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Done! Here is your answer.")],
+    )
+    status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=completed_msg)
+    event = TaskStatusUpdateEvent(task_id="task-ts", context_id="ctx-ts", status=status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=event))
+
+    response = await a2a_agent.run("Hello")
+
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Done! Here is your answer."
+
+
+async def test_non_streaming_accumulates_working_content_for_empty_terminal(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Non-streaming run() accumulates WORKING content and flushes on empty terminal event."""
+    # Intermediate WORKING event with content
+    working_msg = A2AMessage(
+        message_id="msg-working",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Here is your answer from working state.")],
+    )
+    working_status = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=working_msg)
+    working_event = TaskStatusUpdateEvent(task_id="task-acc", context_id="ctx-acc", status=working_status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=working_event))
+
+    # Terminal COMPLETED event with NO content
+    completed_status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED)
+    completed_event = TaskStatusUpdateEvent(task_id="task-acc", context_id="ctx-acc", status=completed_status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=completed_event))
+
+    response = await a2a_agent.run("Hello")
+
+    # The accumulated WORKING content is flushed when terminal arrives empty
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Here is your answer from working state."
+
+
+async def test_non_streaming_intermediate_discarded_when_terminal_has_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Non-streaming: if terminal event has content, intermediate content is discarded."""
+    # Intermediate WORKING event
+    working_msg = A2AMessage(
+        message_id="msg-working",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Still thinking...")],
+    )
+    working_status = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=working_msg)
+    working_event = TaskStatusUpdateEvent(task_id="task-wi", context_id="ctx-wi", status=working_status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=working_event))
+
+    # Terminal COMPLETED event WITH content
+    completed_msg = A2AMessage(
+        message_id="msg-final",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Final answer")],
+    )
+    completed_status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=completed_msg)
+    completed_event = TaskStatusUpdateEvent(task_id="task-wi", context_id="ctx-wi", status=completed_status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=completed_event))
+
+    response = await a2a_agent.run("Hello")
+
+    # Terminal content supersedes accumulated intermediates
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Final answer"
+
+
+async def test_non_streaming_artifact_update_surfaces_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Non-streaming run() should surface content from artifact_update events."""
+    artifact = Artifact(
+        artifact_id="art-ns",
+        parts=[Part(text="Artifact content")],
+    )
+    event = TaskArtifactUpdateEvent(task_id="task-anu", context_id="ctx-anu", artifact=artifact, append=False)
+    mock_a2a_client.responses.append(StreamResponse(artifact_update=event))
+
+    # Terminal task with the same artifact ID — should be deduped
+    mock_a2a_client.add_task_response("task-anu", [{"id": "art-ns", "content": "Artifact content"}])
+
+    response = await a2a_agent.run("Hello")
+
+    # Artifact update + terminal task with same artifact ID = content emitted once from
+    # the artifact_update, then the duplicate from the task is filtered by streamed_artifact_ids
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Artifact content"
 
 
 # endregion

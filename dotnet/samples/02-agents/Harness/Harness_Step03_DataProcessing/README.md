@@ -1,11 +1,11 @@
 # What this sample demonstrates
 
-This sample demonstrates how to use a `HarnessAgent` with the `FileAccessProvider` to give an agent access to a folder of data files for reading, analyzing, and writing results. The `HarnessAgent` pre-configures function invocation, per-service-call chat history persistence, and in-loop compaction — so the sample only needs to supply the chat client, token limits, and application-specific options.
+This sample demonstrates how to use a `HarnessAgent` with the default `FileAccessProvider` to give an agent access to a folder of data files for reading, analyzing, and writing results. The `HarnessAgent` pre-configures function invocation, per-service-call chat history persistence, in-loop compaction, tool approval, and OpenTelemetry — so the sample only needs to supply the chat client, token limits, custom instructions, and opt out of unused features.
 
 Key features showcased:
 
 - **HarnessAgent** — a pre-configured agent that wraps a `ChatClientAgent` with function invocation, per-service-call persistence, and context-window compaction
-- **FileAccessProvider** — gives the agent tools to read, write, list, search, and delete files in a shared data folder
+- **FileAccessProvider** — the HarnessAgent's default file access provider uses `{cwd}/working` as its working directory, matching this sample's `working/` folder
 - **CSV data processing** — the agent reads sales transaction data and performs analysis on demand
 - **Output file creation** — the agent can write summaries, filtered data, or reports back to the data folder
 - **Streaming output** — responses are streamed token-by-token for a natural experience
@@ -39,7 +39,7 @@ dotnet run --project samples/02-agents/Harness/Harness_Step03_DataProcessing
 
 ## What to Expect
 
-The sample starts an interactive conversation with a data analyst agent. The `data/` folder contains a `sales.csv` file with ~50 rows of sales transaction data (date, product, category, quantity, unit price, region, salesperson).
+The sample starts an interactive conversation with a data analyst agent. The `working/` folder contains a `sales.csv` file with ~50 rows of sales transaction data (date, product, category, quantity, unit price, region, salesperson).
 
 You can ask the agent to:
 
@@ -53,7 +53,7 @@ E.g. try the following prompt `Please process the sales.csv file by first filter
 
 ## Sample Data
 
-The included `data/sales.csv` contains sales transactions from January to March 2025 with the following columns:
+The included `working/sales.csv` contains sales transactions from January to March 2025 with the following columns:
 
 | Column | Description |
 | --- | --- |

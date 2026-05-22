@@ -4031,14 +4031,102 @@ async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompt
     assert tool._prompts_loaded is True
 
 
+async def test_connect_skips_tools_and_prompts_when_server_does_not_advertise_capabilities() -> None:
+    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)
+    tool.is_connected = True
+    tool.session = Mock()
+    tool.session._request_id = 0
+    tool.session.initialize = AsyncMock(
+        return_value=types.InitializeResult(
+            protocolVersion=types.LATEST_PROTOCOL_VERSION,
+            capabilities=types.ServerCapabilities(),
+            serverInfo=types.Implementation(name="test", version="1.0"),
+        )
+    )
+    tool.session.list_tools = AsyncMock()
+    tool.session.list_prompts = AsyncMock()
+    tool.session.set_logging_level = AsyncMock()
+
+    with patch.object(logger, "level", logging.INFO):
+        await tool._connect_on_owner()
+
+    tool.session.initialize.assert_awaited_once()
+    tool.session.list_tools.assert_not_called()
+    tool.session.list_prompts.assert_not_called()
+    tool.session.set_logging_level.assert_not_called()
+    assert tool.is_connected is True
+    assert tool._supports_tools is False
+    assert tool._supports_prompts is False
+    assert tool._supports_logging is False
+    assert tool._tools_loaded is True
+    assert tool._prompts_loaded is True
+
+
+async def test_connect_treats_missing_capabilities_as_unsupported() -> None:
+    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)
+    tool.is_connected = True
+    tool.session = Mock()
+    tool.session._request_id = 0
+    tool.session.initialize = AsyncMock(return_value=Mock(capabilities=None))
+    tool.session.list_tools = AsyncMock()
+    tool.session.list_prompts = AsyncMock()
+
+    with patch.object(logger, "level", logging.NOTSET):
+        await tool._connect_on_owner()
+
+    tool.session.list_tools.assert_not_called()
+    tool.session.list_prompts.assert_not_called()
+    assert tool._supports_tools is False
+    assert tool._supports_prompts is False
+    assert tool._supports_logging is False
+
+
+async def test_connect_sets_logging_level_when_server_advertises_logging() -> None:
+    tool = MCPTool(name="test_tool", load_tools=False, load_prompts=False)
+    tool.is_connected = True
+    tool.session = Mock()
+    tool.session._request_id = 0
+    tool.session.initialize = AsyncMock(
+        return_value=types.InitializeResult(
+            protocolVersion=types.LATEST_PROTOCOL_VERSION,
+            capabilities=types.ServerCapabilities(logging=types.LoggingCapability()),
+            serverInfo=types.Implementation(name="test", version="1.0"),
+        )
+    )
+    tool.session.set_logging_level = AsyncMock()
+
+    with patch.object(logger, "level", logging.INFO):
+        await tool._connect_on_owner()
+
+    tool.session.set_logging_level.assert_awaited_once_with("info")
+    assert tool._supports_logging is True
+
+
+async def test_ensure_connected_skips_future_pings_when_ping_is_not_available() -> None:
+    tool = MCPTool(name="test_tool")
+    tool.session = Mock(
+        send_ping=AsyncMock(
+            side_effect=McpError(types.ErrorData(code=-32601, message="Method 'ping' is not available."))
+        )
+    )
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_reconnect:
+        await tool._ensure_connected()
+        await tool._ensure_connected()
+
+    tool.session.send_ping.assert_awaited_once()
+    mock_reconnect.assert_not_awaited()
+    assert tool._ping_available is False
+
+
 async def test_ensure_connected_reconnects_on_failed_ping() -> None:
     tool = MCPTool(name="test_tool")
     tool.session = Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed")))
 
-    with patch.object(tool, "connect", AsyncMock()) as mock_connect:
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_reconnect:
         await tool._ensure_connected()
 
-    mock_connect.assert_awaited_once_with(reset=True)
+    mock_reconnect.assert_awaited_once_with()
 
 
 async def test_ensure_connected_wraps_reconnect_failure() -> None:
@@ -4046,10 +4134,68 @@ async def test_ensure_connected_wraps_reconnect_failure() -> None:
     tool.session = Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed")))
 
     with (
-        patch.object(tool, "connect", AsyncMock(side_effect=RuntimeError("still closed"))),
+        patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=RuntimeError("still closed"))),
         pytest.raises(ToolExecutionException, match="Failed to establish MCP connection"),
     ):
         await tool._ensure_connected()
+
+
+async def test_load_tools_reconnects_on_closed_resource_when_ping_is_unavailable() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_tools=True)
+    tool._ping_available = False
+
+    first_session = Mock()
+    first_session.list_tools = AsyncMock(side_effect=ClosedResourceError())
+    tool.session = first_session
+
+    page = Mock()
+    page.tools = []
+    page.nextCursor = None
+
+    second_session = Mock()
+    second_session.list_tools = AsyncMock(return_value=page)
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_tools = True
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_tools()
+
+    first_session.list_tools.assert_awaited_once()
+    mock_reconnect.assert_awaited_once_with()
+    second_session.list_tools.assert_awaited_once()
+
+
+async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailable() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_prompts=True)
+    tool._ping_available = False
+
+    first_session = Mock()
+    first_session.list_prompts = AsyncMock(side_effect=ClosedResourceError())
+    tool.session = first_session
+
+    page = Mock()
+    page.prompts = []
+    page.nextCursor = None
+
+    second_session = Mock()
+    second_session.list_prompts = AsyncMock(return_value=page)
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_prompts = True
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_prompts()
+
+    first_session.list_prompts.assert_awaited_once()
+    mock_reconnect.assert_awaited_once_with()
+    second_session.list_prompts.assert_awaited_once()
 
 
 async def test_mcp_tool_filters_framework_kwargs():
@@ -4192,6 +4338,55 @@ async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_e
             assert len(meta) > 0
         else:
             assert meta is None
+
+
+async def test_mcp_tool_call_tool_forwards_tool_list_meta():
+    """call_tool echoes per-tool metadata returned by tools/list."""
+    from opentelemetry import trace
+
+    tool_meta = {
+        "tool_configuration": {
+            "name": "WorkIQSharePoint.readSmallBinaryFile",
+            "type": "foundry_toolbox",
+        }
+    }
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="WorkIQSharePoint.readSmallBinaryFile",
+                            description="Read a binary file",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"fileId": {"type": "string"}},
+                                "required": ["fileId"],
+                            },
+                            _meta=tool_meta,
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
+            )
+            self.session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        await server.load_prompts()
+
+        with trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)):
+            await server.call_tool("WorkIQSharePoint.readSmallBinaryFile", fileId="file-1")
+
+        assert server.session.call_tool.call_args.kwargs["meta"] == tool_meta
 
 
 async def test_mcp_streamable_http_tool_hook_not_duplicated_on_repeated_get_mcp_client():

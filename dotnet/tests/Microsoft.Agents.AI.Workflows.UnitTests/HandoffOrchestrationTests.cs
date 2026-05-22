@@ -87,6 +87,23 @@ public class HandoffOrchestrationTests
     }
 
     [Fact]
+    public void BuildHandoffs_WithNameAndDescription_SetsWorkflowMetadata()
+    {
+        const string WorkflowName = "handoff-workflow";
+        const string WorkflowDescription = "A handoff workflow";
+
+        DoubleEchoAgent agent = new("agent");
+
+        var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(agent)
+            .WithName(WorkflowName)
+            .WithDescription(WorkflowDescription)
+            .Build();
+
+        Assert.Equal(WorkflowName, workflow.Name);
+        Assert.Equal(WorkflowDescription, workflow.Description);
+    }
+
+    [Fact]
     public async Task Handoffs_NoTransfers_ResponseServedByOriginalAgentAsync()
     {
         var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>

@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
+    <ProjectReference Include="..\Hosted_Shared_Contributor_Setup\Hosted_Shared_Contributor_Setup.csproj" />
   </ItemGroup>
 
   <!-- For end-users: uncomment the PackageReference below and remove the ProjectReference above

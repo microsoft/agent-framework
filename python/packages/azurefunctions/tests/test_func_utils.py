@@ -107,7 +107,7 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_add_event_queues_event(self, context: CapturingRunnerContext) -> None:
         """Test that add_event queues events correctly."""
-        event = WorkflowEvent.output(executor_id="exec_1", data="output")
+        event = WorkflowEvent("output", executor_id="exec_1", data="output")
 
         await context.add_event(event)
 
@@ -120,7 +120,7 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_drain_events_clears_queue(self, context: CapturingRunnerContext) -> None:
         """Test that drain_events clears the event queue."""
-        await context.add_event(WorkflowEvent.output(executor_id="e", data="test"))
+        await context.add_event(WorkflowEvent("output", executor_id="e", data="test"))
 
         await context.drain_events()  # First drain
         events = await context.drain_events()  # Second drain
@@ -132,14 +132,14 @@ class TestCapturingRunnerContext:
         """Test has_events returns correct boolean."""
         assert await context.has_events() is False
 
-        await context.add_event(WorkflowEvent.output(executor_id="e", data="test"))
+        await context.add_event(WorkflowEvent("output", executor_id="e", data="test"))
 
         assert await context.has_events() is True
 
     @pytest.mark.asyncio
     async def test_next_event_waits_for_event(self, context: CapturingRunnerContext) -> None:
         """Test that next_event returns queued events."""
-        event = WorkflowEvent.output(executor_id="e", data="waited")
+        event = WorkflowEvent("output", executor_id="e", data="waited")
         await context.add_event(event)
 
         result = await context.next_event()
@@ -171,7 +171,7 @@ class TestCapturingRunnerContext:
     async def test_reset_for_new_run_clears_state(self, context: CapturingRunnerContext) -> None:
         """Test that reset_for_new_run clears all state."""
         await context.send_message(WorkflowMessage(data="test", target_id="t", source_id="s"))
-        await context.add_event(WorkflowEvent.output(executor_id="e", data="event"))
+        await context.add_event(WorkflowEvent("output", executor_id="e", data="event"))
         context.set_streaming(True)
 
         context.reset_for_new_run()

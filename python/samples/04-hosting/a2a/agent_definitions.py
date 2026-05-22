@@ -8,15 +8,10 @@ AgentCards for the invoice, policy, and logistics agent types.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from invoice_data import query_by_invoice_id, query_by_transaction_id, query_invoices
-
-if TYPE_CHECKING:
-    from agent_framework import Agent
-    from agent_framework.foundry import FoundryChatClient
-
 
 # ---------------------------------------------------------------------------
 # Agent instructions

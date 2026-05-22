@@ -126,29 +126,6 @@ def serve(
     if not isinstance(port, int) or not (1 <= port <= 65535):
         raise ValueError(f"Invalid port: {port}. Must be integer between 1 and 65535")
 
-    # Security check: warn loudly when network-exposed without authentication.
-    if host not in ("127.0.0.1", "localhost") and not auth_enabled:
-        logger.warning("WARNING: Exposing DevUI to the network with --no-auth.")
-        logger.warning("Anyone on your network can read agent metadata and trigger requests.")
-        logger.warning("Drop --no-auth and DevUI will require Bearer tokens.")
-
-    # Refuse to auto-generate a token for network-exposed binds. Auto-generated tokens
-    # are fine for localhost convenience; for anything else, require an explicit token.
-    if auth_enabled and not auth_token:
-        import os
-
-        env_token = os.environ.get("DEVUI_AUTH_TOKEN")
-        if not env_token:
-            is_production = (
-                host not in ("127.0.0.1", "localhost")
-                or os.environ.get("CI") == "true"
-                or os.environ.get("KUBERNETES_SERVICE_HOST")
-            )
-            if is_production:
-                logger.error("Authentication required but no token provided.")
-                logger.error("Set DEVUI_AUTH_TOKEN env var or pass auth_token='...' to serve().")
-                raise ValueError("DEVUI_AUTH_TOKEN required when host is not localhost")
-
     # Enable instrumentation if requested
     if instrumentation_enabled:
         from agent_framework.observability import enable_instrumentation
