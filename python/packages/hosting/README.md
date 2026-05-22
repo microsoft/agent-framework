@@ -124,14 +124,18 @@ response store, and for short-lived local dev.
 
 For **long-running** deployments (an always-on container, a local dev server
 you restart often, a single-VM bot) opt in to disk persistence by passing
-`state_dir` to `AgentFrameworkHost`. It uses [`diskcache`](https://grantjenks.com/docs/diskcache/)
-(installed via the `[disk]` extra) and an OS-level advisory file lock so two
-hosts pointed at the same directory can't double-execute scheduled pushes.
+`state_dir` to `AgentFrameworkHost`. The runner queue and the session
+bookkeeping use [`diskcache`](https://grantjenks.com/docs/diskcache/)
+(installed via the `[disk]` extra) protected by an OS-level advisory file
+lock so two hosts pointed at the same directory can't double-execute
+scheduled pushes. Workflow checkpoints (when the target is a `Workflow`)
+use the framework's `FileCheckpointStorage` — no extra dependency.
 
 ```python
 from agent_framework_hosting import AgentFrameworkHost
 
-# Single path → host auto-creates `runner/` and `sessions/` subfolders.
+# Single path → host auto-creates `runner/`, `sessions/`, and
+# (for workflow targets) `checkpoints/` subfolders.
 host = AgentFrameworkHost(
     target=agent,
     channels=channels,
@@ -140,12 +144,17 @@ host = AgentFrameworkHost(
 
 # Or route components to different roots — use the HostStatePaths TypedDict
 # (or a plain dict with the same keys) for editor autocomplete on the keys.
+# Omit a key to opt that component out of persistence.
 from agent_framework_hosting import HostStatePaths
 
 host = AgentFrameworkHost(
-    target=agent,
+    target=workflow,
     channels=channels,
-    state_dir=HostStatePaths(runner="/var/lib/myapp/tasks", sessions="/var/lib/myapp/state"),
+    state_dir=HostStatePaths(
+        runner="/var/lib/myapp/tasks",
+        sessions="/var/lib/myapp/state",
+        checkpoints="/var/lib/myapp/checkpoints",
+    ),
 )
 ```
 
@@ -160,6 +169,10 @@ What survives a restart:
   (consumed by `ResponseTarget.active`).
 - **`_identities`** — channel-native `ChannelIdentity` rows used by
   `ResponseTarget.channels([...])` / `.all_linked` fan-out.
+- **Workflow checkpoints** — when the target is a `Workflow`, the host wraps
+  the `checkpoints` path in a per-isolation-key `FileCheckpointStorage`
+  (equivalent to passing `checkpoint_location=...` directly; the explicit
+  parameter takes precedence and emits a warning when both are set).
 
 What doesn't:
 
@@ -169,4 +182,5 @@ What doesn't:
 
 Unpicklable push payloads raise `PushPayloadNotPicklable` *eagerly* from
 `schedule()` so issues surface at the call site, not on the next restart.
+
 

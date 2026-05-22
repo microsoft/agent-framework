@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 # Known component keys recognised by the host's ``state_dir`` normaliser.
 # Adding a new component is a non-breaking change: extend this tuple and
 # add the matching key to :class:`HostStatePaths` in ``_types.py``.
-_KNOWN_COMPONENTS: tuple[str, ...] = ("runner", "sessions")
+_KNOWN_COMPONENTS: tuple[str, ...] = ("runner", "sessions", "checkpoints")
 
 
 def load_diskcache() -> Any:

@@ -501,6 +501,8 @@ class AgentFrameworkHost:
                 For workflow targets, channels (or their ``run_hook``) are
                 responsible for shaping ``ChannelRequest.input`` into the
                 workflow start executor's typed input.
+
+        Keyword Args:
             channels: The channels to expose. Each channel contributes routes
                 and commands that are mounted under ``channel.path`` (defaulting
                 to the channel name).
@@ -520,9 +522,10 @@ class AgentFrameworkHost:
                 (``WorkflowBuilder(checkpoint_storage=...)``), the host
                 refuses to start so ownership of checkpointing is
                 unambiguous. Ignored for ``SupportsAgentRun`` targets (a
-                warning is emitted).
-
-        Keyword Args:
+                warning is emitted). Takes precedence over
+                ``state_dir['checkpoints']`` (or the auto-derived
+                ``state_dir/checkpoints/`` subfolder); a warning surfaces
+                the double-configuration.
             runtime_mode: Hint that drives the *defaults* for runtime-shape
                 dependent components (currently the durable task runner,
                 and — by extension — anything that wants to know whether
@@ -572,42 +575,99 @@ class AgentFrameworkHost:
                 pending queue and the session-related dicts
                 (``_session_aliases``, ``_active``, ``_identities``) to
                 a :mod:`diskcache`-backed store under ``state_dir`` and
-                replays the runner queue on next startup. Accepts:
+                replays the runner queue on next startup. When the
+                target is a :class:`Workflow`, the auto-derived
+                ``state_dir/checkpoints/`` subfolder (or the
+                ``checkpoints`` key of the mapping form) is also used
+                as the workflow checkpoint location (equivalent to
+                passing ``checkpoint_location`` directly). Accepts:
 
                 * ``None`` (default) — everything stays in memory; the
                   process owns its state and loses it on exit. Matches
                   today's behaviour exactly.
                 * ``str`` / :class:`os.PathLike` — the host creates
-                  default subfolders ``state_dir/runner/`` and
-                  ``state_dir/sessions/`` for the runner queue and the
-                  session dicts respectively. Recommended for most
+                  default subfolders ``state_dir/runner/``,
+                  ``state_dir/sessions/``, and (for workflow targets)
+                  ``state_dir/checkpoints/``. Recommended for most
                   long-running-host deployments — one path, no extra
-                  config, both components persist together.
+                  config, all components persist together. Note: when
+                  the target is a Workflow this enables workflow
+                  checkpoint persistence; use the mapping form below
+                  and omit ``checkpoints`` to opt out.
                 * :class:`HostStatePaths` typed dict / plain
                   ``Mapping`` — per-component overrides for callers that
                   want each component on a different volume (fast local
                   SSD for the runner, network-attached volume for
                   sessions, …). Components missing from the mapping
-                  fall back to in-memory.
+                  fall back to in-memory (or, for ``checkpoints``, to
+                  no checkpoint persistence). Unknown keys raise
+                  ``ValueError`` to surface typos early.
 
-                Requires the optional ``diskcache`` dependency (install
-                with ``pip install 'agent-framework-hosting[disk]'``).
-                Each enabled component acquires an OS-level advisory
-                lock on its directory; a second host pointed at the
-                same paths raises :class:`RuntimeError` at construction
-                so two processes do not double-execute queued tasks.
-                When ``durable_task_runner`` is supplied explicitly, the
-                runner sub-path is ignored — the caller owns the
-                runner's persistence story.
+                The ``runner`` and ``sessions`` components require the
+                optional ``diskcache`` dependency (install with
+                ``pip install 'agent-framework-hosting[disk]'``);
+                ``checkpoints`` uses the core
+                :class:`~agent_framework.FileCheckpointStorage` and has
+                no extra dependency. Each disk-cache-backed component
+                acquires an OS-level advisory lock on its directory; a
+                second host pointed at the same paths raises
+                :class:`RuntimeError` at construction so two processes
+                do not double-execute queued tasks. When
+                ``durable_task_runner`` is supplied explicitly, the
+                ``runner`` sub-path is ignored — the caller owns the
+                runner's persistence story. When ``checkpoint_location``
+                is supplied explicitly, the ``checkpoints`` sub-path is
+                ignored.
         """
         self.target: SupportsAgentRun | Workflow = target
         self._is_workflow = isinstance(target, Workflow)
         self.channels = list(channels)
         self._debug = debug
         self._app: Starlette | None = None
+        # Disk persistence — normalise the per-component map up front so
+        # the runner, session-store, and checkpoint paths are resolved
+        # before any consumer (including ``checkpoint_location``) is
+        # built. ``None`` (default) means everything stays in memory.
+        self._state_paths: dict[str, Path | None] = normalize_state_dir(state_dir)
+        # Track whether the user passed the mapping form so we can
+        # distinguish "auto-derived from single path" (silent ignore for
+        # non-workflow targets) from "explicit mapping key" (warn for
+        # non-workflow targets, since that's almost certainly dead config).
+        checkpoints_explicit_in_mapping = isinstance(state_dir, Mapping) and "checkpoints" in state_dir
+        # Resolve the effective workflow checkpoint location: the
+        # explicit ``checkpoint_location`` argument wins; otherwise we
+        # fall back to ``state_dir['checkpoints']`` (single-path form
+        # auto-derives ``state_dir/checkpoints/``).
+        derived_checkpoint_path = self._state_paths.get("checkpoints")
         self._checkpoint_location: Path | CheckpointStorage | None = None
-        if checkpoint_location is not None:
+        effective_checkpoint_source: str | os.PathLike[str] | CheckpointStorage | None = checkpoint_location
+        if checkpoint_location is None and derived_checkpoint_path is not None:
+            # Only consume the derived path when the target is a
+            # Workflow; non-workflow targets get a warning (explicit
+            # mapping case) or a silent ignore (single-path case).
+            if self._is_workflow:
+                effective_checkpoint_source = derived_checkpoint_path
+            elif checkpoints_explicit_in_mapping:
+                logger.warning("state_dir['checkpoints'] is set but target is not a Workflow; ignoring.")
+        elif checkpoint_location is not None and derived_checkpoint_path is not None:
+            # Both the legacy parameter and the new state_dir component
+            # configure the same thing. Keep the explicit one and
+            # surface the double-config so the user notices the no-op.
+            logger.warning(
+                "Both checkpoint_location and state_dir['checkpoints'] are set "
+                "(state_dir['checkpoints']=%s); the explicit checkpoint_location "
+                "takes precedence and the state_dir sub-path is ignored. "
+                "Use the HostStatePaths mapping form and omit 'checkpoints' to "
+                "configure runner/sessions persistence without also enabling "
+                "host-managed workflow checkpointing.",
+                derived_checkpoint_path,
+            )
+        if effective_checkpoint_source is not None:
             if not self._is_workflow:
+                # Only the legacy parameter path can reach here for a
+                # non-workflow target (the derived path was already
+                # short-circuited above). Preserve the historical
+                # warning text so existing users see the same message.
                 logger.warning("checkpoint_location is set but target is not a Workflow; ignoring.")
             else:
                 workflow: Workflow = target  # type: ignore[assignment]
@@ -615,21 +675,17 @@ class AgentFrameworkHost:
                     raise RuntimeError(
                         "Workflow already has checkpoint storage configured "
                         "(WorkflowBuilder(checkpoint_storage=...)). The host "
-                        "manages checkpoints when checkpoint_location is set; "
-                        "remove one of the two configurations."
+                        "manages checkpoints when checkpoint_location (or "
+                        "state_dir['checkpoints']) is set; remove one of the "
+                        "two configurations."
                     )
-                if isinstance(checkpoint_location, (str, os.PathLike)):
-                    self._checkpoint_location = Path(os.fspath(checkpoint_location))
+                if isinstance(effective_checkpoint_source, (str, os.PathLike)):
+                    self._checkpoint_location = Path(os.fspath(effective_checkpoint_source))
                 else:
                     # Anything else is treated as a CheckpointStorage instance.
                     # ``CheckpointStorage`` is a non-runtime-checkable Protocol,
                     # so we cannot ``isinstance``-check it directly.
-                    self._checkpoint_location = checkpoint_location
-        # Disk persistence — normalise the per-component map up front
-        # so the runner and session-store paths are resolved before any
-        # component is built. ``None`` (default) means everything stays
-        # in memory.
-        self._state_paths: dict[str, Path | None] = normalize_state_dir(state_dir)
+                    self._checkpoint_location = effective_checkpoint_source
         # Runtime mode + durable task runner. We resolve mode first
         # because the warning-on-ephemeral-without-runner only fires
         # when both are at their defaults.

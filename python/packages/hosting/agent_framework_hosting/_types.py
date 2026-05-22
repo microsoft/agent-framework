@@ -516,9 +516,11 @@ class HostStatePaths(TypedDict, total=False):
     that needs to survive container moves.
 
     All keys are optional (``total=False``): unset components fall back
-    to in-memory storage. Pass a single ``str``/``PathLike`` to
-    ``state_dir`` instead to get the default subfolder layout
-    (``state_dir/runner/``, ``state_dir/sessions/``).
+    to in-memory storage (or, for ``checkpoints``, to no checkpoint
+    persistence). Pass a single ``str``/``PathLike`` to ``state_dir``
+    instead to get the default subfolder layout
+    (``state_dir/runner/``, ``state_dir/sessions/``,
+    ``state_dir/checkpoints/``).
 
     Future components (links, continuations, ledger) will be added as
     additional keys in subsequent releases.
@@ -536,6 +538,17 @@ class HostStatePaths(TypedDict, total=False):
     ``ResponseTarget.active``/``.channel``/``.all_linked`` to find
     destinations after a restart, and for ``reset_session`` rotations
     to survive a restart."""
+
+    checkpoints: str | os.PathLike[str]
+    """Where the host persists workflow checkpoints for ``Workflow``
+    targets. Equivalent to passing ``checkpoint_location=<this path>``
+    directly: the host wraps it in a per-isolation-key
+    :class:`~agent_framework.FileCheckpointStorage`. Ignored when the
+    target is a ``SupportsAgentRun`` agent (a warning is emitted if you
+    set it explicitly via the mapping form). Pass the legacy
+    ``checkpoint_location`` parameter instead when you need to supply a
+    :class:`~agent_framework.CheckpointStorage` instance — it takes
+    precedence over this key."""
 
 
 # A transform hook runs over each AgentResponseUpdate as the channel consumes

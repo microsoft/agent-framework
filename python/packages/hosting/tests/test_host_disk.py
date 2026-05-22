@@ -225,3 +225,135 @@ def test_explicit_runner_with_runner_state_warns(tmp_path: Path, caplog: pytest.
     finally:
         # user_runner has no disk state, so nothing else to clean up.
         pass
+
+
+# --------------------------------------------------------------------------- #
+# Workflow checkpoint integration                                              #
+# --------------------------------------------------------------------------- #
+
+
+def _build_simple_workflow() -> Any:
+    """Build a no-op workflow for checkpoint-wiring tests."""
+    from tests._workflow_fixtures import build_upper_workflow
+
+    return build_upper_workflow()
+
+
+def test_single_path_state_dir_wires_workflow_checkpoints(tmp_path: Path) -> None:
+    """``state_dir="/foo"`` + workflow target → ``/foo/checkpoints/`` is used."""
+    workflow = _build_simple_workflow()
+    host = AgentFrameworkHost(
+        target=workflow,
+        channels=[_ChannelStub()],
+        state_dir=tmp_path,
+    )
+    try:
+        # Checkpoint location is derived from the single state_dir.
+        assert host._checkpoint_location == tmp_path / "checkpoints"
+    finally:
+        _close_host_disk(host)
+
+
+def test_mapping_state_dir_checkpoints_key_wires_workflow_checkpoints(tmp_path: Path) -> None:
+    """``state_dir={"checkpoints": ...}`` + workflow target → that path is used."""
+    workflow = _build_simple_workflow()
+    ckpt_dir = tmp_path / "ck"
+    host = AgentFrameworkHost(
+        target=workflow,
+        channels=[_ChannelStub()],
+        state_dir={"checkpoints": ckpt_dir},
+    )
+    try:
+        assert host._checkpoint_location == ckpt_dir
+        # No diskcache components were requested.
+        assert host._sessions_store is None
+    finally:
+        _close_host_disk(host)
+
+
+def test_mapping_state_dir_omits_checkpoints_for_workflow(tmp_path: Path) -> None:
+    """Mapping form lets workflow callers opt out of checkpoint persistence."""
+    workflow = _build_simple_workflow()
+    host = AgentFrameworkHost(
+        target=workflow,
+        channels=[_ChannelStub()],
+        # No 'checkpoints' key → no checkpoint persistence even though
+        # other components are persisted.
+        state_dir={"runner": tmp_path / "r", "sessions": tmp_path / "s"},
+    )
+    try:
+        assert host._checkpoint_location is None
+    finally:
+        _close_host_disk(host)
+
+
+def test_explicit_checkpoint_location_wins_over_state_dir(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """``checkpoint_location`` + ``state_dir`` → explicit param wins + warn."""
+    workflow = _build_simple_workflow()
+    explicit = tmp_path / "explicit-ck"
+    with caplog.at_level("WARNING", logger="agent_framework.hosting"):
+        host = AgentFrameworkHost(
+            target=workflow,
+            channels=[_ChannelStub()],
+            checkpoint_location=explicit,
+            state_dir=tmp_path,
+        )
+    try:
+        assert host._checkpoint_location == explicit
+        assert any(
+            "state_dir['checkpoints']" in rec.message and "checkpoint_location" in rec.message for rec in caplog.records
+        )
+    finally:
+        _close_host_disk(host)
+
+
+def test_state_dir_checkpoints_for_agent_target_silent_for_single_path(tmp_path: Path) -> None:
+    """Single-path state_dir + agent target → no checkpoint, no warning."""
+    host = AgentFrameworkHost(
+        target=_AgentStub(),
+        channels=[_ChannelStub()],
+        state_dir=tmp_path,
+    )
+    try:
+        assert host._checkpoint_location is None
+        # ``checkpoints/`` subfolder is not eagerly created (no consumer).
+        assert not (tmp_path / "checkpoints").exists()
+    finally:
+        _close_host_disk(host)
+
+
+def test_state_dir_checkpoints_for_agent_target_warns_when_explicit(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Mapping form with ``checkpoints`` + agent target → warn (dead config)."""
+    with caplog.at_level("WARNING", logger="agent_framework.hosting"):
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub()],
+            state_dir={"checkpoints": tmp_path / "ck"},
+        )
+    try:
+        assert host._checkpoint_location is None
+        assert any(
+            "state_dir['checkpoints']" in rec.message and "not a Workflow" in rec.message for rec in caplog.records
+        )
+    finally:
+        _close_host_disk(host)
+
+
+def test_state_dir_checkpoints_conflicts_with_workflow_own_storage(tmp_path: Path) -> None:
+    """Derived checkpoint path triggers the same conflict guard as explicit."""
+    from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
+
+    from tests._workflow_fixtures import _UpperExecutor
+
+    workflow = WorkflowBuilder(
+        start_executor=_UpperExecutor(id="upper"),
+        checkpoint_storage=InMemoryCheckpointStorage(),
+    ).build()
+    with pytest.raises(RuntimeError, match="already has checkpoint storage"):
+        AgentFrameworkHost(
+            target=workflow,
+            channels=[_ChannelStub()],
+            state_dir=tmp_path,
+        )
