@@ -40,19 +40,11 @@ trigger:
       variable: Local.SearchQuery
       value: =Workflow.Inputs.text
 
-    # List the tools exposed by the toolbox MCP proxy.
-    #
-    # We intentionally OMIT ``conversationId`` here: the tool list is
-    # metadata for the demo, not useful context for the downstream
-    # summarising agent. Forwarding it into the conversation only
-    # inflates token usage and per-call latency. We also keep
-    # ``autoSend: false`` because the Python host's streaming loop
-    # prints every string ``output`` event — emitting the raw tool
-    # list JSON would visually bury the agent's final answer. The
-    # .NET sibling sample uses ``autoSend: true`` because the .NET
-    # ``WorkflowRunner`` console helper only renders agent updates
-    # (not ``WorkflowOutputEvent``s), so the same YAML value behaves
-    # differently across hosts.
+    # List the tools exposed by the toolbox MCP proxy. We omit
+    # ``conversationId`` (the catalog is demo metadata, not useful
+    # context for the downstream agent) and keep ``autoSend: false``
+    # so the raw JSON catalog doesn't bury the agent's final answer in
+    # the host's output stream.
     - kind: InvokeMcpTool
       id: list_toolbox_tools
       serverUrl: =Env.FOUNDRY_TOOLBOX_MCP_SERVER_URL
