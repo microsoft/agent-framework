@@ -20,8 +20,8 @@ namespace Microsoft.Agents.AI.Workflows;
 /// When no explicit output designations are made, the default is the Python-aligned
 /// shape: the terminal aggregator is the workflow output, and every participating agent
 /// (plus its per-agent accumulator) is designated as an intermediate output source.
-/// Calling <see cref="OrchestrationBuilderBase{TBuilder}.WithOutputFrom(System.Collections.Generic.IEnumerable{AIAgent})"/>
-/// or <see cref="OrchestrationBuilderBase{TBuilder}.WithIntermediateOutputFrom(System.Collections.Generic.IEnumerable{AIAgent})"/>
+/// Calling <see cref="OrchestrationBuilderBase{TBuilder}.WithOutputFrom(IEnumerable{AIAgent})"/>
+/// or <see cref="OrchestrationBuilderBase{TBuilder}.WithIntermediateOutputFrom(IEnumerable{AIAgent})"/>
 /// at all suppresses these defaults.
 /// </remarks>
 public sealed class ConcurrentWorkflowBuilder : OrchestrationBuilderBase<ConcurrentWorkflowBuilder>
