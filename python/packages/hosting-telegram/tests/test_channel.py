@@ -21,6 +21,7 @@ from agent_framework_hosting import (
     AgentFrameworkHost,
     ChannelCommand,
     ChannelCommandContext,
+    ChannelRequest,
     HostedRunResult,
 )
 from starlette.testclient import TestClient
@@ -168,6 +169,39 @@ class TestTelegramWebhook:
             )
         assert r.status_code == 401
         assert not agent.runs
+
+    async def test_response_hook_can_rewrite_originating_reply(self) -> None:
+        contexts: list[Any] = []
+
+        def hook(result: HostedRunResult, **kwargs: Any) -> HostedRunResult:
+            contexts.append(kwargs["context"])
+            return HostedRunResult(_FakeAgentResponse(text=result.result.text.upper()), session=result.session)
+
+        ch, agent = _make_telegram()
+        ch.response_hook = hook
+
+        class _Ctx:
+            target: Any = agent
+
+            async def run(self, _request: ChannelRequest) -> HostedRunResult:
+                return HostedRunResult(_FakeAgentResponse(text="hi"))
+
+            async def deliver_response(self, _request: ChannelRequest, _payload: HostedRunResult) -> bool:
+                return True
+
+        ch._ctx = _Ctx()  # type: ignore[assignment] # pyright: ignore[reportPrivateUsage]
+
+        request = ChannelRequest(channel="telegram", operation="message.create", input="hi", stream=False)
+        await ch._dispatch(99, request)  # pyright: ignore[reportPrivateUsage]
+
+        assert ch._http is not None
+        args, kwargs = ch._http.post.call_args  # type: ignore[attr-defined]
+        assert args[0].endswith("/sendMessage")
+        assert kwargs["json"]["text"] == "HI"
+        assert contexts
+        assert contexts[0].channel_name == "telegram"
+        assert contexts[0].originating is True
+        assert contexts[0].destination_identity is None
 
 
 class TestPushAndCommand:

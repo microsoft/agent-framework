@@ -36,10 +36,13 @@ from agent_framework_hosting import (
     ChannelContribution,
     ChannelIdentity,
     ChannelRequest,
+    ChannelResponseContext,
+    ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
     ChannelStreamTransformHook,
     HostedRunResult,
+    apply_response_hook,
     apply_run_hook,
     logger,
 )
@@ -78,6 +81,11 @@ def telegram_isolation_key(chat_id: Any) -> str:
     Telegram conversation by passing the chat id).
     """
     return f"telegram:{chat_id}"
+
+
+def _text_result(text: str) -> HostedRunResult[AgentResponse]:
+    """Build a host delivery payload from text accumulated by this channel."""
+    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
 def _telegram_media_file_id(message: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -147,6 +155,7 @@ class TelegramChannel:
         commands: Sequence[ChannelCommand] = (),
         register_native_commands: bool = True,
         run_hook: ChannelRunHook | None = None,
+        response_hook: ChannelResponseHook | None = None,
         api_base: str = "https://api.telegram.org",
         webhook_url: str | None = None,
         secret_token: str | None = None,
@@ -163,6 +172,7 @@ class TelegramChannel:
         self._commands = list(commands)
         self._register = register_native_commands
         self._hook = run_hook
+        self.response_hook = response_hook
         self._stream_default = stream
         self._stream_transform_hook = stream_transform_hook
         self._stream_edit_min_interval = stream_edit_min_interval
@@ -587,15 +597,19 @@ class TelegramChannel:
             if self._send_typing_action:
                 await self._send_chat_action(chat_id, "typing")
             result = await self._ctx.run(request)
-            await self._reply_with_result(chat_id, result)
+            include_originating = await self._ctx.deliver_response(request, result)
+            if include_originating:
+                result = await self._apply_response_hook(result, request)
+                await self._reply_with_result(chat_id, result.result)
             return
 
         stream = self._ctx.run_stream(request)
-        await self._stream_to_chat(chat_id, stream)
+        await self._stream_to_chat(chat_id, request, stream)
 
     async def _stream_to_chat(
         self,
         chat_id: int,
+        request: ChannelRequest,
         stream: ResponseStream[AgentResponseUpdate, AgentResponse],
     ) -> None:
         """Iterate the agent's ResponseStream and progressively edit a Telegram message.
@@ -719,6 +733,13 @@ class TelegramChannel:
 
         # Final edit applies parse_mode (if configured) to the full text.
         final_text = (accumulated or last_sent)[:_TELEGRAM_MAX_TEXT_LEN]
+        result = _text_result(final_text) if final_text else None
+        include_originating = True
+        if result is not None and self._ctx is not None:
+            include_originating = await self._ctx.deliver_response(request, result)
+            if include_originating:
+                result = await self._apply_response_hook(result, request)
+                final_text = result.result.text[:_TELEGRAM_MAX_TEXT_LEN]
         if message_id is not None and final_text and final_text != last_sent:
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
@@ -739,8 +760,28 @@ class TelegramChannel:
 
         # If nothing ever streamed (no text chunks at all), fall back to the
         # full result so images / tool outputs still reach the user.
-        if not accumulated:
+        if not accumulated and include_originating:
+            if final is not None:
+                wrapped_final = await self._apply_response_hook(HostedRunResult(final), request)
+                final = wrapped_final.result
             await self._reply_with_result(chat_id, final)
+
+    async def _apply_response_hook(
+        self,
+        result: HostedRunResult[Any],
+        request: ChannelRequest,
+    ) -> HostedRunResult[Any]:
+        """Apply the channel-level response hook for an originating reply."""
+        if self.response_hook is None:
+            return result
+        context = ChannelResponseContext(
+            request=request,
+            channel_name=self.name,
+            destination_identity=None,
+            originating=True,
+            is_echo=False,
+        )
+        return await apply_response_hook(self.response_hook, result, context=context)
 
     async def _reply_with_result(self, chat_id: int, result: Any) -> None:
         """Forward an AgentRunResponse back to Telegram.
