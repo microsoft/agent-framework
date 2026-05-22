@@ -92,6 +92,23 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
             return [];
         }
 
+        if (arguments.Value.ValueKind == JsonValueKind.String)
+        {
+            var text = arguments.Value.GetString();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                try
+                {
+                    using var document = JsonDocument.Parse(text);
+                    arguments = document.RootElement.Clone();
+                }
+                catch (JsonException)
+                {
+                    arguments = arguments.Value;
+                }
+            }
+        }
+
         if (arguments.Value.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException(
