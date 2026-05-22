@@ -122,6 +122,35 @@ class TestGraphBasedWorkflowExecution:
         assert "c" in outputs
 
     @pytest.mark.asyncio
+    async def test_foreach_multi_action_body_runs_sequentially(self):
+        """Body actions must complete per item before advancing."""
+        yaml_def = {
+            "name": "loop_sequential_body",
+            "actions": [
+                {"kind": "SetValue", "id": "set_items", "path": "Local.items", "value": ["A", "B"]},
+                {
+                    "kind": "Foreach",
+                    "id": "loop",
+                    "itemsSource": "=Local.items",
+                    "iteratorVariable": "Local.item",
+                    "actions": [
+                        {"kind": "SendActivity", "id": "step_1", "activity": {"text": '="1-" & Local.item'}},
+                        {"kind": "SendActivity", "id": "step_2", "activity": {"text": '="2-" & Local.item'}},
+                        {"kind": "SendActivity", "id": "step_3", "activity": {"text": '="3-" & Local.item'}},
+                    ],
+                },
+            ],
+        }
+
+        builder = DeclarativeWorkflowBuilder(yaml_def)
+        workflow = builder.build()
+
+        events = await workflow.run(ActionTrigger())
+        outputs = events.get_outputs()
+
+        assert outputs == ["1-A", "2-A", "3-A", "1-B", "2-B", "3-B"]
+
+    @pytest.mark.asyncio
     async def test_workflow_with_switch(self):
         """Test workflow with Switch/ConditionGroup."""
         yaml_def = {

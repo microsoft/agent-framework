@@ -817,10 +817,14 @@ class DeclarativeWorkflowBuilder:
                 condition=lambda msg: isinstance(msg, LoopIterationResult) and msg.has_next,
             )
 
-            # Body exit -> Next (get all exits from body and wire to next_executor)
-            body_exits = self._get_source_exits(body_entry)
-            for body_exit in body_exits:
-                builder.add_edge(source=body_exit, target=next_executor)
+            # Wire from the LAST body action so the loop only advances after the
+            # whole body completes. _get_branch_exit walks the chain, skips
+            # terminators (Break/Continue), and returns nested If/Switch
+            # structures so _get_source_exits can flatten their branch exits.
+            body_exit = self._get_branch_exit(body_entry)
+            if body_exit is not None:
+                for source_exit in self._get_source_exits(body_exit):
+                    builder.add_edge(source=source_exit, target=next_executor)
 
             # Next -> body (when has_next=True, loop back)
             builder.add_edge(
@@ -1008,16 +1012,12 @@ class DeclarativeWorkflowBuilder:
         return entry.evaluator if is_structure else entry
 
     def _get_branch_exit(self, branch_entry: Any) -> Any | None:
-        """Get the exit executor of a branch.
+        """Get the exit point of a branch for downstream wiring.
 
-        For a linear sequence of actions, returns the last executor.
-        For nested structures, returns None (they have their own branch_exits).
-
-        Args:
-            branch_entry: The first executor of the branch
-
-        Returns:
-            The exit executor, or None if branch is empty or ends with a structure
+        Returns the last executor (or its ``_exit_executor``) for a linear chain,
+        the nested If/Switch structure itself when the chain ends in one (so
+        callers can flatten ``branch_exits`` via :meth:`_get_source_exits`), or
+        ``None`` when the branch is empty or ends in a terminator action.
         """
         if branch_entry is None:
             return None
