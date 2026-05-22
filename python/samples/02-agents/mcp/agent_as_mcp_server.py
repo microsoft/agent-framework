@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 import anyio
 from agent_framework import Agent, tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -57,7 +57,7 @@ async def run() -> None:
     # Define an agent
     # Agent's name and description provide better context for AI model
     agent = Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         name="RestaurantAgent",
         description="Answer questions about the menu.",
         tools=[get_specials, get_item_price],

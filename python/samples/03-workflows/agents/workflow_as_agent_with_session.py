@@ -38,7 +38,7 @@ Use cases:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured for FoundryChatClient
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
@@ -46,7 +46,7 @@ async def main() -> None:
     # Create a chat client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -72,7 +72,7 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[assistant, summarizer]).build()
 
     # Wrap the workflow as an agent
-    agent = Agent(client=workflow, name="ConversationalWorkflowAgent")
+    agent = workflow.as_agent()
 
     # Create a session to maintain history
     session = agent.create_session()
@@ -133,7 +133,7 @@ async def demonstrate_session_serialization() -> None:
     """
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -144,7 +144,7 @@ async def demonstrate_session_serialization() -> None:
     )
 
     workflow = SequentialBuilder(participants=[memory_assistant]).build()
-    agent = Agent(client=workflow, name="MemoryWorkflowAgent")
+    agent = workflow.as_agent()
 
     # Create initial session and have a conversation
     session = agent.create_session()

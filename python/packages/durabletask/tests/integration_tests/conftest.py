@@ -291,7 +291,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """Skip tests based on markers and environment availability."""
     foundry_vars = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"]
     foundry_available = all(os.getenv(var) for var in foundry_vars)
-    azure_openai_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT_NAME"]
+    azure_openai_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_MODEL"]
     azure_openai_available = all(os.getenv(var) for var in azure_openai_vars)
     skip_foundry = pytest.mark.skip(reason=f"Missing required environment variables: {', '.join(foundry_vars)}")
     skip_azure_openai = pytest.mark.skip(
@@ -348,7 +348,7 @@ def check_sample_env(request: pytest.FixtureRequest) -> None:
 
     sample_name = cast(str, sample_marker.args[0])  # type: ignore[union-attr]
     if sample_name == "06_multi_agent_orchestration_conditionals":
-        required_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT_NAME"]
+        required_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_MODEL"]
     else:
         required_vars = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"]
     missing = [var for var in required_vars if not os.getenv(var)]

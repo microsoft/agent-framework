@@ -40,7 +40,7 @@ Show how to:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for FoundryChatClient with required environment variables.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
@@ -109,7 +109,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[new_email.email_content])], should_respond=True)
     )
 
 
@@ -140,7 +140,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content by id from workflow state and forward it to the assistant.
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[email.email_content])], should_respond=True)
     )
 
 
@@ -165,7 +165,7 @@ def create_spam_detection_agent() -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         instructions=(
@@ -183,7 +183,7 @@ def create_email_assistant_agent() -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         instructions=(

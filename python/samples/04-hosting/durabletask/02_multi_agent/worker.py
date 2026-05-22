@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Worker process for hosting multiple agents with different tools using Durable Task.
+"""Worker process for hosting multiple Azure OpenAI agents with different tools using Durable Task.
 
 This worker registers two agents - a weather assistant and a math assistant - each
 with their own specialized tools. This demonstrates how to host multiple agents
 with different capabilities in a single worker process.
 
 Prerequisites:
-- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL
 - Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -19,7 +19,7 @@ from typing import Any
 
 from agent_framework import Agent, tool
 from agent_framework.azure import DurableAIAgentWorker
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
@@ -73,13 +73,10 @@ def create_weather_agent():
     Returns:
         Agent: The configured Weather agent with weather tool
     """
-    _client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
-        credential=AsyncAzureCliCredential(),
-    )
     return Agent(
-        client=_client,
+        client=OpenAIChatCompletionClient(
+            credential=AsyncAzureCliCredential(),
+        ),
         name=WEATHER_AGENT_NAME,
         instructions="You are a helpful weather assistant. Provide current weather information.",
         tools=[get_weather],
@@ -92,13 +89,10 @@ def create_math_agent():
     Returns:
         Agent: The configured Math agent with calculation tools
     """
-    _client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
-        credential=AsyncAzureCliCredential(),
-    )
     return Agent(
-        client=_client,
+        client=OpenAIChatCompletionClient(
+            credential=AsyncAzureCliCredential(),
+        ),
         name=MATH_AGENT_NAME,
         instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
         tools=[calculate_tip],

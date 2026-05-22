@@ -7,7 +7,7 @@ that uses conditional logic to either handle spam emails or draft professional r
 
 Prerequisites:
 - The worker must be running with both agents, orchestration, and activities registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL
 - Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running
 """

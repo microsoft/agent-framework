@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 import re
@@ -299,6 +300,7 @@ ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -350,6 +352,8 @@ ContentType = Literal[
     "image_generation_tool_result",
     "mcp_server_tool_call",
     "mcp_server_tool_result",
+    "search_tool_call",
+    "search_tool_result",
     "shell_tool_call",
     "shell_tool_result",
     "shell_command_output",
@@ -858,6 +862,56 @@ class Content:
             result=text_result,
             items=items_list,
             exception=exception,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_search_tool_call(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        arguments: str | Mapping[str, Any] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool call content."""
+        return cls(
+            "search_tool_call",
+            call_id=call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_search_tool_result(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        result: Any = None,
+        items: Sequence[Content] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool result content."""
+        return cls(
+            "search_tool_result",
+            call_id=call_id,
+            tool_name=tool_name,
+            result=result,
+            items=list(items) if items is not None else None,
+            status=status,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1380,6 +1434,13 @@ class Content:
 
     def _add_text_reasoning_content(self, other: Content) -> Content:
         """Add two TextReasoningContent instances."""
+        # Ensure we do not silently merge contents with conflicting ids
+        if self.id and other.id and self.id != other.id:
+            raise AdditionItemMismatch(
+                f"Cannot add text_reasoning content with different ids: {self.id!r} != {other.id!r}"
+            )
+        combined_id = self.id or other.id
+
         # Concatenate text, handling None values
         self_text = self.text or ""  # type: ignore[attr-defined]
         other_text = other.text or ""  # type: ignore[attr-defined]
@@ -1390,6 +1451,7 @@ class Content:
 
         return Content(
             "text_reasoning",
+            id=combined_id,
             text=combined_text,
             protected_data=protected_data,
             annotations=_combine_annotations(self.annotations, other.annotations),
@@ -1469,7 +1531,7 @@ class Content:
         return span.lower() == top_level_media_type.lower()
 
     def parse_arguments(self) -> dict[str, Any | None] | None:
-        """Parse arguments from function_call or mcp_server_tool_call content.
+        """Parse arguments from function_call, mcp_server_tool_call, or search_tool_call content.
 
         If arguments cannot be parsed as JSON or the result is not a dict,
         they are returned as a dictionary with a single key "raw".
@@ -1660,7 +1722,6 @@ class Message(SerializationMixin):
         role: RoleLiteral | str,
         contents: Sequence[Content | str | Mapping[str, Any]] | None = None,
         *,
-        text: str | None = None,
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -1674,20 +1735,13 @@ class Message(SerializationMixin):
                 to TextContent), or dicts (parsed via Content.from_dict). Defaults to empty list.
 
         Keyword Args:
-            text: Deprecated. Text content of the message. Use contents instead.
-                This parameter is kept for backward compatibility with serialization.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
                 Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
         """
-        # Handle contents conversion
         parsed_contents = [] if contents is None else _parse_content_list(contents)
-
-        # Handle text for backward compatibility (from serialization)
-        if text is not None:
-            parsed_contents.append(Content.from_text(text=text))
 
         self.role: str = role
         self.contents = parsed_contents
@@ -1787,7 +1841,19 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    instruction_messages = [Message(role, [instr]) for instr in instructions]
+    # Skip instructions that are already present as leading messages with the
+    # same role and text.  This prevents duplicate system messages when
+    # instructions are injected by multiple layers (e.g. Agent + chat client).
+    deduplicated: list[str] = []
+    for idx, instr in enumerate(instructions):
+        if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
+            continue
+        deduplicated.append(instr)
+
+    if not deduplicated:
+        return messages
+
+    instruction_messages = [Message(role, [instr]) for instr in deduplicated]
     return [*instruction_messages, *messages]
 
 
@@ -1864,8 +1930,14 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.conversation_id = update.conversation_id
         if update.finish_reason is not None:
             response.finish_reason = update.finish_reason
-        if update.model_id is not None:
-            response.model_id = update.model_id
+        if update.model is not None:
+            response.model = update.model
+    if (
+        isinstance(response, AgentResponse)
+        and isinstance(update, AgentResponseUpdate)
+        and update.finish_reason is not None
+    ):
+        response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
 
 
@@ -1880,7 +1952,12 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
             if first_new_content is None:
                 first_new_content = deepcopy(content)
             else:
-                first_new_content += content
+                try:
+                    first_new_content += content
+                except AdditionItemMismatch:
+                    # Different IDs means a new logical segment; flush the current one
+                    coalesced_contents.append(first_new_content)
+                    first_new_content = deepcopy(content)
         else:
             # skip this content, it is not of the right type
             # so write the existing one to the list and start a new one,
@@ -1936,6 +2013,26 @@ class ContinuationToken(TypedDict):
 # endregion
 
 
+def _parse_structured_response_value(text: str, response_format: Any | None) -> Any | None:
+    if response_format is None:
+        return None
+    if not text:
+        return None
+    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        return response_format.model_validate_json(text)
+    if isinstance(response_format, Mapping):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Response text is not valid JSON: {exc}") from exc
+    logger.warning(
+        "Unable to parse structured response value, use either a Pydantic model or a dict defining the schema, "
+        "received response_format type: %s",
+        type(response_format),  # type: ignore[reportUnknownArgumentType]
+    )
+    return None
+
+
 class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     """Represents the response to a chat request.
 
@@ -1943,7 +2040,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         messages: The list of chat messages in the response.
         response_id: The ID of the chat response.
         conversation_id: An identifier for the state of the conversation.
-        model_id: The model ID used in the creation of the chat response.
+        model: The model used in the creation of the chat response.
         created_at: A timestamp for the chat response.
         finish_reason: The reason for the chat response.
         usage_details: The usage details for the chat response.
@@ -1966,7 +2063,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             response = ChatResponse(
                 messages=[msg],
                 finish_reason="stop",
-                model_id="gpt-4",
+                model="gpt-4",
             )
             print(response.text)  # "The weather is sunny."
 
@@ -1976,18 +2073,19 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
 
             # Serialization - to_dict and from_dict
             response_dict = response.to_dict()
-            # {'type': 'chat_response', 'messages': [...], 'model_id': 'gpt-4', 'finish_reason': 'stop'}
+            # {'type': 'chat_response', 'messages': [...], 'model': 'gpt-4', 'finish_reason': 'stop'}
             restored_response = ChatResponse.from_dict(response_dict)
-            print(restored_response.model_id)  # "gpt-4"
+            print(restored_response.model)  # "gpt-4"
 
             # Serialization - to_json and from_json
             response_json = response.to_json()
-            # '{"type": "chat_response", "messages": [...], "model_id": "gpt-4", ...}'
+            # '{"type": "chat_response", "messages": [...], "model": "gpt-4", ...}'
             restored_from_json = ChatResponse.from_json(response_json)
             print(restored_from_json.text)  # "The weather is sunny."
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
+    _INTERNAL_CONVERSATION_ID_KEY: ClassVar[str] = "_agent_framework_internal_conversation_id"
 
     def __init__(
         self,
@@ -1996,12 +2094,11 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         response_id: str | None = None,
         conversation_id: str | None = None,
         model: str | None = None,
-        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: ResponseModelT | None = None,
-        response_format: type[BaseModel] | None = None,
+        response_format: StructuredResponseFormat = None,
         continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2013,7 +2110,6 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
             model: Optional model used in the creation of the chat response.
-            model_id: Deprecated alias for ``model``.
             created_at: Optional timestamp for when the response was created.
             finish_reason: Optional reason for the chat response (e.g., "stop", "length", "tool_calls").
             usage_details: Optional usage details for the chat response.
@@ -2024,8 +2120,6 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
         """
-        if model_id is not None and model is None:
-            model = model_id
         if messages is None:
             self.messages: list[Message] = []
         elif isinstance(messages, Message):
@@ -2048,7 +2142,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         self.finish_reason = finish_reason
         self.usage_details = usage_details
         self._value: ResponseModelT | None = value
-        self._response_format: type[BaseModel] | None = response_format
+        self._response_format: StructuredResponseFormat = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = (
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
@@ -2056,14 +2150,17 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
 
-    @property
-    def model_id(self) -> str | None:
-        """Deprecated alias for :attr:`model`."""
-        return self.model
+    def mark_internal_conversation_id(self) -> None:
+        """Mark the current conversation_id as internal control-flow state."""
+        self.additional_properties[self._INTERNAL_CONVERSATION_ID_KEY] = True
 
-    @model_id.setter
-    def model_id(self, value: str | None) -> None:
-        self.model = value
+    def clear_internal_conversation_id(self) -> None:
+        """Remove the internal conversation-id marker."""
+        self.additional_properties.pop(self._INTERNAL_CONVERSATION_ID_KEY, None)
+
+    def has_internal_conversation_id(self) -> bool:
+        """Return whether conversation_id is internal control-flow state."""
+        return bool(self.additional_properties.get(self._INTERNAL_CONVERSATION_ID_KEY, False))
 
     @overload
     @classmethod
@@ -2080,6 +2177,15 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[ChatResponse[Any]],
         updates: Sequence[ChatResponseUpdate],
         *,
+        output_format_type: Mapping[str, Any],
+    ) -> ChatResponse[Any]: ...
+
+    @overload
+    @classmethod
+    def from_updates(
+        cls: type[ChatResponse[Any]],
+        updates: Sequence[ChatResponseUpdate],
+        *,
         output_format_type: None = None,
     ) -> ChatResponse[Any]: ...
 
@@ -2088,7 +2194,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[ChatResponseT],
         updates: Sequence[ChatResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: StructuredResponseFormat = None,
     ) -> ChatResponseT:
         """Joins multiple updates into a single ChatResponse.
 
@@ -2111,10 +2217,10 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             updates: A sequence of ChatResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
         """
-        response_format = output_format_type if isinstance(output_format_type, type) else None
-        msg = cls(messages=[], response_format=response_format)
+        msg = cls(messages=[], response_format=output_format_type)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -2135,6 +2241,15 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[ChatResponse[Any]],
         updates: AsyncIterable[ChatResponseUpdate],
         *,
+        output_format_type: Mapping[str, Any],
+    ) -> ChatResponse[Any]: ...
+
+    @overload
+    @classmethod
+    async def from_update_generator(
+        cls: type[ChatResponse[Any]],
+        updates: AsyncIterable[ChatResponseUpdate],
+        *,
         output_format_type: None = None,
     ) -> ChatResponse[Any]: ...
 
@@ -2143,7 +2258,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[ChatResponseT],
         updates: AsyncIterable[ChatResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: StructuredResponseFormat = None,
     ) -> ChatResponseT:
         """Joins multiple updates into a single ChatResponse.
 
@@ -2162,10 +2277,10 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             updates: An async iterable of ChatResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
         """
-        response_format = output_format_type if isinstance(output_format_type, type) else None
-        msg = cls(messages=[], response_format=response_format)
+        msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -2185,15 +2300,12 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Raises:
             ValidationError: If the response text doesn't match the expected schema.
+            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
-        if (
-            self._response_format is not None
-            and isinstance(self._response_format, type)
-            and issubclass(self._response_format, BaseModel)
-        ):
-            self._value = cast(ResponseModelT, self._response_format.model_validate_json(self.text))
+        if self._response_format is not None:
+            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
             self._value_parsed = True
         return self._value
 
@@ -2217,7 +2329,7 @@ class ChatResponseUpdate(SerializationMixin):
         response_id: The ID of the response of which this update is a part.
         message_id: The ID of the message of which this update is a part.
         conversation_id: An identifier for the state of the conversation of which this update is a part.
-        model_id: The model ID associated with this response update.
+        model: The model associated with this response update.
         created_at: A timestamp for the chat response update.
         finish_reason: The finish reason for the operation.
         additional_properties: Any additional properties associated with the chat response update.
@@ -2263,7 +2375,6 @@ class ChatResponseUpdate(SerializationMixin):
         message_id: str | None = None,
         conversation_id: str | None = None,
         model: str | None = None,
-        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
         continuation_token: ContinuationToken | None = None,
@@ -2280,7 +2391,6 @@ class ChatResponseUpdate(SerializationMixin):
             message_id: Optional ID of the message of which this update is a part.
             conversation_id: Optional identifier for the state of the conversation of which this update is a part
             model: Optional model associated with this response update.
-            model_id: Deprecated alias for ``model``.
             created_at: Optional timestamp for the chat response update.
             finish_reason: Optional finish reason for the operation.
             continuation_token: Optional token for resuming a long-running background operation.
@@ -2290,8 +2400,6 @@ class ChatResponseUpdate(SerializationMixin):
                 from an underlying implementation.
 
         """
-        if model_id is not None and model is None:
-            model = model_id
         # Handle contents - support dict conversion for from_dict
         if contents is None:
             self.contents: list[Content] = []
@@ -2320,15 +2428,6 @@ class ChatResponseUpdate(SerializationMixin):
             allow_none=True,
         )
         self.raw_representation = raw_representation
-
-    @property
-    def model_id(self) -> str | None:
-        """Deprecated alias for :attr:`model`."""
-        return self.model
-
-    @model_id.setter
-    def model_id(self, value: str | None) -> None:
-        self.model = value
 
     @property
     def text(self) -> str:
@@ -2395,9 +2494,10 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         response_id: str | None = None,
         agent_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: ResponseModelT | None = None,
-        response_format: type[BaseModel] | None = None,
+        response_format: StructuredResponseFormat = None,
         continuation_token: ContinuationToken | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -2410,6 +2510,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             agent_id: The identifier of the agent that produced this response. Useful in multi-agent
                 scenarios to track which agent generated the response.
             created_at: A timestamp for the chat response.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
             response_format: Optional response format for the agent response.
@@ -2436,9 +2539,10 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         self.response_id = response_id
         self.agent_id = agent_id
         self.created_at = created_at
+        self.finish_reason = finish_reason
         self.usage_details = usage_details
         self._value: ResponseModelT | None = value
-        self._response_format: type[BaseModel] | None = response_format
+        self._response_format: type[BaseModel] | Mapping[str, Any] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = (
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
@@ -2460,15 +2564,12 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Raises:
             ValidationError: If the response text doesn't match the expected schema.
+            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
-        if (
-            self._response_format is not None
-            and isinstance(self._response_format, type)
-            and issubclass(self._response_format, BaseModel)
-        ):
-            self._value = cast(ResponseModelT, self._response_format.model_validate_json(self.text))
+        if self._response_format is not None:
+            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
             self._value_parsed = True
         return self._value
 
@@ -2498,6 +2599,16 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[AgentResponse[Any]],
         updates: Sequence[AgentResponseUpdate],
         *,
+        output_format_type: Mapping[str, Any],
+        value: Any | None = None,
+    ) -> AgentResponse[Any]: ...
+
+    @overload
+    @classmethod
+    def from_updates(
+        cls: type[AgentResponse[Any]],
+        updates: Sequence[AgentResponseUpdate],
+        *,
         output_format_type: None = None,
         value: Any | None = None,
     ) -> AgentResponse[Any]: ...
@@ -2507,7 +2618,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[AgentResponseT],
         updates: Sequence[AgentResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: StructuredResponseFormat = None,
         value: Any | None = None,
     ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
@@ -2516,7 +2627,8 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             updates: A sequence of AgentResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
             value: Optional pre-parsed structured output value to set directly on the response.
         """
         msg = cls(messages=[], response_format=output_format_type, value=value)
@@ -2540,6 +2652,15 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[AgentResponse[Any]],
         updates: AsyncIterable[AgentResponseUpdate],
         *,
+        output_format_type: Mapping[str, Any],
+    ) -> AgentResponse[Any]: ...
+
+    @overload
+    @classmethod
+    async def from_update_generator(
+        cls: type[AgentResponse[Any]],
+        updates: AsyncIterable[AgentResponseUpdate],
+        *,
         output_format_type: None = None,
     ) -> AgentResponse[Any]: ...
 
@@ -2548,7 +2669,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[AgentResponseT],
         updates: AsyncIterable[AgentResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: StructuredResponseFormat = None,
     ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
 
@@ -2556,7 +2677,8 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             updates: An async iterable of AgentResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
@@ -2630,6 +2752,7 @@ class AgentResponseUpdate(SerializationMixin):
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2645,6 +2768,9 @@ class AgentResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             created_at: Optional timestamp for the chat response update.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
             continuation_token: Optional token for resuming a long-running background operation.
                 When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response update.
@@ -2671,6 +2797,7 @@ class AgentResponseUpdate(SerializationMixin):
         self.response_id = response_id
         self.message_id = message_id
         self.created_at = created_at
+        self.finish_reason = finish_reason
         self.continuation_token = continuation_token
         self.additional_properties = _restore_compaction_annotation_in_additional_properties(
             additional_properties,
@@ -2703,6 +2830,7 @@ def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None)
         response_id=update.response_id,
         message_id=update.message_id,
         created_at=update.created_at,
+        finish_reason=update.finish_reason,  # type: ignore[arg-type]
         continuation_token=update.continuation_token,
         additional_properties=update.additional_properties,
         raw_representation=update,
@@ -2758,10 +2886,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             cleanup_hooks if cleanup_hooks is not None else []
         )
         self._cleanup_run: bool = False
+        self._stream_error: Exception | None = None
         self._inner_stream: ResponseStream[Any, Any] | None = None
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
         self._map_update: Callable[[Any], UpdateT | Awaitable[UpdateT]] | None = None
+        self._pull_context_manager_factories: list[Callable[[], contextlib.AbstractContextManager[Any]]] = []
 
     def map(
         self,
@@ -2880,18 +3010,29 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         return self
 
     async def __anext__(self) -> UpdateT:
-        if self._iterator is None:
-            stream = await self._get_stream()
-            self._iterator = stream.__aiter__()
         try:
-            update: UpdateT = await self._iterator.__anext__()
+            with contextlib.ExitStack() as stack:
+                for factory in self._pull_context_manager_factories:
+                    stack.enter_context(factory())
+                # Resolve the underlying stream inside the pull contexts so that any
+                # spans/contexts created during stream resolution (e.g. inner chat
+                # completion spans created on the first pull of a wrapped agent stream)
+                # inherit the active context (e.g. an outer agent invoke span).
+                if self._iterator is None:
+                    stream = await self._get_stream()
+                    self._iterator = stream.__aiter__()
+                update: UpdateT = await self._iterator.__anext__()
         except StopAsyncIteration:
             self._consumed = True
             await self._run_cleanup_hooks()
             await self.get_final_response()
             raise
-        except Exception:
-            await self._run_cleanup_hooks()
+        except Exception as exc:
+            self._stream_error = exc
+            try:
+                await self._run_cleanup_hooks()
+            finally:
+                self._stream_error = None
             raise
         if self._map_update is not None:
             update = self._map_update(update)  # type: ignore[assignment]
@@ -2906,9 +3047,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 update = hooked
         return update
 
+    async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
+        """Resolve the underlying stream while activating any registered pull context managers.
+
+        Used by ``__await__`` and ``get_final_response`` so that any spans/contexts created
+        during stream resolution (e.g. when the source is an Awaitable that internally
+        creates child telemetry spans) inherit the same active context as iterator pulls.
+        ``__anext__`` resolves the stream inside its own ExitStack and so calls ``_get_stream``
+        directly.
+        """
+        if self._stream is not None:
+            return await self._get_stream()
+        with contextlib.ExitStack() as stack:
+            for factory in self._pull_context_manager_factories:
+                stack.enter_context(factory())
+            return await self._get_stream()
+
     def __await__(self) -> Any:
         async def _wrap() -> ResponseStream[UpdateT, FinalT]:
-            await self._get_stream()
+            await self._resolve_stream_with_pull_contexts()
             return self
 
         return _wrap().__await__()
@@ -2932,10 +3089,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         """
         if self._wrap_inner:
             if self._inner_stream is None:
-                # Use _get_stream() to resolve the awaitable - this properly handles
+                # Use _resolve_stream_with_pull_contexts() so that any spans/contexts
+                # created while resolving the awaitable (e.g. inner telemetry spans)
+                # inherit the same active context as iterator pulls. This also handles
                 # the case where _stream_source and _inner_stream_source are the same
                 # coroutine (e.g., from from_awaitable), avoiding double-await errors.
-                await self._get_stream()
+                await self._resolve_stream_with_pull_contexts()
             if self._inner_stream is None:
                 raise RuntimeError("Inner stream not available")
             if not self._finalized and not self._consumed:
@@ -3045,6 +3204,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._cleanup_hooks.append(hook)
         return self
 
+    def with_pull_context_manager(
+        self,
+        cm_factory: Callable[[], contextlib.AbstractContextManager[Any]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a context manager factory invoked around each underlying iterator pull.
+
+        The factory is called once per ``__anext__`` and the returned context manager wraps
+        the await of the underlying iterator. This is useful for state that needs to be
+        active while the inner async work runs - for example, attaching an OpenTelemetry
+        span to the current context so child spans created by inner code (HTTP clients,
+        tool execution) are correctly parented.
+
+        Because the context manager is entered and exited within the same ``__anext__``
+        invocation, attach/detach style operations remain symmetric in the same async
+        context regardless of where the stream is iterated.
+        """
+        self._pull_context_manager_factories.append(cm_factory)
+        return self
+
     async def _run_cleanup_hooks(self) -> None:
         if self._cleanup_run:
             return
@@ -3068,10 +3246,12 @@ class ToolMode(TypedDict, total=False):
     Fields:
         mode: One of "auto", "required", or "none".
         required_function_name: Optional function name when `mode == "required"`.
+        allowed_tools: Optional list of tool names when `mode` is `"auto"` or `"required"`.
     """
 
     mode: Literal["auto", "required", "none"]
     required_function_name: str
+    allowed_tools: list[str]
 
 
 # region TypedDict-based Chat Options
@@ -3095,12 +3275,12 @@ class _ChatOptionsBase(TypedDict, total=False):
             options: ChatOptions = {
                 "temperature": 0.7,
                 "max_tokens": 1000,
-                "model_id": "gpt-4",
+                "model": "gpt-4",
             }
 
             # With tools
             options_with_tools: ChatOptions = {
-                "model_id": "gpt-4",
+                "model": "gpt-4",
                 "tool_choice": "auto",
                 "temperature": 0.7,
             }
@@ -3110,8 +3290,7 @@ class _ChatOptionsBase(TypedDict, total=False):
     """
 
     # Model selection
-    model_id: str
-
+    model: str
     # Generation parameters
     temperature: float
     top_p: float
@@ -3305,7 +3484,7 @@ def validate_tool_mode(
 
     Returns:
         A ToolMode dict (contains keys: "mode", and optionally
-        "required_function_name"), or ``None`` when not provided.
+        "required_function_name" or "allowed_tools"), or ``None`` when not provided.
 
     Raises:
         ContentError: If the tool_choice string is invalid.
@@ -3322,6 +3501,17 @@ def validate_tool_mode(
         raise ContentError(f"Invalid tool choice: {tool_choice['mode']}")
     if tool_choice["mode"] != "required" and "required_function_name" in tool_choice:
         raise ContentError("tool_choice with mode other than 'required' cannot have 'required_function_name'")
+    if tool_choice["mode"] not in ("auto", "required") and "allowed_tools" in tool_choice:
+        raise ContentError("tool_choice 'allowed_tools' is only valid when mode is 'auto' or 'required'")
+    if "allowed_tools" in tool_choice:
+        allowed_tools = tool_choice["allowed_tools"]
+        if isinstance(allowed_tools, str) or not isinstance(allowed_tools, Sequence):
+            raise ContentError("tool_choice 'allowed_tools' must be a non-string sequence of strings")
+        if not all(isinstance(tool_name, str) for tool_name in allowed_tools):
+            raise ContentError("tool_choice 'allowed_tools' must contain only strings")
+        normalized_tool_choice = dict(tool_choice)
+        normalized_tool_choice["allowed_tools"] = list(allowed_tools)
+        return cast(ToolMode, normalized_tool_choice)
     return tool_choice
 
 
@@ -3347,10 +3537,10 @@ def merge_chat_options(
 
             from agent_framework import merge_chat_options
 
-            base = {"temperature": 0.5, "model_id": "gpt-4"}
+            base = {"temperature": 0.5, "model": "gpt-4"}
             override = {"temperature": 0.7, "max_tokens": 1000}
             merged = merge_chat_options(base, override)
-            # {"temperature": 0.7, "model_id": "gpt-4", "max_tokens": 1000}
+            # {"temperature": 0.7, "model": "gpt-4", "max_tokens": 1000}
     """
     if not base:
         return dict(override) if override else {}
@@ -3427,12 +3617,12 @@ class EmbeddingGenerationOptions(TypedDict, total=False):
             from agent_framework import EmbeddingGenerationOptions
 
             options: EmbeddingGenerationOptions = {
-                "model_id": "text-embedding-3-small",
+                "model": "text-embedding-3-small",
                 "dimensions": 1536,
             }
     """
 
-    model_id: str
+    model: str
     dimensions: int
 
 
@@ -3466,13 +3656,10 @@ class Embedding(Generic[EmbeddingT]):
         vector: EmbeddingT,
         *,
         model: str | None = None,
-        model_id: str | None = None,
         dimensions: int | None = None,
         created_at: datetime | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
-        if model_id is not None and model is None:
-            model = model_id
         self.vector = vector
         self._dimensions = dimensions
         self.model = model
@@ -3480,15 +3667,6 @@ class Embedding(Generic[EmbeddingT]):
         self.additional_properties = (
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
         )
-
-    @property
-    def model_id(self) -> str | None:
-        """Deprecated alias for :attr:`model`."""
-        return self.model
-
-    @model_id.setter
-    def model_id(self, value: str | None) -> None:
-        self.model = value
 
     @property
     def dimensions(self) -> int | None:

@@ -121,6 +121,7 @@ async def run_agent_framework() -> None:
             "- For technical issues: call handoff_to_technical_support"
         ),
         description="Routes requests to appropriate specialists",
+        require_per_service_call_history_persistence=True,
     )
 
     # Create billing specialist
@@ -128,6 +129,7 @@ async def run_agent_framework() -> None:
         name="billing_agent",
         instructions="You are a billing specialist. Help with payment and billing questions. Provide clear assistance.",
         description="Handles billing and payment questions",
+        require_per_service_call_history_persistence=True,
     )
 
     # Create technical support specialist
@@ -135,6 +137,7 @@ async def run_agent_framework() -> None:
         name="technical_support",
         instructions="You are technical support. Help with technical issues. Provide clear assistance.",
         description="Handles technical support questions",
+        require_per_service_call_history_persistence=True,
     )
 
     # Create handoff workflow - simpler configuration

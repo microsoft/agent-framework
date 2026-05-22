@@ -2,7 +2,7 @@
 
 """Integration tests for workflow samples.
 
-These tests verify that the workflow samples from workflow-samples/ directory
+These tests verify that the workflow samples from declarative-agents/workflow-samples/ directory
 can be parsed and validated by the WorkflowFactory.
 """
 
@@ -13,7 +13,7 @@ import yaml
 
 # Path to workflow samples - navigate from tests dir up to repo root
 # tests/test_*.py -> packages/declarative/tests/ -> packages/declarative/ -> packages/ -> python/ -> repo root
-WORKFLOW_SAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "workflow-samples"
+WORKFLOW_SAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "declarative-agents" / "workflow-samples"
 
 
 def get_workflow_sample_files():

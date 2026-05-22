@@ -34,7 +34,9 @@ public class MessageMergerTests
         response.Messages[0].Role.Should().Be(ChatRole.Assistant);
         response.Messages[0].AuthorName.Should().Be(TestAuthorName1);
         response.AgentId.Should().Be(TestAgentId1);
-        response.CreatedAt.Should().NotBe(creationTime);
+        response.CreatedAt.Should().HaveValue();
+        response.CreatedAt.Value.Should().BeOnOrAfter(creationTime);
+        response.CreatedAt.Value.Should().BeCloseTo(creationTime, precision: TimeSpan.FromSeconds(5));
         response.Messages[0].CreatedAt.Should().Be(creationTime);
         response.Messages[0].Contents.Should().HaveCount(1);
         response.FinishReason.Should().BeNull();

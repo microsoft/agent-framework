@@ -4,6 +4,7 @@ import asyncio
 
 from agent_framework import Message
 from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -23,14 +24,14 @@ async def main() -> None:
     Creates a task for the chat request, waits briefly, then cancels it to show proper cleanup.
 
     Configuration:
-    - OpenAI model ID: Use "model_id" parameter or "OPENAI_MODEL" environment variable
+    - OpenAI model ID: Use "model" parameter or "OPENAI_MODEL" environment variable
     - OpenAI API key: Use "api_key" parameter or "OPENAI_API_KEY" environment variable
     """
-    client = FoundryChatClient()
+    client = FoundryChatClient(credential=AzureCliCredential())
 
     try:
         task = asyncio.create_task(
-            client.get_response(messages=[Message(role="user", text="Tell me a fantasy story.")])
+            client.get_response(messages=[Message(role="user", contents=["Tell me a fantasy story."])])
         )
         await asyncio.sleep(1)
         task.cancel()

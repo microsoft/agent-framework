@@ -2,9 +2,14 @@
 
 import asyncio
 import os
+
+# Uncomment this filter to suppress the experimental Skills warning before
+# using the sample's Skills APIs.
+# import warnings
+# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 
-from agent_framework import Agent, Skill, SkillsProvider
+from agent_framework import Agent, InlineSkill, SkillFrontmatter, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -37,10 +42,11 @@ Prerequisites:
 load_dotenv()
 
 # Define a code skill with a script that performs a sensitive operation
-deployment_skill = Skill(
-    name="deployment",
-    description="Tools for deploying application versions to production",
-    content=dedent("""\
+deployment_skill = InlineSkill(
+    frontmatter=SkillFrontmatter(
+        name="deployment", description="Tools for deploying application versions to production"
+    ),
+    instructions=dedent("""\
         Use this skill when the user asks to deploy an application.
 
         1. Run the deploy script with the version and environment parameters.
@@ -67,7 +73,7 @@ async def main() -> None:
 
     # Create the skills provider with script approval enabled
     skills_provider = SkillsProvider(
-        skills=[deployment_skill],
+        source=[deployment_skill],
         require_script_approval=True,
     )
 

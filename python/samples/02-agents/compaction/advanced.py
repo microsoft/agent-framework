@@ -35,25 +35,27 @@ class BudgetSummaryClient:
         **kwargs: Any,
     ) -> ChatResponse:
         summary_text = f"Budget summary generated from {len(messages)} prompt messages."
-        return ChatResponse(messages=[Message(role="assistant", text=summary_text)])
+        return ChatResponse(messages=[Message(role="assistant", contents=[summary_text])])
 
 
 def _build_long_history() -> list[Message]:
-    history = [Message(role="system", text="You are a migration copilot.")]
+    history = [Message(role="system", contents=["You are a migration copilot."])]
     for i in range(1, 8):
         history.append(
             Message(
                 role="user",
-                text=f"Iteration {i}: capture migration requirements and edge cases.",
+                contents=[f"Iteration {i}: capture migration requirements and edge cases."],
             )
         )
         history.append(
             Message(
                 role="assistant",
-                text=(
-                    f"Iteration {i}: detailed plan with dependencies, rollback guidance, and testing details. "
-                    "This sentence is intentionally long to create token pressure."
-                ),
+                contents=[
+                    (
+                        f"Iteration {i}: detailed plan with dependencies, rollback guidance, and testing details. "
+                        "This sentence is intentionally long to create token pressure."
+                    )
+                ],
             )
         )
     return history

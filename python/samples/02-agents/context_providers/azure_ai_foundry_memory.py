@@ -33,7 +33,7 @@ rather than chat history. The memory store is deleted at the end of the run.
 Prerequisites:
 1. Set FOUNDRY_PROJECT_ENDPOINT environment variable
 2. Set FOUNDRY_MODEL for the chat/responses model
-3. Set AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME for the embedding model
+3. Set AZURE_OPENAI_EMBEDDING_MODEL for the embedding model
 4. Deploy both a chat model (e.g. gpt-4) and an embedding model (e.g. text-embedding-3-small)
 """
 load_dotenv()
@@ -55,7 +55,7 @@ async def main() -> None:
         )
         memory_store_definition = MemoryStoreDefaultDefinition(
             chat_model=os.environ["FOUNDRY_MODEL"],
-            embedding_model=os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"],
+            embedding_model=os.environ["AZURE_OPENAI_EMBEDDING_MODEL"],
             options=options,
         )
         print(f"Creating memory store '{memory_store_name}'...")

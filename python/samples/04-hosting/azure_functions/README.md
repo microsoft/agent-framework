@@ -19,17 +19,21 @@ All of these samples are set up to run in Azure Functions. Azure Functions has a
 
 ### 2. Create and activate a virtual environment
 
+Using [uv](https://docs.astral.sh/uv/) (recommended):
+
 **Windows (PowerShell):**
 ```powershell
-python -m venv .venv
+uv venv .venv
 .venv\Scripts\Activate.ps1
 ```
 
 **Linux/macOS:**
 ```bash
-python -m venv .venv
+uv venv .venv
 source .venv/bin/activate
 ```
+
+> **Note:** `python -m venv .venv` also works, but can hang indefinitely on Windows with Microsoft Store Python due to a known `ensurepip` issue. Use `uv venv .venv` to avoid this.
 
 ### 3. Running the samples
 

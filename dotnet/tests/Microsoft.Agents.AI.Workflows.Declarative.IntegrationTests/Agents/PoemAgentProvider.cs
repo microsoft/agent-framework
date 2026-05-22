@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
 internal sealed class PoemAgentProvider(IConfiguration configuration) : AgentProvider(configuration)
 {
-    protected override async IAsyncEnumerable<AgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
+    protected override async IAsyncEnumerable<ProjectsAgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
     {
         AIProjectClient aiProjectClient = new(foundryEndpoint, TestAzureCliCredentials.CreateAzureCliCredential());
 
@@ -23,7 +23,7 @@ internal sealed class PoemAgentProvider(IConfiguration configuration) : AgentPro
                 agentDescription: "Authors original poems");
     }
 
-    private PromptAgentDefinition DefinePoemAgent() =>
+    private DeclarativeAgentDefinition DefinePoemAgent() =>
         new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions =

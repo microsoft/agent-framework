@@ -7,7 +7,7 @@ orchestration function that routes execution based on spam detection results. Ac
 handle side effects (spam handling and email sending).
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL
 - Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -69,8 +69,8 @@ def create_spam_agent() -> "Agent":
     """
     return Agent(
         client=OpenAIChatCompletionClient(
-            model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-            api_key=get_async_bearer_token_provider(
+            model=os.environ["AZURE_OPENAI_MODEL"],
+            credential=get_async_bearer_token_provider(
                 AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
             ),
         ),
@@ -87,8 +87,8 @@ def create_email_agent() -> "Agent":
     """
     return Agent(
         client=OpenAIChatCompletionClient(
-            model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-            api_key=get_async_bearer_token_provider(
+            model=os.environ["AZURE_OPENAI_MODEL"],
+            credential=get_async_bearer_token_provider(
                 AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
             ),
         ),

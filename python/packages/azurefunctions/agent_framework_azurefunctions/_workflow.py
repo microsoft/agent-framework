@@ -240,11 +240,11 @@ def build_agent_executor_response(
     Returns:
         AgentExecutorResponse with reconstructed conversation
     """
-    final_text = response_text
+    final_text: str = response_text or ""
     if structured_response:
         final_text = json.dumps(structured_response)
 
-    assistant_message = Message(role="assistant", text=final_text)
+    assistant_message = Message(role="assistant", contents=[final_text])
 
     agent_response = AgentResponse(
         messages=[assistant_message],
@@ -255,7 +255,7 @@ def build_agent_executor_response(
     if isinstance(previous_message, AgentExecutorResponse) and previous_message.full_conversation:
         full_conversation.extend(previous_message.full_conversation)
     elif isinstance(previous_message, str):
-        full_conversation.append(Message(role="user", text=previous_message))
+        full_conversation.append(Message(role="user", contents=[previous_message]))
 
     full_conversation.append(assistant_message)
 

@@ -77,7 +77,7 @@ class TestDurableAIAgentMessageNormalization:
 
     def test_run_accepts_chat_message(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and normalizes Message objects."""
-        chat_msg = Message(role="user", text="Test message")
+        chat_msg = Message(role="user", contents=["Test message"])
         test_agent.run(chat_msg)
 
         mock_executor.run_durable_agent.assert_called_once()
@@ -95,8 +95,8 @@ class TestDurableAIAgentMessageNormalization:
     def test_run_accepts_list_of_chat_messages(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and joins list of Message objects."""
         messages = [
-            Message(role="user", text="Message 1"),
-            Message(role="assistant", text="Message 2"),
+            Message(role="user", contents=["Message 1"]),
+            Message(role="assistant", contents=["Message 2"]),
         ]
         test_agent.run(messages)
 

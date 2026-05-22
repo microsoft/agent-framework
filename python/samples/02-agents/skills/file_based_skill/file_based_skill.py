@@ -3,6 +3,11 @@
 import asyncio
 import os
 import sys
+
+# Uncomment this filter to suppress the experimental Skills warning before
+# using the sample's Skills APIs.
+# import warnings
+# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from pathlib import Path
 
 from agent_framework import Agent, SkillsProvider
@@ -54,7 +59,7 @@ async def main() -> None:
     # Discovers skills from the 'skills' directory and configures the
     # subprocess_script_runner to run file-based scripts.
     skills_dir = Path(__file__).parent / "skills"
-    skills_provider = SkillsProvider(
+    skills_provider = SkillsProvider.from_paths(
         skill_paths=str(skills_dir),
         script_runner=subprocess_script_runner,
     )

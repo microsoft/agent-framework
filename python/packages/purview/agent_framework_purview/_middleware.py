@@ -82,10 +82,13 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             if should_block_prompt:
                 from agent_framework import AgentResponse, Message
 
+                msg = self._settings.get("blocked_prompt_message", None) or "Prompt blocked by policy"
+
                 context.result = AgentResponse(
                     messages=[
                         Message(
-                            role="system", text=self._settings.get("blocked_prompt_message", "Prompt blocked by policy")
+                            role="system",
+                            contents=[msg],
                         )
                     ]
                 )
@@ -119,11 +122,13 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 if should_block_response:
                     from agent_framework import AgentResponse, Message
 
+                    msg = self._settings.get("blocked_response_message", None) or "Response blocked by policy"
+
                     context.result = AgentResponse(
                         messages=[
                             Message(
                                 role="system",
-                                text=self._settings.get("blocked_response_message", "Response blocked by policy"),
+                                contents=[msg],
                             )
                         ]
                     )
@@ -189,7 +194,8 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 from agent_framework import ChatResponse, Message
 
                 blocked_message = Message(
-                    role="system", text=self._settings.get("blocked_prompt_message", "Prompt blocked by policy")
+                    role="system",
+                    contents=[self._settings.get("blocked_prompt_message", None) or "Prompt blocked by policy"],
                 )
                 context.result = ChatResponse(messages=[blocked_message])
                 raise MiddlewareTermination
@@ -224,7 +230,9 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
 
                         blocked_message = Message(
                             role="system",
-                            text=self._settings.get("blocked_response_message", "Response blocked by policy"),
+                            contents=[
+                                self._settings.get("blocked_response_message", None) or "Response blocked by policy"
+                            ],
                         )
                         context.result = ChatResponse(messages=[blocked_message])
             else:

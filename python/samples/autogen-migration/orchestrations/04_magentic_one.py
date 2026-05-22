@@ -76,7 +76,7 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
     from agent_framework.orchestrations import MagenticBuilder
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create specialized agents
     researcher = Agent(

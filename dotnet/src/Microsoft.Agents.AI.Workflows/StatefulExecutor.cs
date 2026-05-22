@@ -113,6 +113,12 @@ public abstract class StatefulExecutor<TState> : Executor
     {
         if (!skipCache && !context.ConcurrentRunsEnabled)
         {
+            if (this._stateCache is null)
+            {
+                this._stateCache = await context.ReadOrInitStateAsync(this.StateKey, this._initialStateFactory, this.Options.ScopeName, cancellationToken)
+                                                .ConfigureAwait(false);
+            }
+
             TState newState = await invocation(this._stateCache ?? this._initialStateFactory(),
                                                context,
                                                cancellationToken).ConfigureAwait(false)
@@ -168,9 +174,12 @@ public abstract class StatefulExecutor<TState, TInput>(string id,
     /// <inheritdoc/>
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        protocolBuilder.RouteBuilder.AddHandler<TInput>(this.HandleAsync);
+        Func<TInput, IWorkflowContext, CancellationToken, ValueTask> handlerDelegate = this.HandleAsync;
 
-        return protocolBuilder.SendsMessageTypes(sentMessageTypes ?? [])
+        return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler(handlerDelegate))
+                              .AddMethodAttributeTypes(handlerDelegate.Method)
+                              .AddClassAttributeTypes(this.GetType())
+                              .SendsMessageTypes(sentMessageTypes ?? [])
                               .YieldsOutputTypes(outputTypes ?? []);
     }
 
@@ -203,19 +212,12 @@ public abstract class StatefulExecutor<TState, TInput, TOutput>(string id,
     /// <inheritdoc/>
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        protocolBuilder.RouteBuilder.AddHandler<TInput, TOutput>(this.HandleAsync);
-
-        if (this.Options.AutoSendMessageHandlerResultObject)
-        {
-            protocolBuilder.SendsMessage<TOutput>();
-        }
-
-        if (this.Options.AutoYieldOutputHandlerResultObject)
-        {
-            protocolBuilder.YieldsOutput<TOutput>();
-        }
-
-        return protocolBuilder.SendsMessageTypes(sentMessageTypes ?? []).YieldsOutputTypes(outputTypes ?? []);
+        Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> handlerDelegate = this.HandleAsync;
+        return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler(handlerDelegate))
+                              .AddMethodAttributeTypes(handlerDelegate.Method)
+                              .AddClassAttributeTypes(this.GetType())
+                              .SendsMessageTypes(sentMessageTypes ?? [])
+                              .YieldsOutputTypes(outputTypes ?? []);
     }
 
     /// <inheritdoc/>

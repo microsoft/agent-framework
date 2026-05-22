@@ -173,7 +173,7 @@ async def main() -> None:
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         # This sample has been tested only on `gpt-5.1` and may not work as intended on other models
         # This sample is known to fail on `gpt-5-mini` reasoning input (GH issue #4059)
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -243,9 +243,9 @@ async def main() -> None:
 
     # Load workflow from YAML
     samples_root = Path(__file__).parent.parent.parent.parent.parent.parent.parent
-    workflow_path = samples_root / "workflow-samples" / "CustomerSupport.yaml"
+    workflow_path = samples_root / "declarative-agents" / "workflow-samples" / "CustomerSupport.yaml"
     if not workflow_path.exists():
-        # Fall back to local copy if workflow-samples doesn't exist
+        # Fall back to local copy if declarative-agents/workflow-samples doesn't exist
         workflow_path = Path(__file__).parent / "workflow.yaml"
 
     workflow = factory.create_workflow_from_yaml_path(workflow_path)

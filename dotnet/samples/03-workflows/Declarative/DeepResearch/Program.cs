@@ -88,7 +88,7 @@ internal sealed class Program
             agentDescription: "Weather agent for DeepResearch workflow");
     }
 
-    private static PromptAgentDefinition DefineResearchAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineResearchAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -114,13 +114,13 @@ internal sealed class Program
                 """,
             Tools =
             {
-                //AgentTool.CreateBingGroundingTool( // TODO: Use Bing Grounding when available
+                //ProjectsAgentTool.CreateBingGroundingTool( // TODO: Use Bing Grounding when available
                 //    new BingGroundingSearchToolParameters(
                 //        [new BingGroundingSearchConfiguration(this.GetSetting(Settings.FoundryGroundingTool))]))
             }
         };
 
-    private static PromptAgentDefinition DefinePlannerAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefinePlannerAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions = // TODO: Use Structured Inputs / Prompt Template
@@ -139,7 +139,7 @@ internal sealed class Program
                 """
         };
 
-    private static PromptAgentDefinition DefineManagerAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineManagerAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions = // TODO: Use Structured Inputs / Prompt Template
@@ -225,7 +225,7 @@ internal sealed class Program
                 }
         };
 
-    private static PromptAgentDefinition DefineSummaryAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineSummaryAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -240,18 +240,18 @@ internal sealed class Program
                 """
         };
 
-    private static PromptAgentDefinition DefineKnowledgeAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineKnowledgeAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Tools =
             {
-                //AgentTool.CreateBingGroundingTool( // TODO: Use Bing Grounding when available
+                //ProjectsAgentTool.CreateBingGroundingTool( // TODO: Use Bing Grounding when available
                 //    new BingGroundingSearchToolParameters(
                 //        [new BingGroundingSearchConfiguration(this.GetSetting(Settings.FoundryGroundingTool))]))
             }
         };
 
-    private static PromptAgentDefinition DefineCoderAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineCoderAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -265,7 +265,7 @@ internal sealed class Program
             }
         };
 
-    private static PromptAgentDefinition DefineWeatherAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineWeatherAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -274,7 +274,7 @@ internal sealed class Program
                 """,
             Tools =
             {
-                AgentTool.CreateOpenApiTool(
+                ProjectsAgentTool.CreateOpenApiTool(
                     new OpenApiFunctionDefinition(
                         "weather-forecast",
                         BinaryData.FromString(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wttr.json"))),

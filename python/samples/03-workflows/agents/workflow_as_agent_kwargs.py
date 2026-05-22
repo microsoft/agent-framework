@@ -35,7 +35,7 @@ When to use Agent(client=workflow,):
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
@@ -89,7 +89,7 @@ async def main() -> None:
     # Create chat client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -109,7 +109,7 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[agent]).build()
 
     # Expose the workflow as an agent Agent(client=using,)
-    workflow_agent = Agent(client=workflow, name="WorkflowAgent")
+    workflow_agent = workflow.as_agent()
 
     # Define custom context that will flow to tools via kwargs
     custom_data = {

@@ -34,7 +34,7 @@ What it does:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure AI/ Azure OpenAI for `FoundryChatClient` agents.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 - For visualization export: `pip install graphviz>=0.20.0` and install GraphViz binaries.
 """
@@ -46,7 +46,7 @@ class DispatchToExperts(Executor):
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
-        initial_message = Message("user", text=prompt)
+        initial_message = Message("user", contents=[prompt])
         await ctx.send_message(AgentExecutorRequest(messages=[initial_message], should_respond=True))
 
 
@@ -100,7 +100,7 @@ async def main() -> None:
         Agent(
             client=FoundryChatClient(
                 project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                model=os.environ["FOUNDRY_MODEL"],
                 credential=AzureCliCredential(),
             ),
             instructions=(
@@ -115,7 +115,7 @@ async def main() -> None:
         Agent(
             client=FoundryChatClient(
                 project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                model=os.environ["FOUNDRY_MODEL"],
                 credential=AzureCliCredential(),
             ),
             instructions=(
@@ -130,7 +130,7 @@ async def main() -> None:
         Agent(
             client=FoundryChatClient(
                 project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                model=os.environ["FOUNDRY_MODEL"],
                 credential=AzureCliCredential(),
             ),
             instructions=(

@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleaseCandidate>true</IsReleaseCandidate>
+    <IsReleased>true</IsReleased>
     <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
   </PropertyGroup>
 
@@ -26,9 +26,18 @@
     <PackageReference Include="Microsoft.Extensions.Compliance.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.ML.Tokenizers" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" />
+  </ItemGroup>
+
+  <!-- Evaluation support requires net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
+  <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <PackageReference Include="Microsoft.Extensions.AI.Evaluation" />
+  </ItemGroup>
+  <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <Compile Remove="Evaluation\**\*.cs" />
   </ItemGroup>
 
   <PropertyGroup>

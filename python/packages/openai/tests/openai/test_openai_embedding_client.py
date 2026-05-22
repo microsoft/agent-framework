@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework import SupportsGetEmbeddings
+from agent_framework.exceptions import SettingNotFoundError
 from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
@@ -14,6 +17,7 @@ from agent_framework_openai import (
     OpenAIEmbeddingClient,
     OpenAIEmbeddingOptions,
 )
+from agent_framework_openai._embedding_client import RawOpenAIEmbeddingClient
 
 
 def _make_openai_response(
@@ -32,13 +36,6 @@ def _make_openai_response(
     )
 
 
-@pytest.fixture
-def openai_unit_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Set up environment variables for OpenAI embedding client."""
-    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
-    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-
-
 # --- OpenAI unit tests ---
 
 
@@ -48,26 +45,49 @@ def test_openai_construction_with_explicit_params() -> None:
         api_key="test-key",
     )
     assert client.model == "text-embedding-3-small"
+    assert isinstance(client, SupportsGetEmbeddings)
 
 
-def test_openai_construction_from_env(openai_unit_test_env: None) -> None:
+def test_raw_openai_embedding_client_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(RawOpenAIEmbeddingClient.__init__)
+
+    assert "additional_properties" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_openai_construction_from_env(openai_unit_test_env: dict[str, str]) -> None:
     client = OpenAIEmbeddingClient()
+    assert client.model == openai_unit_test_env["OPENAI_EMBEDDING_MODEL"]
+
+
+def test_with_callable_api_key() -> None:
+    """Test OpenAIEmbeddingClient initialization with callable API key."""
+
+    async def get_api_key() -> str:
+        return "test-api-key-123"
+
+    client = OpenAIEmbeddingClient(model="text-embedding-3-small", api_key=get_api_key)
+
     assert client.model == "text-embedding-3-small"
+    assert client.client is not None
 
 
-def test_openai_construction_missing_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="API key is required"):
+@pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
+def test_openai_construction_without_openai_or_azure_config_raises_clear_error(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    with pytest.raises(SettingNotFoundError):
         OpenAIEmbeddingClient(model="text-embedding-3-small")
 
 
-def test_openai_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENAI_EMBEDDING_MODEL", raising=False)
-    with pytest.raises(ValueError, match="embedding model is required"):
-        OpenAIEmbeddingClient(api_key="test-key")
+@pytest.mark.parametrize("exclude_list", [["OPENAI_EMBEDDING_MODEL"]], indirect=True)
+def test_openai_construction_falls_back_to_openai_model(openai_unit_test_env: dict[str, str]) -> None:
+    client = OpenAIEmbeddingClient()
+
+    assert client.model == openai_unit_test_env["OPENAI_MODEL"]
 
 
-async def test_openai_get_embeddings(openai_unit_test_env: None) -> None:
+async def test_openai_get_embeddings(openai_unit_test_env: dict[str, str]) -> None:
     mock_response = _make_openai_response(
         embeddings=[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
     )
@@ -85,7 +105,7 @@ async def test_openai_get_embeddings(openai_unit_test_env: None) -> None:
     assert result[0].dimensions == 3
 
 
-async def test_openai_get_embeddings_usage(openai_unit_test_env: None) -> None:
+async def test_openai_get_embeddings_usage(openai_unit_test_env: dict[str, str]) -> None:
     mock_response = _make_openai_response(
         embeddings=[[0.1]],
         prompt_tokens=10,
@@ -103,7 +123,7 @@ async def test_openai_get_embeddings_usage(openai_unit_test_env: None) -> None:
     assert result.usage["total_token_count"] == 10
 
 
-async def test_openai_options_passthrough_dimensions(openai_unit_test_env: None) -> None:
+async def test_openai_options_passthrough_dimensions(openai_unit_test_env: dict[str, str]) -> None:
     mock_response = _make_openai_response(embeddings=[[0.1]])
     client = OpenAIEmbeddingClient()
     client.client = MagicMock()
@@ -118,7 +138,7 @@ async def test_openai_options_passthrough_dimensions(openai_unit_test_env: None)
     assert result.options is options
 
 
-async def test_openai_options_passthrough_encoding_format(openai_unit_test_env: None) -> None:
+async def test_openai_options_passthrough_encoding_format(openai_unit_test_env: dict[str, str]) -> None:
     mock_response = _make_openai_response(embeddings=[[0.1]])
     client = OpenAIEmbeddingClient()
     client.client = MagicMock()
@@ -132,7 +152,7 @@ async def test_openai_options_passthrough_encoding_format(openai_unit_test_env: 
     assert call_kwargs["encoding_format"] == "base64"
 
 
-async def test_openai_base64_decoding(openai_unit_test_env: None) -> None:
+async def test_openai_base64_decoding(openai_unit_test_env: dict[str, str]) -> None:
     import base64
     import struct
 
@@ -165,7 +185,7 @@ async def test_openai_base64_decoding(openai_unit_test_env: None) -> None:
         assert abs(expected - actual) < 1e-6
 
 
-async def test_openai_error_when_no_model_id() -> None:
+async def test_openai_error_when_no_model() -> None:
     client = OpenAIEmbeddingClient.__new__(OpenAIEmbeddingClient)
     client.model = None
     client.client = MagicMock()
@@ -176,7 +196,7 @@ async def test_openai_error_when_no_model_id() -> None:
         await client.get_embeddings(["test"])
 
 
-async def test_openai_empty_values_returns_empty(openai_unit_test_env: None) -> None:
+async def test_openai_empty_values_returns_empty(openai_unit_test_env: dict[str, str]) -> None:
     client = OpenAIEmbeddingClient()
     client.client = MagicMock()
     client.client.embeddings = MagicMock()

@@ -39,7 +39,7 @@ Demonstrate:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- AZURE_AI_MODEL_DEPLOYMENT_NAME must be set to your Azure OpenAI model deployment name.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with agents, workflows, and executors in the agent framework.
 """
@@ -60,7 +60,7 @@ async def intercept_agent_response(
 async def main() -> None:
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

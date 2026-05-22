@@ -27,7 +27,7 @@ them to transfer control to each other based on the conversation context.
 
 Prerequisites:
     - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-    - Azure OpenAI configured for FoundryChatClient with required environment variables.
+    - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
     - Authentication via azure-identity. Use AzureCliCredential and run `az login` before executing the sample.
 
 Key Concepts:
@@ -77,6 +77,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
             "based on the problem described."
         ),
         name="triage_agent",
+        require_per_service_call_history_persistence=True,
     )
 
     # Refund specialist: Handles refund requests
@@ -86,6 +87,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_refund],
+        require_per_service_call_history_persistence=True,
     )
 
     # Order/shipping specialist: Resolves delivery issues
@@ -95,6 +97,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[check_order_status],
+        require_per_service_call_history_persistence=True,
     )
 
     # Return specialist: Handles return requests
@@ -104,6 +107,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_return],
+        require_per_service_call_history_persistence=True,
     )
 
     return triage_agent, refund_agent, order_agent, return_agent
@@ -201,7 +205,7 @@ async def main() -> None:
     # Initialize the Azure OpenAI Responses client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

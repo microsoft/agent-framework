@@ -46,12 +46,14 @@ internal sealed class InvokeMcpToolExecutor(
     /// <summary>
     /// Determines if the message indicates external input is required.
     /// </summary>
-    public static bool RequiresInput(object? message) => message is ExternalInputRequest;
+    public static bool RequiresInput(object? message) =>
+        message is ExternalInputRequest || (message is PortableValue pv && pv.IsType(out ExternalInputRequest? _));
 
     /// <summary>
     /// Determines if the message indicates no external input is required.
     /// </summary>
-    public static bool RequiresNothing(object? message) => message is ActionExecutorResult;
+    public static bool RequiresNothing(object? message) =>
+        message is ActionExecutorResult || (message is PortableValue pv && pv.IsType(out ActionExecutorResult? _));
 
     /// <inheritdoc/>
     protected override bool EmitResultEvent => false;
@@ -309,12 +311,16 @@ internal sealed class InvokeMcpToolExecutor(
 
     private bool GetAutoSendValue()
     {
-        if (this.Model.Output?.AutoSend is null)
+        // InvokeToolOutput.AutoSend is never null — it returns a literal-false default
+        // when the YAML omits the field. Use AutoSendIsDefaultValue to distinguish an
+        // explicit autoSend value from the implicit default, and treat the implicit
+        // default as autoSend = true (the historical behavior).
+        if (this.Model.Output is { AutoSendIsDefaultValue: false } output)
         {
-            return true;
+            return this.Evaluator.GetValue(output.AutoSend).Value;
         }
 
-        return this.Evaluator.GetValue(this.Model.Output.AutoSend).Value;
+        return true;
     }
 
     private string? GetConnectionName()

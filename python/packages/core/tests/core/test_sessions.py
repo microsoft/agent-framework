@@ -1,16 +1,31 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
-from collections.abc import Sequence
+import threading
+import time
+from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
+from typing import Any
 
-from agent_framework import Message
-from agent_framework._sessions import (
+import pytest
+
+from agent_framework import (
+    AgentContext,
     AgentSession,
-    BaseContextProvider,
-    BaseHistoryProvider,
+    ChatContext,
+    ContextProvider,
+    ExperimentalFeature,
+    FileHistoryProvider,
+    HistoryProvider,
     InMemoryHistoryProvider,
+    Message,
     SessionContext,
+    agent_middleware,
+    chat_middleware,
 )
+from agent_framework._sessions import LOCAL_HISTORY_CONVERSATION_ID, is_local_history_conversation_id
+from agent_framework.exceptions import MiddlewareException
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -102,6 +117,50 @@ class TestSessionContext:
         ctx.extend_instructions("sys", ["Be helpful", "Be concise"])
         assert ctx.instructions == ["Be helpful", "Be concise"]
 
+    def test_extend_middleware_creates_key_and_appends(self) -> None:
+        ctx = SessionContext(input_messages=[])
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        ctx.extend_middleware("rag", first_middleware)
+        ctx.extend_middleware("rag", [second_middleware])
+
+        assert ctx.middleware["rag"] == [first_middleware, second_middleware]
+        assert ctx.get_middleware() == [first_middleware, second_middleware]
+
+    def test_extend_middleware_preserves_source_order(self) -> None:
+        ctx = SessionContext(input_messages=[])
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        ctx.extend_middleware("a", first_middleware)
+        ctx.extend_middleware("b", second_middleware)
+
+        assert list(ctx.middleware.keys()) == ["a", "b"]
+        assert ctx.get_middleware() == [first_middleware, second_middleware]
+
+    def test_extend_middleware_rejects_agent_middleware(self) -> None:
+        ctx = SessionContext(input_messages=[])
+
+        @agent_middleware
+        async def provider_agent_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        with pytest.raises(MiddlewareException, match="Context providers may only add chat or function middleware"):
+            ctx.extend_middleware("rag", provider_agent_middleware)
+
     def test_get_messages_all(self) -> None:
         ctx = SessionContext(input_messages=[])
         ctx.extend_messages("a", [Message(role="user", contents=["a"])])
@@ -154,37 +213,41 @@ class TestSessionContext:
         ctx._response = resp
         assert ctx.response is resp
 
+    def test_local_history_conversation_id_sentinel(self) -> None:
+        assert is_local_history_conversation_id(LOCAL_HISTORY_CONVERSATION_ID) is True
+        assert is_local_history_conversation_id("some_other_id") is False
+
 
 # ---------------------------------------------------------------------------
-# BaseContextProvider tests
+# ContextProvider tests
 # ---------------------------------------------------------------------------
 
 
-class TestContextProviderBase:
+class TestContextProvider:
     def test_source_id_required(self) -> None:
-        provider = BaseContextProvider(source_id="test")
+        provider = ContextProvider(source_id="test")
         assert provider.source_id == "test"
 
     async def test_before_run_is_noop(self) -> None:
-        provider = BaseContextProvider(source_id="test")
+        provider = ContextProvider(source_id="test")
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
         # Should not raise
         await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
 
     async def test_after_run_is_noop(self) -> None:
-        provider = BaseContextProvider(source_id="test")
+        provider = ContextProvider(source_id="test")
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
         await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
-# BaseHistoryProvider tests
+# HistoryProvider tests
 # ---------------------------------------------------------------------------
 
 
-class ConcreteHistoryProvider(BaseHistoryProvider):
+class ConcreteHistoryProvider(HistoryProvider):
     """Concrete test implementation."""
 
     def __init__(self, source_id: str, stored_messages: list[Message] | None = None, **kwargs) -> None:
@@ -449,3 +512,217 @@ class TestInMemoryHistoryProvider:
         ctx = SessionContext(session_id="s1", input_messages=[])
         ctx.extend_messages("custom-source", [Message(role="user", contents=["test"])])
         assert "custom-source" in ctx.context_messages
+
+
+class TestFileHistoryProvider:
+    def test_is_marked_experimental(self) -> None:
+        assert FileHistoryProvider.__feature_stage__ == "experimental"
+        assert FileHistoryProvider.__feature_id__ == ExperimentalFeature.FILE_HISTORY.value
+        assert FileHistoryProvider.__doc__ is not None
+        assert ".. warning:: Experimental" in FileHistoryProvider.__doc__
+
+    async def test_stores_and_loads_messages(self, tmp_path: Path) -> None:
+        from agent_framework import AgentResponse
+
+        provider = FileHistoryProvider(tmp_path)
+        session = AgentSession(session_id="s1")
+
+        input_message = Message(role="user", contents=["hello"])
+        response_message = Message(role="assistant", contents=["hi there"])
+        first_context = SessionContext(session_id=session.session_id, input_messages=[input_message])
+
+        await provider.before_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=first_context,
+            state={},
+        )
+        first_context._response = AgentResponse(messages=[response_message])
+        await provider.after_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=first_context,
+            state={},
+        )
+
+        session_file = provider._session_file_path(session.session_id)
+        assert session_file.name == "s1.jsonl"
+        assert session_file.exists()
+        raw_lines = (await asyncio.to_thread(session_file.read_text, encoding="utf-8")).splitlines()
+        assert len(raw_lines) == 2
+        payloads = [json.loads(line) for line in raw_lines]
+        assert all(payload["type"] == "message" for payload in payloads)
+        assert all("session_id" not in payload for payload in payloads)
+
+        second_context = SessionContext(
+            session_id=session.session_id, input_messages=[Message(role="user", contents=["again"])]
+        )
+        await provider.before_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=second_context,
+            state={},
+        )
+        loaded = second_context.context_messages.get(provider.source_id, [])
+        assert len(loaded) == 2
+        assert loaded[0].text == "hello"
+        assert loaded[1].text == "hi there"
+
+    def test_creates_storage_directory(self, tmp_path: Path) -> None:
+        nested_path = tmp_path / "nested" / "history"
+        provider = FileHistoryProvider(nested_path)
+        assert provider.storage_path == nested_path
+        assert nested_path.exists()
+        assert nested_path.is_dir()
+
+    async def test_uses_encoded_filename_for_unsafe_session_id(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+        unsafe_session_id = "../unsafe/session"
+
+        await provider.save_messages(unsafe_session_id, [Message(role="user", contents=["hello"])])
+
+        session_file = provider._session_file_path(unsafe_session_id)
+        assert session_file.parent == provider.storage_path
+        assert session_file.name.startswith("~session-")
+        assert session_file.suffix == ".jsonl"
+        assert session_file.exists()
+        jsonl_files = await asyncio.to_thread(
+            lambda: sorted(path.name for path in provider.storage_path.glob("*.jsonl"))
+        )
+        assert jsonl_files == [session_file.name]
+
+    async def test_allows_custom_serializers_returning_bytes(self, tmp_path: Path) -> None:
+        calls: list[str] = []
+
+        def dumps(payload: object) -> bytes:
+            calls.append("dumps")
+            return json.dumps(payload).encode("utf-8")
+
+        def loads(payload: str | bytes) -> object:
+            calls.append("loads")
+            if isinstance(payload, bytes):
+                payload = payload.decode("utf-8")
+            return json.loads(payload)
+
+        provider = FileHistoryProvider(tmp_path, dumps=dumps, loads=loads)
+
+        await provider.save_messages("custom-serializer", [Message(role="user", contents=["hello"])])
+        loaded = await provider.get_messages("custom-serializer")
+
+        assert calls == ["dumps", "loads"]
+        assert len(loaded) == 1
+        assert loaded[0].text == "hello"
+
+    async def test_invalid_jsonl_line_raises(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+        await asyncio.to_thread(provider._session_file_path("broken").write_text, "{not-json}\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Failed to deserialize history line 1"):
+            await provider.get_messages("broken")
+
+    async def test_missing_session_file_returns_empty_messages(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+
+        loaded = await provider.get_messages("missing")
+
+        assert loaded == []
+
+    async def test_none_session_id_uses_default_jsonl_file(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+
+        await provider.save_messages(None, [Message(role="user", contents=["hello"])])
+
+        session_file = provider._session_file_path(None)
+        assert session_file.name == "default.jsonl"
+        loaded = await provider.get_messages(None)
+        assert [message.text for message in loaded] == ["hello"]
+
+    async def test_non_mapping_jsonl_line_raises(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+        await asyncio.to_thread(provider._session_file_path("non-mapping").write_text, "[1, 2, 3]\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="did not deserialize to a mapping"):
+            await provider.get_messages("non-mapping")
+
+    async def test_skip_excluded_omits_excluded_messages(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path, skip_excluded=True)
+
+        await provider.save_messages(
+            "skip-excluded",
+            [
+                Message(role="user", contents=["keep"]),
+                Message(role="assistant", contents=["skip"], additional_properties={"_excluded": True}),
+            ],
+        )
+
+        loaded = await provider.get_messages("skip-excluded")
+
+        assert [message.text for message in loaded] == ["keep"]
+
+    async def test_serializer_must_return_single_line_json(self, tmp_path: Path) -> None:
+        def dumps(payload: object) -> str:
+            return json.dumps(payload, indent=2)
+
+        provider = FileHistoryProvider(tmp_path, dumps=dumps)
+
+        with pytest.raises(ValueError, match="single-line JSON"):
+            await provider.save_messages("pretty-json", [Message(role="user", contents=["hello"])])
+
+    async def test_concurrent_writes_for_same_session_are_locked(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path)
+        session_id = "shared-session"
+        file_path = provider._session_file_path(session_id)
+        real_open = Path.open
+        write_started = threading.Event()
+        active_writes = 0
+        overlap_detected = False
+
+        class _TrackingFile:
+            def __init__(self, wrapped: Any) -> None:
+                self._wrapped = wrapped
+
+            def __enter__(self) -> "_TrackingFile":
+                self._wrapped.__enter__()
+                return self
+
+            def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+                self._wrapped.__exit__(exc_type, exc_val, exc_tb)
+
+            def write(self, data: str) -> int:
+                nonlocal active_writes, overlap_detected
+                write_started.set()
+                active_writes += 1
+                overlap_detected = overlap_detected or active_writes > 1
+                try:
+                    time.sleep(0.05)
+                    return int(self._wrapped.write(data))
+                finally:
+                    active_writes -= 1
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._wrapped, name)
+
+        def tracked_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+            handle = real_open(path, *args, **kwargs)
+            if path == file_path and args and args[0] == "a":
+                return _TrackingFile(handle)
+            return handle
+
+        monkeypatch.setattr(Path, "open", tracked_open)
+
+        first_save = asyncio.create_task(provider.save_messages(session_id, [Message(role="user", contents=["first"])]))
+        started = await asyncio.to_thread(write_started.wait, 1.0)
+        assert started
+
+        second_save = asyncio.create_task(
+            provider.save_messages(session_id, [Message(role="assistant", contents=["second"])])
+        )
+        await asyncio.gather(first_save, second_save)
+
+        assert not overlap_detected
+        loaded = await provider.get_messages(session_id)
+        assert [message.text for message in loaded] == ["first", "second"]

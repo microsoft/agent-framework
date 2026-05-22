@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -145,7 +146,7 @@ public static partial class AgentWorkflowBuilder
         return builder.Build();
     }
 
-    /// <summary>Creates a new <see cref="HandoffsWorkflowBuilder"/> using <paramref name="initialAgent"/> as the starting agent in the workflow.</summary>
+    /// <summary>Creates a new <see cref="HandoffWorkflowBuilder"/> using <paramref name="initialAgent"/> as the starting agent in the workflow.</summary>
     /// <param name="initialAgent">The agent that will receive inputs provided to the workflow.</param>
     /// <returns>The builder for creating a workflow based on handoffs.</returns>
     /// <remarks>
@@ -154,7 +155,8 @@ public static partial class AgentWorkflowBuilder
     /// The <see cref="AIAgent"/> must be capable of understanding those <see cref="AgentRunOptions"/> provided. If the agent
     /// ignores the tools or is otherwise unable to advertize them to the underlying provider, handoffs will not occur.
     /// </remarks>
-    public static HandoffsWorkflowBuilder CreateHandoffBuilderWith(AIAgent initialAgent)
+    [Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
+    public static HandoffWorkflowBuilder CreateHandoffBuilderWith(AIAgent initialAgent)
     {
         Throw.IfNull(initialAgent);
         return new(initialAgent);

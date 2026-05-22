@@ -15,7 +15,7 @@ using OpenAI.Chat;
 using OpenAI.Conversations;
 
 string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-string model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-4o-mini";
+string model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-5.4-mini";
 
 // Create a ConversationClient directly from OpenAIClient
 OpenAIClient openAIClient = new(apiKey);
@@ -73,16 +73,28 @@ foreach (ClientResult result in getConversationItemsResults.GetRawPages())
     using JsonDocument getConversationItemsResultAsJson = JsonDocument.Parse(result.GetRawResponse().Content.ToString());
     foreach (JsonElement element in getConversationItemsResultAsJson.RootElement.GetProperty("data").EnumerateArray())
     {
+        // Skip non-message items (e.g. tool calls, reasoning) that lack a "role" property
+        if (!element.TryGetProperty("role"u8, out var roleElement))
+        {
+            continue;
+        }
+
         string messageId = element.GetProperty("id"u8).ToString();
-        string messageRole = element.GetProperty("role"u8).ToString();
+        string messageRole = roleElement.ToString();
         Console.WriteLine($"    Message ID: {messageId}");
         Console.WriteLine($"    Message Role: {messageRole}");
 
-        foreach (var content in element.GetProperty("content").EnumerateArray())
+        if (element.TryGetProperty("content"u8, out var contentElement))
         {
-            string messageContentText = content.GetProperty("text"u8).ToString();
-            Console.WriteLine($"    Message Text: {messageContentText}");
+            foreach (var content in contentElement.EnumerateArray())
+            {
+                if (content.TryGetProperty("text"u8, out var textElement))
+                {
+                    Console.WriteLine($"    Message Text: {textElement}");
+                }
+            }
         }
+
         Console.WriteLine();
     }
 }

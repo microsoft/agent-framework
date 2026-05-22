@@ -9,7 +9,6 @@ Supported classes include:
 - OpenAIChatClient (Responses API)
 - OpenAIChatCompletionClient (Chat Completions API)
 - OpenAIEmbeddingClient
-- OpenAIAssistantsClient (deprecated)
 """
 
 import importlib
@@ -28,13 +27,6 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "OpenAISettings": ("agent_framework_openai", "agent-framework-openai"),
     "ContentFilterResultSeverity": ("agent_framework_openai", "agent-framework-openai"),
     "OpenAIContentFilterException": ("agent_framework_openai", "agent-framework-openai"),
-    "AssistantToolResources": ("agent_framework_openai", "agent-framework-openai"),
-    "OpenAIAssistantProvider": ("agent_framework_openai", "agent-framework-openai"),
-    "OpenAIAssistantsClient": ("agent_framework_openai", "agent-framework-openai"),
-    "OpenAIAssistantsOptions": ("agent_framework_openai", "agent-framework-openai"),
-    "OpenAIResponsesClient": ("agent_framework_openai", "agent-framework-openai"),
-    "OpenAIResponsesOptions": ("agent_framework_openai", "agent-framework-openai"),
-    "RawOpenAIResponsesClient": ("agent_framework_openai", "agent-framework-openai"),
 }
 
 

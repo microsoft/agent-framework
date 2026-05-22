@@ -36,9 +36,10 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
 
         this._eventStream.Start();
 
-        // If there are already unprocessed messages (e.g., from a checkpoint restore that happened
-        // before this handle was created), signal the run loop to start processing them
-        if (stepRunner.HasUnprocessedMessages)
+        // If there are already unprocessed messages or unserviced requests (e.g., from a
+        // checkpoint restore that happened before this handle was created), signal the run
+        // loop to start processing them
+        if (stepRunner.HasUnprocessedMessages || stepRunner.HasUnservicedRequests)
         {
             this.SignalInputToRunLoop();
         }
@@ -192,13 +193,17 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         {
             streamingEventStream.ClearBufferedEvents();
         }
+        else if (this._eventStream is LockstepRunEventStream lockstepEventStream)
+        {
+            lockstepEventStream.ClearBufferedEvents();
+        }
 
-        // Restore the workflow state - this will republish unserviced requests as new events
+        // Restore the workflow state through the live runtime-restore path.
+        // This can re-emit pending requests into the already-active event stream.
         await this._checkpointingHandle.RestoreCheckpointAsync(checkpointInfo, cancellationToken).ConfigureAwait(false);
 
-        // After restore, signal the run loop to process any restored messages
-        // This is necessary because ClearBufferedEvents() doesn't signal, and the restored
-        // queued messages won't automatically wake up the run loop
+        // After restore, signal the run loop to process any restored messages. Initial resume
+        // paths handle this separately when they create the event stream after restoring state.
         this.SignalInputToRunLoop();
     }
 }

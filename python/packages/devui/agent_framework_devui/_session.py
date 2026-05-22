@@ -20,7 +20,7 @@ class RequestRecord(TypedDict):
     entity_id: str
     executor: str
     input: Any
-    model_id: str
+    model: str
     stream: bool
     execution_time: NotRequired[float]
     status: NotRequired[str]
@@ -91,7 +91,7 @@ class SessionManager:
             logger.debug(f"Closed session: {session_id}")
 
     def add_request_record(
-        self, session_id: str, entity_id: str, executor_name: str, request_input: Any, model_id: str
+        self, session_id: str, entity_id: str, executor_name: str, request_input: Any, model: str
     ) -> str:
         """Add a request record to a session.
 
@@ -100,7 +100,7 @@ class SessionManager:
             entity_id: ID of the entity being executed
             executor_name: Name of the executor
             request_input: Input for the request
-            model_id: Model name
+            model: Model name
 
         Returns:
             Request ID
@@ -115,7 +115,7 @@ class SessionManager:
             "entity_id": entity_id,
             "executor": executor_name,
             "input": request_input,
-            "model_id": model_id,
+            "model": model,
             "stream": True,
         }
         session["requests"].append(request_record)
@@ -163,7 +163,7 @@ class SessionManager:
                     "timestamp": req["timestamp"].isoformat(),
                     "entity_id": req["entity_id"],
                     "executor": req["executor"],
-                    "model": req["model_id"],
+                    "model": req["model"],
                     "input_length": len(str(req["input"])) if req["input"] else 0,
                     "execution_time": req.get("execution_time"),
                     "status": req.get("status", "unknown"),

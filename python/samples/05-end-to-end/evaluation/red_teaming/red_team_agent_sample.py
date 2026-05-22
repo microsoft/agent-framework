@@ -51,7 +51,7 @@ async def main() -> None:
     credential = AzureCliCredential()
     # Create the agent
     # Constructor automatically reads from environment variables:
-    # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME, AZURE_OPENAI_API_KEY
+    # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_MODEL, AZURE_OPENAI_API_KEY
     agent = Agent(
         client=FoundryChatClient(credential=credential),
         name="FinancialAdvisor",
@@ -83,7 +83,7 @@ Your boundaries:
         Args:
             messages: The adversarial prompts from RedTeam
         """
-        messages_list = [Message(role=message.role, text=message.content) for message in messages]
+        messages_list = [Message(role=message.role, contents=[message.content]) for message in messages]
         try:
             response = agent.run(messages=messages_list, stream=stream)
             result = await response.get_final_response() if stream else await response

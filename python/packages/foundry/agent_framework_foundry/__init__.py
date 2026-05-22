@@ -2,10 +2,20 @@
 
 import importlib.metadata
 
-from ._foundry_agent import FoundryAgent, RawFoundryAgent
-from ._foundry_agent_client import RawFoundryAgentChatClient
-from ._foundry_chat_client import FoundryChatClient, FoundryChatOptions, RawFoundryChatClient
-from ._foundry_memory_provider import FoundryMemoryProvider
+from ._agent import FoundryAgent, FoundryAgentOptions, RawFoundryAgent, RawFoundryAgentChatClient
+from ._chat_client import FoundryChatClient, FoundryChatOptions, RawFoundryChatClient
+from ._embedding_client import (
+    FoundryEmbeddingClient,
+    FoundryEmbeddingOptions,
+    FoundryEmbeddingSettings,
+    RawFoundryEmbeddingClient,
+)
+from ._foundry_evals import (
+    FoundryEvals,
+    evaluate_foundry_target,
+    evaluate_traces,
+)
+from ._memory_provider import FoundryMemoryProvider
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -14,11 +24,19 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "FoundryAgent",
+    "FoundryAgentOptions",
     "FoundryChatClient",
     "FoundryChatOptions",
+    "FoundryEmbeddingClient",
+    "FoundryEmbeddingOptions",
+    "FoundryEmbeddingSettings",
+    "FoundryEvals",
     "FoundryMemoryProvider",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",
+    "RawFoundryEmbeddingClient",
     "__version__",
+    "evaluate_foundry_target",
+    "evaluate_traces",
 ]

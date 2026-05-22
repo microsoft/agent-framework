@@ -4,11 +4,7 @@
 # Install agent-framework-openai for full type support.
 
 from agent_framework_openai import (
-    AssistantToolResources,
     ContentFilterResultSeverity,
-    OpenAIAssistantProvider,
-    OpenAIAssistantsClient,
-    OpenAIAssistantsOptions,
     OpenAIChatClient,
     OpenAIChatCompletionClient,
     OpenAIChatCompletionOptions,
@@ -17,20 +13,13 @@ from agent_framework_openai import (
     OpenAIContinuationToken,
     OpenAIEmbeddingClient,
     OpenAIEmbeddingOptions,
-    OpenAIResponsesClient,
-    OpenAIResponsesOptions,
     OpenAISettings,
     RawOpenAIChatClient,
     RawOpenAIChatCompletionClient,
-    RawOpenAIResponsesClient,
 )
 
 __all__ = [
-    "AssistantToolResources",
     "ContentFilterResultSeverity",
-    "OpenAIAssistantProvider",
-    "OpenAIAssistantsClient",
-    "OpenAIAssistantsOptions",
     "OpenAIChatClient",
     "OpenAIChatCompletionClient",
     "OpenAIChatCompletionOptions",
@@ -39,10 +28,7 @@ __all__ = [
     "OpenAIContinuationToken",
     "OpenAIEmbeddingClient",
     "OpenAIEmbeddingOptions",
-    "OpenAIResponsesClient",
-    "OpenAIResponsesOptions",
     "OpenAISettings",
     "RawOpenAIChatClient",
     "RawOpenAIChatCompletionClient",
-    "RawOpenAIResponsesClient",
 ]

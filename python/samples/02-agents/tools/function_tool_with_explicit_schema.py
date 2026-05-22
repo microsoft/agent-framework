@@ -18,7 +18,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -70,7 +70,7 @@ def get_current_time(timezone: str = "UTC") -> str:
 
 async def main():
     agent = Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         name="AssistantAgent",
         instructions="You are a helpful assistant. Use the available tools to answer questions.",
         tools=[get_weather, get_current_time],

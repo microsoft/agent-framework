@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, TypeAlias
 
-from agent_framework._types import Message
+from agent_framework._types import AgentResponse, AgentResponseUpdate, Message
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._events import WorkflowEvent
 from agent_framework._workflows._executor import Executor, handler
@@ -188,7 +188,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Usage:
             workflow.run("Write a blog post about AI agents")
         """
-        await self._handle_messages([Message(role="user", text=task)], ctx)
+        await self._handle_messages([Message(role="user", contents=[task])], ctx)
 
     @handler
     async def handle_message(
@@ -205,7 +205,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context
 
         Usage:
-            workflow.run(Message(role="user", text="Write a blog post about AI agents"))
+            workflow.run(Message(role="user", contents=["Write a blog post about AI agents"]))
         """
         await self._handle_messages([task], ctx)
 
@@ -224,8 +224,8 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context
         Usage:
             workflow.run([
-                Message(role="user", text="Write a blog post about AI agents"),
-                Message(role="user", text="Make it engaging and informative.")
+                Message(role="user", contents=["Write a blog post about AI agents"]),
+                Message(role="user", contents=["Make it engaging and informative."])
             ])
         """
         if not task:
@@ -351,8 +351,10 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             result = await result
         return result
 
-    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Never, list[Message]]) -> bool:
-        """Check termination conditions and yield completion if met.
+    async def _check_terminate_and_yield(
+        self, ctx: WorkflowContext[Never, AgentResponse | AgentResponseUpdate]
+    ) -> bool:
+        """Check termination conditions and yield the completion message if met.
 
         Args:
             ctx: Workflow context for yielding output
@@ -362,11 +364,36 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         """
         terminate = await self._check_termination()
         if terminate:
-            self._append_messages([self._create_completion_message(self.TERMINATION_CONDITION_MET_MESSAGE)])
-            await ctx.yield_output(self._full_conversation)
+            completion_message = self._create_completion_message(self.TERMINATION_CONDITION_MET_MESSAGE)
+            self._append_messages([completion_message])
+            await self._yield_completion(ctx, completion_message)
             return True
 
         return False
+
+    async def _yield_completion(
+        self,
+        ctx: WorkflowContext[Never, AgentResponse | AgentResponseUpdate],
+        completion_message: Message,
+    ) -> None:
+        """Yield a synthesized terminal completion message in the right shape for the run mode.
+
+        Mode-aware to mirror ``AgentExecutor`` semantics:
+        - Streaming (``ctx.is_streaming()``): yield a single ``AgentResponseUpdate`` so the
+          ``output`` event stream stays uniformly per-chunk.
+        - Non-streaming: yield the full ``AgentResponse``.
+        """
+        if ctx.is_streaming():
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=list(completion_message.contents),
+                    role=completion_message.role,
+                    author_name=completion_message.author_name,
+                    message_id=completion_message.message_id,
+                )
+            )
+        else:
+            await ctx.yield_output(AgentResponse(messages=[completion_message]))
 
     def _create_completion_message(self, message: str) -> Message:
         """Create a standardized completion message.
@@ -377,7 +404,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Returns:
             Message with completion content
         """
-        return Message(role="assistant", text=message, author_name=self._name)
+        return Message(role="assistant", contents=[message], author_name=self._name)
 
     # Participant routing (shared across all patterns)
 
@@ -441,7 +468,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             # AgentExecutors receive simple message list
             messages: list[Message] = []
             if additional_instruction:
-                messages.append(Message(role="user", text=additional_instruction))
+                messages.append(Message(role="user", contents=[additional_instruction]))
             request = AgentExecutorRequest(messages=messages, should_respond=True)
             await ctx.send_message(request, target_id=target)
             await ctx.add_event(
@@ -490,8 +517,10 @@ class BaseGroupChatOrchestrator(Executor, ABC):
 
         return False
 
-    async def _check_round_limit_and_yield(self, ctx: WorkflowContext[Never, list[Message]]) -> bool:
-        """Check round limit and yield completion if reached.
+    async def _check_round_limit_and_yield(
+        self, ctx: WorkflowContext[Never, AgentResponse | AgentResponseUpdate]
+    ) -> bool:
+        """Check round limit and yield the max-rounds completion message if reached.
 
         Args:
             ctx: Workflow context for yielding output
@@ -501,8 +530,9 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         """
         reach_max_rounds = self._check_round_limit()
         if reach_max_rounds:
-            self._append_messages([self._create_completion_message(self.MAX_ROUNDS_MET_MESSAGE)])
-            await ctx.yield_output(self._full_conversation)
+            completion_message = self._create_completion_message(self.MAX_ROUNDS_MET_MESSAGE)
+            self._append_messages([completion_message])
+            await self._yield_completion(ctx, completion_message)
             return True
 
         return False

@@ -19,7 +19,7 @@ from agent_framework import (
     ResponseStream,
     tool,
 )
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 from pydantic import Field
 
@@ -81,12 +81,12 @@ async def weather_override_middleware(context: ChatContext, call_next: Callable[
                         role="assistant",
                     )
 
-            context.result = ResponseStream(_override_stream())
+            context.result = ResponseStream(_override_stream(), finalizer=ChatResponse.from_updates)
         else:
             # For non-streaming: just replace with a new message
             current_text = context.result.text if isinstance(context.result, ChatResponse) else ""
             custom_message = f"Weather Advisory: [0] {''.join(chunks)} Original message was: {current_text}"
-            context.result = ChatResponse(messages=[Message(role="assistant", text=custom_message)])
+            context.result = ChatResponse(messages=[Message(role="assistant", contents=[custom_message])])
 
 
 async def validate_weather_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
@@ -99,14 +99,19 @@ async def validate_weather_middleware(context: ChatContext, call_next: Callable[
         return
 
     if context.stream and isinstance(context.result, ResponseStream):
+        result_stream = context.result
 
-        def _append_validation_note(response: ChatResponse) -> ChatResponse:
-            response.messages.append(Message(role="assistant", text=validation_note))
-            return response
+        async def _validated_stream() -> AsyncIterable[ChatResponseUpdate]:
+            async for update in result_stream:
+                yield update
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text=validation_note)],
+                role="assistant",
+            )
 
-        context.result.with_finalizer(_append_validation_note)
+        context.result = ResponseStream(_validated_stream(), finalizer=ChatResponse.from_updates)
     elif isinstance(context.result, ChatResponse):
-        context.result.messages.append(Message(role="assistant", text=validation_note))
+        context.result.messages.append(Message(role="assistant", contents=[validation_note]))
 
 
 async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
@@ -118,11 +123,11 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[]
 
     validation_note = "Validation: weather data verified."
 
-    state = {"found_prefix": False}
+    state = {"found_prefix": False, "found_validation": False}
 
     def _sanitize(response: AgentResponse) -> AgentResponse:
         found_prefix = state["found_prefix"]
-        found_validation = False
+        found_validation = state["found_validation"]
         cleaned_messages: list[Message] = []
 
         for message in response.messages:
@@ -141,12 +146,14 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[]
                 found_prefix = True
                 text = text.replace("Weather Advisory:", "")
 
-            text = re.sub(r"\[\d+\]\s*", "", text)
+            text = re.sub(r"\[\d+\]\s*", "", text).strip()
+            if not text:
+                continue
 
             cleaned_messages.append(
                 Message(
                     role=message.role,
-                    text=text.strip(),
+                    contents=[text],
                     author_name=message.author_name,
                     message_id=message.message_id,
                     additional_properties=message.additional_properties,
@@ -159,26 +166,37 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[]
         if not found_validation:
             raise RuntimeError("Expected validation note not found in agent response.")
 
-        cleaned_messages.append(Message(role="assistant", text=" Agent: OK"))
+        cleaned_messages.append(Message(role="assistant", contents=[" Agent: OK"]))
         response.messages = cleaned_messages
         return response
 
     if context.stream and isinstance(context.result, ResponseStream):
 
         def _clean_update(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            cleaned_contents: list[Content] = []
+
             for content in update.contents or []:
                 if not content.text:
+                    cleaned_contents.append(content)
                     continue
                 text = content.text
                 if "Weather Advisory:" in text:
                     state["found_prefix"] = True
                     text = text.replace("Weather Advisory:", "")
+                if validation_note in text:
+                    state["found_validation"] = True
+                    text = text.replace(validation_note, "").strip()
+                    if not text:
+                        continue
                 text = re.sub(r"\[\d+\]\s*", "", text)
                 content.text = text
+                cleaned_contents.append(content)
+
+            update.contents = cleaned_contents
             return update
 
         context.result.with_transform_hook(_clean_update)
-        context.result.with_finalizer(_sanitize)
+        context.result.with_result_hook(_sanitize)
     elif isinstance(context.result, AgentResponse):
         context.result = _sanitize(context.result)
 
@@ -190,7 +208,7 @@ async def main() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=OpenAIResponsesClient(
+        client=OpenAIChatClient(
             middleware=[validate_weather_middleware, weather_override_middleware],
         ),
         name="WeatherAgent",

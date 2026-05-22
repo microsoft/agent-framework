@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -81,7 +81,7 @@ async def scenario_max_iterations():
     print("Scenario 1: max_iterations — limit LLM roundtrips")
     print("=" * 60)
 
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
     # 1. Set max_iterations to 3 — the tool loop will run at most 3 roundtrips
     #    to the model before forcing a text response.
@@ -116,7 +116,7 @@ async def scenario_max_function_calls():
     print("Scenario 2: max_function_calls — limit total tool executions")
     print("=" * 60)
 
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
     # 1. Allow many iterations but cap total function calls to 4.
     #    If the model requests 3 parallel searches per iteration, after 2
@@ -158,7 +158,7 @@ async def scenario_max_invocations():
     print("=" * 60)
 
     agent = Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         name="APIAgent",
         instructions="Use call_expensive_api when asked to analyze something.",
         tools=[call_expensive_api],
@@ -214,7 +214,7 @@ async def scenario_per_agent_tool_limits():
     agent_a_lookup = tool(name="lookup", approval_mode="never_require", max_invocations=2)(_do_lookup)
     agent_b_lookup = tool(name="lookup", approval_mode="never_require", max_invocations=5)(_do_lookup)
 
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
     agent_a = Agent(
         client=client,
         name="AgentA",
@@ -259,7 +259,7 @@ async def scenario_combined():
     print("Scenario 5: Combined — all mechanisms together")
     print("=" * 60)
 
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
     # 1. Configure the client with both iteration and function call limits.
     client.function_invocation_configuration["max_iterations"] = 5  # max 5 LLM roundtrips

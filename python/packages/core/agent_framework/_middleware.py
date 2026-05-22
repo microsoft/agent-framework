@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
     from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._sessions import AgentSession
-    from ._tools import FunctionTool
+    from ._tools import FunctionTool, ToolTypes
     from ._types import ChatOptions, ChatResponse, ChatResponseUpdate
 
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -100,6 +100,7 @@ class AgentContext:
         agent: The agent being invoked.
         messages: The messages being sent to the agent.
         session: The agent session for this invocation, if any.
+        tools: Run-level tool overrides for this invocation, if any.
         options: The options for the agent invocation as a dict.
         stream: Whether this is a streaming invocation.
         compaction_strategy: Optional per-run compaction override.
@@ -142,6 +143,7 @@ class AgentContext:
         agent: SupportsAgentRun,
         messages: list[Message],
         session: AgentSession | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: Mapping[str, Any] | None = None,
         stream: bool = False,
         compaction_strategy: CompactionStrategy | None = None,
@@ -165,6 +167,7 @@ class AgentContext:
             agent: The agent being invoked.
             messages: The messages being sent to the agent.
             session: The agent session for this invocation, if any.
+            tools: Run-level tool overrides for this invocation, if any.
             options: The options for the agent invocation as a dict.
             stream: Whether this is a streaming invocation.
             compaction_strategy: Optional per-run compaction override.
@@ -181,6 +184,7 @@ class AgentContext:
         self.agent = agent
         self.messages = messages
         self.session = session
+        self.tools = tools
         self.options = options
         self.stream = stream
         self.compaction_strategy = compaction_strategy
@@ -290,7 +294,7 @@ class ChatContext:
                 async def process(self, context: ChatContext, call_next):
                     print(f"Chat client: {context.chat_client.__class__.__name__}")
                     print(f"Messages: {len(context.messages)}")
-                    print(f"Model: {context.options.get('model_id')}")
+                    print(f"Model: {context.options.get('model')}")
 
                     # Store metadata
                     context.metadata["input_tokens"] = self.count_tokens(context.messages)
@@ -498,7 +502,7 @@ class ChatMiddleware(ABC):
                     # Add system prompt to messages
                     from agent_framework import Message
 
-                    context.messages.insert(0, Message(role="system", text=self.system_prompt))
+                    context.messages.insert(0, Message(role="system", contents=[self.system_prompt]))
 
                     # Continue execution
                     await call_next()
@@ -1025,7 +1029,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -1039,7 +1043,6 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -1053,7 +1056,6 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
@@ -1066,27 +1068,26 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Execute the chat pipeline if middleware is configured."""
         super_get_response = super().get_response  # type: ignore[misc]
-
-        if compaction_strategy is not None:
-            kwargs["compaction_strategy"] = compaction_strategy
-        if tokenizer is not None:
-            kwargs["tokenizer"] = tokenizer
-
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         call_middleware = effective_client_kwargs.pop("middleware", [])
+        context_kwargs = dict(effective_client_kwargs)
+        if compaction_strategy is not None:
+            context_kwargs["compaction_strategy"] = compaction_strategy
+        if tokenizer is not None:
+            context_kwargs["tokenizer"] = tokenizer
         pipeline = self._get_chat_middleware_pipeline(call_middleware)  # type: ignore[reportUnknownArgumentType]
         if not pipeline.has_middlewares:
             return super_get_response(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
                 options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=effective_client_kwargs,
-                **kwargs,
             )
 
         context = ChatContext(
@@ -1094,7 +1095,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             messages=list(messages),
             options=options,
             stream=stream,
-            kwargs={**effective_client_kwargs, **kwargs},
+            kwargs=context_kwargs,
             function_invocation_kwargs=function_invocation_kwargs,
         )
 
@@ -1180,12 +1181,12 @@ class AgentMiddlewareLayer:
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -1196,12 +1197,12 @@ class AgentMiddlewareLayer:
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
@@ -1212,12 +1213,12 @@ class AgentMiddlewareLayer:
         stream: Literal[True],
         session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
@@ -1227,12 +1228,12 @@ class AgentMiddlewareLayer:
         stream: bool = False,
         session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """MiddlewareTypes-enabled unified run method."""
         # Re-categorize self.middleware at runtime to support dynamic changes
@@ -1263,23 +1264,23 @@ class AgentMiddlewareLayer:
                 messages,
                 stream=stream,
                 session=session,
+                tools=tools,
                 options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
                 function_invocation_kwargs=effective_function_invocation_kwargs,
                 client_kwargs=effective_client_kwargs,
-                **kwargs,
             )
 
         context = AgentContext(
             agent=self,  # type: ignore[arg-type]
             messages=normalize_messages(messages),
             session=session,
+            tools=tools,
             options=options,
             stream=stream,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
-            kwargs=kwargs,
             client_kwargs=effective_client_kwargs,
             function_invocation_kwargs=effective_function_invocation_kwargs,
         )
@@ -1313,22 +1314,16 @@ class AgentMiddlewareLayer:
     def _middleware_handler(
         self, context: AgentContext
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-        # TODO(Copilot): Delete once direct ``run(**kwargs)`` compatibility is removed.
-        client_kwargs = {**context.client_kwargs, **context.kwargs}
-        # TODO(Copilot): Delete once direct ``run(**kwargs)`` compatibility is removed.
-        function_invocation_kwargs = {
-            **context.function_invocation_kwargs,
-            **{k: v for k, v in context.kwargs.items() if k != "middleware"},
-        }
         return super().run(  # type: ignore[misc, no-any-return]
             context.messages,
             stream=context.stream,
             session=context.session,
+            tools=context.tools,
             options=context.options,
             compaction_strategy=context.compaction_strategy,
             tokenizer=context.tokenizer,
-            function_invocation_kwargs=function_invocation_kwargs,
-            client_kwargs=client_kwargs,
+            function_invocation_kwargs=context.function_invocation_kwargs,
+            client_kwargs=context.client_kwargs,
         )
 
 

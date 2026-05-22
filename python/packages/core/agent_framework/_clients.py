@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import sys
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncIterable,
@@ -139,7 +138,8 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -153,7 +153,6 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -167,7 +166,6 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
@@ -180,7 +178,6 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Send input and return the response.
 
@@ -192,7 +189,6 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
             tokenizer: Optional per-call tokenizer override.
             function_invocation_kwargs: Keyword arguments forwarded only to tool invocation layers.
             client_kwargs: Additional client-specific keyword arguments.
-            **kwargs: Deprecated additional client-specific keyword arguments.
 
         Returns:
             When stream=False: An awaitable ChatResponse from the client.
@@ -235,8 +231,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         streaming and non-streaming responses.
 
         For full-featured clients with middleware, telemetry, and function invocation support,
-        use the public client classes (e.g., ``OpenAIChatClient``, ``OpenAIResponsesClient``)
-        which compose these layers correctly.
+        use public client classes such as ``OpenAIChatClient`` which compose these layers correctly.
 
     Examples:
         .. code-block:: python
@@ -258,7 +253,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                     else:
                         # Non-streaming implementation
                         return ChatResponse(
-                            messages=[Message(role="assistant", text="Hello!")], response_id="custom-response"
+                            messages=[Message(role="assistant", contents=["Hello!"])],
+                            response_id="custom-response",
                         )
 
 
@@ -266,9 +262,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             client = CustomChatClient()
 
             # Use the client to get responses
-            response = await client.get_response([Message(role="user", text="Hello, how are you?")])
+            response = await client.get_response([Message(role="user", contents=["Hello, how are you?"])])
             # Or stream responses
-            async for update in client.get_response([Message(role="user", text="Hello!")], stream=True):
+            async for update in client.get_response([Message(role="user", contents=["Hello!"])], stream=True):
                 print(update)
     """
 
@@ -296,7 +292,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a BaseChatClient instance.
 
@@ -304,19 +299,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             compaction_strategy: Optional compaction strategy to apply before model calls.
             tokenizer: Optional tokenizer used by token-aware compaction strategies.
             additional_properties: Additional properties for the client.
-            kwargs: Additional keyword arguments (merged into additional_properties for now).
         """
         self.additional_properties = additional_properties or {}
         self.compaction_strategy = compaction_strategy
         self.tokenizer = tokenizer
-        if kwargs:
-            warnings.warn(
-                "Passing additional properties as direct keyword arguments to BaseChatClient is deprecated; "
-                "pass them via additional_properties instead.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            self.additional_properties.update(kwargs)
         super().__init__()
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
@@ -360,10 +346,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         response_format: Any | None = None,
     ) -> ChatResponse[Any]:
         """Finalize response updates into a single ChatResponse."""
-        output_format_type = response_format if isinstance(response_format, type) else None
         return ChatResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
             updates,
-            output_format_type=output_format_type,
+            output_format_type=response_format,
         )
 
     def _build_response_stream(
@@ -457,7 +442,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -469,7 +455,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -481,7 +468,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
@@ -492,7 +480,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from a chat client.
 
@@ -504,13 +493,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 When omitted, the client-level default is used.
             tokenizer: Optional per-call tokenizer override. When omitted, the
                 client-level default is used.
-            **kwargs: Additional compatibility keyword arguments. Lower chat-client layers do not
-                consume ``function_invocation_kwargs`` directly; if present, it is ignored here
-                because function invocation has already been handled by upper layers. If a
-                ``client_kwargs`` mapping is present, it is flattened into standard keyword
-                arguments before forwarding to ``_inner_get_response()`` so client implementations
-                can leverage those values, while implementations that ignore
-                extra kwargs remain compatible.
+            function_invocation_kwargs: Keyword arguments forwarded only to tool invocation layers.
+            client_kwargs: Additional client-specific keyword arguments forwarded to
+                ``_inner_get_response()``.
 
         Returns:
             When streaming a response stream of ChatResponseUpdates, otherwise an Awaitable ChatResponse.
@@ -519,14 +504,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
         )
-        compatibility_client_kwargs = kwargs.pop("client_kwargs", None)
-        kwargs.pop("function_invocation_kwargs", None)
-        merged_client_kwargs = (
-            dict(cast(Mapping[str, Any], compatibility_client_kwargs))
-            if isinstance(compatibility_client_kwargs, Mapping)
-            else {}
-        )
-        merged_client_kwargs.update(kwargs)
+        merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
 
         if not compaction_overrides:
             return self._inner_get_response(
@@ -594,6 +572,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         default_options: OptionsCoT | Mapping[str, Any] | None = None,
         context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        require_per_service_call_history_persistence: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -613,11 +592,15 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             tools: The tools to use for the request.
             default_options: A TypedDict containing chat options. When using a typed client like
                 ``OpenAIChatClient``, this enables IDE autocomplete for provider-specific options
-                including temperature, max_tokens, model_id, tool_choice, and more.
+                including temperature, max_tokens, model, tool_choice, and more.
                 Note: response_format typing does not flow into run outputs when set via default_options,
                 and dict literals are accepted without specialized option typing.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
+            require_per_service_call_history_persistence: Whether to require per-service-call
+                chat history persistence. When enabled, history providers are invoked around
+                each model call instead of once per ``run()`` when the service is not already
+                storing history.
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level compaction override. When omitted,
                 client-level compaction defaults remain in effect for each call.
@@ -634,7 +617,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 from agent_framework.openai import OpenAIChatClient
 
                 # Create a client
-                client = OpenAIChatClient(model_id="gpt-4")
+                client = OpenAIChatClient(model="gpt-4")
 
                 # Create an agent using the convenience method
                 agent = client.as_agent(
@@ -658,6 +641,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             "default_options": cast(Any, default_options),
             "context_providers": context_providers,
             "middleware": middleware,
+            "require_per_service_call_history_persistence": require_per_service_call_history_persistence,
             "compaction_strategy": compaction_strategy,
             "tokenizer": tokenizer,
             "additional_properties": dict(additional_properties) if additional_properties is not None else None,
@@ -830,22 +814,21 @@ class SupportsFileSearchTool(Protocol):
 
 # region SupportsGetEmbeddings Protocol
 
-# Contravariant TypeVars for the Protocol
+# TypeVars for the Protocol
 EmbeddingInputContraT = TypeVar(
     "EmbeddingInputContraT",
     default="str",
     contravariant=True,
 )
-EmbeddingOptionsContraT = TypeVar(
-    "EmbeddingOptionsContraT",
+EmbeddingProtocolOptionsT = TypeVar(
+    "EmbeddingProtocolOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="EmbeddingGenerationOptions",
-    contravariant=True,
 )
 
 
 @runtime_checkable
-class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingT, EmbeddingOptionsContraT]):
+class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingT, EmbeddingProtocolOptionsT]):
     """Protocol for an embedding client that can generate embeddings.
 
     This protocol enables duck-typing for embedding generation. Any class that
@@ -872,8 +855,8 @@ class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingT, Embeddin
         self,
         values: Sequence[EmbeddingInputContraT],
         *,
-        options: EmbeddingOptionsContraT | None = None,
-    ) -> Awaitable[GeneratedEmbeddings[EmbeddingT]]:
+        options: EmbeddingProtocolOptionsT | None = None,
+    ) -> Awaitable[GeneratedEmbeddings[EmbeddingT, EmbeddingProtocolOptionsT]]:
         """Generate embeddings for the given values.
 
         Args:

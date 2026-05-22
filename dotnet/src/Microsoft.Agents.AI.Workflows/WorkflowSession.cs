@@ -19,7 +19,14 @@ namespace Microsoft.Agents.AI.Workflows;
 internal sealed class WorkflowSession : AgentSession
 {
     private readonly Workflow _workflow;
-    private readonly IWorkflowExecutionEnvironment _executionEnvironment;
+
+    /// <summary>
+    /// The execution environment for this session. Concrete type is required because
+    /// <see cref="CreateOrResumeRunAsync"/> uses the internal
+    /// <see cref="InProcessExecutionEnvironment.ResumeStreamingInternalAsync"/> API.
+    /// </summary>
+    private readonly InProcessExecutionEnvironment _inProcEnvironment;
+
     private readonly bool _includeExceptionDetails;
     private readonly bool _includeWorkflowOutputsInResponse;
 
@@ -63,16 +70,21 @@ internal sealed class WorkflowSession : AgentSession
     public WorkflowSession(Workflow workflow, string sessionId, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
     {
         this._workflow = Throw.IfNull(workflow);
-        this._executionEnvironment = Throw.IfNull(executionEnvironment);
         this._includeExceptionDetails = includeExceptionDetails;
         this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
 
-        if (VerifyCheckpointingConfiguration(executionEnvironment, out InProcessExecutionEnvironment? inProcEnv))
+        IWorkflowExecutionEnvironment env = Throw.IfNull(executionEnvironment);
+        if (VerifyCheckpointingConfiguration(env, out InProcessExecutionEnvironment? inProcEnv))
         {
             // We have an InProcessExecutionEnvironment which is not configured for checkpointing. Ensure it has an externalizable checkpoint manager,
             // since we are responsible for maintaining the state.
-            this._executionEnvironment = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
+            env = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
         }
+
+        this._inProcEnvironment = env as InProcessExecutionEnvironment
+            ?? throw new InvalidOperationException(
+                $"WorkflowSession requires an {nameof(InProcessExecutionEnvironment)}, " +
+                $"but received {env.GetType().Name}.");
 
         this.SessionId = Throw.IfNullOrEmpty(sessionId);
         this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
@@ -86,23 +98,29 @@ internal sealed class WorkflowSession : AgentSession
     public WorkflowSession(Workflow workflow, JsonElement serializedSession, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
-        this._executionEnvironment = Throw.IfNull(executionEnvironment);
         this._includeExceptionDetails = includeExceptionDetails;
         this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
+
+        IWorkflowExecutionEnvironment env = Throw.IfNull(executionEnvironment);
 
         JsonMarshaller marshaller = new(jsonSerializerOptions);
         SessionState sessionState = marshaller.Marshal<SessionState>(serializedSession);
 
         this._inMemoryCheckpointManager = sessionState.CheckpointManager;
         if (this._inMemoryCheckpointManager != null &&
-            VerifyCheckpointingConfiguration(executionEnvironment, out InProcessExecutionEnvironment? inProcEnv))
+            VerifyCheckpointingConfiguration(env, out InProcessExecutionEnvironment? inProcEnv))
         {
-            this._executionEnvironment = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
+            env = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
         }
         else if (this._inMemoryCheckpointManager != null)
         {
             throw new ArgumentException("The session was saved with an externalized checkpoint manager, but the incoming execution environment does not support it.", nameof(executionEnvironment));
         }
+
+        this._inProcEnvironment = env as InProcessExecutionEnvironment
+            ?? throw new InvalidOperationException(
+                $"WorkflowSession requires an {nameof(InProcessExecutionEnvironment)}, " +
+                $"but received {env.GetType().Name}.");
 
         this.SessionId = sessionState.SessionId;
         this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
@@ -131,7 +149,7 @@ internal sealed class WorkflowSession : AgentSession
     {
         Throw.IfNullOrEmpty(parts);
 
-        AgentResponseUpdate update = new(ChatRole.Assistant, parts)
+        return new(ChatRole.Assistant, parts)
         {
             CreatedAt = DateTimeOffset.UtcNow,
             MessageId = Guid.NewGuid().ToString("N"),
@@ -139,27 +157,19 @@ internal sealed class WorkflowSession : AgentSession
             ResponseId = responseId,
             RawRepresentation = raw
         };
-
-        this.ChatHistoryProvider.AddMessages(this, update.ToChatMessage());
-
-        return update;
     }
 
     public AgentResponseUpdate CreateUpdate(string responseId, object raw, ChatMessage message)
     {
         Throw.IfNull(message);
 
-        AgentResponseUpdate update = new(message.Role, message.Contents)
+        return new(message.Role, message.Contents)
         {
             CreatedAt = message.CreatedAt ?? DateTimeOffset.UtcNow,
             MessageId = message.MessageId ?? Guid.NewGuid().ToString("N"),
             ResponseId = responseId,
             RawRepresentation = raw
         };
-
-        this.ChatHistoryProvider.AddMessages(this, update.ToChatMessage());
-
-        return update;
     }
 
     private async ValueTask<ResumeRunResult> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
@@ -168,10 +178,15 @@ internal sealed class WorkflowSession : AgentSession
         // and does not need to be checked again here.
         if (this.LastCheckpoint is not null)
         {
+            // Use the internal resume path that suppresses pending request republishing.
+            // WorkflowSession handles pending requests itself by converting matching responses
+            // via SendMessagesWithResponseConversionAsync, so event-stream republishing would
+            // cause unwanted duplicate events visible to the consumer.
             StreamingRun run =
-                await this._executionEnvironment
-                            .ResumeStreamingAsync(this._workflow,
+                await this._inProcEnvironment
+                            .ResumeStreamingInternalAsync(this._workflow,
                                                this.LastCheckpoint,
+                                               republishPendingEvents: false,
                                                cancellationToken)
                             .ConfigureAwait(false);
 
@@ -180,7 +195,7 @@ internal sealed class WorkflowSession : AgentSession
             return new ResumeRunResult(run, dispatchInfo);
         }
 
-        StreamingRun newRun = await this._executionEnvironment
+        StreamingRun newRun = await this._inProcEnvironment
                             .RunStreamingAsync(this._workflow,
                                          messages,
                                          this.SessionId,
@@ -232,7 +247,7 @@ internal sealed class WorkflowSession : AgentSession
                         hasMatchedResponseForStartExecutor |= string.Equals(responseExecutorId, this._workflow.StartExecutorId, StringComparison.Ordinal);
                     }
 
-                    AIContent normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
+                    object normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
                     externalResponses.Add((pendingRequest.CreateResponse(normalizedResponseContent), pendingRequest.RequestId));
                     (matchedContentIds ??= new(StringComparer.Ordinal)).Add(contentId);
                 }
@@ -273,29 +288,119 @@ internal sealed class WorkflowSession : AgentSession
     }
 
     /// <summary>
+    /// Resolves the concrete request payload type from <see cref="RequestPortInfo.RequestType"/>
+    /// and returns it as an <see cref="IExternalRequestEnvelope"/> if the type implements that
+    /// abstraction. Resolving via the concrete <see cref="TypeId"/> (rather than asking the
+    /// PortableValue to deserialize directly to <see cref="IExternalRequestEnvelope"/>) is
+    /// required because checkpointed payloads round-trip as JSON which cannot be deserialized
+    /// to an interface; the concrete type populates the deserialization cache so subsequent
+    /// interface assignment succeeds.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    private static bool TryGetRequestEnvelope(ExternalRequest request, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
+    {
+        envelope = null;
+
+        TypeId requestType = request.PortInfo.RequestType;
+        Type? concreteType = Type.GetType($"{requestType.TypeName}, {requestType.AssemblyName}", throwOnError: false);
+        if (concreteType is null || !typeof(IExternalRequestEnvelope).IsAssignableFrom(concreteType))
+        {
+            return false;
+        }
+
+        if (!request.TryGetDataAs(concreteType, out object? data) || data is not IExternalRequestEnvelope env)
+        {
+            return false;
+        }
+
+        envelope = env;
+        return true;
+    }
+
+    /// <summary>
     /// Creates the workflow-facing request content surfaced in response updates.
     /// </summary>
-    private static AIContent CreateRequestContentForDelivery(ExternalRequest request) => request switch
+    private static AIContent CreateRequestContentForDelivery(ExternalRequest request)
     {
-        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? functionCallContent)
-            => CloneFunctionCallContent(functionCallContent, externalRequest.RequestId),
-        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
-            => CloneToolApprovalRequestContent(toolApprovalRequestContent, externalRequest.RequestId),
-        ExternalRequest externalRequest
-            => externalRequest.ToFunctionCall(),
-    };
+        // If the request payload is a higher-layer envelope (e.g., a declarative
+        // ExternalInputRequest), surface its inner FCC/TARC to the host on the wire.
+        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        {
+            AIContent? inner = envelope.GetInnerRequestContent();
+            if (inner is ToolApprovalRequestContent toolApprovalRequest)
+            {
+                return CloneToolApprovalRequestContent(toolApprovalRequest, request.RequestId);
+            }
+            if (inner is FunctionCallContent functionCall)
+            {
+                return CloneFunctionCallContent(functionCall, request.RequestId);
+            }
+        }
+
+        return request switch
+        {
+            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? functionCallContent)
+                => CloneFunctionCallContent(functionCallContent, externalRequest.RequestId),
+            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
+                => CloneToolApprovalRequestContent(toolApprovalRequestContent, externalRequest.RequestId),
+            ExternalRequest externalRequest
+                => externalRequest.ToFunctionCall(),
+        };
+    }
 
     /// <summary>
     /// Rewrites workflow-facing response content back to the original agent-owned content ID.
     /// </summary>
-    private static AIContent NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request) => content switch
+    private static object NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request)
     {
-        FunctionResultContent functionResultContent when request.TryGetDataAs(out FunctionCallContent? functionCallContent)
-            => CloneFunctionResultContent(functionResultContent, functionCallContent.CallId),
-        ToolApprovalResponseContent toolApprovalResponseContent when request.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
-            => CloneToolApprovalResponseContent(toolApprovalResponseContent, toolApprovalRequestContent.RequestId),
-        _ => content,
-    };
+        // If the request payload is a higher-layer envelope, recover the original
+        // CallId/RequestId from the inner content and ask the envelope to wrap the
+        // response back into its paired response type for delivery to the request port.
+        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        {
+            AIContent? inner = envelope.GetInnerRequestContent();
+            AIContent payload = (content, inner) switch
+            {
+                (FunctionResultContent functionResult, FunctionCallContent functionCall)
+                    => CloneFunctionResultContent(functionResult, functionCall.CallId),
+                (FunctionResultContent functionResult, ToolApprovalRequestContent toolApprovalRequest)
+                    => CloneFunctionResultContent(functionResult, toolApprovalRequest.ToolCall.CallId),
+                (ToolApprovalResponseContent toolApprovalResponse, ToolApprovalRequestContent toolApprovalRequest)
+                    => CloneToolApprovalResponseContent(toolApprovalResponse, toolApprovalRequest.RequestId),
+                _ => content,
+            };
+
+            ChatMessage message = new(ChatRole.Tool, [payload]);
+            return envelope.CreateResponse([message]);
+        }
+
+        switch (content)
+        {
+            // If we got a FRC, and were expecting a FRC (because the request started out as a FCC, rather than getting converted to
+            // on at the WorkflowSession boundary), clone it and send it in.
+            case FunctionResultContent functionResultContent when request.TryGetDataAs(out FunctionCallContent? functionCallContent):
+                return CloneFunctionResultContent(functionResultContent, functionCallContent.CallId);
+            case FunctionResultContent functionResultContent when !request.PortInfo.ResponseType.IsMatchPolymorphic(typeof(FunctionResultContent)):
+            {
+                object? result = functionResultContent.Result;
+                if (result != null)
+                {
+                    if (request.PortInfo.ResponseType.IsMatchPolymorphic(result.GetType()) || result is PortableValue)
+                    {
+                        return result;
+                    }
+
+                    throw new InvalidOperationException($"Unexpected result type in FunctionResultContent {result.GetType()}; expecting {request.PortInfo.ResponseType}");
+                }
+
+                throw new NotSupportedException($"Null result is not supported when using RequestPort with non-AIContent-typed requests. {functionResultContent}");
+            }
+            case ToolApprovalResponseContent toolApprovalResponseContent when request.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent):
+                return CloneToolApprovalResponseContent(toolApprovalResponseContent, toolApprovalRequestContent.RequestId);
+            default:
+                return content;
+        }
+    }
 
     /// <summary>
     /// Gets the workflow-facing request ID from response content types.
@@ -328,111 +433,135 @@ internal sealed class WorkflowSession : AgentSession
     IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        try
-        {
-            this.LastResponseId = Guid.NewGuid().ToString("N");
-            List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark(this).ToList();
+        this.LastResponseId = Guid.NewGuid().ToString("N");
+        List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark(this).ToList();
 
-            ResumeRunResult resumeResult =
-                await this.CreateOrResumeRunAsync(messages, cancellationToken).ConfigureAwait(false);
+        ResumeRunResult resumeResult =
+            await this.CreateOrResumeRunAsync(messages, cancellationToken).ConfigureAwait(false);
+
 #pragma warning disable CA2007 // Analyzer misfiring.
-            await using StreamingRun run = resumeResult.Run;
+        await using StreamingRun run = resumeResult.Run;
 #pragma warning restore CA2007
 
-            ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
+        ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
 
-            // Send a TurnToken to the start executor unless the only activity is an external
-            // response directed at the start executor itself (which self-emits a TurnToken via
-            // ContinueTurnAsync). Non-start executors (e.g., RequestInfoExecutor) do not emit
-            // TurnTokens after processing responses, so the session must always provide one.
-            bool shouldSendTurnToken =
-                !dispatchInfo.HasMatchedExternalResponses
-                || !dispatchInfo.HasMatchedResponseForStartExecutor;
-            if (shouldSendTurnToken)
-            {
-                await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
-            }
-            await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
+        // Send a TurnToken to the start executor unless the only activity is an external
+        // response directed at the start executor itself (which self-emits a TurnToken via
+        // ContinueTurnAsync). Non-start executors (e.g., RequestInfoExecutor) do not emit
+        // TurnTokens after processing responses, so the session must always provide one.
+        bool shouldSendTurnToken =
+            !dispatchInfo.HasMatchedExternalResponses
+            || !dispatchInfo.HasMatchedResponseForStartExecutor;
+        if (shouldSendTurnToken)
+        {
+            await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
+        }
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
                                                .WithCancellation(cancellationToken))
-            {
-                switch (evt)
-                {
-                    case AgentResponseUpdateEvent agentUpdate:
-                        yield return agentUpdate.Update;
-                        break;
-
-                    case RequestInfoEvent requestInfo:
-                        AIContent requestContent = CreateRequestContentForDelivery(requestInfo.Request);
-
-                        // Track the pending request so we can convert incoming responses back to ExternalResponse.
-                        // External callers respond using the workflow-facing request ID, which is always RequestId.
-                        this.AddPendingRequest(requestInfo.Request.RequestId, requestInfo.Request);
-
-                        AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, requestContent);
-                        yield return update;
-                        break;
-
-                    case WorkflowErrorEvent workflowError:
-                        Exception? exception = workflowError.Exception;
-                        if (exception is TargetInvocationException tie && tie.InnerException != null)
-                        {
-                            exception = tie.InnerException;
-                        }
-
-                        if (exception != null)
-                        {
-                            string message = this._includeExceptionDetails
-                                           ? exception.Message
-                                           : "An error occurred while executing the workflow.";
-
-                            ErrorContent errorContent = new(message);
-                            yield return this.CreateUpdate(this.LastResponseId, evt, errorContent);
-                        }
-
-                        break;
-
-                    case SuperStepCompletedEvent stepCompleted:
-                        this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
-                        goto default;
-
-                    case WorkflowOutputEvent output:
-                        IEnumerable<ChatMessage>? updateMessages = output.Data switch
-                        {
-                            IEnumerable<ChatMessage> chatMessages => chatMessages,
-                            ChatMessage chatMessage => [chatMessage],
-                            _ => null
-                        };
-
-                        if (!this._includeWorkflowOutputsInResponse || updateMessages == null)
-                        {
-                            goto default;
-                        }
-
-                        foreach (ChatMessage message in updateMessages)
-                        {
-                            yield return this.CreateUpdate(this.LastResponseId, evt, message);
-                        }
-                        break;
-
-                    default:
-                        // Emit all other workflow events for observability (DevUI, logging, etc.)
-                        yield return new AgentResponseUpdate(ChatRole.Assistant, [])
-                        {
-                            CreatedAt = DateTimeOffset.UtcNow,
-                            MessageId = Guid.NewGuid().ToString("N"),
-                            Role = ChatRole.Assistant,
-                            ResponseId = this.LastResponseId,
-                            RawRepresentation = evt
-                        };
-                        break;
-                }
-            }
-        }
-        finally
         {
-            // Do we want to try to undo the step, and not update the bookmark?
-            this.ChatHistoryProvider.UpdateBookmark(this);
+            switch (evt)
+            {
+                case AgentResponseUpdateEvent agentUpdate:
+                    yield return agentUpdate.Update;
+                    break;
+
+                case RequestInfoEvent requestInfo:
+                    AIContent requestContent = CreateRequestContentForDelivery(requestInfo.Request);
+
+                    // Track the pending request so we can convert incoming responses back to ExternalResponse.
+                    // External callers respond using the workflow-facing request ID, which is always RequestId.
+                    this.AddPendingRequest(requestInfo.Request.RequestId, requestInfo.Request);
+
+                    AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, requestContent);
+                    yield return update;
+                    break;
+
+                case WorkflowErrorEvent workflowError:
+                    Exception? exception = workflowError.Exception;
+                    if (exception is TargetInvocationException tie && tie.InnerException != null)
+                    {
+                        exception = tie.InnerException;
+                    }
+
+                    if (exception != null)
+                    {
+                        string message = this._includeExceptionDetails
+                                       ? exception.Message
+                                       : "An error occurred while executing the workflow.";
+
+                        ErrorContent errorContent = new(message);
+                        yield return this.CreateUpdate(this.LastResponseId, evt, errorContent);
+                    }
+
+                    break;
+
+                case ExecutorFailedEvent executorFailed:
+                    // Mirror WorkflowErrorEvent: never expose internal workflow graph
+                    // identifiers (executor ID) to the client. Surface the exception
+                    // message only when the host opts in via _includeExceptionDetails.
+                    Exception? executorException = executorFailed.Data;
+                    while (executorException is { InnerException: not null }
+                        && (executorException is TargetInvocationException
+                            || executorException.GetType().Name == "DeclarativeActionException"))
+                    {
+                        executorException = executorException.InnerException;
+                    }
+
+                    string executorMessage = this._includeExceptionDetails && executorException != null
+                        ? executorException.Message
+                        : "An error occurred while executing the workflow.";
+
+                    yield return this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    break;
+
+                case SuperStepCompletedEvent stepCompleted:
+                    this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
+                    goto default;
+
+                case AgentResponseEvent agentResponse:
+                    if (!this._includeWorkflowOutputsInResponse)
+                    {
+                        goto default;
+                    }
+
+                    foreach (ChatMessage message in agentResponse.Response.Messages)
+                    {
+                        yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    break;
+
+                case WorkflowOutputEvent output:
+                    IEnumerable<ChatMessage>? updateMessages = output.Data switch
+                    {
+                        IEnumerable<ChatMessage> chatMessages => chatMessages,
+                        ChatMessage chatMessage => [chatMessage],
+                        _ => null
+                    };
+
+                    if (!this._includeWorkflowOutputsInResponse || updateMessages == null)
+                    {
+                        goto default;
+                    }
+
+                    foreach (ChatMessage message in updateMessages)
+                    {
+                        yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    break;
+
+                default:
+                    // Emit all other workflow events for observability (DevUI, logging, etc.)
+                    yield return new AgentResponseUpdate(ChatRole.Assistant, [])
+                    {
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        MessageId = Guid.NewGuid().ToString("N"),
+                        Role = ChatRole.Assistant,
+                        ResponseId = this.LastResponseId,
+                        RawRepresentation = evt
+                    };
+                    break;
+            }
         }
     }
 

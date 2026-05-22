@@ -70,7 +70,7 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
 
                         if (approvalRequest.AdditionalProperties != null)
                         {
-                            approvalResponse.AdditionalProperties = new AdditionalPropertiesDictionary();
+                            approvalResponse.AdditionalProperties = [];
                             foreach (var kvp in approvalRequest.AdditionalProperties)
                             {
                                 approvalResponse.AdditionalProperties[kvp.Key] = kvp.Value;

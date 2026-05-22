@@ -3,10 +3,15 @@
 import asyncio
 import json
 import os
+
+# Uncomment this filter to suppress the experimental Skills warning before
+# using the sample's Skills APIs.
+# import warnings  # isort: skip
+# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 from typing import Any
 
-from agent_framework import Agent, Skill, SkillResource, SkillsProvider
+from agent_framework import Agent, InlineSkill, InlineSkillResource, SkillFrontmatter, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -41,10 +46,11 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # 1. Static Resources — inline content passed at construction time
 # ---------------------------------------------------------------------------
-unit_converter_skill = Skill(
-    name="unit-converter",
-    description="Convert between common units using a conversion factor",
-    content=dedent("""\
+unit_converter_skill = InlineSkill(
+    frontmatter=SkillFrontmatter(
+        name="unit-converter", description="Convert between common units using a conversion factor"
+    ),
+    instructions=dedent("""\
         Use this skill when the user asks to convert between units.
 
         1. Review the conversion-tables resource to find the factor for the
@@ -53,7 +59,7 @@ unit_converter_skill = Skill(
         3. Use the convert script, passing the value and factor from the table.
     """),
     resources=[
-        SkillResource(
+        InlineSkillResource(
             name="conversion-tables",
             content=dedent("""\
                 # Conversion Tables
@@ -89,7 +95,7 @@ def conversion_policy(**kwargs: Any) -> Any:
 
     Args:
         **kwargs: Runtime keyword arguments from ``agent.run()``.
-            For example, ``agent.run(..., precision=2)``
+            For example, ``agent.run(..., function_invocation_kwargs={"precision": 2})``
             makes ``kwargs["precision"]`` available here.
     """
     precision = kwargs.get("precision", 4)
@@ -137,21 +143,17 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # Create the skills provider with the code-defined skill
-    skills_provider = SkillsProvider(
-        skills=[unit_converter_skill],
-    )
-
+    # Create the skills provider with the code-defined skill and pass it to the agent
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
-        context_providers=[skills_provider],
+        context_providers=[SkillsProvider(unit_converter_skill)],
     ) as agent:
         print("Converting units")
         print("-" * 60)
         response = await agent.run(
             "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
-            precision=2,
+            function_invocation_kwargs={"precision": 2},
         )
         print(f"Agent: {response}\n")
 

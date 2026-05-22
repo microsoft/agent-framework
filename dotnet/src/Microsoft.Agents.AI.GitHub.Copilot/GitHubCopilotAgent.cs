@@ -210,7 +210,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                 string prompt = string.Join("\n", messages.Select(m => m.Text));
 
                 // Handle DataContent as attachments
-                (List<UserMessageDataAttachmentsItem>? attachments, tempDir) = await ProcessDataContentAttachmentsAsync(
+                (List<UserMessageAttachmentFile>? attachments, tempDir) = await ProcessDataContentAttachmentsAsync(
                     messages,
                     cancellationToken).ConfigureAwait(false);
 
@@ -443,11 +443,11 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
     }
 
-    private static async Task<(List<UserMessageDataAttachmentsItem>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
+    private static async Task<(List<UserMessageAttachmentFile>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
         IEnumerable<ChatMessage> messages,
         CancellationToken cancellationToken)
     {
-        List<UserMessageDataAttachmentsItem>? attachments = null;
+        List<UserMessageAttachmentFile>? attachments = null;
         string? tempDir = null;
         foreach (ChatMessage message in messages)
         {
@@ -461,7 +461,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                     string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
 
                     attachments ??= [];
-                    attachments.Add(new UserMessageDataAttachmentsItemFile
+                    attachments.Add(new UserMessageAttachmentFile
                     {
                         Path = tempFilePath,
                         DisplayName = Path.GetFileName(tempFilePath)

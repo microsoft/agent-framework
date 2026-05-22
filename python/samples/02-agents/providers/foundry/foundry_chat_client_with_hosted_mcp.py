@@ -51,7 +51,7 @@ async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", s
     """Here we let the session deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import Message
 
-    result = await agent.run(query, session=session, store=True)
+    result = await agent.run(query, session=session, options={"store": True})
     while len(result.user_input_requests) > 0:
         new_input: list[Any] = []
         for user_input_needed in result.user_input_requests:
@@ -66,7 +66,7 @@ async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", s
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
-        result = await agent.run(new_input, session=session, store=True)
+        result = await agent.run(new_input, session=session, options={"store": True})
     return result
 
 

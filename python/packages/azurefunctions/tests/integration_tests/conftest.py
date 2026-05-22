@@ -115,7 +115,7 @@ def _should_skip_azure_functions_integration_tests() -> tuple[bool, str]:
         os.getenv("FOUNDRY_MODEL", "").strip()
     )
     has_azure_openai_config = bool(os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()) and bool(
-        os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "").strip()
+        os.getenv("AZURE_OPENAI_MODEL", "").strip()
     )
     if not has_foundry_config and not has_azure_openai_config:
         return (
@@ -339,7 +339,7 @@ def _load_and_validate_env(sample_path: Path) -> None:
         "FUNCTIONS_WORKER_RUNTIME",
     ]
     if sample_path.name == "11_workflow_parallel":
-        required_env_vars.extend(["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT_NAME"])
+        required_env_vars.extend(["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_MODEL"])
     else:
         required_env_vars.extend(["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"])
 

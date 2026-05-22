@@ -30,9 +30,10 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework.redis import RedisHistoryProvider
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from dotenv import load_dotenv
 from redis.credentials import CredentialProvider
 
-# Copyright (c) Microsoft. All rights reserved.
+load_dotenv()
 
 
 class AzureCredentialProvider(CredentialProvider):

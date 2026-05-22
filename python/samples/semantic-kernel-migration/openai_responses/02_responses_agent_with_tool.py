@@ -28,10 +28,13 @@ async def run_semantic_kernel() -> None:
         def add(self, a: float, b: float) -> float:
             return a + b
 
+    openai_settings = OpenAISettings()
+    assert openai_settings.responses_model_id is not None, "Responses model ID must be set in OpenAISettings"
+
     client = OpenAIResponsesAgent.create_client()
     # Plugins advertise callable tools to the Responses agent.
     agent = OpenAIResponsesAgent(
-        ai_model=OpenAISettings().responses_model_id,
+        ai_model_id=openai_settings.responses_model_id,
         client=client,
         instructions="Use the add tool when math is required.",
         name="MathExpert",
@@ -43,14 +46,14 @@ async def run_semantic_kernel() -> None:
 
 async def run_agent_framework() -> None:
     from agent_framework import Agent, tool
-    from agent_framework.openai import OpenAIResponsesClient
+    from agent_framework.openai import OpenAIChatClient
 
     @tool(name="add", description="Add two numbers")
     async def add(a: float, b: float) -> float:
         return a + b
 
     chat_agent = Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         instructions="Use the add tool when math is required.",
         name="MathExpert",
         # AF registers the async function as a tool at construction.

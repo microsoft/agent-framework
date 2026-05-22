@@ -47,7 +47,7 @@ body:
     attributes:
       label: Package Versions
       description: List the agent-framework-* packages and versions you are using
-      placeholder: "e.g., agent-framework-core: 1.0.0, agent-framework-azure-ai: 1.0.0"
+      placeholder: "e.g., agent-framework-core: 1.0.0, agent-framework-foundry: 1.0.0"
     validations:
       required: true
 

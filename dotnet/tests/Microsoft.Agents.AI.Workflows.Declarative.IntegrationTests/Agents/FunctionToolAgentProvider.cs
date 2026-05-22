@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
 internal sealed class FunctionToolAgentProvider(IConfiguration configuration) : AgentProvider(configuration)
 {
-    protected override async IAsyncEnumerable<AgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
+    protected override async IAsyncEnumerable<ProjectsAgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
     {
         MenuPlugin menuPlugin = new();
         AIFunction[] functions =
@@ -33,9 +33,9 @@ internal sealed class FunctionToolAgentProvider(IConfiguration configuration) : 
                 agentDescription: "Provides information about the restaurant menu");
     }
 
-    private PromptAgentDefinition DefineMenuAgent(AIFunction[] functions)
+    private DeclarativeAgentDefinition DefineMenuAgent(AIFunction[] functions)
     {
-        PromptAgentDefinition agentDefinition =
+        DeclarativeAgentDefinition agentDefinition =
             new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
             {
                 Instructions =

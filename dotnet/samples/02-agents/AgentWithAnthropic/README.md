@@ -18,9 +18,9 @@ Before you begin, ensure you have the following prerequisites:
 
 **Note**: These samples use Anthropic Claude models. For more information, see [Anthropic documentation](https://docs.anthropic.com/).
 
-## Using Anthropic with Azure Foundry
+## Using Anthropic with Microsoft Foundry
 
-To use Anthropic with Azure Foundry, you can check the sample [AgentProviders/Agent_With_Anthropic](../AgentProviders/Agent_With_Anthropic/README.md) for more details.
+To use Anthropic with Microsoft Foundry, you can check the sample [AgentProviders/Agent_With_Anthropic](../AgentProviders/Agent_With_Anthropic/README.md) for more details.
 
 ## Samples
 

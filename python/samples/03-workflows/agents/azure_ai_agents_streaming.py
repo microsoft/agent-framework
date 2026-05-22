@@ -18,7 +18,7 @@ This sample shows how to create agents backed by Azure OpenAI Responses and use 
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- AZURE_AI_MODEL_DEPLOYMENT_NAME must be set to your Azure OpenAI model deployment name.
+- FOUNDRY_MODEL must be the deployment name of a model in your Foundry project.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, and streaming runs.
 """
@@ -27,7 +27,7 @@ Prerequisites:
 async def main() -> None:
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

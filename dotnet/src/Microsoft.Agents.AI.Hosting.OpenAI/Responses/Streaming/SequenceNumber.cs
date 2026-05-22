@@ -13,5 +13,5 @@ internal sealed class SequenceNumber
     /// Gets the next sequence number.
     /// </summary>
     /// <returns>The next sequence number.</returns>
-    public int Increment() => this._sequenceNumber++;
+    public int Increment() => System.Threading.Interlocked.Increment(ref this._sequenceNumber) - 1;
 }

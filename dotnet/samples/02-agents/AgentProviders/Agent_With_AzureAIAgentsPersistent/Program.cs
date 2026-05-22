@@ -2,14 +2,14 @@
 
 #pragma warning disable CS0618 // Type or member is obsolete - sample uses deprecated PersistentAgentsClientExtensions
 
-// This sample shows how to create and use a simple AI agent with Azure Foundry Agents as the backend.
+// This sample shows how to create and use a simple AI agent with Microsoft Foundry Agents as the backend.
 
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";

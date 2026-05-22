@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
-    [InlineData("CheckSystem.yaml", "CheckSystem.json", Skip = "Temporarily skipped")]
+    [InlineData("CheckSystem.yaml", "CheckSystem.json")]
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json", true)]
     [InlineData("InputArguments.yaml", "InputArguments.json")]
@@ -34,7 +34,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample: true), testcaseFileName, externalConveration);
 
     [Theory]
-    [Trait("Category", "IntegrationDisabled")] // Multi-turn tests hang in CI - needs investigation
     [InlineData("ConfirmInput.yaml", "ConfirmInput.json", false)]
     [InlineData("RequestExternalInput.yaml", "RequestExternalInput.json", false)]
     public Task ValidateMultiTurnAsync(string workflowFileName, string testcaseFileName, bool isSample) =>
@@ -42,7 +41,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private static string GetWorkflowPath(string workflowFileName, bool isSample) =>
         isSample
-            ? Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName)
+            ? Path.Combine(GetRepoFolder(), "declarative-agents", "workflow-samples", workflowFileName)
             : Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName);
 
     protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input, bool useJsonCheckpoint)

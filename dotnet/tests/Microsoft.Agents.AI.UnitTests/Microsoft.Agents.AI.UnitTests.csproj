@@ -13,6 +13,11 @@
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.CopilotStudio\Microsoft.Agents.AI.CopilotStudio.csproj" />
   </ItemGroup>
 
+  <!-- Evaluation tests require net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
+  <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <Compile Remove="EvaluationTests.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />

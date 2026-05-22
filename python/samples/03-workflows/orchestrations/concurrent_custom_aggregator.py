@@ -30,7 +30,7 @@ Demonstrates:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for FoundryChatClient with required environment variables.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
@@ -38,7 +38,7 @@ Prerequisites:
 async def main() -> None:
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -82,12 +82,14 @@ async def main() -> None:
         # Ask the model to synthesize a concise summary of the experts' outputs
         system_msg = Message(
             "system",
-            text=(
-                "You are a helpful assistant that consolidates multiple domain expert outputs "
-                "into one cohesive, concise summary with clear takeaways. Keep it under 200 words."
-            ),
+            contents=[
+                (
+                    "You are a helpful assistant that consolidates multiple domain expert outputs "
+                    "into one cohesive, concise summary with clear takeaways. Keep it under 200 words."
+                )
+            ],
         )
-        user_msg = Message("user", text="\n\n".join(expert_sections))
+        user_msg = Message("user", contents=["\n\n".join(expert_sections)])
 
         response = await client.get_response([system_msg, user_msg])
         # Return the model's final assistant text as the completion result

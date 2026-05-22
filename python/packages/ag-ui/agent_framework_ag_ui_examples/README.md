@@ -16,7 +16,7 @@ All example agents are factory functions that accept any `SupportsChatGetRespons
 
 ```python
 from fastapi import FastAPI
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui_examples.agents import simple_agent, weather_agent
@@ -24,11 +24,11 @@ from agent_framework_ag_ui_examples.agents import simple_agent, weather_agent
 app = FastAPI()
 
 # Option 1: Use Azure OpenAI
-azure_client = AzureOpenAIChatClient(model_id="gpt-4")
+azure_client = OpenAIChatCompletionClient(model="gpt-4")
 add_agent_framework_fastapi_endpoint(app, simple_agent(azure_client), "/chat")
 
 # Option 2: Use OpenAI
-openai_client = OpenAIChatClient(model_id="gpt-4o")
+openai_client = OpenAIChatClient(model="gpt-4o")
 add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/weather")
 
 # Run with: uvicorn main:app --reload
@@ -39,14 +39,14 @@ add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/weathe
 ```python
 from fastapi import FastAPI
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Create your agent
 agent = Agent(
     name="my_agent",
     instructions="You are a helpful assistant.",
-    client=AzureOpenAIChatClient(model_id="gpt-4o"),
+    client=OpenAIChatCompletionClient(model="gpt-4o"),
 )
 
 # Create FastAPI app and add AG-UI endpoint
@@ -90,7 +90,7 @@ Complete examples for all AG-UI features are available:
 ### Using Example Agents
 
 ```python
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_ag_ui_examples.agents import (
     simple_agent,
@@ -99,8 +99,8 @@ from agent_framework_ag_ui_examples.agents import (
 )
 
 # Create a chat client (use any SupportsChatGetResponse implementation)
-azure_client = AzureOpenAIChatClient(model_id="gpt-4")
-openai_client = OpenAIChatClient(model_id="gpt-4o")
+azure_client = OpenAIChatCompletionClient(model="gpt-4")
+openai_client = OpenAIChatClient(model="gpt-4o")
 
 # Create agent instances by calling the factory functions
 agent1 = simple_agent(azure_client)
@@ -137,7 +137,7 @@ The server exposes endpoints at:
 
 ```python
 from fastapi import FastAPI
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui_examples.agents import (
     simple_agent,
@@ -153,7 +153,7 @@ from agent_framework_ag_ui_examples.agents import (
 app = FastAPI(title="AG-UI Examples")
 
 # Create a chat client (shared across all agents, or create individual ones)
-client = AzureOpenAIChatClient(model_id="gpt-4")
+client = OpenAIChatCompletionClient(model="gpt-4")
 
 # Add all example endpoints
 add_agent_framework_fastapi_endpoint(app, simple_agent(client), "/agentic_chat")
@@ -223,8 +223,8 @@ def my_custom_agent(client: SupportsChatGetResponse) -> AgentFrameworkAgent:
     )
 
 # Use it
-from agent_framework.azure import AzureOpenAIChatClient
-client = AzureOpenAIChatClient()
+from agent_framework.openai import OpenAIChatCompletionClient
+client = OpenAIChatCompletionClient()
 agent = my_custom_agent(client)
 ```
 
@@ -234,13 +234,13 @@ State is injected as system messages and updated via predictive state updates:
 
 ```python
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Create your agent
 agent = Agent(
     name="recipe_agent",
-    client=AzureOpenAIChatClient(model_id="gpt-4o"),
+    client=OpenAIChatCompletionClient(model="gpt-4o"),
 )
 
 state_schema = {
@@ -271,13 +271,13 @@ Predictive state updates automatically stream tool arguments as optimistic state
 
 ```python
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Create your agent
 agent = Agent(
     name="document_writer",
-    client=AzureOpenAIChatClient(model_id="gpt-4o"),
+    client=OpenAIChatCompletionClient(model="gpt-4o"),
 )
 
 predict_state_config = {

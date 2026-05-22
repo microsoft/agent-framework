@@ -32,7 +32,7 @@ async def main() -> None:
         instructions="Gather concise facts that help a teammate answer the question.",
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
@@ -43,22 +43,22 @@ async def main() -> None:
         instructions="Compose clear and structured answers using any notes provided.",
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
 
     _orch_client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # Mark participant responses as intermediate so workflow.as_agent() maps
+    # them to text_reasoning content while the final answer remains normal text.
     workflow = GroupChatBuilder(
         participants=[researcher, writer],
-        intermediate_outputs=True,
+        intermediate_output_from=[researcher, writer],
         orchestrator_agent=Agent(
             client=_orch_client,
             name="Orchestrator",
@@ -72,7 +72,7 @@ async def main() -> None:
     print(f"Input: {task}\n")
 
     try:
-        workflow_agent = Agent(client=workflow, name="GroupChatWorkflowAgent")
+        workflow_agent = workflow.as_agent()
         agent_result = await workflow_agent.run(task)
 
         if agent_result.messages:

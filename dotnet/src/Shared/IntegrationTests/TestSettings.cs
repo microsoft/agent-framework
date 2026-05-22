@@ -16,9 +16,17 @@ internal static class TestSettings
 
     // Azure AI (Foundry)
     public const string AzureAIBingConnectionId = "AZURE_AI_BING_CONNECTION_ID";
+    public const string AzureAIEmbeddingDeploymentName = "AZURE_AI_EMBEDDING_DEPLOYMENT_NAME";
     public const string AzureAIMemoryStoreId = "AZURE_AI_MEMORY_STORE_ID";
     public const string AzureAIModelDeploymentName = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
     public const string AzureAIProjectEndpoint = "AZURE_AI_PROJECT_ENDPOINT";
+
+    // Azure AI Search (Foundry.Hosting integration tests, RAG scenario)
+    public const string AzureSearchEndpoint = "AZURE_SEARCH_ENDPOINT";
+    public const string AzureSearchIndexName = "AZURE_SEARCH_INDEX_NAME";
+
+    // Foundry Hosted Agents (Foundry.Hosting integration tests)
+    public const string FoundryHostingItImage = "IT_HOSTED_AGENT_IMAGE";
 
     // Copilot Studio
     public const string CopilotStudioAgentAppId = "COPILOTSTUDIO_AGENT_APP_ID";

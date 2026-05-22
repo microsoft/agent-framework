@@ -22,7 +22,13 @@ async def main():
     """Create an agent from a declarative yaml specification and run it."""
     # get the path
     current_path = Path(__file__).parent
-    yaml_path = current_path.parent.parent.parent.parent / "agent-samples" / "chatclient" / "GetWeather.yaml"
+    yaml_path = (
+        current_path.parent.parent.parent.parent
+        / "declarative-agents"
+        / "agent-samples"
+        / "chatclient"
+        / "GetWeather.yaml"
+    )
     # load the yaml from the path
     with yaml_path.open("r") as f:
         yaml_str = f.read()

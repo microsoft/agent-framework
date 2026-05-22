@@ -27,6 +27,12 @@ public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvid
     public IMcpToolHandler? McpToolHandler { get; init; }
 
     /// <summary>
+    /// Gets or sets the HTTP request handler for executing <c>HttpRequestAction</c> actions within workflows.
+    /// If not set, HTTP request actions will fail with an appropriate error message.
+    /// </summary>
+    public IHttpRequestHandler? HttpRequestHandler { get; init; }
+
+    /// <summary>
     /// Defines the configuration settings for the workflow.
     /// </summary>
     public IConfiguration? Configuration { get; init; }

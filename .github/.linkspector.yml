@@ -21,6 +21,7 @@ ignorePatterns:
   - pattern: "http://host.docker.internal"
   - pattern: "https://openai.github.io/openai-agents-js/openai/agents/classes/"
   - pattern: "https:\/\/dotnet.microsoft.com\/download"
+  - pattern: "https://github.com/Rel1cx/eslint-react"
 # excludedDirs:
   # Folders which include links to localhost, since it's not ignored with regular expressions
 baseUrl: https://github.com/microsoft/agent-framework/

@@ -127,9 +127,13 @@ async def security_and_override_middleware(
                         messages=[
                             Message(
                                 role="assistant",
-                                text="I cannot process requests containing sensitive information. "
-                                "Please rephrase your question without including passwords, secrets, or other "
-                                "sensitive data.",
+                                contents=[
+                                    (
+                                        "I cannot process requests containing sensitive information. "
+                                        "Please rephrase your question without including passwords, secrets, or other "
+                                        "sensitive data."
+                                    )
+                                ],
                             )
                         ]
                     )

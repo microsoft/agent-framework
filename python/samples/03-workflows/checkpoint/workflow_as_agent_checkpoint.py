@@ -21,7 +21,7 @@ Key concepts:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured for FoundryChatClient
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 import asyncio
@@ -50,7 +50,7 @@ async def basic_checkpointing() -> None:
 
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -67,7 +67,7 @@ async def basic_checkpointing() -> None:
     )
 
     workflow = SequentialBuilder(participants=[assistant, reviewer]).build()
-    agent = Agent(client=workflow, name="CheckpointedAgent")
+    agent = workflow.as_agent()
 
     # Create checkpoint storage
     checkpoint_storage = InMemoryCheckpointStorage()
@@ -97,7 +97,7 @@ async def checkpointing_with_thread() -> None:
 
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -108,7 +108,7 @@ async def checkpointing_with_thread() -> None:
     )
 
     workflow = SequentialBuilder(participants=[assistant]).build()
-    agent = Agent(client=workflow, name="MemoryAgent")
+    agent = workflow.as_agent()
 
     # Create both session (for conversation) and checkpoint storage (for workflow state)
     session = agent.create_session()
@@ -145,7 +145,7 @@ async def streaming_with_checkpoints() -> None:
 
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -156,7 +156,7 @@ async def streaming_with_checkpoints() -> None:
     )
 
     workflow = SequentialBuilder(participants=[assistant]).build()
-    agent = Agent(client=workflow, name="StreamingCheckpointAgent")
+    agent = workflow.as_agent()
 
     checkpoint_storage = InMemoryCheckpointStorage()
 

@@ -13,8 +13,8 @@ HandoffBuilder workflows can be properly retrieved.
 
 Prerequisites:
     - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+    - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
     - `az login` (Azure CLI authentication)
-    - AZURE_AI_MODEL_DEPLOYMENT_NAME
 """
 
 import asyncio
@@ -93,7 +93,7 @@ async def main() -> None:
 
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -105,6 +105,7 @@ async def main() -> None:
             "When the user asks to create or generate files, hand off to code_specialist "
             "by calling handoff_to_code_specialist."
         ),
+        require_per_service_call_history_persistence=True,
     )
 
     code_interpreter_tool = client.get_code_interpreter_tool()
@@ -117,6 +118,7 @@ async def main() -> None:
             "and create files when requested. Always save files to /mnt/data/ directory."
         ),
         tools=[code_interpreter_tool],
+        require_per_service_call_history_persistence=True,
     )
 
     workflow = (

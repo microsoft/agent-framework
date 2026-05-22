@@ -3,8 +3,8 @@
 import asyncio
 import os
 
-from agent_framework import AgentResponseUpdate
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, AgentResponseUpdate
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -25,8 +25,8 @@ Compare with `sequential_agents.py`, which uses the default behavior where the f
 conversation context is passed to each agent.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be the deployment name of a model in your Foundry project.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
@@ -36,23 +36,26 @@ load_dotenv()
 
 async def main() -> None:
     # 1) Create agents
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         instructions="You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt.",
         name="writer",
     )
 
-    translator = client.as_agent(
+    translator = Agent(
+        client=client,
         instructions="You are a translator. Translate the given text into French. Output only the translation.",
         name="translator",
     )
 
-    reviewer = client.as_agent(
+    reviewer = Agent(
+        client=client,
         instructions="You are a reviewer. Evaluate the quality of the marketing tagline.",
         name="reviewer",
     )
@@ -63,13 +66,13 @@ async def main() -> None:
     workflow = SequentialBuilder(
         participants=[writer, translator, reviewer],
         chain_only_agent_responses=True,
-        intermediate_outputs=True,
+        intermediate_output_from=[writer, translator],
     ).build()
 
     # 3) Run and collect outputs
     last_agent: str | None = None
     async for event in workflow.run("Write a tagline for a budget-friendly eBike.", stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+        if event.type in ("intermediate", "output") and isinstance(event.data, AgentResponseUpdate):
             if event.data.author_name != last_agent:
                 last_agent = event.data.author_name
                 print()

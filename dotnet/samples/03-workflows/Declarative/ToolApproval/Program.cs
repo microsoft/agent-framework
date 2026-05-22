@@ -58,7 +58,7 @@ internal sealed class Program
             agentDescription: "Searches documents on Microsoft Learn");
     }
 
-    private static PromptAgentDefinition DefineSearchAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineSearchAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =

@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import Agent, FunctionTool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -26,7 +26,7 @@ async def main():
     )
 
     agent = Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         name="DeclarationOnlyToolAgent",
         instructions="You are a helpful agent that uses tools.",
         tools=function_declaration,

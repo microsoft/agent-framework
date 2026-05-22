@@ -13,7 +13,7 @@ Integration with Azure AI Foundry Local for local model inference.
 ```python
 from agent_framework.foundry import FoundryLocalClient
 
-client = FoundryLocalClient(model_id="your-local-model")
+client = FoundryLocalClient(model="your-local-model")
 response = await client.get_response("Hello")
 ```
 

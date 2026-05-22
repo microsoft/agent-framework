@@ -16,7 +16,7 @@ This sample demonstrates implementing a Ollama agent with reasoning.
 
 Ensure to install Ollama and have a model running locally before running the sample
 Not all Models support reasoning, to test reasoning try qwen3:8b
-Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the code below.
+Set the model to use via the OLLAMA_MODEL environment variable or modify the code below.
 https://ollama.com/
 
 """

@@ -63,9 +63,9 @@ internal sealed class Program
             agentDescription: "Provides information about the restaurant menu");
     }
 
-    private static PromptAgentDefinition DefineMenuAgent(IConfiguration configuration, AIFunction[] functions)
+    private static DeclarativeAgentDefinition DefineMenuAgent(IConfiguration configuration, AIFunction[] functions)
     {
-        PromptAgentDefinition agentDefinition =
+        DeclarativeAgentDefinition agentDefinition =
             new(configuration.GetValue(Application.Settings.FoundryModel))
             {
                 Instructions =

@@ -129,7 +129,7 @@ async def to_email_assistant_request(
     """
     # Bridge executor. Converts a structured DetectionResult into a Message and forwards it as a new request.
     detection = DetectionResult.model_validate_json(response.agent_response.text)
-    user_msg = Message("user", text=detection.email_content)
+    user_msg = Message("user", contents=[detection.email_content])
     await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
@@ -139,7 +139,7 @@ def create_spam_detector_agent() -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         instructions=(
@@ -158,7 +158,7 @@ def create_email_assistant_agent() -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         instructions=(
@@ -200,7 +200,7 @@ async def main() -> None:
 
     # Execute the workflow. Since the start is an AgentExecutor, pass an AgentExecutorRequest.
     # The workflow completes when it becomes idle (no more work to do).
-    request = AgentExecutorRequest(messages=[Message("user", text=email)], should_respond=True)
+    request = AgentExecutorRequest(messages=[Message("user", contents=[email])], should_respond=True)
     events = await workflow.run(request)
     outputs = events.get_outputs()
     if outputs:

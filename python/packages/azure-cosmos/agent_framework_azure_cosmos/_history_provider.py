@@ -10,9 +10,10 @@ import uuid
 from collections.abc import Sequence
 from typing import Any, ClassVar, TypedDict
 
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
-from agent_framework._sessions import BaseHistoryProvider
+from agent_framework import Message
+from agent_framework._sessions import HistoryProvider
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.cosmos import PartitionKey
@@ -32,8 +33,8 @@ class AzureCosmosHistorySettings(TypedDict, total=False):
     key: SecretString | None
 
 
-class CosmosHistoryProvider(BaseHistoryProvider):
-    """Azure Cosmos DB-backed history provider using BaseHistoryProvider hooks."""
+class CosmosHistoryProvider(HistoryProvider):
+    """Azure Cosmos DB-backed history provider using HistoryProvider hooks."""
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "azure_cosmos_history"
     _BATCH_OPERATION_LIMIT: ClassVar[int] = 100
@@ -121,7 +122,7 @@ class CosmosHistoryProvider(BaseHistoryProvider):
             self._cosmos_client = CosmosClient(
                 url=settings["endpoint"],  # type: ignore[arg-type]
                 credential=credential or settings["key"].get_secret_value(),  # type: ignore[arg-type,union-attr]
-                user_agent_suffix=AGENT_FRAMEWORK_USER_AGENT,
+                user_agent_suffix=get_user_agent(),
             )
             self._owns_client = True
 

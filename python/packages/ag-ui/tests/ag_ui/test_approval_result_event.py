@@ -448,3 +448,37 @@ async def test_resolve_approval_responses_returns_only_approved() -> None:
     rejection_results = [c for c in all_contents if c.type == "function_result" and c.call_id == rejected_call_id]
     assert len(rejection_results) == 1
     assert "rejected" in str(rejection_results[0].result).lower()
+
+
+class TestApprovalToolResultDisplayChannel:
+    """Approved tools using ``state_update(..., tool_result=...)`` must route the
+    display payload to the UI event while ``flow.tool_results`` still receives
+    the LLM-bound text. The HITL approval emitter is separate from the standard
+    streaming emitter, so it gets its own coverage.
+    """
+
+    def test_approval_emits_display_payload_when_marker_present(self) -> None:
+        from agent_framework_ag_ui import state_update
+        from agent_framework_ag_ui._agent_run import _make_approval_tool_result_events
+
+        display_payload = {"city": "Seattle", "temp": 14, "conditions": "foggy"}
+        inner = state_update(text="14°C, foggy", tool_result=display_payload)
+        resolved = Content.from_function_result(call_id="call_disp", result=[inner])
+
+        events = _make_approval_tool_result_events([resolved])
+
+        assert len(events) == 1
+        # UI event must carry the serialized display payload, NOT the LLM text.
+        assert json.loads(events[0].content) == display_payload
+        assert events[0].content != "14°C, foggy"
+
+    def test_approval_falls_back_to_text_when_no_marker(self) -> None:
+        """Backward compat: without a display marker, behaviour is unchanged."""
+        from agent_framework_ag_ui._agent_run import _make_approval_tool_result_events
+
+        resolved = Content.from_function_result(call_id="call_plain", result="Sunny in Seattle")
+
+        events = _make_approval_tool_result_events([resolved])
+
+        assert len(events) == 1
+        assert events[0].content == "Sunny in Seattle"

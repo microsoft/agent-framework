@@ -41,6 +41,7 @@ internal sealed class AGUIMessageJsonConverter : JsonConverter<AGUIMessage>
             AGUIRoles.User => jsonElement.Deserialize(options.GetTypeInfo(typeof(AGUIUserMessage))) as AGUIUserMessage,
             AGUIRoles.Assistant => jsonElement.Deserialize(options.GetTypeInfo(typeof(AGUIAssistantMessage))) as AGUIAssistantMessage,
             AGUIRoles.Tool => jsonElement.Deserialize(options.GetTypeInfo(typeof(AGUIToolMessage))) as AGUIToolMessage,
+            AGUIRoles.Reasoning => jsonElement.Deserialize(options.GetTypeInfo(typeof(AGUIReasoningMessage))) as AGUIReasoningMessage,
             _ => throw new JsonException($"Unknown AGUIMessage role discriminator: '{discriminator}'")
         };
 
@@ -74,6 +75,9 @@ internal sealed class AGUIMessageJsonConverter : JsonConverter<AGUIMessage>
                 break;
             case AGUIToolMessage tool:
                 JsonSerializer.Serialize(writer, tool, options.GetTypeInfo(typeof(AGUIToolMessage)));
+                break;
+            case AGUIReasoningMessage reasoning:
+                JsonSerializer.Serialize(writer, reasoning, options.GetTypeInfo(typeof(AGUIReasoningMessage)));
                 break;
             default:
                 throw new JsonException($"Unknown AGUIMessage type: {value.GetType().Name}");
