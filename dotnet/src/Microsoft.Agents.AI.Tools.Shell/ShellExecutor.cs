@@ -3,6 +3,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Tools.Shell;
 
@@ -64,6 +65,20 @@ public abstract class ShellExecutor : IAsyncDisposable
     /// <param name="command">The shell command to execute.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public abstract Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Build an <see cref="AIFunction"/> bound to this executor, suitable for
+    /// registering with an agent as a callable tool.
+    /// </summary>
+    /// <param name="name">Function name visible to the model.</param>
+    /// <param name="description">Function description for the model.</param>
+    /// <param name="requireApproval">
+    /// When <see langword="true"/> (the default), wraps the function in
+    /// <see cref="ApprovalRequiredAIFunction"/> so every invocation requires
+    /// explicit user approval before executing.
+    /// </param>
+    /// <returns>An <see cref="AIFunction"/> wrapping <see cref="RunAsync"/>.</returns>
+    public abstract AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = true);
 
     /// <inheritdoc />
     public abstract ValueTask DisposeAsync();
