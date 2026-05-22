@@ -198,6 +198,27 @@ class TestResponsesChannelNonStreaming:
         assert push_ch.pushes and push_ch.pushes[0][1].result.text == "real reply"
         assert push_ch.pushes[0][0].native_id == "42"
 
+    def test_response_hook_can_rewrite_originating_reply(self) -> None:
+        contexts: list[Any] = []
+
+        def hook(result: HostedRunResult, **kwargs: Any) -> HostedRunResult:
+            contexts.append(kwargs["context"])
+            return HostedRunResult(_FakeAgentResponse(text=result.result.text.upper()), session=result.session)
+
+        agent = _FakeAgent(reply="hooked")
+        host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel(response_hook=hook)])
+
+        with TestClient(host.app) as client:
+            r = client.post("/responses", json={"input": "hi"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["output"][0]["content"][0]["text"] == "HOOKED"
+        assert contexts
+        assert contexts[0].channel_name == "responses"
+        assert contexts[0].originating is True
+        assert contexts[0].destination_identity is None
+
 
 class TestResponsesChannelStreaming:
     def test_sse_emits_created_delta_completed(self) -> None:
@@ -213,6 +234,21 @@ class TestResponsesChannelStreaming:
         assert events[0] == "response.created"
         assert events[-1] == "response.completed"
         assert events.count("response.output_text.delta") == 3
+
+    def test_sse_transform_hook_can_rewrite_chunks(self) -> None:
+        agent = _FakeAgent(reply="hello", chunks=["he", "llo"])
+
+        def transform(update: _FakeUpdate) -> _FakeUpdate:
+            return _FakeUpdate(text=update.text.upper())
+
+        host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel(stream_transform_hook=transform)])
+        with TestClient(host.app) as client:
+            r = client.post("/responses", json={"input": "hi", "stream": True})
+
+        assert r.status_code == 200
+        assert '"delta":"HE"' in r.text
+        assert '"delta":"LLO"' in r.text
+        assert '"text":"HELLO"' in r.text
 
     def test_sse_emits_failed_when_stream_raises(self) -> None:
         # Regression: ResponseOutputMessage.status only accepts in_progress/

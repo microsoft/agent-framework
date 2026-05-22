@@ -17,17 +17,21 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping
-from typing import Any
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from typing import Any, cast
 
 from agent_framework import AgentResponse, Content, Message
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
     ChannelRequest,
+    ChannelResponseContext,
+    ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
+    ChannelStreamTransformHook,
     HostedRunResult,
+    apply_response_hook,
     apply_run_hook,
     get_current_isolation_keys,
     logger,
@@ -83,6 +87,8 @@ class ResponsesChannel:
         *,
         path: str = "",
         run_hook: ChannelRunHook | None = None,
+        response_hook: ChannelResponseHook | None = None,
+        stream_transform_hook: ChannelStreamTransformHook | None = None,
         response_id_factory: Callable[..., str] | None = None,
     ) -> None:
         """Create a Responses channel.
@@ -94,6 +100,14 @@ class ResponsesChannel:
             run_hook: Optional :data:`ChannelRunHook` invoked with the
                 parsed :class:`ChannelRequest` before the agent target
                 runs. May return a replacement request.
+            response_hook: Optional :data:`ChannelResponseHook` invoked
+                before the channel serializes an originating
+                :class:`HostedRunResult` into a Responses envelope. The
+                host also invokes this hook when delivering to this
+                channel as a non-originating push destination.
+            stream_transform_hook: Optional per-update transform hook
+                applied while streaming Server-Sent Events. Return a
+                replacement update, or ``None`` to drop the update.
             response_id_factory: Optional callable that mints the
                 per-request response id. Default produces
                 ``resp_<uuid hex>`` which matches the OpenAI Responses
@@ -123,6 +137,8 @@ class ResponsesChannel:
         """
         self.path = path
         self._hook = run_hook
+        self.response_hook = response_hook
+        self._stream_transform_hook = stream_transform_hook
         self._ctx: ChannelContext | None = None
         self._response_id_factory: Callable[..., str] = (
             response_id_factory if response_id_factory is not None else (lambda *_a, **_kw: f"resp_{uuid.uuid4().hex}")
@@ -233,9 +249,29 @@ class ResponsesChannel:
 
         result = await self._ctx.run(channel_request)
         include_originating = await self._ctx.deliver_response(channel_request, result)
+        if include_originating:
+            result = await self._apply_response_hook(result, channel_request)
         text = result.result.text if include_originating else _ack_text()
         envelope = self._build_response(body, text, status="completed", response_id=response_id)
         return JSONResponse(envelope.model_dump(mode="json", exclude_none=True))
+
+    async def _apply_response_hook(
+        self,
+        result: HostedRunResult[AgentResponse],
+        request: ChannelRequest,
+    ) -> HostedRunResult[AgentResponse]:
+        """Apply the channel-level response hook for an originating reply."""
+        if self.response_hook is None:
+            return result
+        context = ChannelResponseContext(
+            request=request,
+            channel_name=self.name,
+            destination_identity=None,
+            originating=True,
+            is_echo=False,
+        )
+        shaped = await apply_response_hook(self.response_hook, result, context=context)
+        return cast("HostedRunResult[AgentResponse]", shaped)
 
     def _build_response(
         self,
@@ -316,6 +352,11 @@ class ResponsesChannel:
         try:
             stream = self._ctx.run_stream(request)
             async for update in stream:
+                if self._stream_transform_hook is not None:
+                    transformed = self._stream_transform_hook(update)
+                    update = await transformed if isinstance(transformed, Awaitable) else transformed
+                    if update is None:
+                        continue
                 chunk = getattr(update, "text", None)
                 if chunk:
                     accumulated += chunk
@@ -363,8 +404,12 @@ class ResponsesChannel:
             return
 
         completed_text = accumulated
-        include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
-        if not include_originating:
+        result = _text_result(accumulated)
+        include_originating = await self._ctx.deliver_response(request, result)
+        if include_originating:
+            result = await self._apply_response_hook(result, request)
+            completed_text = result.result.text
+        else:
             completed_text = _ack_text()
         completed = self._build_response(body, completed_text, status="completed", response_id=response_id)
         # Reuse the same message id we emitted deltas under.
