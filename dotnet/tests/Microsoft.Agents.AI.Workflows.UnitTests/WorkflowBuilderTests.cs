@@ -6,7 +6,7 @@ using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
-public partial class WorkflowBuilderSmokeTests
+public partial class WorkflowBuilderTests
 {
     private sealed class NoOpExecutor(string id) : Executor(id)
     {
