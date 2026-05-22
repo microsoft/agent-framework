@@ -67,7 +67,9 @@ from ._isolation import (
     reset_current_isolation_keys,
     set_current_isolation_keys,
 )
+from ._persistence import normalize_state_dir
 from ._runner import InProcessTaskRunner
+from ._state_store import SessionsStateStore, build_session_dicts
 from ._types import (
     Channel,
     ChannelIdentity,
@@ -79,6 +81,7 @@ from ._types import (
     DurableTaskPayloadMode,
     DurableTaskRunner,
     HostedRunResult,
+    HostStatePaths,
     PushPayloadNotSerializable,
     ResponseTargetKind,
     apply_response_hook,
@@ -486,6 +489,7 @@ class AgentFrameworkHost:
         allow_in_process_runner: bool = False,
         default_allowlist: IdentityAllowlist | None = None,
         identity_linker: Any = None,
+        state_dir: str | os.PathLike[str] | HostStatePaths | Mapping[str, str | os.PathLike[str]] | None = None,
     ) -> None:
         """Create a host for ``target`` and its channels.
 
@@ -563,6 +567,38 @@ class AgentFrameworkHost:
                 allowlists that declare ``requires_linked_claims=True``
                 require a linker to be configured, otherwise the host
                 would silently deny everyone.
+            state_dir: Opt-in disk persistence for host-managed state.
+                When set, the host writes the in-process task runner's
+                pending queue and the session-related dicts
+                (``_session_aliases``, ``_active``, ``_identities``) to
+                a :mod:`diskcache`-backed store under ``state_dir`` and
+                replays the runner queue on next startup. Accepts:
+
+                * ``None`` (default) — everything stays in memory; the
+                  process owns its state and loses it on exit. Matches
+                  today's behaviour exactly.
+                * ``str`` / :class:`os.PathLike` — the host creates
+                  default subfolders ``state_dir/runner/`` and
+                  ``state_dir/sessions/`` for the runner queue and the
+                  session dicts respectively. Recommended for most
+                  long-running-host deployments — one path, no extra
+                  config, both components persist together.
+                * :class:`HostStatePaths` typed dict / plain
+                  ``Mapping`` — per-component overrides for callers that
+                  want each component on a different volume (fast local
+                  SSD for the runner, network-attached volume for
+                  sessions, …). Components missing from the mapping
+                  fall back to in-memory.
+
+                Requires the optional ``diskcache`` dependency (install
+                with ``pip install 'agent-framework-hosting[disk]'``).
+                Each enabled component acquires an OS-level advisory
+                lock on its directory; a second host pointed at the
+                same paths raises :class:`RuntimeError` at construction
+                so two processes do not double-execute queued tasks.
+                When ``durable_task_runner`` is supplied explicitly, the
+                runner sub-path is ignored — the caller owns the
+                runner's persistence story.
         """
         self.target: SupportsAgentRun | Workflow = target
         self._is_workflow = isinstance(target, Workflow)
@@ -589,6 +625,11 @@ class AgentFrameworkHost:
                     # ``CheckpointStorage`` is a non-runtime-checkable Protocol,
                     # so we cannot ``isinstance``-check it directly.
                     self._checkpoint_location = checkpoint_location
+        # Disk persistence — normalise the per-component map up front
+        # so the runner and session-store paths are resolved before any
+        # component is built. ``None`` (default) means everything stays
+        # in memory.
+        self._state_paths: dict[str, Path | None] = normalize_state_dir(state_dir)
         # Runtime mode + durable task runner. We resolve mode first
         # because the warning-on-ephemeral-without-runner only fires
         # when both are at their defaults.
@@ -612,7 +653,12 @@ class AgentFrameworkHost:
                     "or set `allow_in_process_runner=True` to opt out of this "
                     "check (e.g. for local dev exercising ephemeral code paths)."
                 )
-            self._durable_task_runner: DurableTaskRunner = InProcessTaskRunner()
+            # When state_dir["runner"] is set, the default in-process
+            # runner persists its queue to disk so a long-running host
+            # can replay in-flight pushes after a crash / restart.
+            self._durable_task_runner: DurableTaskRunner = InProcessTaskRunner(
+                state_dir=self._state_paths.get("runner"),
+            )
             self._owns_runner = True
             if self._runtime_mode == "ephemeral":
                 logger.warning(
@@ -624,6 +670,16 @@ class AgentFrameworkHost:
         else:
             self._durable_task_runner = durable_task_runner
             self._owns_runner = False
+            if self._state_paths.get("runner") is not None:
+                # The caller supplied both a runner and a runner state
+                # path. The path would only have applied to the default
+                # in-process runner; surface the misconfig so it doesn't
+                # silently become a no-op.
+                logger.warning(
+                    "state_dir['runner'] is set but a durable_task_runner was "
+                    "supplied explicitly; the runner sub-path is ignored — "
+                    "configure persistence on the runner instance directly."
+                )
         # Validate the runner / push-codec pairing eagerly: a JSON-mode
         # durable runner cannot persist payloads for a push-capable
         # channel that has no codec. Failing here makes the misconfig
@@ -637,20 +693,38 @@ class AgentFrameworkHost:
         self._durable_task_runner.register(HOSTING_PUSH_TASK_NAME, self._handle_push_task)
         # Per-isolation_key session cache. The real spec backs this with a
         # pluggable session store; this base host keeps it in-process.
+        # NOTE: live ``AgentSession`` objects are NOT persisted to disk
+        # — the history provider rehydrates them from its own store on
+        # the next turn. ``state_dir`` only persists the lightweight
+        # pickle-friendly bookkeeping below.
         self._sessions: dict[str, Any] = {}
-        # ``isolation_key -> active session_id``. Normally identical to the
-        # isolation_key, but ``reset_session`` rotates this to a fresh id so
-        # the next turn starts a new ``AgentSession`` while the old history
-        # remains on disk under its original session_id.
-        self._session_aliases: dict[str, str] = {}
-        # Per-isolation_key identity registry: which channels we've seen this
-        # user on, and which native_id they used on each. Powers
-        # ResponseTarget.active / .channel(name) / .channels([...]) /
-        # .all_linked.
-        # Shape: { isolation_key: { channel_name: ChannelIdentity } }.
-        self._identities: dict[str, dict[str, ChannelIdentity]] = {}
-        # (isolation_key -> last-seen channel name) for ResponseTarget.active.
-        self._active: dict[str, str] = {}
+        # Open the disk-backed sessions store first when persistence is
+        # on; the three persisted dicts share the same cache + lock to
+        # minimise file handles and acquisition cost.
+        sessions_path = self._state_paths.get("sessions")
+        self._sessions_store: SessionsStateStore | None
+        if sessions_path is not None:
+            self._sessions_store = SessionsStateStore(sessions_path)
+            # ``isolation_key -> active session_id``. Normally identical to the
+            # isolation_key, but ``reset_session`` rotates this to a fresh id so
+            # the next turn starts a new ``AgentSession`` while the old history
+            # remains on disk under its original session_id. Persisted so a
+            # rotation survives a restart.
+            aliases_dict, active_dict, identities_dict = build_session_dicts(self._sessions_store)
+            self._session_aliases: dict[str, str] = aliases_dict
+            # (isolation_key -> last-seen channel name) for ResponseTarget.active.
+            self._active: dict[str, str] = active_dict
+            # Per-isolation_key identity registry: which channels we've seen this
+            # user on, and which native_id they used on each. Powers
+            # ResponseTarget.active / .channel(name) / .channels([...]) /
+            # .all_linked.
+            # Shape: { isolation_key: { channel_name: ChannelIdentity } }.
+            self._identities: dict[str, dict[str, ChannelIdentity]] = identities_dict
+        else:
+            self._sessions_store = None
+            self._session_aliases = {}
+            self._active = {}
+            self._identities = {}
         # Set by ``serve()`` so the lifespan startup handler doesn't
         # double-log the banner; remains ``False`` when callers mount
         # ``host.app`` under their own ASGI server.
@@ -1069,6 +1143,21 @@ class AgentFrameworkHost:
             # in tests, or by callers driving the host without an ASGI
             # server.)
             startup_errors: list[tuple[str, BaseException]] = []
+            # Replay any persisted pending tasks first so re-scheduled
+            # work runs alongside fresh traffic from the moment the
+            # host accepts requests. Only meaningful for the host-owned
+            # in-process runner with disk persistence on; caller-owned
+            # runners manage their own replay lifecycle.
+            if (
+                self._owns_runner
+                and isinstance(self._durable_task_runner, InProcessTaskRunner)
+                and self._state_paths.get("runner") is not None
+            ):
+                try:
+                    await self._durable_task_runner.resume()
+                except Exception as exc:
+                    logger.exception("lifespan startup: durable task runner resume failed")
+                    startup_errors.append(("InProcessTaskRunner.resume", exc))
             for cb in on_startup:
                 try:
                     await cb()
@@ -1113,6 +1202,15 @@ class AgentFrameworkHost:
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.exception("lifespan shutdown: durable task runner shutdown failed")
                         shutdown_errors.append(("InProcessTaskRunner.shutdown", exc))
+                # Close the persisted sessions store after the runner so
+                # any in-flight task that touches session state during
+                # shutdown can still write through.
+                if self._sessions_store is not None:
+                    try:
+                        self._sessions_store.close()
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.exception("lifespan shutdown: sessions store close failed")
+                        shutdown_errors.append(("SessionsStateStore.close", exc))
                 if shutdown_errors:
                     _, first_exc = shutdown_errors[0]
                     if len(shutdown_errors) > 1:

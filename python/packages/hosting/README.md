@@ -89,6 +89,8 @@ envelopes, echo idempotency, workflow targets — see the
 pip install agent-framework-hosting agent-framework-hosting-responses
 # or with uvicorn pre-installed for the demo `host.serve(...)` helper
 pip install "agent-framework-hosting[serve]" agent-framework-hosting-responses
+# add the [disk] extra to opt in to on-disk persistence (see below)
+pip install "agent-framework-hosting[disk]"
 ```
 
 ## Quickstart
@@ -110,3 +112,61 @@ host.serve(port=8000)
 See the [hosting samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/af-hosting)
 for richer multi-channel apps (Telegram + Teams + Responses fan-out,
 identity linking, `ResponseTarget` routing, etc.).
+
+## Optional disk persistence (`state_dir`)
+
+By default the host keeps everything in memory: the durable-task runner's
+pending push queue, the per-isolation-key session aliases, the active-channel
+map, and the per-channel `ChannelIdentity` map. That is the right shape for
+**ephemeral** runtimes (Foundry Hosted Agents et al.) where the host is
+restarted per request and persistence lives behind a service like the Foundry
+response store, and for short-lived local dev.
+
+For **long-running** deployments (an always-on container, a local dev server
+you restart often, a single-VM bot) opt in to disk persistence by passing
+`state_dir` to `AgentFrameworkHost`. It uses [`diskcache`](https://grantjenks.com/docs/diskcache/)
+(installed via the `[disk]` extra) and an OS-level advisory file lock so two
+hosts pointed at the same directory can't double-execute scheduled pushes.
+
+```python
+from agent_framework_hosting import AgentFrameworkHost
+
+# Single path → host auto-creates `runner/` and `sessions/` subfolders.
+host = AgentFrameworkHost(
+    target=agent,
+    channels=channels,
+    state_dir="./.host-state",
+)
+
+# Or route components to different roots — use the HostStatePaths TypedDict
+# (or a plain dict with the same keys) for editor autocomplete on the keys.
+from agent_framework_hosting import HostStatePaths
+
+host = AgentFrameworkHost(
+    target=agent,
+    channels=channels,
+    state_dir=HostStatePaths(runner="/var/lib/myapp/tasks", sessions="/var/lib/myapp/state"),
+)
+```
+
+What survives a restart:
+
+- **Pending durable-task records** — scheduled but not-yet-completed push
+  deliveries replay on the next host startup via `runner.resume()`. Records
+  that crashed mid-attempt resume with their already-consumed retry budget.
+- **`_session_aliases`** — per-isolation-key session-id rewrites (via the
+  reset-session command).
+- **`_active`** — the most recently active channel for each isolation key
+  (consumed by `ResponseTarget.active`).
+- **`_identities`** — channel-native `ChannelIdentity` rows used by
+  `ResponseTarget.channels([...])` / `.all_linked` fan-out.
+
+What doesn't:
+
+- Live `AgentSession` objects (rehydrated lazily by the history provider on the
+  next turn).
+- The `ContinuationToken` store (separate concern, plug in your own).
+
+Unpicklable push payloads raise `PushPayloadNotPicklable` *eagerly* from
+`schedule()` so issues surface at the call site, not on the next restart.
+

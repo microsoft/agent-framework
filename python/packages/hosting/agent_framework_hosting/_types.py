@@ -21,10 +21,11 @@ See ``docs/specs/002-python-hosting-channels.md`` for the full design.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypedDict, TypeVar, runtime_checkable
 
 from agent_framework import (
     AgentResponse,
@@ -490,6 +491,53 @@ class PushPayloadNotSerializable(RuntimeError):
     """
 
 
+class PushPayloadNotPicklable(RuntimeError):
+    """Raised when a disk-persistent runner cannot pickle a scheduled task payload.
+
+    The in-process runner falls back to pickle when ``state_dir`` is set
+    so a long-running host can resume in-flight pushes across restarts.
+    Most :class:`HostedRunResult` payloads (frozen dataclasses wrapping
+    :class:`AgentResponse` or workflow output) pickle without issue, but
+    a user-supplied workflow result or response hook may embed an
+    unpickleable object (live network client, ``asyncio.Lock``, generator).
+    The runner raises this at schedule time so the misconfig is loud
+    rather than silently downgrading to no-persistence.
+    """
+
+
+class HostStatePaths(TypedDict, total=False):
+    """Per-component disk paths for host-managed state.
+
+    Pass an instance of this typed dict to
+    :class:`~agent_framework_hosting._host.AgentFrameworkHost`'s
+    ``state_dir`` parameter when you want to place individual components
+    on different volumes — for example, a fast local SSD for the runner
+    task queue and a network-attached durable volume for session state
+    that needs to survive container moves.
+
+    All keys are optional (``total=False``): unset components fall back
+    to in-memory storage. Pass a single ``str``/``PathLike`` to
+    ``state_dir`` instead to get the default subfolder layout
+    (``state_dir/runner/``, ``state_dir/sessions/``).
+
+    Future components (links, continuations, ledger) will be added as
+    additional keys in subsequent releases.
+    """
+
+    runner: str | os.PathLike[str]
+    """Where :class:`~agent_framework_hosting._runner.InProcessTaskRunner`
+    persists its pending-task queue and bounded terminal-status cache.
+    Required for in-flight push retries to survive process restarts."""
+
+    sessions: str | os.PathLike[str]
+    """Where the host persists session aliases (from
+    :meth:`AgentFrameworkHost.reset_session`), the per-isolation-key
+    identity registry, and the last-active-channel map. Required for
+    ``ResponseTarget.active``/``.channel``/``.all_linked`` to find
+    destinations after a restart, and for ``reset_session`` rotations
+    to survive a restart."""
+
+
 # A transform hook runs over each AgentResponseUpdate as the channel consumes
 # the stream. It can return a replacement update, ``None`` to drop the update,
 # or be async. Channels apply it during iteration so that channel-specific
@@ -830,7 +878,9 @@ __all__ = [
     "ChannelStreamTransformHook",
     "DurableTaskPayloadMode",
     "DurableTaskRunner",
+    "HostStatePaths",
     "HostedRunResult",
+    "PushPayloadNotPicklable",
     "PushPayloadNotSerializable",
     "ResponseStream",
     "ResponseTarget",
