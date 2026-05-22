@@ -93,7 +93,7 @@ class ResponsesChannel:
     ) -> None:
         """Create a Responses channel.
 
-        Args:
+        Keyword Args:
             path: Mount prefix on the host. Default ``""`` mounts the
                 ``POST /responses`` route at the app root, matching the
                 upstream OpenAI surface.

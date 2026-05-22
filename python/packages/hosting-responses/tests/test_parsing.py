@@ -85,13 +85,12 @@ class TestMessagesFromResponsesInput:
 
 
 class TestParseResponsesRequest:
-    def test_instructions_become_system_message_prefix(self) -> None:
+    def test_instructions_are_forwarded_as_chat_options(self) -> None:
         msgs, opts, sess = parse_responses_request({"input": "hi", "instructions": "be brief"})
-        assert msgs[0].role == "system"
-        assert msgs[0].text == "be brief"
-        assert msgs[1].role == "user"
-        # 'instructions' is consumed, not forwarded as an option.
-        assert "instructions" not in opts
+        assert len(msgs) == 1
+        assert msgs[0].role == "user"
+        assert msgs[0].text == "hi"
+        assert opts["instructions"] == "be brief"
         assert sess is None
 
     def test_options_passthrough(self) -> None:

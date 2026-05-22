@@ -22,13 +22,11 @@ _RESPONSES_OPTION_REMAP = {
     "max_output_tokens": "max_tokens",
     "parallel_tool_calls": "allow_multiple_tool_calls",
 }
-# Fields we forward to ChatOptions verbatim.
-# NOTE: ``instructions`` is intentionally NOT in this set. It is handled
-# separately above by being prepended as a system message in
-# ``parse_responses_request``; keeping it out of the passthrough set
-# prevents future consumers from accidentally also forwarding it as a
-# ChatOptions field (which would ship the system message twice).
+# Fields we forward to ChatOptions verbatim. ``instructions`` stays here
+# because Agent Framework exposes it as a ChatOptions field; it must not be
+# lifted into a synthetic system message.
 _RESPONSES_OPTION_PASSTHROUGH = {
+    "instructions",
     "temperature",
     "top_p",
     "metadata",
@@ -203,8 +201,7 @@ def parse_responses_request(
 
     Returns a triple ``(messages, options, session)`` where:
 
-    - ``messages`` is the parsed conversation (``instructions`` is prepended
-      as a system message when present).
+    - ``messages`` is the parsed conversation.
     - ``options`` is a ``ChatOptions``-shaped dict with the model-tunable
       fields the channel lifted off the body.
     - ``session`` is a :class:`ChannelSession` keyed by
@@ -212,18 +209,10 @@ def parse_responses_request(
     """
     messages = messages_from_responses_input(body.get("input"))
 
-    if (instructions := body.get("instructions")) and isinstance(instructions, str):
-        messages.insert(0, Message("system", [Content.from_text(text=instructions)]))
-
     options: dict[str, Any] = {}
     for key, value in body.items():
         if key in _RESPONSES_TRANSPORT_KEYS or value is None:
             continue
-        # ``instructions`` is consumed above (prepended as a system
-        # message) and intentionally absent from
-        # ``_RESPONSES_OPTION_PASSTHROUGH`` so this loop drops it
-        # silently — defence against a future passthrough-set edit
-        # that would re-introduce double-forwarding.
         if (mapped := _RESPONSES_OPTION_REMAP.get(key)) is not None:
             options[mapped] = value
         elif key in _RESPONSES_OPTION_PASSTHROUGH:
