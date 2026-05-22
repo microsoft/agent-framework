@@ -28,6 +28,7 @@ from agent_framework import (
     ResponseStream,
     WorkflowCheckpoint,
     WorkflowCheckpointException,
+    WorkflowMessage,
 )
 from azure.ai.agentserver.responses import InMemoryResponseProvider
 from mcp import McpError
@@ -2716,7 +2717,6 @@ class TestCheckpointContextPathValidation:
 
     @staticmethod
     def _checkpoint_with_azure_message_role() -> WorkflowCheckpoint:
-        from agent_framework._workflows._runner_context import WorkflowMessage
         from azure.ai.agentserver.responses.models import MessageRole
 
         return WorkflowCheckpoint(
@@ -2797,7 +2797,7 @@ class TestCheckpointContextPathValidation:
             latest = await storage.get_latest(workflow_name="wf")
 
         assert latest is None
-        assert any("MessageRole" in record.message for record in caplog.records)
+        assert any("MessageRole" in message for message in caplog.messages)
 
     @pytest.mark.parametrize(
         "bad_id",

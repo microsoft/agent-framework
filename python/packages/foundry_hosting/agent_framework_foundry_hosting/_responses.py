@@ -117,6 +117,8 @@ from typing_extensions import Any
 
 logger = logging.getLogger(__name__)
 
+_AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
+
 
 # region Approval Storage
 class ApprovalStorage(Protocol):
@@ -254,7 +256,7 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
         storage_path,
         # Keep this provider-specific allowlist narrow. Hosted workflow
         # checkpoints can persist Azure's role enum inside Message objects.
-        allowed_checkpoint_types=[f"{MessageRole.__module__}:{MessageRole.__qualname__}"],
+        allowed_checkpoint_types=[_AZURE_RESPONSES_MESSAGE_ROLE_TYPE],
     )
 
 
