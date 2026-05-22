@@ -5,6 +5,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+#if NET
+using Microsoft.Agents.AI.Tools.Shell;
+#endif
 using Microsoft.Extensions.AI;
 using Moq;
 
@@ -1347,4 +1350,114 @@ public class HarnessAgentTests
     }
 
     #endregion
+
+#if NET
+    #region Feature: ShellEnvironmentProvider
+
+    /// <summary>
+    /// Verify that ShellEnvironmentProvider is included when ShellExecutor is provided.
+    /// </summary>
+    [Fact]
+    public void ShellEnvironmentProvider_IncludedWhenExecutorProvided()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var executorMock = new Mock<ShellExecutor>();
+        executorMock.Setup(e => e.AsAIFunction(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Returns(AIFunctionFactory.Create(() => "test", "run_shell"));
+        var options = CreateAllDisabledOptions();
+        options.ShellExecutor = executorMock.Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent?.AIContextProviders);
+        Assert.Contains(innerAgent!.AIContextProviders!, p => p is ShellEnvironmentProvider);
+    }
+
+    /// <summary>
+    /// Verify that ShellEnvironmentProvider is not included when ShellExecutor is null.
+    /// </summary>
+    [Fact]
+    public void ShellEnvironmentProvider_ExcludedWhenExecutorNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.ShellExecutor = null;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent);
+        Assert.NotNull(innerAgent!.AIContextProviders);
+        Assert.DoesNotContain(innerAgent.AIContextProviders!, p => p is ShellEnvironmentProvider);
+    }
+
+    /// <summary>
+    /// Verify that the shell tool AIFunction is added to ChatOptions.Tools when ShellExecutor is provided.
+    /// </summary>
+    [Fact]
+    public async Task ShellExecutor_ToolAddedToChatOptionsAsync()
+    {
+        // Arrange
+        ChatOptions? capturedOptions = null;
+        var chatClientMock = new Mock<IChatClient>();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
+
+        var executorMock = new Mock<ShellExecutor>();
+        executorMock.Setup(e => e.AsAIFunction(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Returns(AIFunctionFactory.Create(() => "shell output", "run_shell"));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableWebSearch = true;
+        options.ShellExecutor = executorMock.Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClientMock.Object, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — the shell tool should be present
+        Assert.NotNull(capturedOptions?.Tools);
+        Assert.Contains(capturedOptions!.Tools!, t => t is AIFunction f && f.Name == "run_shell");
+    }
+
+    /// <summary>
+    /// Verify that ShellEnvironmentProvider is present when ShellEnvironmentProviderOptions is also specified.
+    /// </summary>
+    [Fact]
+    public void ShellEnvironmentProvider_PresentWhenOptionsProvided()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var executorMock = new Mock<ShellExecutor>();
+        executorMock.Setup(e => e.AsAIFunction(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Returns(AIFunctionFactory.Create(() => "test", "run_shell"));
+        var envOptions = new ShellEnvironmentProviderOptions
+        {
+            ProbeTools = ["git", "python"],
+        };
+        var options = CreateAllDisabledOptions();
+        options.ShellExecutor = executorMock.Object;
+        options.ShellEnvironmentProviderOptions = envOptions;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert — provider should exist (options wiring is validated by the provider's behavior)
+        Assert.NotNull(innerAgent?.AIContextProviders);
+        Assert.Contains(innerAgent!.AIContextProviders!, p => p is ShellEnvironmentProvider);
+    }
+
+    #endregion
+#endif
 }

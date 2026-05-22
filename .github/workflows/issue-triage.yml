@@ -137,6 +137,7 @@ jobs:
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}
           SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           ISSUE_REPO: ${{ needs.team_check.outputs.repo }}

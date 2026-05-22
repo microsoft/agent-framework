@@ -16,6 +16,7 @@ using System.ClientModel.Primitives;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Harness.Shared.Console;
+using Harness.Shared.Console.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -113,4 +114,8 @@ AIAgent parentAgent =
 // Run the interactive console session.
 await HarnessConsole.RunAgentAsync(
     parentAgent,
-    userPrompt: "Enter a list of stock tickers (e.g., BAC, MSFT, BA):");
+    userPrompt: "Enter a list of stock tickers (e.g., BAC, MSFT, BA):",
+    options: new HarnessConsoleOptions
+    {
+        Observers = [new OpenAIResponsesErrorObserver(), .. HarnessConsoleOptions.BuildDefaultObservers()],
+    });

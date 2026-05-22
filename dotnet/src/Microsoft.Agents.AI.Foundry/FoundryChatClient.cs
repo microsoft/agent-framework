@@ -27,9 +27,9 @@ namespace Microsoft.Agents.AI.Foundry;
 /// Foundry chat-client decorator that unifies the three Foundry chat-client construction
 /// modes (Responses Agent, Prompt Agent, Agent Endpoint) behind a single type and centralizes
 /// Foundry-specific concerns: <c>microsoft.foundry</c> telemetry tagging,
-/// <c>agent-framework-dotnet/{version}</c> User-Agent stamping, and (for Prompt Agents)
-/// per-request payload mutation that injects the agent reference and strips per-request
-/// overrides that the server owns.
+/// <c>agent-framework-dotnet/{version}</c> User-Agent stamping, <c>x-ms-served-model</c>
+/// response-header capture, and (for Prompt Agents) per-request payload mutation that injects
+/// the agent reference and strips per-request overrides that the server owns.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -78,6 +78,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         this._aiProjectClient = aiProjectClient;
         this._metadata = new ChatClientMetadata("microsoft.foundry", defaultModelId: modelId);
         TryRegisterAgentFrameworkUserAgentPolicy(this.InnerClient);
+        TryRegisterServedModelPolicy(this.InnerClient);
     }
 
     /// <summary>
@@ -96,6 +97,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         this._baseChatOptions = baseChatOptions;
         this.AgentName = agentReference.Name;
         TryRegisterAgentFrameworkUserAgentPolicy(this.InnerClient);
+        TryRegisterServedModelPolicy(this.InnerClient);
     }
 
     /// <summary>
@@ -161,6 +163,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         this.AgentName = inner.AgentName;
         this._metadata = new ChatClientMetadata("microsoft.foundry");
         TryRegisterAgentFrameworkUserAgentPolicy(this.InnerClient);
+        TryRegisterServedModelPolicy(this.InnerClient);
     }
 
     /// <summary>
@@ -212,7 +215,25 @@ public sealed class FoundryChatClient : DelegatingChatClient
             ? this.GetAgentEnabledChatOptions(options)
             : options;
 
-        return await base.GetResponseAsync(messages, effectiveOptions, cancellationToken).ConfigureAwait(false);
+        var box = new StrongBox<string?>(null);
+        var previous = ServedModelScope.Current;
+        ServedModelScope.Current = box;
+
+        try
+        {
+            var response = await base.GetResponseAsync(messages, effectiveOptions, cancellationToken).ConfigureAwait(false);
+
+            if (box.Value is { } servedModel)
+            {
+                response.ModelId = servedModel;
+            }
+
+            return response;
+        }
+        finally
+        {
+            ServedModelScope.Current = previous;
+        }
     }
 
     /// <inheritdoc/>
@@ -222,9 +243,25 @@ public sealed class FoundryChatClient : DelegatingChatClient
             ? this.GetAgentEnabledChatOptions(options)
             : options;
 
-        await foreach (var chunk in base.GetStreamingResponseAsync(messages, effectiveOptions, cancellationToken).ConfigureAwait(false))
+        var box = new StrongBox<string?>(null);
+        var previous = ServedModelScope.Current;
+        ServedModelScope.Current = box;
+
+        try
         {
-            yield return chunk;
+            await foreach (var chunk in base.GetStreamingResponseAsync(messages, effectiveOptions, cancellationToken).ConfigureAwait(false))
+            {
+                if (box.Value is { } servedModel)
+                {
+                    chunk.ModelId = servedModel;
+                }
+
+                yield return chunk;
+            }
+        }
+        finally
+        {
+            ServedModelScope.Current = previous;
         }
     }
 
@@ -624,6 +661,25 @@ public sealed class FoundryChatClient : DelegatingChatClient
             OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
                 policies,
                 AgentFrameworkUserAgentPolicy.Instance,
+                PipelinePosition.PerCall);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort registration of <see cref="ServedModelPolicy"/> via the MEAI
+    /// <see cref="OpenAIRequestPolicies"/> hook. The policy captures the
+    /// <c>x-ms-served-model</c> response header from Azure OpenAI and writes it into
+    /// <see cref="ServedModelScope"/> so the <see cref="GetResponseAsync"/> and
+    /// <see cref="GetStreamingResponseAsync"/> overrides can overwrite
+    /// <see cref="ChatResponse.ModelId"/> with the actual model snapshot.
+    /// </summary>
+    private static void TryRegisterServedModelPolicy(IChatClient? innerClient)
+    {
+        if (innerClient?.GetService<OpenAIRequestPolicies>() is { } policies)
+        {
+            OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
+                policies,
+                ServedModelPolicy.Instance,
                 PipelinePosition.PerCall);
         }
     }
