@@ -293,7 +293,8 @@ def make_commands(
             await ctx.reply(f"This chat is not linked to an Entra ID. Isolation key: {key}\nSend /link to bind it.")
 
     async def handle_weather(ctx: ChannelCommandContext) -> None:
-        _, _, location = ctx.request.input.partition(" ")
+        command_text = ctx.request.input if isinstance(ctx.request.input, str) else ""
+        _, _, location = command_text.partition(" ")
         location = location.strip() or "Seattle"
         await ctx.reply(lookup_weather(location=location))
 

@@ -168,7 +168,8 @@ def make_commands(host_ref: dict[str, AgentFrameworkHost]) -> list[ChannelComman
     async def handle_weather(ctx: ChannelCommandContext) -> None:
         # Bypass the agent and call the tool directly to demonstrate that
         # commands have full control over how they reply.
-        _, _, location = ctx.request.input.partition(" ")
+        command_text = ctx.request.input if isinstance(ctx.request.input, str) else ""
+        _, _, location = command_text.partition(" ")
         location = location.strip() or "Seattle"
         await ctx.reply(lookup_weather(location=location))
 
