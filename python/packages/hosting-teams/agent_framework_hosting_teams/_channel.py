@@ -330,7 +330,7 @@ class TeamsChannel:
     ) -> None:
         """Configure the channel.
 
-        Args:
+        Keyword Args:
             client_id: Entra app id of the Bot Service registration.
                 Required unless ``skip_auth=True`` or you supply ``app``.
             client_secret: Client secret for the Entra app.
