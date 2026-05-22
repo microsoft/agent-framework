@@ -20,13 +20,13 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any
 
+from agent_framework import AgentResponse, Content, Message
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
     ChannelRequest,
     ChannelRunHook,
     ChannelSession,
-    DeliveryReport,
     HostedRunResult,
     apply_run_hook,
     get_current_isolation_keys,
@@ -55,13 +55,17 @@ from ._parsing import (
 )
 
 
-def _ack_text(report: DeliveryReport) -> str:
+def _ack_text() -> str:
     """Tiny acknowledgement string for the originating wire.
 
     Used when the agent reply is delivered out-of-band via :class:`ChannelPush`.
     """
-    pushed = ", ".join(report.pushed) if report.pushed else "(none)"
-    return f"[delivered out-of-band → {pushed}]"
+    return "[delivered out-of-band]"
+
+
+def _text_result(text: str) -> HostedRunResult[AgentResponse]:
+    """Build a host delivery payload from text accumulated by this channel."""
+    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
 class ResponsesChannel:
@@ -228,8 +232,8 @@ class ResponsesChannel:
             )
 
         result = await self._ctx.run(channel_request)
-        report = await self._ctx.deliver_response(channel_request, result)
-        text = result.text if report.include_originating else _ack_text(report)
+        include_originating = await self._ctx.deliver_response(channel_request, result)
+        text = result.result.text if include_originating else _ack_text()
         envelope = self._build_response(body, text, status="completed", response_id=response_id)
         return JSONResponse(envelope.model_dump(mode="json", exclude_none=True))
 
@@ -344,7 +348,7 @@ class ResponsesChannel:
             # ``deliver_response`` itself is best-effort; we swallow its
             # exceptions so the failure event still reaches the client.
             try:
-                await self._ctx.deliver_response(request, HostedRunResult(text=accumulated))
+                await self._ctx.deliver_response(request, _text_result(accumulated))
             except Exception:  # pragma: no cover - delivery is best-effort
                 logger.exception("Responses stream failure deliver_response failed")
             failed = self._build_response(body, accumulated, status="failed", response_id=response_id)
@@ -359,9 +363,9 @@ class ResponsesChannel:
             return
 
         completed_text = accumulated
-        report = await self._ctx.deliver_response(request, HostedRunResult(text=accumulated))
-        if not report.include_originating:
-            completed_text = _ack_text(report)
+        include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
+        if not include_originating:
+            completed_text = _ack_text()
         completed = self._build_response(body, completed_text, status="completed", response_id=response_id)
         # Reuse the same message id we emitted deltas under.
         if completed.output and isinstance(completed.output[0], ResponseOutputMessage):

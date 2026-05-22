@@ -195,8 +195,7 @@ class TestResponsesChannelNonStreaming:
         body = r.json()
         text = body["output"][0]["content"][0]["text"]
         assert "delivered out-of-band" in text
-        assert "telegram:42" in text
-        assert push_ch.pushes and push_ch.pushes[0][1].text == "real reply"
+        assert push_ch.pushes and push_ch.pushes[0][1].result.text == "real reply"
         assert push_ch.pushes[0][0].native_id == "42"
 
 
