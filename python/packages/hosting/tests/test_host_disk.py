@@ -15,6 +15,7 @@ from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
     ChannelIdentity,
+    LinkChallenge,
 )
 
 # Skip the whole module when the optional disk extra isn't installed.
@@ -39,6 +40,22 @@ class _ChannelStub:
 
     def contribute(self, _context: ChannelContext) -> ChannelContribution:
         return ChannelContribution()
+
+
+class _NonConfigurableLinker:
+    async def resolve(self, _identity: ChannelIdentity) -> LinkChallenge:
+        return LinkChallenge("link")
+
+
+class _ConfigurableLinker:
+    def __init__(self) -> None:
+        self.configured_path: Path | None = None
+
+    def configure_link_store_path(self, path: str | Path) -> None:
+        self.configured_path = Path(path)
+
+    async def resolve(self, _identity: ChannelIdentity) -> LinkChallenge:
+        return LinkChallenge("link")
 
 
 def _close_host_disk(host: AgentFrameworkHost) -> None:
@@ -130,6 +147,54 @@ def test_unknown_component_key_raises(tmp_path: Path) -> None:
             channels=[_ChannelStub()],
             state_dir={"runnerr": tmp_path / "x"},  # type: ignore[dict-item]
         )
+
+
+def test_links_state_path_configures_compatible_identity_linker(tmp_path: Path) -> None:
+    """``state_dir['links']`` is offered to linkers that accept host-owned persistence."""
+    linker = _ConfigurableLinker()
+    host = AgentFrameworkHost(
+        target=_AgentStub(),
+        channels=[_ChannelStub()],
+        identity_linker=linker,
+        state_dir=tmp_path,
+    )
+    try:
+        assert linker.configured_path == tmp_path / "links"
+    finally:
+        _close_host_disk(host)
+
+
+def test_explicit_links_state_path_without_linker_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Explicit ``links`` path with no linker is almost certainly dead config."""
+    with caplog.at_level("WARNING", logger="agent_framework.hosting"):
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub()],
+            state_dir={"links": tmp_path / "links"},
+        )
+    try:
+        assert any(
+            "state_dir['links']" in rec.message and "no identity_linker" in rec.message for rec in caplog.records
+        )
+    finally:
+        _close_host_disk(host)
+
+
+def test_links_state_path_with_nonconfigurable_linker_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A linker that owns its persistence directly gets a clear warning."""
+    with caplog.at_level("WARNING", logger="agent_framework.hosting"):
+        host = AgentFrameworkHost(
+            target=_AgentStub(),
+            channels=[_ChannelStub()],
+            identity_linker=_NonConfigurableLinker(),
+            state_dir={"links": tmp_path / "links"},
+        )
+    try:
+        assert any(
+            "state_dir['links']" in rec.message and "SupportsLinkStorePath" in rec.message for rec in caplog.records
+        )
+    finally:
+        _close_host_disk(host)
 
 
 # --------------------------------------------------------------------------- #

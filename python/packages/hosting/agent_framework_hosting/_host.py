@@ -63,6 +63,7 @@ from ._authorization import (
     IdentityLinker,
     LinkChallenge,
     LinkRequired,
+    SupportsLinkStorePath,
 )
 from ._isolation import (
     ISOLATION_HEADER_CHAT,
@@ -585,15 +586,20 @@ class AgentFrameworkHost:
                 ``state_dir/checkpoints/`` subfolder (or the
                 ``checkpoints`` key of the mapping form) is also used
                 as the workflow checkpoint location (equivalent to
-                passing ``checkpoint_location`` directly). Accepts:
+                passing ``checkpoint_location`` directly). The
+                auto-derived ``state_dir/links/`` subfolder (or the
+                ``links`` key of the mapping form) is offered to
+                identity linkers that implement
+                :class:`SupportsLinkStorePath`. Accepts:
 
                 * ``None`` (default) — everything stays in memory; the
                   process owns its state and loses it on exit. Matches
                   today's behaviour exactly.
-                * ``str`` / :class:`os.PathLike` — the host creates
-                  default subfolders ``state_dir/runner/``,
-                  ``state_dir/sessions/``, and (for workflow targets)
-                  ``state_dir/checkpoints/``. Recommended for most
+                * ``str`` / :class:`os.PathLike` — the host derives
+                  default subpaths ``state_dir/runner/``,
+                  ``state_dir/sessions/``, ``state_dir/links/``, and
+                  (for workflow targets) ``state_dir/checkpoints/``.
+                  Recommended for most
                   long-running-host deployments — one path, no extra
                   config, all components persist together. Note: when
                   the target is a Workflow this enables workflow
@@ -622,7 +628,9 @@ class AgentFrameworkHost:
                 ``runner`` sub-path is ignored — the caller owns the
                 runner's persistence story. When ``checkpoint_location``
                 is supplied explicitly, the ``checkpoints`` sub-path is
-                ignored.
+                ignored. When an ``identity_linker`` does not implement
+                :class:`SupportsLinkStorePath`, the ``links`` sub-path is
+                ignored and the linker must be configured directly.
         """
         self.target: SupportsAgentRun | Workflow = target
         self._is_workflow = isinstance(target, Workflow)
@@ -639,6 +647,7 @@ class AgentFrameworkHost:
         # non-workflow targets) from "explicit mapping key" (warn for
         # non-workflow targets, since that's almost certainly dead config).
         checkpoints_explicit_in_mapping = isinstance(state_dir, Mapping) and "checkpoints" in state_dir
+        links_explicit_in_mapping = isinstance(state_dir, Mapping) and "links" in state_dir
         # Resolve the effective workflow checkpoint location: the
         # explicit ``checkpoint_location`` argument wins; otherwise we
         # fall back to ``state_dir['checkpoints']`` (single-path form
@@ -794,6 +803,10 @@ class AgentFrameworkHost:
         # construction-time validation for fail-fast misconfigurations.
         self._default_allowlist: IdentityAllowlist | None = default_allowlist
         self._identity_linker: IdentityLinker | None = identity_linker
+        self._configure_identity_linker_state(
+            self._state_paths.get("links"),
+            explicit=links_explicit_in_mapping,
+        )
         self._validate_channel_authorization()
 
     @property
@@ -802,6 +815,23 @@ class AgentFrameworkHost:
         if self._app is None:
             self._app = self._build_app()
         return self._app
+
+    def _configure_identity_linker_state(self, links_path: Path | None, *, explicit: bool) -> None:
+        """Offer the derived ``state_dir['links']`` path to compatible linkers."""
+        if links_path is None:
+            return
+        linker = self._identity_linker
+        if linker is None:
+            if explicit:
+                logger.warning("state_dir['links'] is set but no identity_linker is configured; ignoring.")
+            return
+        if isinstance(linker, SupportsLinkStorePath):
+            linker.configure_link_store_path(links_path)
+            return
+        logger.warning(
+            "state_dir['links'] is set but the configured identity_linker does not implement "
+            "SupportsLinkStorePath; configure link-store persistence on the linker directly."
+        )
 
     def _validate_runner_codec_pairing(self) -> None:
         """Refuse to start when a JSON-mode runner is paired with codec-less push channels.

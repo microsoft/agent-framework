@@ -714,6 +714,13 @@ V1 ships two implementations:
 
 Pluggable v1-fast-follow implementations (Cosmos, SQL, Redis) plug into the same protocol — see req #24.
 
+In the Python core package, the host-level `state_dir` shorthand reserves a
+`links` component for this identity-link store. Passing a single path derives
+`state_dir/links/`; the `HostStatePaths` mapping form accepts `links=...` for
+placing link-store data on a separate volume. The core host offers that path to
+identity linkers that implement `SupportsLinkStorePath`; linkers that own a
+provider-specific store can ignore it and be configured directly.
+
 **`ChannelCommand` / `ChannelCommandContext` / `CommandHandler`** — cross-channel native command model (per PR #5393).
 
 | Type | Fields | Description |

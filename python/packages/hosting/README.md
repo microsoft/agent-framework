@@ -129,13 +129,16 @@ bookkeeping use [`diskcache`](https://grantjenks.com/docs/diskcache/)
 (installed via the `[disk]` extra) protected by an OS-level advisory file
 lock so two hosts pointed at the same directory can't double-execute
 scheduled pushes. Workflow checkpoints (when the target is a `Workflow`)
-use the framework's `FileCheckpointStorage` — no extra dependency.
+use the framework's `FileCheckpointStorage` — no extra dependency. The
+identity-link store path is offered to linkers that implement
+`SupportsLinkStorePath`; linkers that manage persistence themselves should
+be configured directly.
 
 ```python
 from agent_framework_hosting import AgentFrameworkHost
 
-# Single path → host auto-creates `runner/`, `sessions/`, and
-# (for workflow targets) `checkpoints/` subfolders.
+# Single path → host auto-derives `runner/`, `sessions/`, `links/`, and
+# (for workflow targets) `checkpoints/` subpaths.
 host = AgentFrameworkHost(
     target=agent,
     channels=channels,
@@ -154,6 +157,7 @@ host = AgentFrameworkHost(
         runner="/var/lib/myapp/tasks",
         sessions="/var/lib/myapp/state",
         checkpoints="/var/lib/myapp/checkpoints",
+        links="/var/lib/myapp/links",
     ),
 )
 ```
@@ -173,6 +177,9 @@ What survives a restart:
   the `checkpoints` path in a per-isolation-key `FileCheckpointStorage`
   (equivalent to passing `checkpoint_location=...` directly; the explicit
   parameter takes precedence and emits a warning when both are set).
+- **Identity-link store** — when the configured linker implements
+  `SupportsLinkStorePath`, the host passes the `links` path to it so pending
+  challenges, linked identities, and verified claims can survive restarts.
 
 What doesn't:
 
@@ -182,5 +189,4 @@ What doesn't:
 
 Unpicklable push payloads raise `PushPayloadNotPicklable` *eagerly* from
 `schedule()` so issues surface at the call site, not on the next restart.
-
 

@@ -28,6 +28,7 @@ their transport or identity-provider SDKs.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -338,6 +339,21 @@ class IdentityLinker(Protocol):
         ...
 
 
+@runtime_checkable
+class SupportsLinkStorePath(Protocol):
+    """Optional protocol for linkers that accept host-provided persistence.
+
+    When ``AgentFrameworkHost(state_dir=...)`` derives a ``links`` path, the
+    host calls this hook on identity linkers that implement it. Linkers that
+    manage their own persistence can ignore this protocol and should be
+    configured directly by the application.
+    """
+
+    def configure_link_store_path(self, path: str | os.PathLike[str]) -> None:
+        """Configure where the linker should persist its link store."""
+        ...
+
+
 @dataclass(frozen=True)
 class Allowed:
     """The identity is authorized; ``isolation_key`` is its stable key."""
@@ -465,4 +481,5 @@ __all__ = [
     "LinkedClaimAllowlist",
     "LinkedIdentity",
     "NativeIdAllowlist",
+    "SupportsLinkStorePath",
 ]

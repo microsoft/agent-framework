@@ -34,6 +34,7 @@ from ._authorization import (
     LinkRequired,
     LinkResolution,
     NativeIdAllowlist,
+    SupportsLinkStorePath,
 )
 from ._host import AgentFrameworkHost, ChannelContext, RuntimeMode, logger
 from ._isolation import (
@@ -129,6 +130,7 @@ __all__ = [
     "ResponseTargetKind",
     "RetryPolicy",
     "RuntimeMode",
+    "SupportsLinkStorePath",
     "TaskHandle",
     "TaskStatus",
     "__version__",

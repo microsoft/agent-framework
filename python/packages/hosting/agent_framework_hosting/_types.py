@@ -520,10 +520,10 @@ class HostStatePaths(TypedDict, total=False):
     persistence). Pass a single ``str``/``PathLike`` to ``state_dir``
     instead to get the default subfolder layout
     (``state_dir/runner/``, ``state_dir/sessions/``,
-    ``state_dir/checkpoints/``).
+    ``state_dir/checkpoints/``, ``state_dir/links/``).
 
-    Future components (links, continuations, ledger) will be added as
-    additional keys in subsequent releases.
+    Future components (continuations, ledger) will be added as additional
+    keys in subsequent releases.
     """
 
     runner: str | os.PathLike[str]
@@ -549,6 +549,15 @@ class HostStatePaths(TypedDict, total=False):
     ``checkpoint_location`` parameter instead when you need to supply a
     :class:`~agent_framework.CheckpointStorage` instance — it takes
     precedence over this key."""
+
+    links: str | os.PathLike[str]
+    """Where identity-linker implementations persist their link store:
+    pending link challenges/grants, channel-native identity to linked
+    isolation-key mappings, and verified-claim metadata. The core host
+    does not impose a storage format; concrete :class:`IdentityLinker`
+    implementations that support host-provided persistence receive this
+    path via ``configure_link_store_path``. If a linker manages its own
+    persistence, omit this key or configure that linker directly."""
 
 
 # A transform hook runs over each AgentResponseUpdate as the channel consumes

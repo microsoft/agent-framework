@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 # Known component keys recognised by the host's ``state_dir`` normaliser.
 # Adding a new component is a non-breaking change: extend this tuple and
 # add the matching key to :class:`HostStatePaths` in ``_types.py``.
-_KNOWN_COMPONENTS: tuple[str, ...] = ("runner", "sessions", "checkpoints")
+_KNOWN_COMPONENTS: tuple[str, ...] = ("runner", "sessions", "checkpoints", "links")
 
 
 def load_diskcache() -> Any:
@@ -140,7 +140,7 @@ def normalize_state_dir(
     - ``None`` → all components return ``None`` (fully in-memory; today's behavior).
     - ``str`` / :class:`os.PathLike` → all components share a parent
       directory and get an auto-allocated subfolder (``runner/``,
-      ``sessions/``).
+      ``sessions/``, ``checkpoints/``, ``links/``).
     - :class:`HostStatePaths` typed dict / plain ``Mapping`` → per-key
       override. Components missing from the mapping fall back to ``None``
       (in-memory only). Unknown keys raise ``ValueError`` to surface
