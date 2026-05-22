@@ -720,8 +720,8 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
             return;
         }
 
-        // User took control — replay only their designations, in dictionary order.
-        foreach ((AIAgent agent, HashSet<OutputTag> tags) in this._outputDesignations)
+        // User took control — replay only their designations.
+        foreach (AIAgent agent in this._outputDesignations.Keys)
         {
             if (!executors.TryGetValue(agent.Id, out ExecutorBinding? binding))
             {
@@ -729,6 +729,7 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
                     $"Output designation references agent '{agent.Name ?? agent.Id}', which is not a participant in this handoff workflow.");
             }
 
+            HashSet<OutputTag> tags = this._outputDesignations[agent];
             if (tags.Count == 0)
             {
                 builder.WithOutputFrom(binding);

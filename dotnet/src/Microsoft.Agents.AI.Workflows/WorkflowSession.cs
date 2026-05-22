@@ -520,7 +520,12 @@ internal sealed class WorkflowSession : AgentSession
                     goto default;
 
                 case AgentResponseEvent agentResponse:
-                    if (!this._includeWorkflowOutputsInResponse)
+                    // Under Futures.EnableAgentResponseOutputTaggingAndFiltering=true, mirror
+                    // AgentResponseUpdateEvent's behavior: always forward, regardless of the
+                    // _includeWorkflowOutputsInResponse host flag. Under the legacy default,
+                    // keep today's behavior — gated by the include flag.
+                    if (!Futures.EnableAgentResponseOutputTaggingAndFiltering &&
+                        !this._includeWorkflowOutputsInResponse)
                     {
                         goto default;
                     }
@@ -539,7 +544,11 @@ internal sealed class WorkflowSession : AgentSession
                         _ => null
                     };
 
-                    if (!this._includeWorkflowOutputsInResponse || updateMessages == null)
+                    // Same gating asymmetry as AgentResponseEvent: intermediate outputs are
+                    // forwarded unconditionally; terminal/untagged outputs require the host
+                    // to opt in via _includeWorkflowOutputsInResponse.
+                    if (updateMessages == null ||
+                        (!output.IsIntermediate() && !this._includeWorkflowOutputsInResponse))
                     {
                         goto default;
                     }

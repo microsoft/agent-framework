@@ -260,8 +260,12 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
 
         Executor sourceExecutor = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
-        if (!sourceExecutor.CanOutput(output.GetType()))
+        if (!isAgentResponseShaped && !sourceExecutor.CanOutput(output.GetType()))
         {
+            // AIAgent-shaped payloads bypass the per-executor declared-yield check (matching the
+            // legacy bypass branch above). The AIAgent host executor relays the agent's output
+            // without declaring AgentResponse(Update) in its Yields set, so a CanOutput probe
+            // here would always reject — but those payloads are always a valid output shape.
             throw new InvalidOperationException($"Cannot output object of type {output.GetType().Name}. Expecting one of [{string.Join(", ", sourceExecutor.OutputTypes)}].");
         }
 

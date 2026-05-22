@@ -176,7 +176,7 @@ public sealed class GroupChatWorkflowBuilder
             return;
         }
 
-        foreach ((AIAgent agent, HashSet<OutputTag> tags) in this._outputDesignations)
+        foreach (AIAgent agent in this._outputDesignations.Keys)
         {
             if (!agentMap.TryGetValue(agent, out ExecutorBinding? binding))
             {
@@ -184,6 +184,7 @@ public sealed class GroupChatWorkflowBuilder
                     $"Output designation references agent '{agent.Name ?? agent.Id}', which is not a participant in this group chat workflow.");
             }
 
+            HashSet<OutputTag> tags = this._outputDesignations[agent];
             if (tags.Count == 0)
             {
                 builder.WithOutputFrom(binding);
