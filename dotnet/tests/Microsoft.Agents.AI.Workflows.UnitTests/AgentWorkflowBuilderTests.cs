@@ -4,132 +4,174 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Text;
-using System.Text.Json;
-using System.Threading;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.InProc;
+using FluentAssertions;
 using Microsoft.Extensions.AI;
+
+#pragma warning disable SYSLIB1045 // Use GeneratedRegex
+#pragma warning disable RCS1186 // Use Regex instance instead of static method
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 /// <summary>
-/// Container for tests covering <see cref="AgentWorkflowBuilder"/> entry points that
-/// do not produce a dedicated builder type (currently <c>BuildSequential</c> and
-/// <c>BuildConcurrent</c>). The actual test methods live in nested classes
-/// (<see cref="SequentialTests"/> and <see cref="ConcurrentTests"/>) split across
-/// partial files. Shared test helpers — the <c>DoubleEchoAgent</c> family and the
-/// <c>RunWorkflow*</c> methods — are declared on this outer partial as
-/// <c>internal</c> so the nested test classes and the standalone
-/// <see cref="GroupChatWorkflowBuilderTests"/> can all reuse them.
+/// Tests targeting the static <see cref="AgentWorkflowBuilder"/> helper surface —
+/// <see cref="AgentWorkflowBuilder.BuildSequential(System.Collections.Generic.IEnumerable{AIAgent})"/>,
+/// <see cref="AgentWorkflowBuilder.BuildConcurrent(System.Collections.Generic.IEnumerable{AIAgent}, System.Func{System.Collections.Generic.IList{System.Collections.Generic.List{ChatMessage}}, System.Collections.Generic.List{ChatMessage}})"/>,
+/// and the various <c>Create*BuilderWith</c> factories. Per-builder unit tests live in their own
+/// files (<see cref="SequentialWorkflowBuilderTests"/>, <see cref="ConcurrentWorkflowBuilderTests"/>, etc.).
 /// </summary>
-public static partial class AgentWorkflowBuilderTests
+public class AgentWorkflowBuilderTests
 {
-    internal class DoubleEchoAgent(string name) : AIAgent
+    [Fact]
+    public void Test_AgentWorkflowBuilder_BuildSequential_InvalidArguments_Throws()
     {
-        public override string Name => name;
-
-        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
-            => new(new DoubleEchoAgentSession());
-
-        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => new(new DoubleEchoAgentSession());
-
-        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => default;
-
-        protected override Task<AgentResponse> RunCoreAsync(
-            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
-
-        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
-            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            await Task.Yield();
-
-            var contents = messages.SelectMany(m => m.Contents).ToList();
-            string id = Guid.NewGuid().ToString("N");
-            yield return new AgentResponseUpdate(ChatRole.Assistant, this.Name) { AuthorName = this.Name, MessageId = id };
-            yield return new AgentResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
-            yield return new AgentResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
-        }
+        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildSequential(workflowName: null!, null!));
+        Assert.Throws<ArgumentException>("agents", () => AgentWorkflowBuilder.BuildSequential());
     }
 
-    internal sealed class DoubleEchoAgentSession() : AgentSession();
-
-    internal sealed class DoubleEchoAgentWithBarrier(string name, StrongBox<TaskCompletionSource<bool>> barrier, StrongBox<int> remaining) : DoubleEchoAgent(name)
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task Test_AgentWorkflowBuilder_BuildSequential_DelegatesToBuilderAsync(int numAgents)
     {
-        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
-            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            if (Interlocked.Decrement(ref remaining.Value) == 0)
-            {
-                barrier.Value!.SetResult(true);
-            }
+        Workflow workflow = AgentWorkflowBuilder.BuildSequential(
+            from i in Enumerable.Range(1, numAgents)
+            select new OrchestrationTestHelpers.DoubleEchoAgent($"agent{i}"));
 
-            await barrier.Value!.Task.ConfigureAwait(false);
+        // Smoke: end-to-end run produces a non-empty result. Detailed pipeline-ordering
+        // assertions live in SequentialWorkflowBuilderTests.
+        (string updateText, List<ChatMessage>? result, _, _) =
+            await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
 
-            await foreach (var update in base.RunCoreStreamingAsync(messages, session, options, cancellationToken))
-            {
-                await Task.Yield();
-                yield return update;
-            }
-        }
+        Assert.NotNull(result);
+        Assert.Equal(numAgents + 1, result.Count);
+        Assert.NotEmpty(updateText);
     }
 
-    internal sealed record WorkflowRunResult(string UpdateText, List<ChatMessage>? Result, CheckpointInfo? LastCheckpoint, List<RequestInfoEvent> PendingRequests);
-
-    internal static async Task<WorkflowRunResult> RunWorkflowCheckpointedAsync(
-        Workflow workflow, List<ChatMessage> input, InProcessExecutionEnvironment environment, CheckpointInfo? fromCheckpoint = null)
+    [Fact]
+    public void Test_AgentWorkflowBuilder_BuildSequential_WithWorkflowNameSetsNameOnWorkflow()
     {
-        await using StreamingRun run =
-            fromCheckpoint != null ? await environment.ResumeStreamingAsync(workflow, fromCheckpoint)
-                                   : await environment.OpenStreamingAsync(workflow);
+        Workflow workflow = AgentWorkflowBuilder.BuildSequential(
+            "static-sequential",
+            new OrchestrationTestHelpers.DoubleEchoAgent("agent1"));
 
-        await run.TrySendMessageAsync(input);
-        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
-
-        return await ProcessWorkflowRunAsync(run);
+        workflow.Name.Should().Be("static-sequential");
     }
 
-    internal static async Task<WorkflowRunResult> ProcessWorkflowRunAsync(StreamingRun run)
+    [Fact]
+    public void Test_AgentWorkflowBuilder_BuildConcurrent_InvalidArguments_Throws()
     {
-        StringBuilder sb = new();
-        WorkflowOutputEvent? output = null;
-        CheckpointInfo? lastCheckpoint = null;
-
-        List<RequestInfoEvent> pendingRequests = [];
-
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false).ConfigureAwait(false))
-        {
-            switch (evt)
-            {
-                case AgentResponseUpdateEvent responseUpdate:
-                    sb.Append(responseUpdate.Data);
-                    break;
-
-                case RequestInfoEvent requestInfo:
-                    pendingRequests.Add(requestInfo);
-                    break;
-
-                case WorkflowOutputEvent e:
-                    output = e;
-                    break;
-
-                case WorkflowErrorEvent errorEvent:
-                    Assert.Fail($"Workflow execution failed with error: {errorEvent.Exception}");
-                    break;
-
-                case SuperStepCompletedEvent stepCompleted:
-                    lastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
-                    break;
-            }
-        }
-
-        return new(sb.ToString(), output?.As<List<ChatMessage>>(), lastCheckpoint, pendingRequests);
+        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildConcurrent(null!));
     }
 
-    internal static Task<WorkflowRunResult> RunWorkflowAsync(
-        Workflow workflow, List<ChatMessage> input, ExecutionEnvironment executionEnvironment = ExecutionEnvironment.InProcess_Lockstep)
-        => RunWorkflowCheckpointedAsync(workflow, input, executionEnvironment.ToWorkflowExecutionEnvironment());
+    [Fact]
+    public async Task Test_AgentWorkflowBuilder_BuildConcurrent_DelegatesToBuilderAsync()
+    {
+        StrongBox<TaskCompletionSource<bool>> barrier = new();
+        StrongBox<int> remaining = new();
+
+        Workflow workflow = AgentWorkflowBuilder.BuildConcurrent(
+        [
+            new OrchestrationTestHelpers.DoubleEchoAgentWithBarrier("agent1", barrier, remaining),
+            new OrchestrationTestHelpers.DoubleEchoAgentWithBarrier("agent2", barrier, remaining),
+        ]);
+
+        barrier.Value = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        remaining.Value = 2;
+
+        (string updateText, List<ChatMessage>? result, _, _) =
+            await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
+
+        Assert.NotEmpty(updateText);
+        Assert.NotNull(result);
+        Assert.Equal(2, result.Count);
+        Assert.Single(Regex.Matches(updateText, "agent1"));
+        Assert.Single(Regex.Matches(updateText, "agent2"));
+    }
+
+    [Fact]
+    public void Test_AgentWorkflowBuilder_BuildConcurrent_WithWorkflowNameSetsNameOnWorkflow()
+    {
+        Workflow workflow = AgentWorkflowBuilder.BuildConcurrent(
+            "static-concurrent",
+            [new OrchestrationTestHelpers.DoubleEchoAgent("agent1")]);
+
+        workflow.Name.Should().Be("static-concurrent");
+    }
+
+    [Fact]
+    public async Task Test_AgentWorkflowBuilder_BuildConcurrent_AggregatorIsHonoredAsync()
+    {
+        // Replace the default ("last message from each agent") with a custom aggregator,
+        // and confirm the workflow yields its result.
+        List<ChatMessage> sentinel = [new(ChatRole.Assistant, "custom-aggregator-result")];
+
+        Workflow workflow = AgentWorkflowBuilder.BuildConcurrent(
+            [new OrchestrationTestHelpers.DoubleEchoAgent("agent1")],
+            aggregator: _ => sentinel);
+
+        (_, List<ChatMessage>? result, _, _) =
+            await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
+
+        result.Should().NotBeNull().And.ContainSingle();
+        result![0].Text.Should().Be("custom-aggregator-result");
+    }
+
+    [Fact]
+    public void Test_AgentWorkflowBuilder_CreateSequentialBuilderWith_RejectsNull()
+    {
+        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.CreateSequentialBuilderWith(null!));
+    }
+
+    [Fact]
+    public void Test_AgentWorkflowBuilder_CreateSequentialBuilderWith_ReturnsConfigurableBuilder()
+    {
+        OrchestrationTestHelpers.DoubleEchoAgent agent = new("agent1");
+
+        SequentialWorkflowBuilder builder = AgentWorkflowBuilder.CreateSequentialBuilderWith(agent);
+        Workflow workflow = builder.WithName("via-factory").Build();
+
+        workflow.Name.Should().Be("via-factory");
+    }
+
+    [Fact]
+    public void Test_AgentWorkflowBuilder_CreateConcurrentBuilderWith_RejectsNull()
+    {
+        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.CreateConcurrentBuilderWith(null!));
+    }
+
+    [Fact]
+    public void Test_AgentWorkflowBuilder_CreateConcurrentBuilderWith_ReturnsConfigurableBuilder()
+    {
+        OrchestrationTestHelpers.DoubleEchoAgent agent = new("agent1");
+
+        ConcurrentWorkflowBuilder builder = AgentWorkflowBuilder.CreateConcurrentBuilderWith(agent);
+        Workflow workflow = builder.WithName("via-factory").Build();
+
+        workflow.Name.Should().Be("via-factory");
+    }
+
+    [Fact]
+    public void Test_AgentWorkflowBuilder_CreateHandoffBuilderWith_RejectsNull()
+    {
+#pragma warning disable MAAIW001
+        Assert.Throws<ArgumentNullException>("initialAgent", () => AgentWorkflowBuilder.CreateHandoffBuilderWith(null!));
+#pragma warning restore MAAIW001
+    }
+
+    [Fact]
+    public void Test_AgentWorkflowBuilder_CreateGroupChatBuilderWith_RejectsNull()
+    {
+        Assert.Throws<ArgumentNullException>("managerFactory", () => AgentWorkflowBuilder.CreateGroupChatBuilderWith(null!));
+    }
+
+    [Fact]
+    public void Test_AgentWorkflowBuilder_CreateMagenticBuilderWith_RejectsNull()
+    {
+#pragma warning disable MAAIW001
+        Assert.Throws<ArgumentNullException>("managerAgent", () => AgentWorkflowBuilder.CreateMagenticBuilderWith(null!));
+#pragma warning restore MAAIW001
+    }
 }

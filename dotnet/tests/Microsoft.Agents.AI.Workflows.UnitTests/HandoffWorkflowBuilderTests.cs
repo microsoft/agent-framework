@@ -19,8 +19,8 @@ public class HandoffWorkflowBuilderTests
     [Fact]
     public void Test_HandoffWorkflowBuilder_DefaultDesignationsMatchSpec()
     {
-        AgentWorkflowBuilderTests.DoubleEchoAgent coordinator = new("coordinator");
-        AgentWorkflowBuilderTests.DoubleEchoAgent specialist = new("specialist");
+        OrchestrationTestHelpers.DoubleEchoAgent coordinator = new("coordinator");
+        OrchestrationTestHelpers.DoubleEchoAgent specialist = new("specialist");
 
         Workflow workflow = AgentWorkflowBuilder
             .CreateHandoffBuilderWith(coordinator)
@@ -38,8 +38,8 @@ public class HandoffWorkflowBuilderTests
     [Fact]
     public void Test_HandoffWorkflowBuilder_ExplicitDesignationsReplaceDefaults()
     {
-        AgentWorkflowBuilderTests.DoubleEchoAgent coordinator = new("coordinator");
-        AgentWorkflowBuilderTests.DoubleEchoAgent specialist = new("specialist");
+        OrchestrationTestHelpers.DoubleEchoAgent coordinator = new("coordinator");
+        OrchestrationTestHelpers.DoubleEchoAgent specialist = new("specialist");
 
         Workflow workflow = AgentWorkflowBuilder
             .CreateHandoffBuilderWith(coordinator)
@@ -61,9 +61,9 @@ public class HandoffWorkflowBuilderTests
     [Fact]
     public void Test_HandoffWorkflowBuilder_DesignationForNonParticipantThrows()
     {
-        AgentWorkflowBuilderTests.DoubleEchoAgent coordinator = new("coordinator");
-        AgentWorkflowBuilderTests.DoubleEchoAgent specialist = new("specialist");
-        AgentWorkflowBuilderTests.DoubleEchoAgent stranger = new("stranger");
+        OrchestrationTestHelpers.DoubleEchoAgent coordinator = new("coordinator");
+        OrchestrationTestHelpers.DoubleEchoAgent specialist = new("specialist");
+        OrchestrationTestHelpers.DoubleEchoAgent stranger = new("stranger");
 
         HandoffWorkflowBuilder builder = AgentWorkflowBuilder
             .CreateHandoffBuilderWith(coordinator)
