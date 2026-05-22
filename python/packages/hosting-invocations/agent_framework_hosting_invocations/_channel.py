@@ -123,7 +123,7 @@ class InvocationsChannel:
             )
 
         result = await self._ctx.run(channel_request)
-        return JSONResponse({"response": result.text, "session_id": session_id})
+        return JSONResponse({"response": result.result.text, "session_id": session_id})
 
     async def _stream(self, request: ChannelRequest) -> AsyncIterator[str]:
         r"""Yield bare ``data:`` SSE lines for each text chunk + a final ``[DONE]``.
