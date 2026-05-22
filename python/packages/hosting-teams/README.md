@@ -62,7 +62,7 @@ from microsoft_teams.cards.core import AdaptiveCard
 
 async def to_card(ctx: TeamsOutboundContext) -> TeamsOutboundPayload:
     card = AdaptiveCard(
-        body=[{"type": "TextBlock", "text": ctx.result.text, "wrap": True}],
+        body=[{"type": "TextBlock", "text": ctx.result.result.text, "wrap": True}],
     )
     return TeamsOutboundPayload(card=card)
 
@@ -74,7 +74,7 @@ TeamsChannel(..., outbound_transform=to_card)
 ```python
 async def with_citations(ctx: TeamsOutboundContext) -> TeamsOutboundPayload:
     return TeamsOutboundPayload(
-        text=ctx.result.text,
+        text=ctx.result.result.text,
         citations=[
             TeamsCitation(
                 name="Microsoft Agent Framework",

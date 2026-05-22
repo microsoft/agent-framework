@@ -60,6 +60,8 @@ from typing import Any, TypeAlias, cast
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
+    Content,
+    Message,
     ResponseStream,
 )
 from agent_framework_hosting import (
@@ -151,7 +153,7 @@ class TeamsOutboundContext:
 
     request: ChannelRequest
     activity_context: ActivityContext[MessageActivity]
-    result: HostedRunResult
+    result: HostedRunResult[AgentResponse]
 
 
 TeamsOutboundTransform: TypeAlias = Callable[
@@ -610,7 +612,7 @@ class TeamsChannel:
                 await activity_context.stream.close()
             except Exception:  # pragma: no cover - best effort
                 logger.exception("TeamsChannel stream close failed")
-            result = HostedRunResult(text="".join(accumulated))
+            result = _text_result("".join(accumulated))
             try:
                 await self._ctx.deliver_response(request, result)
             except Exception:  # pragma: no cover - best effort
@@ -632,7 +634,7 @@ class TeamsChannel:
         self,
         request: ChannelRequest,
         activity_context: ActivityContext[MessageActivity],
-        result: HostedRunResult,
+        result: HostedRunResult[AgentResponse],
     ) -> None:
         """Resolve outbound content and POST to Teams via the SDK."""
         payload = await self._resolve_outbound(request, activity_context, result)
@@ -666,11 +668,11 @@ class TeamsChannel:
         self,
         request: ChannelRequest,
         activity_context: ActivityContext[MessageActivity],
-        result: HostedRunResult,
+        result: HostedRunResult[AgentResponse],
     ) -> TeamsOutboundPayload:
         """Run ``outbound_transform`` (sync or async) and return the payload."""
         if self._outbound_transform is None:
-            return TeamsOutboundPayload(text=result.text)
+            return TeamsOutboundPayload(text=result.result.text)
         maybe = self._outbound_transform(
             TeamsOutboundContext(
                 request=request,
@@ -788,6 +790,11 @@ def _update_text(update: AgentResponseUpdate) -> str:
         if isinstance(text, str) and text:
             parts.append(text)
     return "".join(parts)
+
+
+def _text_result(text: str) -> HostedRunResult[AgentResponse]:
+    """Build a host delivery payload from text accumulated by this channel."""
+    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
 def _citations_entity(citations: Sequence[TeamsCitation]) -> CitationEntity:

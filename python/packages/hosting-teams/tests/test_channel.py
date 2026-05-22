@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from agent_framework import AgentResponse, Content, Message
 from agent_framework_hosting import (
     ChannelRequest,
     HostedRunResult,
@@ -258,7 +259,7 @@ class _FakeChannelContext:
 
     async def run(self, request: ChannelRequest) -> HostedRunResult:
         self.runs.append(request)
-        return HostedRunResult(text=self.response_text)
+        return _run_result(self.response_text)
 
     def run_stream(self, request: ChannelRequest) -> Any:
         self.streamed.append(request)
@@ -274,6 +275,10 @@ class _FakeChannelContext:
     async def deliver_response(self, request: ChannelRequest, payload: HostedRunResult) -> Any:
         self.delivered.append((request, payload))
         return None
+
+
+def _run_result(text: str) -> HostedRunResult[AgentResponse]:
+    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
 class _FakeStream:
@@ -337,7 +342,7 @@ async def test_on_message_runs_target_and_sends_text() -> None:
 
     # Outbound message: plain text.
     assert activity_ctx.sent == ["agent-reply"]
-    assert ctx.delivered[0][1].text == "agent-reply"
+    assert ctx.delivered[0][1].result.text == "agent-reply"
 
 
 async def test_on_message_invokes_run_hook_with_protocol_request() -> None:
@@ -444,7 +449,7 @@ async def test_streaming_emits_chunks_through_stream_and_closes() -> None:
     assert activity_ctx.stream.chunks == ["hel", "lo"]
     assert activity_ctx.stream.closed is True
     # delivery still ran with the accumulated text
-    assert ctx.delivered[0][1].text == "hello"
+    assert ctx.delivered[0][1].result.text == "hello"
 
 
 async def test_streaming_transform_hook_can_drop_updates() -> None:
@@ -725,7 +730,7 @@ async def test_streaming_finalises_on_iteration_failure() -> None:
 
     # Stream closed and partial result delivered despite the failure.
     assert activity_ctx.stream.closed is True
-    assert ctx.delivered[0][1].text == "partial"
+    assert ctx.delivered[0][1].result.text == "partial"
 
 
 async def test_streaming_applies_outbound_transform_after_close() -> None:
@@ -747,7 +752,7 @@ async def test_streaming_applies_outbound_transform_after_close() -> None:
     assert activity_ctx.stream.chunks == ["hel", "lo"]
     # Final card sent via the SDK send() after stream closes
     assert len(activity_ctx.sent) == 1
-    assert captured and captured[0].result.text == "hello"
+    assert captured and captured[0].result.result.text == "hello"
 
 
 # --------------------------------------------------------------------------- #
