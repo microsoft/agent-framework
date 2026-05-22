@@ -80,9 +80,8 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(ExecutorIdentity))]
     [JsonSerializable(typeof(RunnerStateData))]
 
-    // Workflow Representation Types
-    [JsonSerializable(typeof(WorkflowInfo))]
-    [JsonSerializable(typeof(EdgeConnection))]
+    // Workflow Output Types
+    [JsonSerializable(typeof(OutputTag))]
 
     // Workflow-as-Agent
     [JsonSerializable(typeof(WorkflowChatHistoryProvider.StoreState))]

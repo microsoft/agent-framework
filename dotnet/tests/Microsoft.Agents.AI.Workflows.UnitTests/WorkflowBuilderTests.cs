@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -455,4 +455,112 @@ public partial class WorkflowBuilderTests
     /// </summary>
     private static Edge GetSingleEdge(Workflow workflow, string sourceId)
         => workflow.Edges[sourceId].Should().ContainSingle().Subject;
+
+    // --- Tag-aware WithOutputFrom / WithIntermediateOutputFrom tests ---
+
+    [Fact]
+    public void Test_WithOutputFrom_RegistersWithEmptyTagSet()
+    {
+        NoOpExecutor a = new("a");
+        NoOpExecutor b = new("b");
+        Workflow workflow = new WorkflowBuilder("a")
+            .AddEdge(a, b)
+            .WithOutputFrom(b)
+            .Build();
+
+        workflow.OutputExecutors.Should().ContainKey("b");
+        workflow.OutputExecutors["b"].Should().BeEmpty("regular outputs are untagged");
+    }
+
+    [Fact]
+    public void Test_WithIntermediateOutputFrom_AddsIntermediateTag()
+    {
+        NoOpExecutor a = new("a");
+        NoOpExecutor b = new("b");
+        Workflow workflow = new WorkflowBuilder("a")
+            .AddEdge(a, b)
+            .WithIntermediateOutputFrom([b])
+            .Build();
+
+        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+    }
+
+    [Fact]
+    public void Test_WithOutputFrom_MultipleExecutorsAllUntagged()
+    {
+        NoOpExecutor a = new("a");
+        NoOpExecutor b = new("b");
+        NoOpExecutor c = new("c");
+
+        Workflow workflow = new WorkflowBuilder("a")
+            .AddEdge(a, b).AddEdge(a, c)
+            .WithOutputFrom(b, c)
+            .Build();
+
+        workflow.OutputExecutors.Should().HaveCount(2);
+        workflow.OutputExecutors["b"].Should().BeEmpty();
+        workflow.OutputExecutors["c"].Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Test_WithOutputFrom_ThenIntermediate_AccumulatesTags()
+    {
+        NoOpExecutor a = new("a");
+        NoOpExecutor b = new("b");
+        Workflow workflow = new WorkflowBuilder("a")
+            .AddEdge(a, b)
+            .WithOutputFrom(b)
+            .WithIntermediateOutputFrom([b])
+            .Build();
+
+        // WithOutputFrom doesn't add a tag; WithIntermediateOutputFrom adds Intermediate.
+        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+    }
+
+    [Fact]
+    public void Test_WithIntermediateOutputFrom_RepeatedDedupes()
+    {
+        NoOpExecutor a = new("a");
+        NoOpExecutor b = new("b");
+        Workflow workflow = new WorkflowBuilder("a")
+            .AddEdge(a, b)
+            .WithIntermediateOutputFrom([b])
+            .WithIntermediateOutputFrom([b])
+            .Build();
+
+        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+    }
+
+    [Fact]
+    public void Test_WithIntermediateOutputFrom_OnlyRegistersWithoutPriorWithOutputFrom()
+    {
+        // WithIntermediateOutputFrom on its own is sufficient to register the executor as an
+        // output source — the call ensures the id is in the dict with the Intermediate tag.
+        NoOpExecutor a = new("a");
+        NoOpExecutor b = new("b");
+        Workflow workflow = new WorkflowBuilder("a")
+            .AddEdge(a, b)
+            .WithIntermediateOutputFrom([b])
+            .Build();
+
+        workflow.OutputExecutors.Should().ContainKey("b");
+        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+    }
+
+    [Fact]
+    public void Test_WithOutputFrom_TracksExecutorBinding()
+    {
+        // A placeholder binding referenced via WithOutputFrom must end up bound by the time we Build.
+        NoOpExecutor a = new("a");
+        NoOpExecutor future = new("future");
+
+        Workflow workflow = new WorkflowBuilder("a")
+            .AddEdge(a, "future")
+            .WithIntermediateOutputFrom(["future"])
+            .BindExecutor(future)
+            .Build();
+
+        workflow.OutputExecutors.Should().ContainKey("future");
+        workflow.OutputExecutors["future"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+    }
 }
