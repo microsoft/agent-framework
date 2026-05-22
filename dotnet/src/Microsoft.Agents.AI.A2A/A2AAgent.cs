@@ -28,9 +28,7 @@ public sealed class A2AAgent : AIAgent
     private static readonly AIAgentMetadata s_agentMetadata = new("a2a");
 
     private readonly IA2AClient _a2aClient;
-    private readonly string? _id;
-    private readonly string? _name;
-    private readonly string? _description;
+    private readonly A2AAgentOptions _agentOptions;
     private readonly ILogger _logger;
 
     /// <summary>
@@ -38,17 +36,37 @@ public sealed class A2AAgent : AIAgent
     /// </summary>
     /// <param name="a2aClient">The A2A client to use for interacting with A2A agents.</param>
     /// <param name="id">The unique identifier for the agent.</param>
-    /// <param name="name">The the name of the agent.</param>
+    /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
     public A2AAgent(IA2AClient a2aClient, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
+        : this(
+              a2aClient,
+              new A2AAgentOptions
+              {
+                  Id = id,
+                  Name = name,
+                  Description = description
+              },
+              loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="A2AAgent"/> class.
+    /// </summary>
+    /// <param name="a2aClient">The A2A client to use for interacting with A2A agents.</param>
+    /// <param name="options">
+    /// Configuration options that control the agent's identity, including its identifier, name, and description.
+    /// </param>
+    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
+    public A2AAgent(IA2AClient a2aClient, A2AAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(a2aClient);
+        _ = Throw.IfNull(options);
 
         this._a2aClient = a2aClient;
-        this._id = id;
-        this._name = name;
-        this._description = description;
+        this._agentOptions = options.Clone();
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
     }
 
@@ -216,13 +234,13 @@ public sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    protected override string? IdCore => this._id;
+    protected override string? IdCore => this._agentOptions.Id;
 
     /// <inheritdoc/>
-    public override string? Name => this._name;
+    public override string? Name => this._agentOptions.Name;
 
     /// <inheritdoc/>
-    public override string? Description => this._description;
+    public override string? Description => this._agentOptions.Description;
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
@@ -456,6 +474,7 @@ public sealed class A2AAgent : AIAgent
             ResponseId = statusUpdateEvent.TaskId,
             RawRepresentation = statusUpdateEvent,
             Role = ChatRole.Assistant,
+            MessageId = statusUpdateEvent.Status.Message?.MessageId,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
             Contents = statusUpdateEvent.Status.GetUserInputRequests(),

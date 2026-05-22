@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Moq;
+#if NET
+using Microsoft.Agents.AI.Tools.Shell;
+#endif
 
 namespace Microsoft.Agents.AI.UnitTests;
 
@@ -31,11 +34,18 @@ public class HarnessAgentOptionsTests
         Assert.False(options.DisableAgentModeProvider);
         Assert.False(options.DisableAgentSkillsProvider);
         Assert.False(options.DisableOpenTelemetry);
+        Assert.Null(options.OpenTelemetrySourceName);
         Assert.Null(options.MaximumIterationsPerRequest);
         Assert.Null(options.FileMemoryStore);
         Assert.Null(options.FileAccessStore);
         Assert.Null(options.AgentModeProviderOptions);
         Assert.Null(options.AgentSkillsSource);
+        Assert.Null(options.BackgroundAgents);
+        Assert.Null(options.BackgroundAgentsProviderOptions);
+#if NET
+        Assert.Null(options.ShellExecutor);
+        Assert.Null(options.ShellEnvironmentProviderOptions);
+#endif
     }
 
     /// <summary>
@@ -51,6 +61,12 @@ public class HarnessAgentOptionsTests
         var fileAccessStore = new Mock<AgentFileStore>().Object;
         var agentModeOptions = new AgentModeProviderOptions();
         var skillsSource = new Mock<AgentSkillsSource>().Object;
+        var backgroundAgents = new AIAgent[] { new Mock<AIAgent>().Object };
+        var backgroundAgentsOptions = new BackgroundAgentsProviderOptions();
+#if NET
+        var shellExecutor = new Mock<ShellExecutor>().Object;
+        var shellEnvOptions = new ShellEnvironmentProviderOptions();
+#endif
 
         // Act
         var options = new HarnessAgentOptions
@@ -75,6 +91,13 @@ public class HarnessAgentOptionsTests
             DisableAgentSkillsProvider = true,
             AgentSkillsSource = skillsSource,
             DisableOpenTelemetry = true,
+            OpenTelemetrySourceName = "custom-source",
+            BackgroundAgents = backgroundAgents,
+            BackgroundAgentsProviderOptions = backgroundAgentsOptions,
+#if NET
+            ShellExecutor = shellExecutor,
+            ShellEnvironmentProviderOptions = shellEnvOptions,
+#endif
         };
 
         // Assert
@@ -100,5 +123,12 @@ public class HarnessAgentOptionsTests
         Assert.True(options.DisableAgentSkillsProvider);
         Assert.Same(skillsSource, options.AgentSkillsSource);
         Assert.True(options.DisableOpenTelemetry);
+        Assert.Equal("custom-source", options.OpenTelemetrySourceName);
+        Assert.Same(backgroundAgents, options.BackgroundAgents);
+        Assert.Same(backgroundAgentsOptions, options.BackgroundAgentsProviderOptions);
+#if NET
+        Assert.Same(shellExecutor, options.ShellExecutor);
+        Assert.Same(shellEnvOptions, options.ShellEnvironmentProviderOptions);
+#endif
     }
 }

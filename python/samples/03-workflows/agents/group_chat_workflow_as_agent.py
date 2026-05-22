@@ -54,11 +54,11 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # Mark participant responses as intermediate so workflow.as_agent() maps
+    # them to text_reasoning content while the final answer remains normal text.
     workflow = GroupChatBuilder(
         participants=[researcher, writer],
-        intermediate_outputs=True,
+        intermediate_output_from=[researcher, writer],
         orchestrator_agent=Agent(
             client=_orch_client,
             name="Orchestrator",

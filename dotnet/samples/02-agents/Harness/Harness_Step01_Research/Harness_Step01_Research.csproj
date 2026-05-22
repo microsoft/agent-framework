@@ -13,9 +13,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Harness\Microsoft.Agents.AI.Harness.csproj" />
-    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
     <ProjectReference Include="..\Harness_Shared_Console\Harness_Shared_Console.csproj" />
+    <ProjectReference Include="..\Harness_Shared_Console_OpenAI\Harness_Shared_Console_OpenAI.csproj" />
   </ItemGroup>
 
 </Project>

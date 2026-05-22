@@ -16,20 +16,26 @@
 #pragma warning disable MAAI001  // Suppress experimental API warnings for Agents AI experiments.
 
 using System.ClientModel.Primitives;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Harness.Shared.Console;
+using Harness.Shared.Console.OpenAI;
 using Harness.Shared.Console.ToolFormatters;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
-using OpenAI.Responses;
 using SampleApp;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_OPENAI_ENDPOINT is not set.");
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
 
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
+const string TracingSourceName = "Harness.Research";
+
+// Set up OpenTelemetry tracing that writes spans to a text file.
+// This captures all agent activity (tool calls, model invocations, compaction, etc.)
+// as well as HTTP requests made by the underlying HttpClient transport.
+using var tracerProvider = HarnessTracing.CreateFileTracerProvider(TracingSourceName);
 
 // Create a HarnessAgent with the Harness providers (TodoProvider and AgentModeProvider)
 // and research-focused instructions including the mandatory planning workflow.
@@ -63,23 +69,22 @@ var instructions =
 // Only custom instructions, a WebBrowsingTool, and FileAccess opt-out are needed.
 AIAgent agent =
     // Create an OpenAIClient that communicates with the Foundry responses service.
-    new OpenAIClient(
+    new AIProjectClient(
+        new Uri(endpoint),
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
         // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
-        new OpenAIClientOptions()
-        {
-            Endpoint = new Uri(endpoint),
-            RetryPolicy = new ClientRetryPolicy(3)          // Enable retries to improve resiliency.
-        })
+        new DefaultAzureCredential(),
+        new AIProjectClientOptions { RetryPolicy = new ClientRetryPolicy(3) })  // Enable retries to improve resiliency.
+    .GetProjectOpenAIClient()
     .GetResponsesClient()
-    .AsIChatClientWithStoredOutputDisabled(deploymentName)  // We want to manage chat history locally (not stored in the responses service), so that we can manage compaction ourselves.
+    .AsIChatClient(deploymentName)
     .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
     {
         Name = "ResearchAgent",
         Description = "A research assistant that plans and executes research tasks.",
-        DisableFileMemory = true,                           // If enabled, this would allow the agent to store memories as files in a directory associated with the current session
+        DisableFileAccess = true,                           // If enabled, this would allow the agent to read/write files in a working directory
+        OpenTelemetrySourceName = TracingSourceName,        // Use our custom source name so spans are captured by the TracerProvider above.
         FileMemoryStore = new FileSystemAgentFileStore(     // Configure the file memory provider to store files in a local folder called "agent-files".
             Path.Combine(AppContext.BaseDirectory, "agent-files")),
         ChatOptions = new ChatOptions
@@ -103,6 +108,7 @@ await HarnessConsole.RunAgentAsync(
     {
         Observers = [
             new OpenAIResponsesWebSearchDisplayObserver(),
+            new OpenAIResponsesErrorObserver(),
             .. HarnessConsoleOptions.BuildObserversWithPlanning(
                 agent,
                 planModeName: "plan",

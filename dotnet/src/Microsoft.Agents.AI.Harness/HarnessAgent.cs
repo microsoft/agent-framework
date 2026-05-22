@@ -4,7 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using Microsoft.Agents.AI.Compaction;
+#if NET
+using Microsoft.Agents.AI.Tools.Shell;
+#endif
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -130,7 +134,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
 
         if (options?.DisableOpenTelemetry is not true)
         {
-            builder.UseOpenTelemetry();
+            builder.UseOpenTelemetry(sourceName: options?.OpenTelemetrySourceName);
         }
 
         return builder.Build();
@@ -183,6 +187,8 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 AIContextProviders = contextProviders,
                 UseProvidedChatClientAsIs = true,
                 RequirePerServiceCallChatHistoryPersistence = true,
+                WarnOnChatHistoryProviderConflict = false,
+                ThrowOnChatHistoryProviderConflict = false,
             });
     }
 
@@ -197,6 +203,14 @@ public sealed class HarnessAgent : DelegatingAIAgent
             result.Tools ??= [];
             result.Tools.Add(new HostedWebSearchTool());
         }
+
+#if NET
+        if (options?.ShellExecutor is ShellExecutor shellExecutor)
+        {
+            result.Tools ??= [];
+            result.Tools.Add(shellExecutor.AsAIFunction());
+        }
+#endif
 
         return result;
     }
@@ -246,6 +260,22 @@ public sealed class HarnessAgent : DelegatingAIAgent
 
             providers.Add(skillsProvider);
         }
+
+        if (options?.BackgroundAgents is IEnumerable<AIAgent> backgroundAgents)
+        {
+            var materializedAgents = backgroundAgents.ToList();
+            if (materializedAgents.Count > 0)
+            {
+                providers.Add(new BackgroundAgentsProvider(materializedAgents, options.BackgroundAgentsProviderOptions));
+            }
+        }
+
+#if NET
+        if (options?.ShellExecutor is ShellExecutor shellExecutor)
+        {
+            providers.Add(new ShellEnvironmentProvider(shellExecutor, options.ShellEnvironmentProviderOptions));
+        }
+#endif
 
         if (options?.AIContextProviders is IEnumerable<AIContextProvider> userProviders)
         {
