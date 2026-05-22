@@ -23,7 +23,7 @@ namespace Azure.AI.Projects;
 /// Provides extension methods for <see cref="AIProjectClient"/>.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
-public static partial class AzureAIProjectChatClientExtensions
+public static partial class AIProjectClientExtensions
 {
     /// <summary>
     /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="AgentReference"/>.
@@ -63,7 +63,7 @@ public static partial class AzureAIProjectChatClientExtensions
             clientFactory,
             services);
 
-        return new FoundryAgent(aiProjectClient, innerAgent);
+        return new FoundryAgent(innerAgent);
     }
 
     /// <summary>
@@ -132,7 +132,7 @@ public static partial class AzureAIProjectChatClientExtensions
             !allowDeclarativeMode,
             services);
 
-        return new FoundryAgent(aiProjectClient, innerAgent);
+        return new FoundryAgent(innerAgent);
     }
 
     /// <summary>
@@ -165,7 +165,7 @@ public static partial class AzureAIProjectChatClientExtensions
             !allowDeclarativeMode,
             services);
 
-        return new FoundryAgent(aiProjectClient, innerAgent);
+        return new FoundryAgent(innerAgent);
     }
 
     /// <summary>
@@ -246,7 +246,7 @@ public static partial class AzureAIProjectChatClientExtensions
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)
     {
-        IChatClient chatClient = new AzureAIProjectChatClient(aiProjectClient, agentVersion, agentOptions.ChatOptions);
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentVersion, agentOptions.ChatOptions);
 
         if (clientFactory is not null)
         {
@@ -268,10 +268,7 @@ public static partial class AzureAIProjectChatClientExtensions
         Throw.IfNull(agentOptions.ChatOptions);
         Throw.IfNullOrWhitespace(agentOptions.ChatOptions.ModelId);
 
-        IChatClient chatClient = aiProjectClient
-            .GetProjectOpenAIClient()
-            .GetResponsesClient()
-            .AsIChatClient(agentOptions.ChatOptions.ModelId);
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentOptions.ChatOptions.ModelId);
 
         if (clientFactory is not null)
         {
@@ -298,7 +295,7 @@ public static partial class AzureAIProjectChatClientExtensions
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)
     {
-        IChatClient chatClient = new AzureAIProjectChatClient(aiProjectClient, agentRecord, agentOptions.ChatOptions);
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentRecord, agentOptions.ChatOptions);
 
         if (clientFactory is not null)
         {
@@ -316,7 +313,7 @@ public static partial class AzureAIProjectChatClientExtensions
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)
     {
-        IChatClient chatClient = new AzureAIProjectChatClient(aiProjectClient, agentReference, defaultModelId: null, agentOptions.ChatOptions);
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentReference, defaultModelId: null, agentOptions.ChatOptions);
 
         if (clientFactory is not null)
         {

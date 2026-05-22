@@ -56,6 +56,7 @@ members = [
     "agent-framework-orchestrations",
     "agent-framework-purview",
     "agent-framework-redis",
+    "agent-framework-tools",
 ]
 constraints = [
     { name = "fastapi-sso", specifier = ">=0.19.0" },
@@ -603,7 +604,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "github-copilot-sdk", marker = "python_full_version >= '3.11'", specifier = "<=1.0.0b2,>=1.0.0b2" },
+    { name = "github-copilot-sdk", marker = "python_full_version >= '3.11'", specifier = ">=1.0.0b2,<=1.0.0b2" },
 ]
 
 [[package]]
@@ -812,6 +813,21 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6,<3" },
     { name = "redis", specifier = ">=6.4.0,<7.2.1" },
     { name = "redisvl", specifier = ">=0.11.0,<0.16" },
+]
+
+[[package]]
+name = "agent-framework-tools"
+version = "1.0.0a260424"
+source = { editable = "packages/tools" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "psutil", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "psutil", specifier = ">=5.9" },
 ]
 
 [[package]]

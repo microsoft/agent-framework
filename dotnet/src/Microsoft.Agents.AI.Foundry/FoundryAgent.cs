@@ -40,11 +40,6 @@ namespace Microsoft.Agents.AI.Foundry;
 public sealed class FoundryAgent : DelegatingAIAgent
 {
     /// <summary>
-    /// The cached <see cref="AIProjectClient"/> supplied to or constructed by the active constructor.
-    /// </summary>
-    private readonly AIProjectClient _aiProjectClient;
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="FoundryAgent"/> class using the direct Responses API path.
     /// </summary>
     /// <param name="projectEndpoint">The Microsoft Foundry project endpoint.</param>
@@ -73,9 +68,8 @@ public sealed class FoundryAgent : DelegatingAIAgent
         : base(CreateInnerAgent(
             CreateProjectClient(projectEndpoint, credential, clientOptions),
             model, instructions, name, description, tools, clientFactory, loggerFactory, services,
-            out var aiProjectClient))
+            out _))
     {
-        this._aiProjectClient = aiProjectClient;
     }
 
     /// <summary>
@@ -87,9 +81,11 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// </param>
     /// <param name="credential">The authentication credential.</param>
     /// <param name="clientOptions">
-    /// Optional configuration for the underlying <see cref="ProjectResponsesClient"/>. When supplied:
+    /// Optional configuration for the underlying <see cref="ProjectOpenAIClient"/>. When supplied:
     /// <list type="bullet">
     ///   <item><description>The instance is passed through to the per-agent client; pipeline policies added via <c>AddPolicy(...)</c> on it execute on the per-agent traffic.</description></item>
+    ///   <item><description><c>Endpoint</c> and <see cref="ProjectOpenAIClientOptions.AgentName"/> are owned by this constructor and are overwritten with values derived from <paramref name="agentEndpoint"/>; any caller value is replaced.</description></item>
+    ///   <item><description>For the project-level conversations client a separate fresh options bag is built that copies only <see cref="ClientPipelineOptions.RetryPolicy"/>, <see cref="ClientPipelineOptions.NetworkTimeout"/>, <see cref="ClientPipelineOptions.Transport"/>, and <c>UserAgentApplicationId</c>; pipeline policies added via <c>AddPolicy(...)</c> do <strong>not</strong> propagate to the conversations pipeline.</description></item>
     /// </list>
     /// </param>
     /// <param name="tools">Optional tools to use when interacting with the agent.</param>
@@ -113,43 +109,37 @@ public sealed class FoundryAgent : DelegatingAIAgent
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         IServiceProvider? services = null)
-        : base(CreateInnerAgentFromAgentEndpoint(agentEndpoint, credential, clientOptions, tools, clientFactory, services, out var aiProjectClient))
+        : base(CreateInnerAgentFromAgentEndpoint(agentEndpoint, credential, clientOptions, tools, clientFactory, services))
     {
-        this._aiProjectClient = aiProjectClient;
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="FoundryAgent"/> class from an agent-specific
-    /// endpoint while reusing an existing <see cref="AIProjectClient"/>.
+    /// Internal constructor used by the <c>AsAIAgent(this AIProjectClient, Uri, ...)</c>
+    /// extension where the caller already has an <see cref="AIProjectClient"/> and the agent
+    /// endpoint URI. Reuses the supplied client's pipeline (no new credential or transport is
+    /// stamped) and surfaces the agent through a <see cref="FoundryChatClient"/> just like the
+    /// public agent-endpoint ctor.
     /// </summary>
-    /// <param name="aiProjectClient">An existing <see cref="AIProjectClient"/> rooted at the same project as <paramref name="agentEndpoint"/>.</param>
-    /// <param name="agentEndpoint">
-    /// The agent-specific endpoint URI. Must be of the shape
-    /// <c>https://&lt;host&gt;/.../projects/&lt;project&gt;/agents/&lt;agentName&gt;/endpoint/protocols/openai</c>.
-    /// </param>
-    /// <param name="tools">Optional tools to use when interacting with the agent.</param>
-    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/>.</param>
-    /// <param name="services">Optional service provider for resolving dependencies required by AI functions.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="aiProjectClient"/> or <paramref name="agentEndpoint"/> is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="agentEndpoint"/> does not match the expected agent-endpoint shape.</exception>
     internal FoundryAgent(
         AIProjectClient aiProjectClient,
         Uri agentEndpoint,
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         IServiceProvider? services = null)
-        : base(BuildAgentEndpointInnerAgent(aiProjectClient, agentEndpoint, clientOptions: null, tools, clientFactory, services))
+        : base(CreateInnerAgentFromAgentEndpointReusingProjectClient(aiProjectClient, agentEndpoint, tools, clientFactory, services))
     {
-        this._aiProjectClient = Throw.IfNull(aiProjectClient);
     }
 
     /// <summary>
-    /// Internal constructor used by <c>AsAIAgent</c> extension methods that already have an <see cref="AIProjectClient"/> and a configured <see cref="ChatClientAgent"/>.
+    /// Internal constructor used by <c>AsAIAgent</c> extension methods that already have a
+    /// configured <see cref="ChatClientAgent"/>. The inner agent already routes through a
+    /// <see cref="FoundryChatClient"/> whose <c>GetService&lt;AIProjectClient&gt;()</c> surfaces
+    /// the project client to downstream callers, so the agent does not also need a private
+    /// <see cref="AIProjectClient"/> reference here.
     /// </summary>
-    internal FoundryAgent(AIProjectClient aiProjectClient, ChatClientAgent innerAgent)
+    internal FoundryAgent(ChatClientAgent innerAgent)
         : base(WireClientHeaders(Throw.IfNull(innerAgent)))
     {
-        this._aiProjectClient = Throw.IfNull(aiProjectClient);
     }
 
     #region Convenience methods
@@ -182,7 +172,13 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// <returns>A <see cref="ChatClientAgentSession"/> linked to the newly created server-side conversation.</returns>
     public async Task<ChatClientAgentSession> CreateConversationSessionAsync(CancellationToken cancellationToken = default)
     {
-        var conversationsClient = this._aiProjectClient.ProjectOpenAIClient.GetProjectConversationsClient();
+        // The inner FoundryChatClient surfaces an AIProjectClient via GetService for all
+        // three construction modes (Plan #2 Agent Endpoint mode materialization). Resolve it through the
+        // delegating chain at call time instead of caching a private reference on this agent.
+        var aiProjectClient = this.GetService<AIProjectClient>()
+            ?? throw new InvalidOperationException(
+                "FoundryAgent inner chain does not expose an AIProjectClient; cannot create a project-level conversation session.");
+        var conversationsClient = aiProjectClient.GetProjectOpenAIClient().GetProjectConversationsClient();
 
         var conversation = (await conversationsClient.CreateProjectConversationAsync(options: null, cancellationToken).ConfigureAwait(false)).Value;
 
@@ -195,17 +191,6 @@ public sealed class FoundryAgent : DelegatingAIAgent
         ?? throw new InvalidOperationException("FoundryAgent inner chain does not contain a ChatClientAgent.");
 
     #endregion
-
-    /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        if (serviceKey is null && serviceType == typeof(AIProjectClient))
-        {
-            return this._aiProjectClient;
-        }
-
-        return base.GetService(serviceType, serviceKey);
-    }
 
     #region Private helpers
 
@@ -251,7 +236,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
         Throw.IfNull(agentOptions.ChatOptions);
         Throw.IfNullOrWhitespace(agentOptions.ChatOptions.ModelId);
 
-        IChatClient chatClient = new AzureAIProjectResponsesChatClient(aiProjectClient, agentOptions.ChatOptions.ModelId);
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentOptions.ChatOptions.ModelId);
 
         if (clientFactory is not null)
         {
@@ -288,16 +273,10 @@ public sealed class FoundryAgent : DelegatingAIAgent
     }
 
     /// <summary>
-    /// Builds the inner <see cref="ChatClientAgent"/> for the agent-endpoint constructor by
-    /// constructing a project-scoped <see cref="ProjectOpenAIClient"/> and using
-    /// <see cref="ProjectOpenAIClient.GetProjectResponsesClientForAgentEndpoint(string, string?, ProjectOpenAIClientOptions?)"/>.
-    /// This routes the outbound URL through the per-agent endpoint shape that the Foundry service
-    /// expects for hosted agents and lets the SDK auto-append the <c>api-version</c> query string.
-    /// Caller-supplied <paramref name="clientOptions"/> are passed through to the per-agent
-    /// client with <c>Endpoint</c> and
-    /// <see cref="ProjectOpenAIClientOptions.AgentName"/> overridden by values derived from
-    /// <paramref name="agentEndpoint"/>; any policies the caller added via <c>AddPolicy</c>
-    /// remain in effect on the per-agent pipeline. The MEAI user-agent policy is appended last.
+    /// Builds the inner <see cref="ChatClientAgent"/> for the agent-endpoint constructor. The
+    /// per-agent <see cref="ProjectOpenAIClient"/> shape and URL parsing are owned by
+    /// <see cref="FoundryChatClient"/>; we just construct it in the Agent Endpoint mode (Mode 3)
+    /// and pass the inner chat client through any caller-provided <paramref name="clientFactory"/>.
     /// </summary>
     private static AIAgent CreateInnerAgentFromAgentEndpoint(
         Uri agentEndpoint,
@@ -305,44 +284,14 @@ public sealed class FoundryAgent : DelegatingAIAgent
         ProjectOpenAIClientOptions? clientOptions,
         IList<AITool>? tools,
         Func<IChatClient, IChatClient>? clientFactory,
-        IServiceProvider? services,
-        out AIProjectClient outClient)
+        IServiceProvider? services)
     {
         Throw.IfNull(agentEndpoint);
         Throw.IfNull(credential);
 
-        var (_, projectRoot) = ParseAgentEndpoint(agentEndpoint);
-        outClient = CreateProjectClient(projectRoot, credential, CreateProjectClientOptions(clientOptions));
+        IChatClient chatClient = new FoundryChatClient(agentEndpoint, credential, clientOptions);
+        var agentName = ((FoundryChatClient)chatClient).AgentName!;
 
-        return BuildAgentEndpointInnerAgent(outClient, agentEndpoint, clientOptions, tools, clientFactory, services);
-    }
-
-    /// <summary>
-    /// Builds the inner <see cref="ChatClientAgent"/> for an agent endpoint against a pre-built
-    /// <see cref="AIProjectClient"/>. The caller is responsible for ensuring the supplied client
-    /// is rooted at the same project as <paramref name="agentEndpoint"/>; the agent name is
-    /// parsed from the endpoint URI and passed to
-    /// <see cref="ProjectOpenAIClient.GetProjectResponsesClientForAgentEndpoint(string, string?, ProjectOpenAIClientOptions?)"/>.
-    /// </summary>
-    private static AIAgent BuildAgentEndpointInnerAgent(
-        AIProjectClient aiProjectClient,
-        Uri agentEndpoint,
-        ProjectOpenAIClientOptions? clientOptions,
-        IList<AITool>? tools,
-        Func<IChatClient, IChatClient>? clientFactory,
-        IServiceProvider? services)
-    {
-        Throw.IfNull(aiProjectClient);
-        Throw.IfNull(agentEndpoint);
-
-        var (agentName, _) = ParseAgentEndpoint(agentEndpoint);
-
-        var perAgentOptions = clientOptions ?? new ProjectOpenAIClientOptions();
-        perAgentOptions.AddPolicy(RequestOptionsExtensions.UserAgentPolicy, PipelinePosition.PerCall);
-
-        IChatClient chatClient = aiProjectClient.ProjectOpenAIClient
-            .GetProjectResponsesClientForAgentEndpoint(agentName, options: perAgentOptions)
-            .AsIChatClient();
         if (clientFactory is not null)
         {
             chatClient = clientFactory(chatClient);
@@ -359,6 +308,46 @@ public sealed class FoundryAgent : DelegatingAIAgent
     }
 
     /// <summary>
+    /// Variant of <see cref="CreateInnerAgentFromAgentEndpoint"/> that reuses an existing
+    /// <see cref="AIProjectClient"/>'s pipeline instead of stamping a fresh credential. Used by
+    /// the <c>AsAIAgent(AIProjectClient, Uri agentEndpoint, ...)</c> extension overload.
+    /// </summary>
+    private static AIAgent CreateInnerAgentFromAgentEndpointReusingProjectClient(
+        AIProjectClient aiProjectClient,
+        Uri agentEndpoint,
+        IList<AITool>? tools,
+        Func<IChatClient, IChatClient>? clientFactory,
+        IServiceProvider? services)
+    {
+        Throw.IfNull(aiProjectClient);
+        Throw.IfNull(agentEndpoint);
+
+        IChatClient chatClient = new FoundryChatClient(aiProjectClient, agentEndpoint, clientOptions: null);
+        var agentName = ((FoundryChatClient)chatClient).AgentName!;
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
+
+        ChatClientAgentOptions agentOptions = new()
+        {
+            Id = agentName,
+            Name = agentName,
+            ChatOptions = new() { Tools = tools },
+        };
+
+        return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, services: services));
+    }
+
+    /// <summary>
+    /// Parses an agent endpoint URI. Delegates to <see cref="FoundryChatClient.ParseAgentEndpoint(Uri)"/>
+    /// so the chat client and the agent share a single source of truth for the URL shape.
+    /// </summary>
+    internal static (string AgentName, Uri ProjectRoot) ParseAgentEndpoint(Uri agentEndpoint)
+        => FoundryChatClient.ParseAgentEndpoint(agentEndpoint);
+
+    /// <summary>
     /// Parses an agent endpoint URI of shape
     /// <c>https://&lt;host&gt;/.../projects/&lt;project&gt;/agents/&lt;agentName&gt;/endpoint/protocols/openai</c>
     /// and returns the agent name and the derived project-root URI.
@@ -369,90 +358,12 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// strips query string and fragment. Throws <see cref="ArgumentException"/> for inputs that
     /// do not match the expected shape.
     /// </remarks>
-    /// <exception cref="ArgumentException">
-    /// The endpoint is missing the <c>/agents/</c> segment, has an empty agent name, or has a
-    /// suffix other than <c>/endpoint/protocols/openai</c>.
-    /// </exception>
-    internal static (string AgentName, Uri ProjectRoot) ParseAgentEndpoint(Uri agentEndpoint)
-    {
-        Throw.IfNull(agentEndpoint);
-
-        const string AgentsSegment = "/agents/";
-        const string ExpectedSuffix = "/endpoint/protocols/openai";
-
-        var path = agentEndpoint.AbsolutePath.TrimEnd('/');
-        var idx = path.IndexOf(AgentsSegment, StringComparison.OrdinalIgnoreCase);
-        if (idx < 0)
-        {
-            throw new ArgumentException(
-                $"Expected an agent endpoint of shape 'https://<host>/.../projects/<project>/agents/<agentName>/endpoint/protocols/openai' but got '{agentEndpoint}'.",
-                nameof(agentEndpoint));
-        }
-
-        var afterAgents = path.Substring(idx + AgentsSegment.Length);
-        var nextSlash = afterAgents.IndexOf('/');
-        if (nextSlash <= 0)
-        {
-            throw new ArgumentException(
-                $"Agent endpoint '{agentEndpoint}' is missing the '<agentName>{ExpectedSuffix}' suffix.",
-                nameof(agentEndpoint));
-        }
-
-        var agentName = afterAgents.Substring(0, nextSlash);
-        var suffix = afterAgents.Substring(nextSlash);
-        if (!string.Equals(suffix, ExpectedSuffix, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException(
-                $"Agent endpoint '{agentEndpoint}' has an unexpected suffix '{suffix}'. Expected '{ExpectedSuffix}'.",
-                nameof(agentEndpoint));
-        }
-
-        var rootPath = path.Substring(0, idx);
-        var projectRoot = new UriBuilder(agentEndpoint)
-        {
-            Path = rootPath,
-            Query = string.Empty,
-            Fragment = string.Empty,
-        }.Uri;
-
-        return (agentName, projectRoot);
-    }
-
     private static AIProjectClient CreateProjectClient(Uri endpoint, AuthenticationTokenProvider credential, AIProjectClientOptions? clientOptions = null)
     {
         Throw.IfNull(endpoint);
         Throw.IfNull(credential);
 
-        clientOptions ??= new AIProjectClientOptions();
-        clientOptions.AddPolicy(RequestOptionsExtensions.UserAgentPolicy, PipelinePosition.PerCall);
-        return new AIProjectClient(endpoint, credential, clientOptions);
-    }
-
-    internal static AIProjectClientOptions? CreateProjectClientOptions(ProjectOpenAIClientOptions? clientOptions)
-    {
-        if (clientOptions is null)
-        {
-            return null;
-        }
-
-        // Copy pipeline behavior the caller configured on the per-agent options bag onto the
-        // project-level options bag so the agent endpoint client honors it. UserAgentApplicationId
-        // is project-level (not derived from the agent endpoint), so it must be carried through too.
-        var projectOptions = new AIProjectClientOptions
-        {
-            Transport = clientOptions.Transport,
-            RetryPolicy = clientOptions.RetryPolicy,
-            NetworkTimeout = clientOptions.NetworkTimeout,
-            MessageLoggingPolicy = clientOptions.MessageLoggingPolicy,
-            UserAgentApplicationId = clientOptions.UserAgentApplicationId,
-        };
-
-        if (clientOptions.ClientLoggingOptions is not null)
-        {
-            projectOptions.ClientLoggingOptions = clientOptions.ClientLoggingOptions;
-        }
-
-        return projectOptions;
+        return new AIProjectClient(endpoint, credential, clientOptions ?? new AIProjectClientOptions());
     }
 
     #endregion

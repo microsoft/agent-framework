@@ -19,6 +19,7 @@ using System.ClientModel.Primitives;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Harness.Shared.Console;
+using Harness.Shared.Console.OpenAI;
 using Harness.Shared.Console.ToolFormatters;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -107,6 +108,7 @@ await HarnessConsole.RunAgentAsync(
     {
         Observers = [
             new OpenAIResponsesWebSearchDisplayObserver(),
+            new OpenAIResponsesErrorObserver(),
             .. HarnessConsoleOptions.BuildObserversWithPlanning(
                 agent,
                 planModeName: "plan",
