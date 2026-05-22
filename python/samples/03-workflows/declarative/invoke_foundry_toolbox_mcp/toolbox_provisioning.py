@@ -2,10 +2,10 @@
 
 """Foundry toolbox provisioning helper for ``invoke_foundry_toolbox_mcp``.
 
-Toolboxes are normally provisioned through the Foundry portal or a
-separate deployment script; bundling the setup here lets the sample run
-end-to-end without manual steps. ``main.py`` owns the workflow execution
-path.
+Toolboxes are normally created through the Foundry portal or a separate
+deployment script. Bundling the one-off setup here lets the sample run
+end-to-end without manual steps. ``main.py`` owns the workflow
+execution path.
 """
 
 from collections.abc import Mapping
@@ -23,27 +23,16 @@ from azure.identity import AzureCliCredential
 FOUNDRY_FEATURES_HEADERS: Mapping[str, str] = {"Foundry-Features": "Toolboxes=V1Preview"}
 
 
-def build_toolbox_mcp_server_url(project_endpoint: str, name: str, api_version: str) -> str:
-    """Compose the Foundry toolbox MCP proxy URL."""
-    return f"{project_endpoint.rstrip('/')}/toolboxes/{name}/mcp?api-version={api_version}"
-
-
-def create_sample_toolbox(
-    *,
-    name: str,
-    docs_server_label: str,
-    project_endpoint: str,
-    docs_server_url: str = "https://learn.microsoft.com/api/mcp",
-) -> None:
+def create_sample_toolbox(*, name: str, docs_server_label: str, project_endpoint: str) -> None:
     """Provision a toolbox version (delete-then-create; idempotent).
 
-    Bundles the Microsoft Learn Docs MCP server and the Foundry built-in
-    ``web_search`` tool. Uses ``AzureCliCredential`` because the sample
-    expects ``az login``; switch to a managed identity or service
-    principal for production deployments.
+    Bundles the Microsoft Learn Docs MCP server under ``docs_server_label``.
+    Uses ``AzureCliCredential`` because the sample expects ``az login``;
+    switch to a managed identity or service principal for production
+    deployments.
     """
     from azure.ai.projects import AIProjectClient
-    from azure.ai.projects.models import MCPTool, Tool, WebSearchTool
+    from azure.ai.projects.models import MCPTool, Tool
     from azure.core.exceptions import ResourceNotFoundError
 
     with (
@@ -57,13 +46,16 @@ def create_sample_toolbox(
             pass
 
         tools: list[Tool] = [
-            MCPTool(server_label=docs_server_label, server_url=docs_server_url, require_approval="never"),
-            WebSearchTool(),
+            MCPTool(
+                server_label=docs_server_label,
+                server_url="https://learn.microsoft.com/api/mcp",
+                require_approval="never",
+            ),
         ]
 
         created = project_client.beta.toolboxes.create_version(
             name=name,
-            description="Sample toolbox combining Microsoft Learn Docs MCP and Foundry web search.",
+            description="Sample toolbox exposing the Microsoft Learn Docs MCP server.",
             tools=tools,
             headers=FOUNDRY_FEATURES_HEADERS,
         )

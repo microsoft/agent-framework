@@ -124,14 +124,12 @@ class WorkflowFactory:
                 or auth/connection resolution.
             configuration: Optional mapping that populates the PowerFx ``Env``
                 symbol referenced from workflow YAML expressions (e.g.
-                ``=Env.MY_KEY``). Mirrors the .NET ``IConfiguration``-based
-                pattern in
-                ``dotnet/src/Microsoft.Agents.AI.Workflows.Declarative/PowerFx/WorkflowDiagnostics.cs``.
-                Keys supplied here are always exposed under ``Env.<key>``; the
-                process ``os.environ`` is consulted only when
-                ``restrict_env_to_configuration`` is ``False``. When neither
-                source produces a value the ``Env`` symbol is omitted so
-                ``=Env.X`` evaluates to the literal expression string.
+                ``=Env.MY_KEY``). Keys supplied here are always exposed
+                under ``Env.<key>``; the process ``os.environ`` is consulted
+                only when ``restrict_env_to_configuration`` is ``False``.
+                When neither source produces a value the ``Env`` symbol is
+                omitted so ``=Env.X`` evaluates to the literal expression
+                string.
             restrict_env_to_configuration: When ``True`` (default), the
                 ``Env`` PowerFx symbol is populated exclusively from
                 ``configuration``; ``os.environ`` is never consulted. Set to

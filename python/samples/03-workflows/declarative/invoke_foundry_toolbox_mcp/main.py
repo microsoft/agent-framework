@@ -2,18 +2,13 @@
 
 """Invoke a Foundry toolbox MCP endpoint from a declarative workflow.
 
-The workflow lists the toolbox's tools, queries Microsoft Learn Docs
-and ``web_search`` through the toolbox, and summarises the combined
-results with a Foundry agent. The reserved ``tools/list`` tool name is
-intercepted natively by ``DefaultMCPToolHandler``.
+The workflow calls ``microsoft_docs_search`` (the Microsoft Learn Docs
+MCP server, bundled into a sample toolbox by ``toolbox_provisioning``)
+through the toolbox proxy and asks a Foundry agent to summarise the
+result.
 
 Required env vars:
     FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL.
-
-Optional env vars:
-    FOUNDRY_TOOLBOX_NAME, FOUNDRY_TOOLBOX_API_VERSION,
-    FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL,
-    FOUNDRY_TOOLBOX_WEB_SEARCH_TOOL_NAME, FOUNDRY_TOOLBOX_ENDPOINT.
 
 Run with:
     python samples/03-workflows/declarative/invoke_foundry_toolbox_mcp/main.py
@@ -34,25 +29,17 @@ from agent_framework.declarative import (
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import TokenCredential
 from azure.identity import AzureCliCredential, get_bearer_token_provider
-from toolbox_provisioning import (
-    FOUNDRY_FEATURES_HEADERS,
-    build_toolbox_mcp_server_url,
-    create_sample_toolbox,
-)
+from toolbox_provisioning import FOUNDRY_FEATURES_HEADERS, create_sample_toolbox
 
 AGENT_NAME = "FoundryToolboxMcpAgent"
+TOOLBOX_NAME = "declarative_foundry_toolbox_mcp"
+DOCS_SERVER_LABEL = "microsoft_docs"
 
 AGENT_INSTRUCTIONS = """\
-You combine results from two tool calls in the conversation:
-
-  - ``microsoft_docs_search`` from the Microsoft Learn Docs MCP server
-    (authoritative Microsoft documentation), and
-  - ``web_search`` (Foundry built-in) for general web context.
-
-Answer the user's question using ONLY the information present in the
-conversation. Prefer Microsoft Learn results for any product or API
-question and cite document titles or URLs when available. If neither
-result set contains an answer, say so plainly rather than guessing.
+Answer the user's question using ONLY the Microsoft Learn docs search
+result already present in the conversation. Cite document titles or
+URLs when available. If the result does not contain an answer, say so
+plainly rather than guessing.
 """
 
 
@@ -71,33 +58,18 @@ async def main() -> None:
     """Run the Foundry toolbox MCP workflow."""
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model = os.environ["FOUNDRY_MODEL"]
-    toolbox_name = os.environ.get("FOUNDRY_TOOLBOX_NAME", "declarative_foundry_toolbox_mcp")
-    toolbox_api_version = os.environ.get("FOUNDRY_TOOLBOX_API_VERSION", "v1")
-    docs_server_label = os.environ.get("FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL", "microsoft_docs")
-    web_search_tool_name = os.environ.get("FOUNDRY_TOOLBOX_WEB_SEARCH_TOOL_NAME", "web_search")
 
     print("=" * 60)
     print("Invoke Foundry Toolbox MCP Workflow Demo")
     print("=" * 60)
-    print(f"Provisioning toolbox '{toolbox_name}' in Foundry...")
+    print(f"Provisioning toolbox '{TOOLBOX_NAME}' in Foundry...")
     create_sample_toolbox(
-        name=toolbox_name,
-        docs_server_label=docs_server_label,
+        name=TOOLBOX_NAME,
+        docs_server_label=DOCS_SERVER_LABEL,
         project_endpoint=project_endpoint,
     )
 
-    toolbox_endpoint = os.environ.get("FOUNDRY_TOOLBOX_ENDPOINT") or build_toolbox_mcp_server_url(
-        project_endpoint=project_endpoint,
-        name=toolbox_name,
-        api_version=toolbox_api_version,
-    )
-    # Values exposed to ``=Env.*`` in workflow.yaml. Passing them via
-    # ``configuration`` keeps the symbol table scoped to this workflow.
-    workflow_configuration = {
-        "FOUNDRY_TOOLBOX_MCP_SERVER_URL": toolbox_endpoint,
-        "FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL": docs_server_label,
-        "FOUNDRY_TOOLBOX_WEB_SEARCH_TOOL_NAME": web_search_tool_name,
-    }
+    toolbox_endpoint = f"{project_endpoint.rstrip('/')}/toolboxes/{TOOLBOX_NAME}/mcp?api-version=v1"
     print(f"Toolbox endpoint: {toolbox_endpoint}")
     print()
 
@@ -109,7 +81,7 @@ async def main() -> None:
     # request, including the MCP ``initialize`` handshake (the YAML's
     # per-action ``headers`` only takes effect during ``call_tool``).
     # ``timeout=`` matches the MCP-recommended values; httpx's 5s
-    # default breaks long-running tool calls like ``web_search``.
+    # default breaks long-running tool calls.
     http_client = httpx.AsyncClient(
         auth=_BearerAuth(credential),
         headers=FOUNDRY_FEATURES_HEADERS,
@@ -136,46 +108,31 @@ async def main() -> None:
         factory = WorkflowFactory(
             agents={AGENT_NAME: summary_agent},
             mcp_tool_handler=mcp_handler,
-            configuration=workflow_configuration,
+            configuration={
+                "FOUNDRY_TOOLBOX_MCP_SERVER_URL": toolbox_endpoint,
+                "FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL": DOCS_SERVER_LABEL,
+            },
         )
         workflow = factory.create_workflow_from_yaml_path(Path(__file__).parent / "workflow.yaml")
 
-        print("Ask one question that benefits from both Microsoft Learn docs and a web search.")
+        print("Ask a question that can be answered from the Microsoft Learn docs.")
         print()
         user_input = input("You: ").strip() or "How do I configure logging in the Agent Framework?"  # noqa: ASYNC250
 
-        # Progress markers per YAML action so slow MCP calls or agent
-        # invocations don't look like a hang. Action ids mirror
-        # workflow.yaml.
-        progress_labels = {
-            "list_toolbox_tools": "Listing toolbox tools...",
-            "search_docs_with_toolbox": "Searching Microsoft Learn docs...",
-            "search_web_with_toolbox": "Searching the web...",
-            "summarize_toolbox_result": "Summarizing results...",
-        }
         printed_prefix = False
-        produced_output = False
         async for event in workflow.run({"text": user_input}, stream=True):
             if event.type == "executor_invoked":
-                label = progress_labels.get(event.executor_id or "")
-                if label is not None:
-                    print(f"[{label}]")
-                continue
-            if event.type == "output" and isinstance(event.data, str):
-                # Only the summarising agent emits ``output``; the three
-                # MCP actions use ``autoSend: false`` in the YAML.
-                if event.executor_id and event.executor_id != "summarize_toolbox_result":
-                    continue
+                if event.executor_id == "search_docs_with_toolbox":
+                    print("[Searching Microsoft Learn docs...]")
+                elif event.executor_id == "summarize_toolbox_result":
+                    print("[Summarizing results...]")
+            elif event.type == "output" and isinstance(event.data, str):
                 if not printed_prefix:
                     print("\nAgent: ", end="", flush=True)
                     printed_prefix = True
                 print(event.data, end="", flush=True)
-                produced_output = True
 
-        if produced_output:
-            print()
-        else:
-            print("\n(no response produced)")
+        print()
 
 
 if __name__ == "__main__":

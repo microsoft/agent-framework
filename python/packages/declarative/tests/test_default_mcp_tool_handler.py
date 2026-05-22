@@ -644,8 +644,8 @@ class TestListTools:
         }
 
     @pytest.mark.asyncio
-    async def test_list_tools_property_order_matches_dotnet(self) -> None:
-        """The JSON property order must match .NET SerializeToolsList: name, description, inputSchema, outputSchema."""
+    async def test_list_tools_property_order_is_stable(self) -> None:
+        """JSON property order is stable: name, description, inputSchema, outputSchema."""
         handler = DefaultMCPToolHandler()
         with _patch_tool():
             await handler.invoke_tool(_invocation())
@@ -662,7 +662,7 @@ class TestListTools:
 
     @pytest.mark.asyncio
     async def test_list_tools_indented_output(self) -> None:
-        """Output is indented with 2-space indent (matches .NET ``Indented=true``)."""
+        """Output is JSON with a 2-space indent so the conversation log is human-readable."""
         handler = DefaultMCPToolHandler()
         with _patch_tool():
             await handler.invoke_tool(_invocation())
@@ -774,6 +774,6 @@ class TestListTools:
         assert result.is_error is False
 
     def test_class_attribute_value(self) -> None:
-        # Constant name MUST be the MCP protocol method name for cross-language parity
-        # with .NET ``DefaultMcpToolHandler.ListToolsToolName``.
+        # Constant must equal the MCP protocol method name so a single
+        # string travels unchanged through host code, YAML, and the wire.
         assert DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME == "tools/list"

@@ -198,11 +198,12 @@ class DefaultMCPToolHandler:
     """Reserved ``tool_name`` that maps an :class:`MCPToolHandler` invocation
     to the MCP protocol ``tools/list`` discovery operation.
 
-    Mirrors the .NET ``DefaultMcpToolHandler.ListToolsToolName`` public
-    constant for cross-language discoverability. When this handler receives
-    an invocation with this name it pages through ``session.list_tools()``
-    and returns the catalog as a single ``TextContent`` containing JSON of
-    shape ``{"tools": [{name, description, inputSchema, outputSchema}, ...]}``.
+    The constant matches the underlying MCP method name so a single
+    string travels unchanged through host code, YAML, and the protocol
+    wire. When this handler receives an invocation with this name it
+    pages through ``session.list_tools()`` and returns the catalog as a
+    single ``TextContent`` containing JSON of shape
+    ``{"tools": [{name, description, inputSchema, outputSchema}, ...]}``.
     Workflows can reference this name from an ``InvokeMcpTool`` declarative
     action to introspect a server's tool surface without an extra round-trip
     from host code.
@@ -237,9 +238,7 @@ class DefaultMCPToolHandler:
         intercepted client-side: instead of being forwarded as a tool call,
         it is translated to an MCP ``session.list_tools()`` discovery
         operation (paginated automatically) and returned as a single
-        ``TextContent`` containing a JSON tool catalog. Matches the .NET
-        ``DefaultMcpToolHandler`` behaviour so the same YAML works
-        cross-language.
+        ``TextContent`` containing a JSON tool catalog.
         """
         from agent_framework import Content
         from agent_framework.exceptions import ToolExecutionException
@@ -328,13 +327,12 @@ class DefaultMCPToolHandler:
         full catalog as a single ``TextContent`` containing JSON of shape
         ``{"tools": [{name, description, inputSchema, outputSchema}, ...]}``.
 
-        The output shape, property names, and property order match
-        ``DefaultMcpToolHandler.SerializeToolsList`` in the .NET reference
-        implementation so the same workflow YAML can consume the result
-        cross-language. ``indent=2`` matches ``Utf8JsonWriter`` ``Indented``
-        mode; ``allow_nan=False`` guards against producing non-conformant
-        JSON ``NaN``/``Infinity`` tokens if a misbehaving server returns
-        such values in a schema.
+        The output shape, property names, and property order are stable so
+        downstream PowerFx expressions can rely on the schema. ``indent=2``
+        produces human-readable JSON for the conversation log;
+        ``allow_nan=False`` guards against producing non-conformant JSON
+        ``NaN``/``Infinity`` tokens if a misbehaving server returns such
+        values in a schema.
         """
         from agent_framework import Content
 

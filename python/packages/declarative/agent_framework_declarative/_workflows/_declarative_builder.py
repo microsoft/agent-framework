@@ -22,7 +22,6 @@ from agent_framework import (
 )
 
 from ._declarative_base import (
-    _EMPTY_ENV_CONFIG,  # type: ignore[reportPrivateUsage]
     ConditionResult,
     DeclarativeActionExecutor,
     DeclarativeEnvConfig,
@@ -178,7 +177,7 @@ class DeclarativeWorkflowBuilder:
         self._seen_explicit_ids: set[str] = set()  # Track explicit IDs for duplicate detection
         self._http_request_handler = http_request_handler
         self._mcp_tool_handler = mcp_tool_handler
-        self._env_config: DeclarativeEnvConfig = env_config if env_config is not None else _EMPTY_ENV_CONFIG
+        self._env_config: DeclarativeEnvConfig = env_config if env_config is not None else DeclarativeEnvConfig()
         # Resolve max_iterations: explicit arg > YAML maxTurns > core default
         resolved = max_iterations if max_iterations is not None else yaml_definition.get("maxTurns")
         if resolved is not None and (not isinstance(resolved, int) or resolved <= 0):
