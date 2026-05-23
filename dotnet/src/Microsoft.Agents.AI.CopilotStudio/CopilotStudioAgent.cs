@@ -98,7 +98,7 @@ public class CopilotStudioAgent : AIAgent
             responseMessagesList.Add(message);
         }
 
-        // TODO: Review list of ChatResponse properties to ensure we set all availble values.
+        // TODO: Review list of ChatResponse properties to ensure we set all available values.
         // Setting ResponseId and MessageId end up being particularly important for streaming consumers
         // so that they can tell things like response boundaries.
         return new AgentResponse(responseMessagesList)
@@ -135,7 +135,7 @@ public class CopilotStudioAgent : AIAgent
         // Enumerate the response messages
         await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
         {
-            // TODO: Review list of ChatResponse properties to ensure we set all availble values.
+            // TODO: Review list of ChatResponse properties to ensure we set all available values.
             // Setting ResponseId and MessageId end up being particularly important for streaming consumers
             // so that they can tell things like response boundaries.
             yield return new AgentResponseUpdate(message.Role, message.Contents)
