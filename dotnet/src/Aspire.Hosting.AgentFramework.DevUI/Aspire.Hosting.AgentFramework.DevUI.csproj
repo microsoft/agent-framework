@@ -36,8 +36,12 @@
       aggregator loads at runtime via Assembly.Load. Reference it here so users of
       Aspire.Hosting.AgentFramework.DevUI get the frontend out of the box without
       having to add a second package to their AppHost project.
+
+      TreatAsUsed silences ReferenceTrimmer RT0002: no symbol from this assembly
+      is referenced in source, but the assembly must flow through as a runtime
+      dependency so Assembly.Load("Microsoft.Agents.AI.DevUI") succeeds.
     -->
-    <ProjectReference Include="..\Microsoft.Agents.AI.DevUI\Microsoft.Agents.AI.DevUI.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.DevUI\Microsoft.Agents.AI.DevUI.csproj" TreatAsUsed="true" />
   </ItemGroup>
 
   <ItemGroup>
