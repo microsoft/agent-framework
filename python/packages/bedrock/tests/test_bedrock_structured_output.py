@@ -253,7 +253,7 @@ async def test_unsupported_model_validation_exception() -> None:
         )
 
     assert "does not support structured output via outputConfig.textFormat" in str(exc.value)
-    assert "Claude Haiku/Sonnet/Opus 4.5+" in str(exc.value)
+    assert "Check the model's Bedrock Converse outputConfig/textFormat support." in str(exc.value)
 
 
 # endregion

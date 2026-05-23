@@ -328,11 +328,16 @@ class BedrockChatClient(
                 raise ChatClientInvalidResponseException("Bedrock converse response must be a mapping.")
             return response
         except ClientError as e:
-            if e.response.get("Error", {}).get("Code") == "ValidationException" and "outputConfig" in str(e):
+            error_details = e.response.get("Error", {})
+            error_code = error_details.get("Code", "")
+            error_message = error_details.get("Message", "")
+            if error_code == "ValidationException" and (
+                "outputConfig" in error_message or "outputConfig" in str(e)
+            ):
                 raise ValueError(
                     f"Model '{self.model}' does not support structured output via outputConfig.textFormat. "
-                    "Supported models include Claude Haiku/Sonnet/Opus 4.5+. "
-                    f"Original error: {e}"
+                    "Check the model's Bedrock Converse outputConfig/textFormat support. "
+                    f"AWS error Code: {error_code}. AWS error Message: {error_message}"
                 ) from e
             raise
 
@@ -757,6 +762,8 @@ class BedrockChatClient(
         if isinstance(response_format, dict):
             # response_format passed as a dict schema (possibly OpenAI-style)
             schema_src = response_format.get("json_schema", {}).get("schema", response_format)
+            if isinstance(schema_src, str):
+                schema_src = json.loads(schema_src)
             schema = copy.deepcopy(schema_src)
             name = response_format.get("json_schema", {}).get("name", "output_schema")
         else:
@@ -810,6 +817,10 @@ class BedrockChatClient(
                 self._set_additional_properties_false(sub)
         if "$defs" in schema:
             for definition in schema["$defs"].values():
+                if isinstance(definition, dict):
+                    self._set_additional_properties_false(definition)
+        if "definitions" in schema:
+            for definition in schema["definitions"].values():
                 if isinstance(definition, dict):
                     self._set_additional_properties_false(definition)
 
