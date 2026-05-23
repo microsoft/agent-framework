@@ -129,8 +129,10 @@ def test_additional_properties_false_set_recursively() -> None:
 
     # Check $defs for NestedAddress
     defs = schema.get("$defs", {})
-    if "NestedAddress" in defs:
-        assert defs["NestedAddress"].get("additionalProperties") is False
+    assert "NestedAddress" in defs, "Expected NestedAddress to be present in $defs"
+    assert defs["NestedAddress"].get("additionalProperties") is False, (
+        "Expected additionalProperties=False on nested NestedAddress schema"
+    )
 
 
 def test_no_output_config_when_response_format_none() -> None:

@@ -331,8 +331,12 @@ class BedrockChatClient(
             error_details = e.response.get("Error", {})
             error_code = error_details.get("Code", "")
             error_message = error_details.get("Message", "")
+            # "outputConfig" in error_message catches cases where Bedrock explicitly
+            # rejects the outputConfig field (unsupported model). Other ValidationExceptions
+            # (e.g. malformed schema shape, invalid property values) will not mention
+            # "outputConfig" and will bubble up as raw ClientError without being misdiagnosed.
             if error_code == "ValidationException" and (
-                "outputConfig" in error_message or "outputConfig" in str(e)
+                "outputconfig" in error_message.lower() or "outputconfig" in str(e).lower()
             ):
                 raise ValueError(
                     f"Model '{self.model}' does not support structured output via outputConfig.textFormat. "
@@ -760,12 +764,27 @@ class BedrockChatClient(
             return None
 
         if isinstance(response_format, dict):
-            # response_format passed as a dict schema (possibly OpenAI-style)
-            schema_src = response_format.get("json_schema", {}).get("schema", response_format)
+            if "json_schema" in response_format:
+                # Shape A — OpenAI-style wrapper
+                json_schema_config = response_format["json_schema"]
+                schema_src = json_schema_config.get("schema", {})
+                name = json_schema_config.get("name", "output_schema")
+            elif "schema" in response_format:
+                # Shape B — inner shape directly {"name": ..., "schema": ...}
+                schema_src = response_format["schema"]
+                name = response_format.get("name", "output_schema")
+            else:
+                # Shape C — assume entire dict is the raw schema
+                logger.warning(
+                    "response_format dict has no 'json_schema' or 'schema' key; "
+                    "treating entire dict as raw JSON schema."
+                )
+                schema_src = response_format
+                name = "output_schema"
+
             if isinstance(schema_src, str):
                 schema_src = json.loads(schema_src)
             schema = copy.deepcopy(schema_src)
-            name = response_format.get("json_schema", {}).get("name", "output_schema")
         else:
             # response_format is a Pydantic model class
             schema = response_format.model_json_schema()
@@ -808,7 +827,9 @@ class BedrockChatClient(
                 if node_id in visited:
                     return
                 visited.add(node_id)
-                if node.get("type") == "object":
+                if node.get("type") == "object" or (
+                    "properties" in node and "type" not in node
+                ):
                     node["additionalProperties"] = False
                 for value in node.values():
                     if isinstance(value, (dict, list)):
