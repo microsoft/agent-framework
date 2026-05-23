@@ -800,29 +800,29 @@ class BedrockChatClient(
         Args:
             schema: The JSON schema dict to modify in-place.
         """
-        if schema.get("type") == "object":
-            schema["additionalProperties"] = False
-        for value in schema.get("properties", {}).values():
-            if isinstance(value, dict):
-                self._set_additional_properties_false(value)
-        items = schema.get("items")
-        if isinstance(items, list):
-            for item in items:
-                if isinstance(item, dict):
-                    self._set_additional_properties_false(item)
-        elif isinstance(items, dict):
-            self._set_additional_properties_false(items)
-        for sub in schema.get("anyOf", []) + schema.get("allOf", []) + schema.get("oneOf", []):
-            if isinstance(sub, dict):
-                self._set_additional_properties_false(sub)
-        if "$defs" in schema:
-            for definition in schema["$defs"].values():
-                if isinstance(definition, dict):
-                    self._set_additional_properties_false(definition)
-        if "definitions" in schema:
-            for definition in schema["definitions"].values():
-                if isinstance(definition, dict):
-                    self._set_additional_properties_false(definition)
+        visited: set[int] = set()
+
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                node_id = id(node)
+                if node_id in visited:
+                    return
+                visited.add(node_id)
+                if node.get("type") == "object":
+                    node["additionalProperties"] = False
+                for value in node.values():
+                    if isinstance(value, (dict, list)):
+                        walk(value)
+            elif isinstance(node, list):
+                node_id = id(node)
+                if node_id in visited:
+                    return
+                visited.add(node_id)
+                for item in node:
+                    if isinstance(item, (dict, list)):
+                        walk(item)
+
+        walk(schema)
 
     def service_url(self) -> str:
         """Returns the service URL for the Bedrock runtime in the configured AWS region.
