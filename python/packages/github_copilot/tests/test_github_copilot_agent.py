@@ -22,7 +22,13 @@ from agent_framework import (
     Message,
 )
 from agent_framework.exceptions import AgentException
-from copilot.generated.session_events import Data, ErrorClass, Result, SessionEvent, SessionEventType
+from copilot.generated.session_events import (
+    Data,
+    SessionEvent,
+    SessionEventType,
+    ToolExecutionCompleteError,
+    ToolExecutionCompleteResult,
+)
 from copilot.tools import ToolInvocation, ToolResult
 
 from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
@@ -212,6 +218,18 @@ class TestGitHubCopilotAgentInit:
         opts["model"] = "mutated"
         assert agent._settings.get("model") == "gpt-5.1-mini"
 
+    def test_init_stores_instruction_directories(self) -> None:
+        """Test that instruction_directories are stored on the agent instance."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            default_options={"instruction_directories": ["/my/instructions"]}
+        )
+        assert agent._instruction_directories == ["/my/instructions"]  # type: ignore
+
+    def test_init_without_instruction_directories(self) -> None:
+        """Test that instruction_directories default to None when not provided."""
+        agent = GitHubCopilotAgent()
+        assert agent._instruction_directories is None  # type: ignore
+
 
 class TestGitHubCopilotAgentLifecycle:
     """Test cases for agent lifecycle management."""
@@ -293,6 +311,50 @@ class TestGitHubCopilotAgentLifecycle:
             call_args = MockClient.call_args[0][0]
             assert call_args.cli_path == "/custom/path"
             assert call_args.log_level == "debug"
+
+    async def test_start_passes_copilot_home_to_subprocess_config(self) -> None:
+        """Test that copilot_home is passed through to SubprocessConfig."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+                default_options={"copilot_home": "/custom/copilot/home"}
+            )
+            await agent.start()
+
+            call_args = MockClient.call_args[0][0]
+            assert call_args.copilot_home == "/custom/copilot/home"
+
+    async def test_start_copilot_home_not_set_when_unspecified(self) -> None:
+        """Test that copilot_home is not included in SubprocessConfig when not specified."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            call_args = MockClient.call_args[0][0]
+            assert call_args.copilot_home is None
+
+    async def test_start_copilot_home_from_env_variable(self) -> None:
+        """Test that copilot_home can be set via GITHUB_COPILOT_COPILOT_HOME env variable."""
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_COPILOT_HOME": "/env/copilot/home"}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            call_args = MockClient.call_args[0][0]
+            assert call_args.copilot_home == "/env/copilot/home"
 
 
 class TestGitHubCopilotAgentRun:
@@ -537,7 +599,7 @@ class TestGitHubCopilotAgentRunStreaming:
         """Test that TOOL_EXECUTION_COMPLETE events produce function_result content."""
         tool_event_data = MagicMock()
         tool_event_data.tool_call_id = "call_abc123"
-        tool_event_data.result = Result(content="Sunny, 72°F")
+        tool_event_data.result = ToolExecutionCompleteResult(content="Sunny, 72°F")
         tool_event_data.success = True
         tool_event_data.error = None
 
@@ -652,9 +714,9 @@ class TestGitHubCopilotAgentRunStreaming:
         """Test that a failed tool result surfaces the error as exception."""
         tool_event_data = MagicMock()
         tool_event_data.tool_call_id = "call_fail"
-        tool_event_data.result = Result(content="Error: connection timeout")
+        tool_event_data.result = ToolExecutionCompleteResult(content="Error: connection timeout")
         tool_event_data.success = False
-        tool_event_data.error = ErrorClass(message="connection timeout")
+        tool_event_data.error = ToolExecutionCompleteError(message="connection timeout")
 
         tool_event = SessionEvent(
             data=tool_event_data,
@@ -691,7 +753,7 @@ class TestGitHubCopilotAgentRunStreaming:
         """Test that a failed tool result with a string error is surfaced."""
         tool_event_data = MagicMock()
         tool_event_data.tool_call_id = "call_fail2"
-        tool_event_data.result = Result(content="")
+        tool_event_data.result = ToolExecutionCompleteResult(content="")
         tool_event_data.success = False
         tool_event_data.error = "something went wrong"
 
@@ -729,7 +791,7 @@ class TestGitHubCopilotAgentRunStreaming:
         """Test that a successful tool result with error field does not propagate exception."""
         tool_event_data = MagicMock()
         tool_event_data.tool_call_id = "call_ok"
-        tool_event_data.result = Result(content="partial result")
+        tool_event_data.result = ToolExecutionCompleteResult(content="partial result")
         tool_event_data.success = True
         tool_event_data.error = "some warning"
 
@@ -817,7 +879,7 @@ class TestGitHubCopilotAgentRunStreaming:
         # Tool result event
         result_data = MagicMock()
         result_data.tool_call_id = "call_001"
-        result_data.result = Result(content="72°F and sunny")
+        result_data.result = ToolExecutionCompleteResult(content="72°F and sunny")
         result_data.success = True
         result_data.error = None
         tool_result_event = SessionEvent(
@@ -882,9 +944,12 @@ class TestGitHubCopilotAgentSessionManagement:
             mock_session.session_id,
             on_permission_request=unittest.mock.ANY,
             streaming=unittest.mock.ANY,
+            model=unittest.mock.ANY,
+            system_message=unittest.mock.ANY,
             tools=unittest.mock.ANY,
             mcp_servers=unittest.mock.ANY,
             provider=unittest.mock.ANY,
+            instruction_directories=unittest.mock.ANY,
         )
 
     async def test_session_config_includes_model(
@@ -1015,6 +1080,100 @@ class TestGitHubCopilotAgentSessionManagement:
         config = call_args.kwargs
         assert "tools" in config
         assert "on_permission_request" in config
+
+    async def test_instruction_directories_passed_to_create_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that instruction_directories are passed through to create_session."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/path/to/instructions", "/other/path"]},
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == ["/path/to/instructions", "/other/path"]
+
+    async def test_instruction_directories_runtime_override(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that runtime instruction_directories take precedence over defaults."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/default/path"]},
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {"instruction_directories": ["/runtime/path"]}
+        await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == ["/runtime/path"]
+
+    async def test_instruction_directories_none_when_not_specified(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that instruction_directories is None when not specified."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] is None
+
+    async def test_instruction_directories_empty_list_clears_defaults(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that an explicit empty list at runtime clears the agent-level defaults."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/default/path"]},
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {"instruction_directories": []}
+        await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == []
+
+    async def test_instruction_directories_override_on_resumed_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that instruction_directories override works on resumed sessions."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/default/path"]},
+        )
+        await agent.start()
+
+        # Simulate a session that already has a service_session_id (resume path)
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
+
+        runtime_options: GitHubCopilotOptions = {"instruction_directories": ["/override/path"]}
+        await agent._get_or_create_session(session, runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.resume_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == ["/override/path"]
 
 
 class TestGitHubCopilotAgentMCPServers:
@@ -2318,3 +2477,231 @@ class TestGitHubCopilotAgentContextProviders:
         with pytest.raises(ValueError, match="on_function_approval"):
             async for _ in agent.run("hello", stream=True, options={"on_function_approval": lambda _c: True}):
                 pass
+
+    async def test_provider_tools_forwarded_to_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that tools added by context providers are forwarded to session creation."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                from agent_framework._tools import normalize_tools
+
+                def load_skill(skill_name: str) -> str:
+                    """Load a skill by name."""
+                    return f"Loaded: {skill_name}"
+
+                context.extend_tools(self.source_id, normalize_tools([load_skill]))
+
+        provider = ToolInjectingProvider()
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        await agent.run("Hello", session=session)
+
+        call_kwargs = mock_client.create_session.call_args.kwargs
+        assert call_kwargs.get("tools") is not None
+        tool_names = [t.name for t in call_kwargs["tools"]]
+        assert "load_skill" in tool_names
+
+    async def test_provider_tools_merged_with_constructor_tools(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that provider tools are merged with constructor tools, not replacing them."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        def my_tool(x: str) -> str:
+            """A constructor tool."""
+            return x
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                from agent_framework._tools import normalize_tools
+
+                def load_skill(skill_name: str) -> str:
+                    """Load a skill by name."""
+                    return f"Loaded: {skill_name}"
+
+                context.extend_tools(self.source_id, normalize_tools([load_skill]))
+
+        provider = ToolInjectingProvider()
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            tools=[my_tool],
+            context_providers=[provider],
+        )
+        session = agent.create_session()
+        await agent.run("Hello", session=session)
+
+        call_kwargs = mock_client.create_session.call_args.kwargs
+        assert call_kwargs.get("tools") is not None
+        tool_names = [t.name for t in call_kwargs["tools"]]
+        assert "my_tool" in tool_names
+        assert "load_skill" in tool_names
+
+    async def test_provider_tools_forwarded_in_streaming(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that provider tools are forwarded in the streaming path."""
+        events = [assistant_delta_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                from agent_framework._tools import normalize_tools
+
+                def load_skill(skill_name: str) -> str:
+                    """Load a skill by name."""
+                    return f"Loaded: {skill_name}"
+
+                context.extend_tools(self.source_id, normalize_tools([load_skill]))
+
+        provider = ToolInjectingProvider()
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        async for _ in agent.run("Hello", stream=True, session=session):
+            pass
+
+        call_kwargs = mock_client.create_session.call_args.kwargs
+        assert call_kwargs.get("tools") is not None
+        tool_names = [t.name for t in call_kwargs["tools"]]
+        assert "load_skill" in tool_names
+
+    async def test_provider_tools_forwarded_to_resume_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that provider tools are forwarded when resuming an existing session."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                from agent_framework._tools import normalize_tools
+
+                def load_skill(skill_name: str) -> str:
+                    """Load a skill by name."""
+                    return f"Loaded: {skill_name}"
+
+                context.extend_tools(self.source_id, normalize_tools([load_skill]))
+
+        provider = ToolInjectingProvider()
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        session.service_session_id = "existing-id"
+        await agent.run("Hello", session=session)
+
+        mock_client.create_session.assert_not_called()
+        mock_client.resume_session.assert_called_once()
+        call_kwargs = mock_client.resume_session.call_args.kwargs
+        assert call_kwargs.get("tools") is not None
+        tool_names = [t.name for t in call_kwargs["tools"]]
+        assert "load_skill" in tool_names
+
+    async def test_provider_tools_forwarded_to_resume_session_streaming(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that provider tools are forwarded when resuming an existing session in streaming mode."""
+        events = [assistant_delta_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                from agent_framework._tools import normalize_tools
+
+                def load_skill(skill_name: str) -> str:
+                    """Load a skill by name."""
+                    return f"Loaded: {skill_name}"
+
+                context.extend_tools(self.source_id, normalize_tools([load_skill]))
+
+        provider = ToolInjectingProvider()
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        session.service_session_id = "existing-id"
+        async for _ in agent.run("Hello", stream=True, session=session):
+            pass
+
+        mock_client.create_session.assert_not_called()
+        mock_client.resume_session.assert_called_once()
+        call_kwargs = mock_client.resume_session.call_args.kwargs
+        assert call_kwargs.get("tools") is not None
+        tool_names = [t.name for t in call_kwargs["tools"]]
+        assert "load_skill" in tool_names

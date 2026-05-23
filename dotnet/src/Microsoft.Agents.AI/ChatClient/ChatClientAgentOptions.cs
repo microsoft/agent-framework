@@ -152,6 +152,36 @@ public sealed class ChatClientAgentOptions
     public bool RequirePerServiceCallChatHistoryPersistence { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to include a <see cref="MessageInjectingChatClient"/>
+    /// in the chat client pipeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set to <see langword="true"/>, a <see cref="MessageInjectingChatClient"/> is added to the pipeline
+    /// between the <see cref="FunctionInvokingChatClient"/> and the inner client. This enables external code
+    /// (such as tool delegates) to inject messages into the function execution loop via the
+    /// <see cref="MessageInjectingChatClient"/> class, which can be resolved from the chat client using
+    /// <c>GetService&lt;MessageInjectingChatClient&gt;()</c>.
+    /// </para>
+    /// <para>
+    /// This setting can be used independently of <see cref="RequirePerServiceCallChatHistoryPersistence"/>,
+    /// however it is recommended to also enable per-service-call persistence when using message injection
+    /// so that injected messages are persisted to chat history between service calls.
+    /// </para>
+    /// <para>
+    /// When setting the <see cref="UseProvidedChatClientAsIs"/> setting to <see langword="true"/> and
+    /// <see cref="EnableMessageInjection"/> to <see langword="true"/>, ensure that your custom chat client stack
+    /// includes a <see cref="MessageInjectingChatClient"/>. You can add one manually via the
+    /// <see cref="ChatClientBuilderExtensions.UseMessageInjection"/> extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public bool EnableMessageInjection { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -168,5 +198,6 @@ public sealed class ChatClientAgentOptions
             WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
             ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
             RequirePerServiceCallChatHistoryPersistence = this.RequirePerServiceCallChatHistoryPersistence,
+            EnableMessageInjection = this.EnableMessageInjection,
         };
 }

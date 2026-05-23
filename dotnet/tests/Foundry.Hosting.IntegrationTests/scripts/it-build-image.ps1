@@ -100,7 +100,35 @@ if (Test-Path $out) {
     Remove-Item -Recurse -Force $out
 }
 
-dotnet publish $TestContainerProject -c Release -f net10.0 -r linux-musl-x64 --self-contained false -o $out --tl:off | Out-Host
+# Always tell publish to skip ProjectReference rebuilds via --no-dependencies. Publish
+# resolves TestContainer's framework lib references (Foundry, Foundry.Hosting and their
+# transitive deps) by reading the prebuilt DLLs at src/<lib>/bin/Release/net10.0/*.dll.
+# This:
+#   1) Structurally avoids the MSB3026 "file is being used by another process" race that
+#      occurs when publish overwrites the same DLL paths a prior `dotnet build` produced
+#      while VBCSCompiler from that build still holds file handles.
+#   2) Avoids needlessly rebuilding identical managed (RID-agnostic) library DLLs.
+# Callers MUST run `dotnet build dotnet/tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj -c Release`
+# (or equivalent) first so those prebuilt DLLs exist. The CI workflow does this in the
+# preceding "Build Foundry hosted IT (and its deps)" step.
+$prebuildProbes = @(
+    "dotnet/src/Microsoft.Agents.AI.Foundry/bin/Release/net10.0/Microsoft.Agents.AI.Foundry.dll",
+    "dotnet/src/Microsoft.Agents.AI.Foundry.Hosting/bin/Release/net10.0/Microsoft.Agents.AI.Foundry.Hosting.dll"
+)
+$missingPrebuilds = @($prebuildProbes | Where-Object { -not (Test-Path $_) })
+if ($missingPrebuilds.Count -gt 0) {
+    $msg = @(
+        "Required prebuilt outputs not found:"
+        ($missingPrebuilds | ForEach-Object { "  - $_" })
+        ""
+        "Publish runs with --no-dependencies and consumes prebuilt DLLs in place. Build the"
+        "test project first so its ProjectReference closure populates src/<lib>/bin/Release/net10.0/:"
+        "  dotnet build dotnet/tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj -c Release"
+    ) -join "`n"
+    throw $msg
+}
+
+dotnet publish $TestContainerProject -c Release -f net10.0 -r linux-musl-x64 --self-contained false --no-dependencies -o $out --tl:off | Out-Host
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE."
 }

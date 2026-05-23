@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
-    [InlineData("CheckSystem.yaml", "CheckSystem.json", Skip = "Temporarily skipped")]
+    [InlineData("CheckSystem.yaml", "CheckSystem.json")]
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json", true)]
     [InlineData("InputArguments.yaml", "InputArguments.json")]

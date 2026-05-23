@@ -21,6 +21,10 @@ internal static class TestSettings
     public const string AzureAIModelDeploymentName = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
     public const string AzureAIProjectEndpoint = "AZURE_AI_PROJECT_ENDPOINT";
 
+    // Azure AI Search (Foundry.Hosting integration tests, RAG scenario)
+    public const string AzureSearchEndpoint = "AZURE_SEARCH_ENDPOINT";
+    public const string AzureSearchIndexName = "AZURE_SEARCH_INDEX_NAME";
+
     // Foundry Hosted Agents (Foundry.Hosting integration tests)
     public const string FoundryHostingItImage = "IT_HOSTED_AGENT_IMAGE";
 

@@ -10,7 +10,7 @@ import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Coroutine, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
@@ -158,6 +158,22 @@ def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextM
     return _streamable_http_client(*args, **kwargs)  # type: ignore[return-value]
 
 
+def _should_propagate_cancelled_error(ex: BaseException) -> bool:
+    """Return True if *ex* is a genuine task-cancellation that should propagate unchanged.
+
+    On Python >= 3.11, ``task.cancelling() > 0`` distinguishes a real caller-driven
+    cancellation from a CancelledError raised internally by a library (e.g. via an
+    anyio cancel scope).  On older Python versions the API is unavailable, so we
+    always return False and let callers wrap the error in ToolException instead.
+    """
+    if not isinstance(ex, asyncio.CancelledError):
+        return False
+    if sys.version_info < (3, 11):
+        return False
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
 # region: MCP Plugin
 
 
@@ -239,15 +255,22 @@ class MCPTool:
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
-        self._lifecycle_queue: asyncio.Queue[tuple[str, bool, asyncio.Future[None]]] | None = None
+        self._lifecycle_queue: asyncio.Queue[tuple[str, bool, bool, asyncio.Future[None]]] | None = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
         self.request_timeout = request_timeout
         self.client = client
         self._functions: list[FunctionTool] = []
+        self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
+        self._server_capabilities: types.ServerCapabilities | None = None
+        self._supports_tools: bool = True
+        self._supports_prompts: bool = True
+        self._supports_logging: bool | None = None
+        self._ping_available: bool = True
+        self._pending_reload_tasks: set[asyncio.Task[None]] = set()
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -548,11 +571,11 @@ class MCPTool:
         stop_error: BaseException | None = None
         try:
             while True:
-                action, reset, future = await queue.get()
+                action, reset, load_configured, future = await queue.get()
 
                 try:
                     if action == "connect":
-                        await self._connect_on_owner(reset=reset)
+                        await self._connect_on_owner(reset=reset, load_configured=load_configured)
                     elif action == "close":
                         await self._close_on_owner()
                     else:
@@ -577,7 +600,7 @@ class MCPTool:
         finally:
             while True:
                 try:
-                    _, _, future = queue.get_nowait()
+                    _, _, _, future = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
                 if not future.done():
@@ -590,12 +613,18 @@ class MCPTool:
         owner_task = self._lifecycle_owner_task
         return owner_task is not None and asyncio.current_task() is owner_task
 
-    async def _run_on_lifecycle_owner(self, action: str, *, reset: bool = False) -> None:
+    async def _run_on_lifecycle_owner(
+        self,
+        action: str,
+        *,
+        reset: bool = False,
+        load_configured: bool = True,
+    ) -> None:
         await self._ensure_lifecycle_owner()
 
         if self._is_lifecycle_owner_task():
             if action == "connect":
-                await self._connect_on_owner(reset=reset)
+                await self._connect_on_owner(reset=reset, load_configured=load_configured)
             elif action == "close":
                 await self._close_on_owner()
             else:
@@ -607,7 +636,7 @@ class MCPTool:
             raise RuntimeError("MCP lifecycle owner is not available.")
 
         future = asyncio.get_running_loop().create_future()
-        await queue.put((action, reset, future))
+        await queue.put((action, reset, load_configured, future))
         await future
 
     async def _safe_close_exit_stack(self) -> None:
@@ -627,6 +656,43 @@ class MCPTool:
         except asyncio.CancelledError:
             logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
 
+    async def _close_and_check_cancelled(self, ex: BaseException) -> bool:
+        """Close the exit stack and return True if *ex* is a genuine task cancellation.
+
+        Callers should immediately re-raise when this returns True::
+
+            if await self._close_and_check_cancelled(ex):
+                raise
+        """
+        await self._safe_close_exit_stack()
+        return _should_propagate_cancelled_error(ex)
+
+    def _reset_session_state(self) -> None:
+        self._server_capabilities = None
+        self._supports_tools = True
+        self._supports_prompts = True
+        self._supports_logging = None
+        self._ping_available = True
+
+    def _set_server_capabilities(self, capabilities: types.ServerCapabilities | None) -> None:
+        self._server_capabilities = capabilities
+        if capabilities is None:
+            self._supports_tools = False
+            self._supports_prompts = False
+            self._supports_logging = False
+            return
+
+        self._supports_tools = getattr(capabilities, "tools", None) is not None
+        self._supports_prompts = getattr(capabilities, "prompts", None) is not None
+        self._supports_logging = getattr(capabilities, "logging", None) is not None
+
+    async def _reconnect_without_loading(self) -> None:
+        if self._is_lifecycle_owner_task():
+            await self._connect_on_owner(reset=True, load_configured=False)
+            return
+
+        await self._run_on_lifecycle_owner("connect", reset=True, load_configured=False)
+
     async def connect(self, *, reset: bool = False) -> None:
         if self._is_lifecycle_owner_task():
             await self._connect_on_owner(reset=reset)
@@ -635,7 +701,7 @@ class MCPTool:
         async with self._lifecycle_request_lock:
             await self._run_on_lifecycle_owner("connect", reset=reset)
 
-    async def _connect_on_owner(self, *, reset: bool = False) -> None:
+    async def _connect_on_owner(self, *, reset: bool = False, load_configured: bool = True) -> None:
         """Connect to the MCP server.
 
         Establishes a connection to the MCP server, initializes the session,
@@ -643,6 +709,7 @@ class MCPTool:
 
         Keyword Args:
             reset: If True, forces a reconnection even if already connected.
+            load_configured: If True, loads tools and prompts according to the constructor flags.
 
         Raises:
             ToolException: If connection or session initialization fails.
@@ -651,18 +718,28 @@ class MCPTool:
             await self._safe_close_exit_stack()
             self.session = None
             self.is_connected = False
+            self._reset_session_state()
             self._exit_stack = AsyncExitStack()
         if not self.session:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
-            except Exception as ex:
-                await self._safe_close_exit_stack()
+            except (Exception, asyncio.CancelledError) as ex:
+                # On Python >= 3.11, re-raise genuine task cancellation (task.cancelling() > 0)
+                # instead of wrapping it in ToolException. On Python < 3.11, task.cancelling()
+                # is unavailable so MCP-internal CancelledErrors cannot be distinguished from
+                # caller-driven cancellation; they are wrapped as ToolException in that case.
+                if await self._close_and_check_cancelled(ex):
+                    raise
                 command = getattr(self, "command", None)
                 if command:
                     error_msg = f"Failed to start MCP server '{command}': {ex}"
                 else:
                     error_msg = f"Failed to connect to MCP server: {ex}"
-                raise ToolException(error_msg, inner_exception=ex) from ex
+                # CancelledError is a BaseException (not Exception) on Python >= 3.8, so
+                # inner_exception=None and ToolException.__init__ won't log exc_info.
+                if isinstance(ex, asyncio.CancelledError):
+                    logger.debug(error_msg, exc_info=True)
+                raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             try:
                 try:
                     from mcp import types
@@ -692,16 +769,22 @@ class MCPTool:
                         sampling_capabilities=sampling_capabilities,
                     )
                 )
-            except Exception as ex:
-                await self._safe_close_exit_stack()
+            except (Exception, asyncio.CancelledError) as ex:
+                if await self._close_and_check_cancelled(ex):
+                    raise
+                session_error_msg = f"Failed to create MCP session: {ex}"
+                if isinstance(ex, asyncio.CancelledError):
+                    logger.debug(session_error_msg, exc_info=True)
                 raise ToolException(
-                    message="Failed to create MCP session. Please check your configuration.",
-                    inner_exception=ex,
+                    message=session_error_msg,
+                    inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
             try:
-                await session.initialize()
-            except Exception as ex:
-                await self._safe_close_exit_stack()
+                initialize_result = await session.initialize()
+                self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+            except (Exception, asyncio.CancelledError) as ex:
+                if await self._close_and_check_cancelled(ex):
+                    raise
                 # Provide context about initialization failure
                 command = getattr(self, "command", None)
                 if command:
@@ -710,21 +793,28 @@ class MCPTool:
                     error_msg = f"MCP server '{full_command}' failed to initialize: {ex}"
                 else:
                     error_msg = f"MCP server failed to initialize: {ex}"
-                raise ToolException(error_msg, inner_exception=ex) from ex
+                if isinstance(ex, asyncio.CancelledError):
+                    logger.debug(error_msg, exc_info=True)
+                raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
         elif self.session._request_id == 0:  # type: ignore[attr-defined]
             # If the session is not initialized, we need to reinitialize it
-            await self.session.initialize()
+            initialize_result = await self.session.initialize()
+            self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+        elif self._server_capabilities is None:
+            self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
         logger.debug("Connected to MCP server: %s", self.session)
         self.is_connected = True
-        if self.load_tools_flag:
-            await self.load_tools()
+        if load_configured and self.load_tools_flag:
+            if self._supports_tools:
+                await self.load_tools()
             self._tools_loaded = True
-        if self.load_prompts_flag:
-            await self.load_prompts()
+        if load_configured and self.load_prompts_flag:
+            if self._supports_prompts:
+                await self.load_prompts()
             self._prompts_loaded = True
 
-        if logger.level != logging.NOTSET:
+        if logger.level != logging.NOTSET and self._supports_logging is not False:
             try:
                 level_name = cast(
                     Any, next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
@@ -862,11 +952,46 @@ class MCPTool:
         if isinstance(message, types.ServerNotification):
             match message.root.method:
                 case "notifications/tools/list_changed":
-                    await self.load_tools()
+                    self._schedule_reload(self.load_tools())
                 case "notifications/prompts/list_changed":
-                    await self.load_prompts()
+                    self._schedule_reload(self.load_prompts())
                 case _:
                     logger.debug("Unhandled notification: %s", message.root.method)
+
+    def _schedule_reload(self, coro: Coroutine[Any, Any, None]) -> None:
+        """Schedule a reload coroutine as a background task.
+
+        Reloads (load_tools / load_prompts) triggered by MCP server
+        notifications must NOT be awaited inside the message handler because
+        the handler runs on the MCP SDK's single-threaded receive loop.
+        Awaiting a session request (e.g. ``list_tools``) from within that loop
+        deadlocks: the receive loop cannot read the response while it is
+        blocked waiting for the handler to return.
+
+        Instead we fire the reload as an independent ``asyncio.Task`` and keep
+        a strong reference in ``_pending_reload_tasks`` so it is not garbage-
+        collected before completion.  Only one reload per kind (tools / prompts)
+        is kept in flight; a new notification cancels the previous pending task
+        for the same coroutine name to avoid unbounded growth.
+        """
+        # Cancel-and-replace: only one reload per kind should be in flight.
+        reload_name = f"mcp-reload:{self.name}:{coro.__qualname__}"
+        for existing in list(self._pending_reload_tasks):
+            if existing.get_name() == reload_name and not existing.done():
+                logger.debug("Cancelling in-flight reload %s; superseded by new notification", reload_name)
+                existing.cancel()
+
+        async def _safe_reload() -> None:
+            try:
+                await coro
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Background MCP reload failed", exc_info=True)
+
+        task = asyncio.create_task(_safe_reload(), name=reload_name)
+        self._pending_reload_tasks.add(task)
+        task.add_done_callback(self._pending_reload_tasks.discard)
 
     def _determine_approval_mode(
         self,
@@ -893,17 +1018,49 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        from anyio import ClosedResourceError
         from mcp import types
+
+        if not self._supports_prompts:
+            logger.debug("Skipping MCP prompt loading because the server did not advertise prompts support.")
+            return
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
         params: types.PaginatedRequestParams | None = None
         while True:
-            # Ensure connection is still valid before each page request
-            await self._ensure_connected()
+            prompt_list: types.ListPromptsResult | None = None
+            for attempt in range(2):
+                try:
+                    # Ensure connection is still valid before each page request
+                    await self._ensure_connected()
+                    if not self._supports_prompts:
+                        logger.debug(
+                            "Skipping MCP prompt loading because the server did not advertise prompts support."
+                        )
+                        return
+                    prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                    break
+                except ClosedResourceError as cl_ex:
+                    if attempt == 0:
+                        logger.info("MCP connection closed unexpectedly while loading prompts. Reconnecting...")
+                        try:
+                            await self._reconnect_without_loading()
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                        continue
+                    logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
+                    raise ToolExecutionException(
+                        "Failed to load prompts - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
 
-            prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+            if prompt_list is None:
+                raise ToolExecutionException("Failed to load prompts.")
 
             for prompt in prompt_list.prompts:
                 normalized_name = _normalize_mcp_name(prompt.name)
@@ -930,7 +1087,7 @@ class MCPTool:
                 existing_names.add(local_name)
 
             # Check if there are more pages
-            if not prompt_list or not prompt_list.nextCursor:
+            if not prompt_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
 
@@ -943,19 +1100,53 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        from anyio import ClosedResourceError
         from mcp import types
+
+        if not self._supports_tools:
+            logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
+            return
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
+        self._tool_call_meta_by_name.clear()
 
         params: types.PaginatedRequestParams | None = None
         while True:
-            # Ensure connection is still valid before each page request
-            await self._ensure_connected()
+            tool_list: types.ListToolsResult | None = None
+            for attempt in range(2):
+                try:
+                    # Ensure connection is still valid before each page request
+                    await self._ensure_connected()
+                    if not self._supports_tools:
+                        logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
+                        return
+                    tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                    break
+                except ClosedResourceError as cl_ex:
+                    if attempt == 0:
+                        logger.info("MCP connection closed unexpectedly while loading tools. Reconnecting...")
+                        try:
+                            await self._reconnect_without_loading()
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                        continue
+                    logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
+                    raise ToolExecutionException(
+                        "Failed to load tools - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
 
-            tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+            if tool_list is None:
+                raise ToolExecutionException("Failed to load tools.")
 
             for tool in tool_list.tools:
+                if tool.meta is not None:
+                    self._tool_call_meta_by_name[tool.name] = dict(tool.meta)
+
                 normalized_name = _normalize_mcp_name(tool.name)
                 local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
 
@@ -999,15 +1190,24 @@ class MCPTool:
                 existing_names.add(local_name)
 
             # Check if there are more pages
-            if not tool_list or not tool_list.nextCursor:
+            if not tool_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
     async def _close_on_owner(self) -> None:
+        # Cancel any pending reload tasks before tearing down the session.
+        tasks = list(self._pending_reload_tasks)
+        for task in tasks:
+            task.cancel()
+        self._pending_reload_tasks.clear()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
         self.session = None
         self.is_connected = False
+        self._reset_session_state()
 
     async def close(self) -> None:
         """Disconnect from the MCP server.
@@ -1039,12 +1239,30 @@ class MCPTool:
         Raises:
             ToolExecutionException: If reconnection fails.
         """
+        from mcp.shared.exceptions import McpError
+
+        if not self._ping_available:
+            return
+
         try:
             await self.session.send_ping()  # type: ignore[union-attr]
+        except McpError as mcp_exc:
+            if mcp_exc.error.code == -32601:
+                self._ping_available = False
+                logger.debug("Skipping future MCP pings because the server does not support ping.")
+                return
+            logger.info("MCP connection invalid or closed. Reconnecting...")
+            try:
+                await self._reconnect_without_loading()
+            except Exception as ex:
+                raise ToolExecutionException(
+                    "Failed to establish MCP connection.",
+                    inner_exception=ex,
+                ) from ex
         except Exception:
             logger.info("MCP connection invalid or closed. Reconnecting...")
             try:
-                await self.connect(reset=True)
+                await self._reconnect_without_loading()
             except Exception as ex:
                 raise ToolExecutionException(
                     "Failed to establish MCP connection.",
@@ -1098,14 +1316,15 @@ class MCPTool:
             }
         }
 
-        # Inject OpenTelemetry trace context into MCP _meta for distributed tracing.
-        otel_meta = _inject_otel_into_mcp_meta()
+        # Some MCP proxies require their tools/list metadata to be echoed on tools/call.
+        tool_meta = self._tool_call_meta_by_name.get(tool_name)
+        meta = _inject_otel_into_mcp_meta(dict(tool_meta) if tool_meta is not None else None)
 
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
                 if result.isError:
                     parsed = parser(result)
                     text = (

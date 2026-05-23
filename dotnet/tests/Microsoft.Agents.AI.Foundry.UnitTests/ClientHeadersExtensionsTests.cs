@@ -245,29 +245,33 @@ public sealed class ClientHeadersExtensionsTests
     }
 
     // -------------------------------------------------------------------------------------------
-    // 10. ClientHeadersScope.Push is LIFO and AsyncLocal-isolated (parallel runs don't leak)
+    // 10. ClientHeadersScope is AsyncLocal-isolated across parallel runs and auto-restores on
+    //     async-method return (no explicit Dispose needed).
     // -------------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task ClientHeadersScope_IsLifoAndAsyncLocalIsolatedAsync()
+    public async Task ClientHeadersScope_IsAsyncLocalIsolatedAndAutoRestoresAsync()
     {
         // Arrange
         var dictA = new Dictionary<string, string> { ["x-client-end-user-id"] = "alice" };
         var dictB = new Dictionary<string, string> { ["x-client-end-user-id"] = "bob" };
 
-        // Act / Assert
+        // Act / Assert: parallel async flows do not see each other's mutations.
         await Task.WhenAll(
             ProbeAsync(dictA, "alice"),
             ProbeAsync(dictB, "bob"));
 
         async Task ProbeAsync(Dictionary<string, string> dict, string expected)
         {
-            using (ClientHeadersScope.Push(dict))
-            {
-                await Task.Yield();
-                Assert.Equal(expected, ClientHeadersScope.Current!["x-client-end-user-id"]);
-            }
+            ClientHeadersScope.Current = dict;
+            await Task.Yield();
+            Assert.Equal(expected, ClientHeadersScope.Current!["x-client-end-user-id"]);
         }
+
+        // Assert: setting Current inside an awaited async method does not leak back to the caller
+        // after the method returns. This is the AsyncLocal natural-restoration behavior the
+        // ClientHeadersAgent relies on.
+        Assert.Null(ClientHeadersScope.Current);
     }
 
     // -------------------------------------------------------------------------------------------
@@ -320,15 +324,18 @@ public sealed class ClientHeadersExtensionsTests
             perTryPolicies: default,
             beforeTransportPolicies: default);
 
-        var perCall = new Dictionary<string, string> { ["x-client-end-user-id"] = "alice" };
-
         // Act
-        using (ClientHeadersScope.Push(perCall))
+        ClientHeadersScope.Current = new Dictionary<string, string> { ["x-client-end-user-id"] = "alice" };
+        try
         {
             var msg = pipeline.CreateMessage();
             msg.Request.Method = "GET";
             msg.Request.Uri = new Uri("https://example.test/");
             await pipeline.SendAsync(msg);
+        }
+        finally
+        {
+            ClientHeadersScope.Current = null;
         }
 
         // Assert: the per-call value won.

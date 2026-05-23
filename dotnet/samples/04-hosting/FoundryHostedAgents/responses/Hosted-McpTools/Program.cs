@@ -19,6 +19,7 @@ using Azure.AI.Projects;
 using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
+using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
@@ -81,50 +82,14 @@ AIAgent agent = new AIProjectClient(projectEndpoint, credential)
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
+builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();
 
-// In Development, also map the OpenAI-compatible route that AIProjectClient uses.
-if (app.Environment.IsDevelopment())
-{
-    app.MapFoundryResponses("openai/v1");
-}
+// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
+// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
+// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
+app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();
-
-/// <summary>
-/// A <see cref="TokenCredential"/> for local Docker debugging only.
-/// Reads a pre-fetched bearer token from the <c>AZURE_BEARER_TOKEN</c> environment variable
-/// once at startup. This should NOT be used in production.
-///
-/// Generate a token on your host and pass it to the container:
-///   export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-///   docker run -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN ...
-/// </summary>
-internal sealed class DevTemporaryTokenCredential : TokenCredential
-{
-    private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
-    private readonly string? _token;
-
-    public DevTemporaryTokenCredential()
-    {
-        this._token = Environment.GetEnvironmentVariable(EnvironmentVariable);
-    }
-
-    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => this.GetAccessToken();
-
-    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => new(this.GetAccessToken());
-
-    private AccessToken GetAccessToken()
-    {
-        if (string.IsNullOrEmpty(this._token) || this._token == "DefaultAzureCredential")
-        {
-            throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
-        }
-
-        return new AccessToken(this._token, DateTimeOffset.UtcNow.AddHours(1));
-    }
-}

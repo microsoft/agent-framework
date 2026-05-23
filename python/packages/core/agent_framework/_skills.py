@@ -5,7 +5,7 @@
 Defines the core data model classes for the agent skills system:
 
 - **Skills:** :class:`Skill` (abstract base), :class:`InlineSkill` (code-defined),
-  and :class:`FileSkill` (filesystem-backed).
+  :class:`ClassSkill` (class-based), and :class:`FileSkill` (filesystem-backed).
 - **Resources:** :class:`SkillResource` (abstract base), :class:`InlineSkillResource`
   (static content or callable).
 - **Scripts:** :class:`SkillScript` (abstract base), :class:`InlineSkillScript`
@@ -27,6 +27,9 @@ Skills can come from different sources:
   Represented as :class:`FileSkill` instances.
 - **Code-defined** — created as :class:`InlineSkill` instances in Python code,
   with optional callable resources attached via the ``@skill.resource`` decorator.
+- **Class-based** — created by subclassing :class:`ClassSkill` to define
+  self-contained, reusable skill types with ``create_resource()`` and
+  ``create_script()`` factory methods.
 - **Custom sources** — any :class:`SkillsSource` implementation that provides
   skills from arbitrary origins (REST APIs, databases, etc.).
 
@@ -286,13 +289,15 @@ class SkillScript(ABC):
         return None
 
     @abstractmethod
-    async def run(self, skill: Skill, args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
         """Run this script.
 
         Args:
             skill: The skill that owns this script.
-            args: Optional keyword arguments for the script, provided by the
-                agent/LLM.
+            args: Optional arguments for the script, provided by the
+                agent/LLM.  May be a ``dict`` (named keyword arguments
+                for inline scripts) or a ``list[str]`` (positional CLI
+                arguments for file-based scripts).
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
@@ -358,19 +363,31 @@ class InlineSkillScript(SkillScript):
             self._parameters_schema_resolved = True
         return self._parameters_schema
 
-    async def run(self, skill: Skill, args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
         """Run the script by invoking the callable in-process.
 
         Args:
             skill: The skill that owns this script.
             args: Optional keyword arguments for the script, provided by the
-                agent/LLM.
+                agent/LLM.  Must be a ``dict`` or ``None``; passing a
+                ``list`` raises :class:`TypeError` because inline scripts
+                bind arguments by keyword name.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
         Returns:
             The script execution result.
+
+        Raises:
+            TypeError: If ``args`` is a ``list`` (array-style arguments
+                are only supported for file-based scripts).
         """
+        if isinstance(args, list):
+            raise TypeError(
+                f"Inline script '{self.name}' requires keyword arguments (dict), "
+                f"but received a list. Array-style arguments are only supported "
+                f"for file-based scripts."
+            )
         if self._accepts_kwargs:  # noqa: SIM108
             result = self.function(**(args or {}), **kwargs)
         else:
@@ -428,13 +445,23 @@ class FileSkillScript(SkillScript):
         self.full_path = full_path
         self._runner = runner
 
-    async def run(self, skill: Skill, args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+    @property
+    def parameters_schema(self) -> dict[str, Any] | None:
+        """JSON Schema advertising that file scripts accept a string array.
+
+        Returns a fixed schema ``{"type": "array", "items": {"type": "string"}}``
+        so that the LLM knows to pass positional CLI arguments as a JSON array
+        of strings.
+        """
+        return {"type": "array", "items": {"type": "string"}}
+
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
         """Run the script by delegating to the configured runner.
 
         Args:
             skill: The skill that owns this script.  Must be a
                 :class:`FileSkill`.
-            args: Optional keyword arguments for the script.
+            args: Optional arguments for the script.
             **kwargs: Additional runtime keyword arguments (unused).
 
         Returns:
@@ -446,14 +473,10 @@ class FileSkillScript(SkillScript):
         """
         if not isinstance(skill, FileSkill):
             raise TypeError(
-                f"File-based script '{self.name}' requires a FileSkill "
-                f"but received '{type(skill).__name__}'."
+                f"File-based script '{self.name}' requires a FileSkill but received '{type(skill).__name__}'."
             )
         if self._runner is None:
-            raise ValueError(
-                f"Script '{self.name}' requires a runner. "
-                "Provide a script_runner for file-based scripts."
-            )
+            raise ValueError(f"Script '{self.name}' requires a runner. Provide a script_runner for file-based scripts.")
         result = self._runner(skill, self, args)
         if inspect.isawaitable(result):
             return await result
@@ -466,41 +489,23 @@ class Skill(ABC):
 
     A skill represents a domain-specific capability with instructions,
     resources, and scripts.  Concrete implementations include
-    :class:`FileSkill` (filesystem-backed) and :class:`InlineSkill`
-    (code-defined).
+    :class:`FileSkill` (filesystem-backed), :class:`InlineSkill`
+    (code-defined), and :class:`ClassSkill` (class-based).
 
-    Skill metadata follows the
-    `Agent Skills specification <https://agentskills.io/>`_.
-
-    Attributes:
-        name: Skill name (lowercase letters, numbers, hyphens only).
-        description: Human-readable description of the skill.
+    Skill spec metadata (name, description, license, compatibility,
+    allowed_tools, metadata) is exposed via the :attr:`frontmatter`
+    property, which returns a :class:`SkillFrontmatter` instance.
     """
 
-    def __init__(
-        self,
-        *,
-        name: str,
-        description: str,
-    ) -> None:
-        """Initialize a Skill.
+    @property
+    @abstractmethod
+    def frontmatter(self) -> SkillFrontmatter:
+        """The L1 discovery metadata for this skill.
 
-        Validates the skill name and description against specification rules.
-
-        Args:
-            name: Skill name (lowercase letters, numbers, hyphens only;
-                max 64 characters; no leading/trailing/consecutive hyphens).
-            description: Human-readable description of the skill
-                (≤1024 characters).
-
-        Raises:
-            ValueError: If the name or description is invalid.
+        Contains the name, description, and other spec fields as defined by
+        the `Agent Skills specification <https://agentskills.io/specification>`_.
         """
-        _validate_skill_name(name)
-        _validate_skill_description(name, description)
-
-        self.name = name
-        self.description = description
+        ...
 
     @property
     @abstractmethod
@@ -534,6 +539,68 @@ class Skill(ABC):
         scripts.
         """
         return []
+
+
+@experimental(feature_id=ExperimentalFeature.SKILLS)
+class SkillFrontmatter:
+    """L1 discovery metadata for a :class:`Skill`.
+
+    Encapsulates all `Agent Skills specification <https://agentskills.io/specification>`_
+    frontmatter fields in a single object. All fields are mutable plain
+    attributes; callers may freely reassign them after construction.
+
+    The constructor validates ``name``, ``description``, and ``compatibility``
+    against specification rules and raises :class:`ValueError` on invalid
+    input. Assignments made after construction are **not** re-validated;
+    callers are expected to honor the spec.
+
+    Attributes:
+        name: Skill name (lowercase letters, numbers, hyphens only).
+        description: Human-readable description of the skill.
+        license: Optional license name or reference.
+        compatibility: Optional compatibility information (≤500 characters).
+        allowed_tools: Optional space-delimited pre-approved tool names.
+        metadata: Optional arbitrary key-value pairs (shallow-copied on
+            construction to avoid caller-owned dict aliasing).
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        license: str | None = None,
+        compatibility: str | None = None,
+        allowed_tools: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        """Initialize a SkillFrontmatter.
+
+        Args:
+            name: Skill name (lowercase letters, numbers, hyphens only;
+                max 64 characters; no leading/trailing/consecutive hyphens).
+            description: Human-readable description of the skill
+                (≤1024 characters).
+            license: Optional license name or reference.
+            compatibility: Optional compatibility information
+                (≤500 characters).
+            allowed_tools: Optional space-delimited pre-approved tool names.
+            metadata: Optional arbitrary key-value pairs.
+
+        Raises:
+            ValueError: If the name, description, or compatibility is invalid.
+        """
+        _validate_skill_name(name)
+        _validate_skill_description(name, description)
+        _validate_compatibility(compatibility)
+
+        self.name = name
+        self.description = description
+        self.compatibility = compatibility
+        self.license = license
+        self.allowed_tools = allowed_tools
+        # Shallow-copy to avoid aliasing with caller-owned dict.
+        self.metadata: dict[str, str] | None = dict(metadata) if metadata is not None else None
 
 
 def _validate_skill_name(name: str) -> None:
@@ -570,9 +637,80 @@ def _validate_skill_description(name: str, description: str) -> None:
         raise ValueError("Skill description cannot be empty.")
     if len(description) > MAX_DESCRIPTION_LENGTH:
         raise ValueError(
-            f"Skill '{name}' has an invalid description: "
-            f"Must be {MAX_DESCRIPTION_LENGTH} characters or fewer."
+            f"Skill '{name}' has an invalid description: Must be {MAX_DESCRIPTION_LENGTH} characters or fewer."
         )
+
+
+def _validate_compatibility(compatibility: str | None) -> None:
+    """Validate an optional compatibility value against specification rules.
+
+    Args:
+        compatibility: The optional compatibility value to validate.
+
+    Raises:
+        ValueError: If the value exceeds the maximum allowed length.
+    """
+    if compatibility is not None and len(compatibility) > MAX_COMPATIBILITY_LENGTH:
+        raise ValueError(f"Skill compatibility must be {MAX_COMPATIBILITY_LENGTH} characters or fewer.")
+
+
+def _build_skill_content(
+    name: str,
+    description: str,
+    instructions: str,
+    resources: Sequence[SkillResource] | None = None,
+    scripts: Sequence[SkillScript] | None = None,
+) -> str:
+    """Build XML-structured content for code-defined and class-based skills.
+
+    Produces an XML document containing name, description, instructions,
+    resources, and scripts elements.  Used by both :class:`InlineSkill`
+    and :class:`ClassSkill` to generate their ``content`` property.
+
+    Args:
+        name: The skill name.
+        description: The skill description.
+        instructions: The raw instructions text.
+        resources: Optional resources associated with the skill.
+        scripts: Optional scripts associated with the skill.
+
+    Returns:
+        An XML-structured content string.
+    """
+    result = (
+        f"<name>{xml_escape(name)}</name>\n"
+        f"<description>{xml_escape(description)}</description>\n"
+        "\n"
+        "<instructions>\n"
+        f"{instructions}\n"
+        "</instructions>"
+    )
+
+    if resources:
+        resource_lines = "\n".join(_create_resource_element(r) for r in resources)
+        result += f"\n\n<resources>\n{resource_lines}\n</resources>"
+
+    if scripts:
+        script_lines = "\n".join(_create_script_element(s) for s in scripts)
+        result += f"\n\n<scripts>\n{script_lines}\n</scripts>"
+
+    return result
+
+
+def _create_resource_element(resource: SkillResource) -> str:
+    """Create a self-closing ``<resource …/>`` XML element from a :class:`SkillResource`.
+
+    Args:
+        resource: The resource to create the element from.
+
+    Returns:
+        A single indented XML element string with ``name`` and optional
+        ``description`` attributes.
+    """
+    attrs = f'name="{xml_escape(resource.name, quote=True)}"'
+    if resource.description:
+        attrs += f' description="{xml_escape(resource.description, quote=True)}"'
+    return f"  <resource {attrs}/>"
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
@@ -582,19 +720,14 @@ class InlineSkill(Skill):
     All resources and scripts should be configured before the skill is
     registered with a :class:`SkillsProvider`.
 
-    Attributes:
-        name: Skill name (lowercase letters, numbers, hyphens only).
-        description: Human-readable description of the skill.
-        instructions: The skill instructions text.
-
     Examples:
-        With the decorator:
-
         .. code-block:: python
 
             skill = InlineSkill(
-                name="db-skill",
-                description="Database operations",
+                frontmatter=SkillFrontmatter(
+                    name="db-skill",
+                    description="Database operations",
+                ),
                 instructions="Use this skill for DB tasks.",
             )
 
@@ -607,8 +740,7 @@ class InlineSkill(Skill):
     def __init__(
         self,
         *,
-        name: str,
-        description: str,
+        frontmatter: SkillFrontmatter,
         instructions: str,
         resources: Sequence[SkillResource] | None = None,
         scripts: Sequence[SkillScript] | None = None,
@@ -616,18 +748,24 @@ class InlineSkill(Skill):
         """Initialize an InlineSkill.
 
         Args:
-            name: Skill name (lowercase letters, numbers, hyphens only).
-            description: Human-readable description of the skill (≤1024 chars).
+            frontmatter: Skill specification metadata (name, description,
+                and optional spec fields). Construct a :class:`SkillFrontmatter`
+                with the desired fields.
             instructions: The skill instructions text.
             resources: Pre-built resources to attach to this skill.
             scripts: Pre-built scripts to attach to this skill.
         """
-        super().__init__(name=name, description=description)
+        self._frontmatter = frontmatter
 
         self.instructions = instructions
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
         self._scripts: list[SkillScript] = list(scripts) if scripts is not None else []
         self._cached_content: str | None = None
+
+    @property
+    def frontmatter(self) -> SkillFrontmatter:
+        """The L1 discovery metadata for this skill."""
+        return self._frontmatter
 
     @property
     def content(self) -> str:
@@ -639,25 +777,14 @@ class InlineSkill(Skill):
         if self._cached_content is not None:
             return self._cached_content
 
-        result = (
-            f"<name>{xml_escape(self.name)}</name>\n"
-            f"<description>{xml_escape(self.description)}</description>\n"
-            "\n"
-            "<instructions>\n"
-            f"{self.instructions}\n"
-            "</instructions>"
+        self._cached_content = _build_skill_content(
+            self._frontmatter.name,
+            self._frontmatter.description,
+            self.instructions,
+            self._resources,
+            self._scripts,
         )
-
-        if self._resources:
-            resource_lines = "\n".join(self._create_resource_element(r) for r in self._resources)
-            result += f"\n\n<resources>\n{resource_lines}\n</resources>"
-
-        if self._scripts:
-            script_lines = "\n".join(_create_script_element(s) for s in self._scripts)
-            result += f"\n\n<scripts>\n{script_lines}\n</scripts>"
-
-        self._cached_content = result
-        return result
+        return self._cached_content
 
     @property
     def resources(self) -> list[SkillResource]:
@@ -668,22 +795,6 @@ class InlineSkill(Skill):
     def scripts(self) -> list[SkillScript]:
         """Mutable list of :class:`SkillScript` instances."""
         return self._scripts
-
-    @staticmethod
-    def _create_resource_element(resource: SkillResource) -> str:
-        """Create a self-closing ``<resource …/>`` XML element from an :class:`SkillResource`.
-
-        Args:
-            resource: The resource to create the element from.
-
-        Returns:
-            A single indented XML element string with ``name`` and optional
-            ``description`` attributes.
-        """
-        attrs = f'name="{xml_escape(resource.name, quote=True)}"'
-        if resource.description:
-            attrs += f' description="{xml_escape(resource.description, quote=True)}"'
-        return f"  <resource {attrs}/>"
 
     def resource(
         self,
@@ -705,8 +816,7 @@ class InlineSkill(Skill):
 
         Keyword Args:
             name: Resource name override.  Defaults to ``func.__name__``.
-            description: Resource description override.  Defaults to the
-                function's docstring (via :func:`inspect.getdoc`).
+            description: Resource description override.  Defaults to ``None``.
 
         Returns:
             The original function unchanged, or a secondary decorator when
@@ -732,7 +842,7 @@ class InlineSkill(Skill):
 
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
             resource_name = name or f.__name__
-            resource_description = description or (inspect.getdoc(f) or None)
+            resource_description = description
             self._resources.append(
                 InlineSkillResource(
                     name=resource_name,
@@ -766,8 +876,7 @@ class InlineSkill(Skill):
 
         Keyword Args:
             name: Script name override.  Defaults to ``func.__name__``.
-            description: Script description override.  Defaults to the
-                function's docstring (via :func:`inspect.getdoc`).
+            description: Script description override.  Defaults to ``None``.
 
         Returns:
             The original function unchanged, or a secondary decorator when
@@ -794,7 +903,7 @@ class InlineSkill(Skill):
 
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
             script_name = name or f.__name__
-            script_description = description or (inspect.getdoc(f) or None)
+            script_description = description
             self._scripts.append(
                 InlineSkillScript(
                     name=script_name,
@@ -809,21 +918,437 @@ class InlineSkill(Skill):
         return decorator(func)
 
 
+def _make_method_name(method_name: str) -> str:
+    """Convert a Python method name to a skill resource/script name.
+
+    Replaces underscores with hyphens to match the skill naming convention.
+
+    Args:
+        method_name: The Python method name (e.g. ``"conversion_table"``).
+
+    Returns:
+        The converted name (e.g. ``"conversion-table"``).
+    """
+    return method_name.replace("_", "-").strip("-")
+
+
+def _validate_member_name(name: str, kind: str) -> None:
+    """Validate a resource or script name at decoration time.
+
+    Args:
+        name: The name to validate.
+        kind: ``"resource"`` or ``"script"`` — used in error messages.
+
+    Raises:
+        ValueError: If the name is empty, too long, or contains invalid characters.
+    """
+    if not name or not name.strip():
+        raise ValueError(f"@ClassSkill.{kind} name cannot be empty.")
+    if len(name) > MAX_NAME_LENGTH or not VALID_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid @ClassSkill.{kind} name '{name}': Must be {MAX_NAME_LENGTH} characters or fewer, "
+            "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen "
+            "or contain consecutive hyphens."
+        )
+
+
+def _discover_marked_members(cls: type, marker_attr: str) -> list[tuple[str, dict[str, Any]]]:
+    """Scan a class for methods or properties stamped with a marker attribute.
+
+    Checks both regular callable attributes (via ``dir``) and ``property``
+    descriptors (via ``cls.__dict__``) whose ``fget`` carries the marker.
+
+    Args:
+        cls: The class to scan.
+        marker_attr: The marker attribute name to look for (e.g.
+            ``"_skill_resource_marker"``).
+
+    Returns:
+        A list of ``(member_name, marker_dict)`` tuples.
+    """
+    results: list[tuple[str, dict[str, Any]]] = []
+    seen: set[str] = set()
+
+    # Walk the MRO so that property-resources defined on a parent class
+    # are also discovered.  ``cls.__dict__`` only sees the leaf class.
+    for klass in cls.__mro__:
+        for attr_name, attr_value in klass.__dict__.items():
+            if attr_name in seen:
+                continue
+            if (
+                isinstance(attr_value, property)
+                and attr_value.fget is not None
+                and hasattr(attr_value.fget, marker_attr)
+            ):
+                results.append((attr_name, getattr(attr_value.fget, marker_attr)))
+                seen.add(attr_name)
+
+    # Check regular callable attributes.
+    for attr_name in dir(cls):
+        if attr_name in seen:
+            continue
+        try:
+            attr = getattr(cls, attr_name, None)
+        except Exception:
+            # Some descriptors (e.g. abstract properties) may raise on access.
+            logger.warning("Skipping '%s' during skill discovery: descriptor raised on access", attr_name)
+            attr = None
+        if attr is not None and callable(attr) and hasattr(attr, marker_attr):
+            results.append((attr_name, getattr(attr, marker_attr)))
+    return results
+
+
+@experimental(feature_id=ExperimentalFeature.SKILLS)
+class ClassSkill(Skill, ABC):
+    """Abstract base class for defining skills as reusable Python classes.
+
+    Inherit from this class to create a self-contained skill definition.
+    Override :attr:`instructions` to provide the skill body.
+
+    Resources and scripts can be defined in two ways:
+
+    - **Decorator-based (recommended):** Mark methods with
+      :meth:`ClassSkill.resource` and :meth:`ClassSkill.script` decorators
+      for automatic discovery.
+    - **Explicit override:** Override the :attr:`resources` and
+      :attr:`scripts` properties, constructing :class:`InlineSkillResource`
+      and :class:`InlineSkillScript` instances directly.
+
+    Class-based skills can be distributed via shared libraries or PyPI
+    packages, making them easy to reuse across projects.
+
+    Examples:
+        Decorator-based (recommended):
+
+        .. code-block:: python
+
+            class UnitConverterSkill(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(
+                        frontmatter=SkillFrontmatter(
+                            name="unit-converter",
+                            description="Convert between common units.",
+                        ),
+                    )
+
+                @property
+                def instructions(self) -> str:
+                    return "Use this skill to convert units..."
+
+                @ClassSkill.resource(name="table")
+                def conversion_table(self) -> str:
+                    return "| From | To | Factor |..."
+
+                @ClassSkill.script(name="convert")
+                def convert(self, value: float, factor: float) -> str:
+                    return json.dumps({"result": round(value * factor, 4)})
+
+        Explicit override:
+
+        .. code-block:: python
+
+            class UnitConverterSkill(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(
+                        frontmatter=SkillFrontmatter(
+                            name="unit-converter",
+                            description="Convert between common units.",
+                        ),
+                    )
+
+                @property
+                def instructions(self) -> str:
+                    return "Use this skill to convert units..."
+
+                @property
+                def resources(self) -> list[SkillResource]:
+                    return [
+                        InlineSkillResource(name="table", content="| From | To | Factor |..."),
+                    ]
+
+                @property
+                def scripts(self) -> list[SkillScript]:
+                    return [InlineSkillScript(name="convert", function=convert_fn)]
+    """
+
+    def __init__(
+        self,
+        *,
+        frontmatter: SkillFrontmatter,
+    ) -> None:
+        """Initialize a ClassSkill.
+
+        Args:
+            frontmatter: Skill specification metadata (name, description,
+                and optional spec fields). Construct a :class:`SkillFrontmatter`
+                with the desired fields.
+        """
+        self._frontmatter = frontmatter
+        self._cached_content: str | None = None
+        self._cached_resources: list[SkillResource] | None = None
+        self._cached_scripts: list[SkillScript] | None = None
+
+    @property
+    def frontmatter(self) -> SkillFrontmatter:
+        """The L1 discovery metadata for this skill."""
+        return self._frontmatter
+
+    @staticmethod
+    def resource(
+        func: Callable[..., Any] | None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Any:
+        """Decorator that marks a method or property as a skill resource for auto-discovery.
+
+        When applied to a method or property on a :class:`ClassSkill` subclass,
+        it is automatically discovered and registered as an
+        :class:`InlineSkillResource`.  Methods are invoked each time the
+        resource is read.  Properties are evaluated via their getter.
+
+        Can be applied to a method directly, or stacked with ``@property``
+        (place ``@property`` first, ``@ClassSkill.resource`` second).
+
+        Supports bare usage (``@ClassSkill.resource``) and parameterized usage
+        (``@ClassSkill.resource(name="custom", description="...")``).
+
+        Args:
+            func: The function being decorated.  Populated automatically when
+                the decorator is applied without parentheses.
+
+        Keyword Args:
+            name: Resource name override.  Defaults to the method name with
+                underscores replaced by hyphens.
+            description: Resource description.  Defaults to ``None``.
+
+        Examples:
+            On a method:
+
+            .. code-block:: python
+
+                @ClassSkill.resource(name="conversion-table")
+                def get_table(self) -> str:
+                    return "..."
+
+            On a property:
+
+            .. code-block:: python
+
+                @property
+                @ClassSkill.resource
+                def conversion_table(self) -> str:
+                    return "..."
+        """
+
+        def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+            if isinstance(f, (property, classmethod, staticmethod)):
+                raise TypeError(
+                    "@ClassSkill.resource must be applied before @property, @classmethod, or @staticmethod. "
+                    "Place @property first, then @ClassSkill.resource."
+                )
+            if name is not None:
+                _validate_member_name(name, "resource")
+            f._skill_resource_marker = {  # type: ignore[attr-defined]
+                "name": name,
+                "description": description,
+            }
+            return f
+
+        if func is None:
+            return decorator
+        return decorator(func)
+
+    @staticmethod
+    def script(
+        func: Callable[..., Any] | None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Any:
+        """Decorator that marks a method as a skill script for auto-discovery.
+
+        When applied to a method on a :class:`ClassSkill` subclass, the method is
+        automatically discovered and registered as an :class:`InlineSkillScript`.
+        The method's parameters (excluding ``self``) are used to generate a JSON
+        schema, and the method is invoked in-process when the script is run.
+
+        Supports bare usage (``@ClassSkill.script``) and parameterized usage
+        (``@ClassSkill.script(name="custom", description="...")``).
+
+        Args:
+            func: The function being decorated.  Populated automatically when
+                the decorator is applied without parentheses.
+
+        Keyword Args:
+            name: Script name override.  Defaults to the method name with
+                underscores replaced by hyphens.
+            description: Script description.  Defaults to ``None``.
+
+        Examples:
+            .. code-block:: python
+
+                @ClassSkill.script(name="convert")
+                def convert(self, value: float, factor: float) -> str:
+                    return json.dumps({"result": round(value * factor, 4)})
+        """
+
+        def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+            if isinstance(f, (property, classmethod, staticmethod)):
+                raise TypeError("@ClassSkill.script must be applied before @property, @classmethod, or @staticmethod.")
+            if name is not None:
+                _validate_member_name(name, "script")
+            f._skill_script_marker = {  # type: ignore[attr-defined]
+                "name": name,
+                "description": description,
+            }
+            return f
+
+        if func is None:
+            return decorator
+        return decorator(func)
+
+    @property
+    @abstractmethod
+    def instructions(self) -> str:
+        """The raw instructions text for this skill.
+
+        Subclasses must override this property to provide the skill body.
+        """
+        ...
+
+    @property
+    def resources(self) -> list[SkillResource]:
+        """Resources discovered from :meth:`ClassSkill.resource`-decorated methods.
+
+        On first access, scans the class for methods marked with the
+        :meth:`ClassSkill.resource` decorator and instantiates
+        :class:`InlineSkillResource` instances from them.
+        The result is cached after the first access.
+
+        Override this property to provide resources explicitly instead of
+        using decorator-based discovery.
+        """
+        if self._cached_resources is not None:
+            return list(self._cached_resources)
+
+        resources: list[SkillResource] = []
+        seen_names: set[str] = set()
+
+        for attr_name, attr in _discover_marked_members(type(self), "_skill_resource_marker"):
+            marker: dict[str, Any] = attr
+            resource_name = marker.get("name") or _make_method_name(attr_name)
+            if resource_name in seen_names:
+                raise ValueError(
+                    f"Skill '{self._frontmatter.name}' already has a resource named '{resource_name}'. "
+                    "Ensure each @ClassSkill.resource has a unique name."
+                )
+            seen_names.add(resource_name)
+
+            # Use inspect.getattr_static to check the descriptor type without
+            # triggering it, and walk the MRO so inherited properties are found.
+            static_attr = inspect.getattr_static(self, attr_name, None)
+            is_property = isinstance(static_attr, property)
+            resource_description = marker.get("description")
+
+            if is_property:
+                # Property — use a lambda that reads the property value each time.
+                # We capture attr_name to avoid late-binding issues.
+                # Do NOT call getattr here to avoid triggering the getter during discovery.
+                resource_func = (lambda name: lambda: getattr(self, name))(attr_name)
+                resources.append(
+                    InlineSkillResource(
+                        name=resource_name,
+                        function=resource_func,
+                        description=resource_description,
+                    )
+                )
+            else:
+                # Regular method — use the bound method directly.
+                bound_method = getattr(self, attr_name)
+                resources.append(
+                    InlineSkillResource(
+                        name=resource_name,
+                        function=bound_method,
+                        description=resource_description,
+                    )
+                )
+
+        self._cached_resources = resources
+        return list(self._cached_resources)
+
+    @property
+    def scripts(self) -> list[SkillScript]:
+        """Scripts discovered from :meth:`ClassSkill.script`-decorated methods.
+
+        On first access, scans the class for methods marked with the
+        :meth:`ClassSkill.script` decorator and instantiates
+        :class:`InlineSkillScript` instances from them.
+        The result is cached after the first access.
+
+        Override this property to provide scripts explicitly instead of
+        using decorator-based discovery.
+        """
+        if self._cached_scripts is not None:
+            return list(self._cached_scripts)
+
+        scripts: list[SkillScript] = []
+        seen_names: set[str] = set()
+
+        for attr_name, attr in _discover_marked_members(type(self), "_skill_script_marker"):
+            marker: dict[str, Any] = attr
+            script_name = marker.get("name") or _make_method_name(attr_name)
+            if script_name in seen_names:
+                raise ValueError(
+                    f"Skill '{self._frontmatter.name}' already has a script named '{script_name}'. "
+                    "Ensure each @ClassSkill.script has a unique name."
+                )
+            seen_names.add(script_name)
+
+            bound_method = getattr(self, attr_name)
+            script_description = marker.get("description")
+            scripts.append(
+                InlineSkillScript(
+                    name=script_name,
+                    function=bound_method,
+                    description=script_description,
+                )
+            )
+
+        self._cached_scripts = scripts
+        return list(self._cached_scripts)
+
+    @property
+    def content(self) -> str:
+        """Synthesized XML content containing name, description, instructions, resources, and scripts.
+
+        The result is cached after the first access.
+        """
+        if self._cached_content is not None:
+            return self._cached_content
+
+        self._cached_content = _build_skill_content(
+            self._frontmatter.name,
+            self._frontmatter.description,
+            self.instructions,
+            self.resources,
+            self.scripts,
+        )
+        return self._cached_content
+
+
 @experimental(feature_id=ExperimentalFeature.SKILLS)
 class FileSkill(Skill):
     """A :class:`Skill` discovered from a filesystem directory backed by a SKILL.md file.
 
     Attributes:
-        name: Skill name (lowercase letters, numbers, hyphens only).
-        description: Human-readable description of the skill.
         path: Absolute path to the directory containing this skill.
     """
 
     def __init__(
         self,
         *,
-        name: str,
-        description: str,
+        frontmatter: SkillFrontmatter,
         content: str,
         path: str,
         resources: Sequence[SkillResource] | None = None,
@@ -832,24 +1357,46 @@ class FileSkill(Skill):
         """Initialize a FileSkill.
 
         Args:
-            name: Skill name (lowercase letters, numbers, hyphens only).
-            description: Human-readable description of the skill (≤1024 chars).
+            frontmatter: Skill specification metadata parsed from the
+                SKILL.md file's YAML frontmatter (name, description,
+                and optional spec fields).
             content: The full raw SKILL.md file content including YAML frontmatter.
             path: Absolute path to the skill directory on disk.
             resources: Resources discovered for this skill.
             scripts: Scripts discovered for this skill.
         """
-        super().__init__(name=name, description=description)
+        self._frontmatter = frontmatter
 
         self._content = content
         self.path = path
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
         self._scripts: list[SkillScript] = list(scripts) if scripts is not None else []
+        self._cached_content: str | None = None
+
+    @property
+    def frontmatter(self) -> SkillFrontmatter:
+        """The L1 discovery metadata for this skill."""
+        return self._frontmatter
 
     @property
     def content(self) -> str:
-        """The skill content provided at construction time."""
-        return self._content
+        """The skill content with appended scripts block.
+
+        When scripts are present, a ``<scripts>`` XML block is appended
+        to the raw SKILL.md content so that the LLM can discover each
+        script's ``<parameters_schema>``.
+
+        The result is cached after the first access.  Adding scripts
+        after the first access will not be reflected.
+        """
+        if self._cached_content is not None:
+            return self._cached_content
+        if not self._scripts:
+            self._cached_content = self._content
+        else:
+            script_lines = "\n".join(_create_script_element(s) for s in self._scripts)
+            self._cached_content = f"{self._content}\n\n<scripts>\n{script_lines}\n</scripts>"
+        return self._cached_content
 
     @property
     def resources(self) -> list[SkillResource]:
@@ -884,7 +1431,9 @@ class SkillScriptRunner(Protocol):
     satisfies this protocol.
     """
 
-    def __call__(self, skill: FileSkill, script: FileSkillScript, args: dict[str, Any] | None = None) -> Any:
+    def __call__(
+        self, skill: FileSkill, script: FileSkillScript, args: dict[str, Any] | list[str] | None = None
+    ) -> Any:
         """Run a skill script.
 
         The :class:`SkillsProvider` resolves skill and script names
@@ -894,7 +1443,7 @@ class SkillScriptRunner(Protocol):
         Args:
             skill: The file-based skill that owns the script.
             script: The file-based script to run.
-            args: Optional keyword arguments for the script.
+            args: Optional arguments for the script.
 
         Returns:
             The result. May be any type; the framework
@@ -910,6 +1459,7 @@ SKILL_FILE_NAME: Final[str] = "SKILL.md"
 MAX_SEARCH_DEPTH: Final[int] = 2
 MAX_NAME_LENGTH: Final[int] = 64
 MAX_DESCRIPTION_LENGTH: Final[int] = 1024
+MAX_COMPATIBILITY_LENGTH: Final[int] = 500
 DEFAULT_RESOURCE_EXTENSIONS: Final[tuple[str, ...]] = (
     ".md",
     ".json",
@@ -921,6 +1471,13 @@ DEFAULT_RESOURCE_EXTENSIONS: Final[tuple[str, ...]] = (
 )
 DEFAULT_SCRIPT_EXTENSIONS: Final[tuple[str, ...]] = (".py",)
 
+# "." means the skill directory root itself (files directly in the skill folder).
+ROOT_DIRECTORY_INDICATOR: Final[str] = "."
+
+# Standard subdirectory names per https://agentskills.io/specification#directory-structure
+DEFAULT_RESOURCE_DIRECTORIES: Final[tuple[str, ...]] = ("references", "assets")
+DEFAULT_SCRIPT_DIRECTORIES: Final[tuple[str, ...]] = ("scripts",)
+
 # region Patterns and prompt template
 
 # Matches YAML frontmatter delimited by "---" lines.
@@ -930,16 +1487,122 @@ FRONTMATTER_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
-# Matches YAML "key: value" lines. Group 1 = key, Group 2 = quoted value,
-# Group 3 = unquoted value.
+# Matches top-level YAML "key: value" lines (unindented). Group 1 = key,
+# Group 2 = quoted value, Group 3 = unquoted value. Only matches keys at
+# column 0 so that indented children (e.g. under "metadata:") are not
+# mistakenly captured as top-level fields.
 YAML_KV_RE = re.compile(
-    r"^\s*(\w+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
+    r"^([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
+    re.MULTILINE,
+)
+
+# Matches a YAML "metadata:" block followed by indented key-value pairs.
+YAML_METADATA_BLOCK_RE = re.compile(
+    r"^metadata\s*:\s*$\n((?:[ \t]+\S.*\n?)+)",
+    re.MULTILINE,
+)
+
+# Matches indented "key: value" lines within a metadata block.
+YAML_INDENTED_KV_RE = re.compile(
+    r"^\s+([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
     re.MULTILINE,
 )
 
 # Validates skill names: lowercase letters, numbers, hyphens only;
 # must not start or end with a hyphen, and must not contain consecutive hyphens.
 VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$")
+
+# Block scalar indicator characters recognised by the lightweight YAML parser.
+_BLOCK_SCALAR_INDICATORS = ("|", ">")
+
+
+def _parse_yaml_scalar_value(yaml_content: str, kv_match: re.Match[str]) -> str:
+    """Resolve the scalar value for an unquoted YAML key-value match.
+
+    If the captured value starts with a YAML block scalar indicator (``|`` or
+    ``>``), the function reads subsequent indented continuation lines, strips
+    the common leading indentation, and joins them according to the scalar
+    style (literal preserves newlines, folded replaces them with spaces).
+
+    Chomping indicators are respected per YAML 1.2 §8.1.1.2:
+
+    * ``-`` (strip) — final line break and trailing empty lines excluded
+    * ``+`` (keep) — final line break and any trailing empty lines preserved
+    * default (clip) — final line break preserved, trailing empty lines excluded
+
+    For plain (non-block-scalar) values the captured text is returned as-is.
+    Note: explicit indentation indicators (e.g. ``|2``) are not supported;
+    indentation is auto-detected from the common leading whitespace.
+    """
+    value: str = kv_match.group(3)
+
+    if not value or value[0] not in _BLOCK_SCALAR_INDICATORS:
+        return value
+
+    scalar_style = value[0]
+    keep_trailing_newline = len(value) > 1 and value[1] == "+"
+    strip_trailing_newline = len(value) > 1 and value[1] == "-"
+
+    # Find the start of the next line after this key-value match.
+    next_line_start = yaml_content.find("\n", kv_match.end())
+    if next_line_start < 0:
+        return value
+    next_line_start += 1  # skip the newline character itself
+
+    # Collect indented continuation lines (or blank lines within the block).
+    block_lines: list[str] = []
+    pos = next_line_start
+    while pos < len(yaml_content):
+        line_end = yaml_content.find("\n", pos)
+        if line_end < 0:
+            line = yaml_content[pos:]
+            line_end = len(yaml_content)
+        else:
+            line = yaml_content[pos:line_end]
+
+        if not line or line.isspace():
+            # Blank / whitespace-only lines are part of the block.
+            block_lines.append("")
+            pos = line_end + 1 if line_end < len(yaml_content) else line_end
+            continue
+
+        if line[0] not in (" ", "\t"):
+            # Non-indented, non-blank line — end of the block.
+            break
+
+        block_lines.append(line)
+        pos = line_end + 1 if line_end < len(yaml_content) else line_end
+
+    # Strip trailing blank lines collected from the block.
+    while block_lines and block_lines[-1] == "":
+        block_lines.pop()
+
+    if not block_lines:
+        return ""
+
+    # Determine the common leading indentation across non-empty lines.
+    # Only space/tab characters count as indentation (matches YAML semantics).
+    def _indent_width(s: str) -> int:
+        i = 0
+        while i < len(s) and s[i] in (" ", "\t"):
+            i += 1
+        return i
+
+    common_indent = min(_indent_width(line) for line in block_lines if line)
+    normalized = [line[common_indent:] if line else "" for line in block_lines]
+
+    # Literal preserves newlines; folded joins non-empty lines with spaces.
+    parsed = "\n".join(normalized) if scalar_style == "|" else " ".join(line for line in normalized if line)
+
+    if keep_trailing_newline:
+        return parsed + "\n"
+    if strip_trailing_newline:
+        return parsed
+    # Clip (default): literal gets a trailing newline, folded does not.
+    if scalar_style == "|":
+        return parsed + "\n"
+    return parsed
+
 
 # Default system prompt template for advertising available skills to the model.
 # Use {skills} as the placeholder for the generated skills XML list.
@@ -1027,7 +1690,7 @@ class SkillsProvider(ContextProvider):
                         FileSkillsSource("./skills", script_runner=my_runner),
                         InMemorySkillsSource([my_code_skill]),
                     ]),
-                    predicate=lambda s: s.name != "internal",
+                    predicate=lambda s: s.frontmatter.name != "internal",
                 )
             )
             provider = SkillsProvider(source)
@@ -1126,6 +1789,8 @@ class SkillsProvider(ContextProvider):
         script_runner: SkillScriptRunner | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
+        resource_directories: Sequence[str] | None = None,
+        script_directories: Sequence[str] | None = None,
         instruction_template: str | None = None,
         require_script_approval: bool = False,
         disable_caching: bool = False,
@@ -1148,6 +1813,15 @@ class SkillsProvider(ContextProvider):
                 ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``.
             script_extensions: File extensions recognized as discoverable
                 scripts.  Defaults to ``(".py",)``.
+            resource_directories: Relative directory paths to scan for
+                resource files within each skill directory.  Use ``"."``
+                to include files at the skill root level.  Defaults to
+                ``("references", "assets")`` per the agentskills.io
+                specification.
+            script_directories: Relative directory paths to scan for
+                script files within each skill directory.  Use ``"."``
+                to include files at the skill root level.  Defaults to
+                ``("scripts",)`` per the agentskills.io specification.
             instruction_template: Custom system-prompt template for
                 advertising skills.  Must contain a ``{skills}`` placeholder.
                 Uses a built-in template when ``None``.
@@ -1177,6 +1851,8 @@ class SkillsProvider(ContextProvider):
                 script_runner=script_runner,
                 resource_extensions=resource_extensions,
                 script_extensions=script_extensions,
+                resource_directories=resource_directories,
+                script_directories=script_directories,
             )
         )
         return cls(
@@ -1262,10 +1938,10 @@ class SkillsProvider(ContextProvider):
 
         lines: list[str] = []
         # Sort by name for deterministic output
-        for skill in sorted(skills, key=lambda s: s.name):
+        for skill in sorted(skills, key=lambda s: s.frontmatter.name):
             lines.append("  <skill>")
-            lines.append(f"    <name>{xml_escape(skill.name)}</name>")
-            lines.append(f"    <description>{xml_escape(skill.description)}</description>")
+            lines.append(f"    <name>{xml_escape(skill.frontmatter.name)}</name>")
+            lines.append(f"    <description>{xml_escape(skill.frontmatter.description)}</description>")
             lines.append("  </skill>")
 
         return template.format(
@@ -1438,7 +2114,7 @@ class SkillsProvider(ContextProvider):
         if include_script_runner_tool:
 
             async def _run_script(
-                skill_name: str, script_name: str, args: dict[str, Any] | None = None, **kwargs: Any
+                skill_name: str, script_name: str, args: dict[str, Any] | list[str] | None = None, **kwargs: Any
             ) -> Any:
                 return await self._run_skill_script(skills, skill_name, script_name, args, **kwargs)
 
@@ -1461,12 +2137,31 @@ class SkillsProvider(ContextProvider):
                                 ),
                             },
                             "args": {
-                                "type": ["object", "null"],
-                                "additionalProperties": True,
+                                "oneOf": [
+                                    {
+                                        "type": "object",
+                                        "additionalProperties": True,
+                                        "description": (
+                                            "Named arguments as key-value pairs "
+                                            '(e.g. {"length": 24, "uppercase": true}).'
+                                        ),
+                                    },
+                                    {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "description": (
+                                            "Positional CLI arguments as a string array "
+                                            '(e.g. ["input.docx", "--output", "result.idx"]).'
+                                        ),
+                                    },
+                                    {"type": "null"},
+                                ],
                                 "default": None,
                                 "description": (
-                                    "Arguments to pass to the script as key-value pairs. "
-                                    "Use parameter names as keys without leading dashes "
+                                    "Arguments to pass to the script. "
+                                    "Use an array of strings for CLI-style positional arguments "
+                                    '(e.g. ["input.docx", "--output", "result.idx"]), '
+                                    "or an object for named parameters "
                                     '(e.g. {"length": 24, "uppercase": true}). '
                                     "How these values are mapped to the underlying script "
                                     "is determined by the script implementation or configured runner."
@@ -1484,7 +2179,7 @@ class SkillsProvider(ContextProvider):
     def _find_skill(skills: Sequence[Skill], name: str) -> Skill | None:
         """Find a skill by name (case-insensitive linear scan)."""
         name_lower = name.lower()
-        return next((s for s in skills if s.name.lower() == name_lower), None)
+        return next((s for s in skills if s.frontmatter.name.lower() == name_lower), None)
 
     def _load_skill(self, skills: Sequence[Skill], skill_name: str) -> str:
         """Return the full content for the named skill.
@@ -1516,7 +2211,7 @@ class SkillsProvider(ContextProvider):
         skills: Sequence[Skill],
         skill_name: str,
         script_name: str,
-        args: dict[str, Any] | None = None,
+        args: dict[str, Any] | list[str] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Run a named script from a skill.
@@ -1528,9 +2223,8 @@ class SkillsProvider(ContextProvider):
             skills: The skills to look up the skill from.
             skill_name: The name of the owning skill.
             script_name: The script name to look up (case-insensitive).
-            args: Optional keyword arguments for the script, provided by the
-                agent/LLM.  These are mapped to the function's declared
-                parameters.
+            args: Optional arguments for the script, provided by the
+                agent/LLM.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs`` (e.g. arguments passed via
                 ``agent.run(user_id="123")``).
@@ -1662,7 +2356,15 @@ class FileSkillsSource(SkillsSource):
 
     Recursively scans the configured *skill_paths* directories for
     ``SKILL.md`` files (up to 2 levels deep), parses their YAML frontmatter,
-    and discovers associated resource and script files from subdirectories.
+    and discovers associated resource and script files from spec-defined
+    subdirectories.
+
+    By default, resources are discovered from ``references/`` and ``assets/``
+    subdirectories, and scripts from ``scripts/``, per the
+    `agentskills.io specification
+    <https://agentskills.io/specification>`_.  Use *resource_directories*
+    and *script_directories* to customize which subdirectories are scanned.
+    Pass ``"."`` to include files at the skill root level.
 
     Security: file-based metadata is XML-escaped before prompt injection,
     and resource reads are guarded against path traversal and symlink escape.
@@ -1676,14 +2378,15 @@ class FileSkillsSource(SkillsSource):
             source = FileSkillsSource(skill_paths="./skills")
             skills = await source.get_skills()
 
-        With a script runner and custom extensions:
+        With a script runner and custom directories:
 
         .. code-block:: python
 
             source = FileSkillsSource(
                 skill_paths=["./skills", "./more-skills"],
                 script_runner=my_runner,
-                script_extensions=(".py", ".sh"),
+                resource_directories=[".", "references", "assets"],
+                script_directories=["scripts"],
             )
     """
 
@@ -1694,12 +2397,14 @@ class FileSkillsSource(SkillsSource):
         script_runner: SkillScriptRunner | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
+        resource_directories: Sequence[str] | None = None,
+        script_directories: Sequence[str] | None = None,
     ) -> None:
         """Initialize a FileSkillsSource.
 
         Args:
             skill_paths: One or more directory paths to search for file-based
-                skills.  Each path may point to an individual skill folder
+                skills.  Each path may point to an individual skill directory
                 (containing ``SKILL.md``) or to a parent that contains skill
                 subdirectories.
 
@@ -1713,6 +2418,18 @@ class FileSkillsSource(SkillsSource):
                 ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``.
             script_extensions: File extensions recognized as discoverable
                 scripts.  Defaults to ``(".py",)``.
+            resource_directories: Relative directory paths to scan for
+                resource files within each skill directory.  Use ``"."``
+                to include files at the skill root level.  Defaults to
+                ``("references", "assets")`` per the
+                `agentskills.io specification
+                <https://agentskills.io/specification>`_.
+            script_directories: Relative directory paths to scan for
+                script files within each skill directory.  Use ``"."``
+                to include files at the skill root level.  Defaults to
+                ``("scripts",)`` per the
+                `agentskills.io specification
+                <https://agentskills.io/specification>`_.
         """
         if isinstance(skill_paths, (str, Path)):
             self._skill_paths: list[str] = [str(skill_paths)]
@@ -1722,6 +2439,17 @@ class FileSkillsSource(SkillsSource):
         self._script_runner = script_runner
         self._resource_extensions = resource_extensions or DEFAULT_RESOURCE_EXTENSIONS
         self._script_extensions = script_extensions or DEFAULT_SCRIPT_EXTENSIONS
+
+        self._resource_directories: tuple[str, ...] = (
+            tuple(FileSkillsSource._validate_and_normalize_directory_names(resource_directories))
+            if resource_directories is not None
+            else DEFAULT_RESOURCE_DIRECTORIES
+        )
+        self._script_directories: tuple[str, ...] = (
+            tuple(FileSkillsSource._validate_and_normalize_directory_names(script_directories))
+            if script_directories is not None
+            else DEFAULT_SCRIPT_DIRECTORIES
+        )
 
     async def get_skills(self) -> list[Skill]:
         """Discover and return all file-based skills from configured paths.
@@ -1743,37 +2471,40 @@ class FileSkillsSource(SkillsSource):
             if parsed is None:
                 continue
 
-            name, description, content = parsed
+            frontmatter, content = parsed
 
-            if name in skills:
+            if frontmatter.name in skills:
                 logger.warning(
                     "Duplicate skill name '%s': skill from '%s' skipped in favor of existing skill",
-                    name,
+                    frontmatter.name,
                     skill_path,
                 )
                 continue
 
             file_skill = FileSkill(
-                name=name,
-                description=description,
+                frontmatter=frontmatter,
                 content=content,
                 path=skill_path,
             )
 
             # Discover and attach file-based resources
-            for rn in FileSkillsSource._discover_resource_files(skill_path, self._resource_extensions):
+            for rn in FileSkillsSource._discover_resource_files(
+                skill_path, self._resource_extensions, self._resource_directories
+            ):
                 resource_full_path = FileSkillsSource._get_validated_resource_path(skill_path, rn)
                 file_skill.resources.append(_FileSkillResource(name=rn, full_path=resource_full_path))
 
             # Discover and attach file-based scripts as SkillScript instances
-            for sn in FileSkillsSource._discover_script_files(skill_path, self._script_extensions):
+            for sn in FileSkillsSource._discover_script_files(
+                skill_path, self._script_extensions, self._script_directories
+            ):
                 script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # noqa: ASYNC240
                 file_skill.scripts.append(
                     FileSkillScript(name=sn, full_path=script_full_path, runner=self._script_runner)
                 )
 
-            skills[file_skill.name] = file_skill
-            logger.info("Loaded skill: %s", file_skill.name)
+            skills[file_skill.frontmatter.name] = file_skill
+            logger.info("Loaded skill: %s", file_skill.frontmatter.name)
 
         logger.info("Successfully loaded %d skills", len(skills))
         return list(skills.values())
@@ -1847,115 +2578,269 @@ class FileSkillsSource(SkillsSource):
         return False
 
     @staticmethod
+    def _validate_and_normalize_directory_names(
+        directories: Sequence[str],
+    ) -> list[str]:
+        """Validate and normalize relative directory names.
+
+        Ensures each entry is a safe relative path.  The ``"."`` root indicator
+        is passed through unchanged.  Entries containing ``..`` segments or
+        representing absolute paths are rejected with a warning and skipped.
+        Empty or whitespace-only entries raise :class:`ValueError`.
+
+        Args:
+            directories: Sequence of relative directory names to validate.
+
+        Returns:
+            A list of validated, normalized directory names.
+
+        Raises:
+            ValueError: If any entry is empty or whitespace-only.
+        """
+        result: list[str] = []
+        for directory in directories:
+            if not directory or not directory.strip():
+                raise ValueError("Directory names must not be empty or whitespace.")
+
+            # Normalize separators: backslash → forward slash, strip leading ./ and trailing /
+            normalized = PurePosixPath(directory.replace("\\", "/")).as_posix()
+
+            # "." and "./" both normalize to "." — treat as root indicator
+            if normalized == ROOT_DIRECTORY_INDICATOR:
+                result.append(ROOT_DIRECTORY_INDICATOR)
+                continue
+
+            # Reject absolute paths (check both POSIX and Windows-style roots
+            # so validation is consistent regardless of the host OS)
+            if os.path.isabs(directory) or normalized.startswith("/") or re.match(r"^[A-Za-z]:[/\\]", directory):
+                logger.warning(
+                    "Skipping directory '%s': absolute paths are not allowed.",
+                    directory,
+                )
+                continue
+
+            # Reject paths containing ".." segments
+            if any(segment == ".." for segment in normalized.split("/")):
+                logger.warning(
+                    "Skipping directory '%s': parent traversal ('..') is not allowed.",
+                    directory,
+                )
+                continue
+
+            result.append(normalized)
+        return result
+
+    @staticmethod
     def _discover_resource_files(
         skill_dir_path: str,
         extensions: tuple[str, ...] = DEFAULT_RESOURCE_EXTENSIONS,
+        directories: tuple[str, ...] = DEFAULT_RESOURCE_DIRECTORIES,
     ) -> list[str]:
-        """Scan a skill directory for resource files matching *extensions*.
+        """Scan configured subdirectories for resource files matching *extensions*.
 
-        Recursively walks *skill_dir_path* and collects files whose extension
-        is in *extensions*, excluding ``SKILL.md`` itself.  Each candidate is
-        validated against path-traversal and symlink-escape checks; unsafe
-        files are skipped with a warning.
+        Scans each directory in *directories* within *skill_dir_path* for files
+        whose extension is in *extensions*, excluding ``SKILL.md`` itself.
+        Use ``"."`` in *directories* to include files at the skill root level.
+        Each candidate is validated against path-traversal and symlink-escape
+        checks; unsafe files are skipped with a warning.
 
         Args:
             skill_dir_path: Absolute path to the skill directory to scan.
             extensions: Tuple of allowed file extensions (e.g. ``(".md", ".json")``).
+            directories: Relative subdirectory paths to scan for resources.
 
         Returns:
-            Relative resource paths (forward-slash-separated) for every
+            Sorted relative resource paths (forward-slash-separated) for every
             discovered file that passes security checks.
         """
         skill_dir = Path(skill_dir_path).absolute()
         root_directory_path = str(skill_dir)
         resources: list[str] = []
         normalized_extensions = {e.lower() for e in extensions}
+        seen_directories: set[str] = set()
 
-        for resource_file in skill_dir.rglob("*"):
-            if not resource_file.is_file():
+        for directory in directories:
+            is_root = directory == ROOT_DIRECTORY_INDICATOR
+            target_dir = skill_dir if is_root else (skill_dir / directory)
+
+            # Deduplicate after resolving to avoid scanning the same directory twice.
+            # Use normcase for case-insensitive dedup on case-insensitive filesystems.
+            resolved_target = str(Path(os.path.normpath(target_dir)).absolute())
+            dedup_key = os.path.normcase(resolved_target)
+            if dedup_key in seen_directories:
+                continue
+            seen_directories.add(dedup_key)
+
+            if not target_dir.is_dir():
                 continue
 
-            if resource_file.name.upper() == SKILL_FILE_NAME.upper():
-                continue
+            # Directory-level containment and symlink checks for non-root directories
+            if not is_root:
+                if not FileSkillsSource._is_path_within_directory(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping resource directory '%s': resolves outside skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
-            if resource_file.suffix.lower() not in normalized_extensions:
-                continue
+                if FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping resource directory '%s': symlink detected in path under skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
-            resource_full_path = str(Path(os.path.normpath(resource_file)).absolute())
-
-            if not FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
+            # Scan top-level files only (non-recursive) within this directory
+            try:
+                entries = list(target_dir.iterdir())
+            except OSError:
                 logger.warning(
-                    "Skipping resource '%s': resolves outside skill directory '%s'",
-                    resource_file,
+                    "Failed to list resource directory '%s' in skill directory '%s'; skipping.",
+                    directory,
                     skill_dir_path,
                 )
                 continue
 
-            if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
-                logger.warning(
-                    "Skipping resource '%s': symlink detected in path under skill directory '%s'",
-                    resource_file,
-                    skill_dir_path,
-                )
-                continue
+            for resource_file in entries:
+                if not resource_file.is_file():
+                    continue
 
-            rel_path = resource_file.relative_to(skill_dir)
-            resources.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
+                if resource_file.name.upper() == SKILL_FILE_NAME.upper():
+                    continue
 
+                if resource_file.suffix.lower() not in normalized_extensions:
+                    continue
+
+                resource_full_path = str(Path(os.path.normpath(resource_file)).absolute())
+
+                # Containment check: file must resolve within the target directory
+                if not FileSkillsSource._is_path_within_directory(resource_full_path, resolved_target):
+                    logger.warning(
+                        "Skipping resource '%s': resolves outside target directory '%s'",
+                        resource_file,
+                        directory,
+                    )
+                    continue
+
+                if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
+                    logger.warning(
+                        "Skipping resource '%s': symlink detected in path under skill directory '%s'",
+                        resource_file,
+                        skill_dir_path,
+                    )
+                    continue
+
+                rel_path = resource_file.relative_to(skill_dir)
+                resources.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
+
+        resources.sort()
         return resources
 
     @staticmethod
     def _discover_script_files(
         skill_dir_path: str,
         extensions: tuple[str, ...] = DEFAULT_SCRIPT_EXTENSIONS,
+        directories: tuple[str, ...] = DEFAULT_SCRIPT_DIRECTORIES,
     ) -> list[str]:
-        """Scan a skill directory for script files matching *extensions*.
+        """Scan configured subdirectories for script files matching *extensions*.
 
-        Recursively walks *skill_dir_path* and collects files whose extension
-        is in *extensions*.  Each candidate is validated against path-traversal
-        and symlink-escape checks; unsafe files are skipped with a warning.
+        Scans each directory in *directories* within *skill_dir_path* for files
+        whose extension is in *extensions*.  Use ``"."`` in *directories* to
+        include files at the skill root level.  Each candidate is validated
+        against path-traversal and symlink-escape checks; unsafe files are
+        skipped with a warning.
 
         Args:
             skill_dir_path: Absolute path to the skill directory to scan.
             extensions: Tuple of allowed script extensions (e.g. ``(".py",)``).
+            directories: Relative subdirectory paths to scan for scripts.
 
         Returns:
-            Relative script paths (forward-slash-separated) for every
+            Sorted relative script paths (forward-slash-separated) for every
             discovered file that passes security checks.
         """
         skill_dir = Path(skill_dir_path).absolute()
         root_directory_path = str(skill_dir)
         scripts: list[str] = []
         normalized_extensions = {e.lower() for e in extensions}
+        seen_directories: set[str] = set()
 
-        for script_file in skill_dir.rglob("*"):
-            if not script_file.is_file():
+        for directory in directories:
+            is_root = directory == ROOT_DIRECTORY_INDICATOR
+            target_dir = skill_dir if is_root else (skill_dir / directory)
+
+            # Deduplicate after resolving to avoid scanning the same directory twice.
+            # Use normcase for case-insensitive dedup on case-insensitive filesystems.
+            resolved_target = str(Path(os.path.normpath(target_dir)).absolute())
+            dedup_key = os.path.normcase(resolved_target)
+            if dedup_key in seen_directories:
+                continue
+            seen_directories.add(dedup_key)
+
+            if not target_dir.is_dir():
                 continue
 
-            if script_file.suffix.lower() not in normalized_extensions:
-                continue
+            # Directory-level containment and symlink checks for non-root directories
+            if not is_root:
+                if not FileSkillsSource._is_path_within_directory(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping script directory '%s': resolves outside skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
-            script_full_path = str(Path(os.path.normpath(script_file)).absolute())
+                if FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping script directory '%s': symlink detected in path under skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
-            if not FileSkillsSource._is_path_within_directory(script_full_path, root_directory_path):
+            # Scan top-level files only (non-recursive) within this directory
+            try:
+                entries = list(target_dir.iterdir())
+            except OSError:
                 logger.warning(
-                    "Skipping script '%s': resolves outside skill directory '%s'",
-                    script_file,
+                    "Failed to list script directory '%s' in skill directory '%s'; skipping.",
+                    directory,
                     skill_dir_path,
                 )
                 continue
 
-            if FileSkillsSource._has_symlink_in_path(script_full_path, root_directory_path):
-                logger.warning(
-                    "Skipping script '%s': symlink detected in path under skill directory '%s'",
-                    script_file,
-                    skill_dir_path,
-                )
-                continue
+            for script_file in entries:
+                if not script_file.is_file():
+                    continue
 
-            rel_path = script_file.relative_to(skill_dir)
-            scripts.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
+                if script_file.suffix.lower() not in normalized_extensions:
+                    continue
 
+                script_full_path = str(Path(os.path.normpath(script_file)).absolute())
+
+                # Containment check: file must resolve within the target directory
+                if not FileSkillsSource._is_path_within_directory(script_full_path, resolved_target):
+                    logger.warning(
+                        "Skipping script '%s': resolves outside target directory '%s'",
+                        script_file,
+                        directory,
+                    )
+                    continue
+
+                if FileSkillsSource._has_symlink_in_path(script_full_path, root_directory_path):
+                    logger.warning(
+                        "Skipping script '%s': symlink detected in path under skill directory '%s'",
+                        script_file,
+                        skill_dir_path,
+                    )
+                    continue
+
+                rel_path = script_file.relative_to(skill_dir)
+                scripts.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
+
+        scripts.sort()
         return scripts
 
     @staticmethod
@@ -1993,10 +2878,7 @@ class FileSkillsSource(SkillsSource):
             raise ValueError(f"Resource file '{resource_name}' not found in skill directory '{skill_dir}'.")
 
         if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
-            raise ValueError(
-                f"Resource file '{resource_name}' "
-                "has a symlink in its path; symlinks are not allowed."
-            )
+            raise ValueError(f"Resource file '{resource_name}' has a symlink in its path; symlinks are not allowed.")
 
         return resource_full_path
 
@@ -2005,8 +2887,9 @@ class FileSkillsSource(SkillsSource):
         name: str | None,
         description: str | None,
         source: str,
+        compatibility: str | None = None,
     ) -> str | None:
-        """Validate a skill's name and description against naming rules.
+        """Validate a skill's name, description, and compatibility against naming rules.
 
         Enforces length limits, character-set restrictions, and non-emptiness
         for both file-based and code-defined skills.
@@ -2016,6 +2899,7 @@ class FileSkillsSource(SkillsSource):
             description: Skill description to validate.
             source: Human-readable label for diagnostics (e.g. a file path
                 or ``"code skill"``).
+            compatibility: Optional compatibility value to validate.
 
         Returns:
             A diagnostic error string if validation fails, or ``None`` if valid.
@@ -2039,24 +2923,32 @@ class FileSkillsSource(SkillsSource):
                 f"Must be {MAX_DESCRIPTION_LENGTH} characters or fewer."
             )
 
+        if compatibility is not None and len(compatibility) > MAX_COMPATIBILITY_LENGTH:
+            return (
+                f"Skill '{name}' from '{source}' has an invalid compatibility: "
+                f"Must be {MAX_COMPATIBILITY_LENGTH} characters or fewer."
+            )
+
         return None
 
     @staticmethod
     def _extract_frontmatter(
         content: str,
         skill_file_path: str,
-    ) -> tuple[str, str] | None:
+    ) -> SkillFrontmatter | None:
         """Extract and validate YAML frontmatter from a SKILL.md file.
 
-        Parses the ``---``-delimited frontmatter block for ``name`` and
-        ``description`` fields.
+        Parses the ``---``-delimited frontmatter block for all
+        `agentskills.io specification <https://agentskills.io/specification>`_
+        fields: ``name``, ``description``, ``license``, ``compatibility``,
+        ``allowed-tools``, and ``metadata``.
 
         Args:
             content: Raw text content of the SKILL.md file.
             skill_file_path: Path to the file (used in diagnostic messages only).
 
         Returns:
-            A ``(name, description)`` tuple on success, or ``None`` if the
+            A :class:`SkillFrontmatter` on success, or ``None`` if the
             frontmatter is missing, malformed, or fails validation.
         """
         match = FRONTMATTER_RE.search(content)
@@ -2067,35 +2959,65 @@ class FileSkillsSource(SkillsSource):
         yaml_content = match.group(1).strip()
         name: str | None = None
         description: str | None = None
+        license_value: str | None = None
+        compatibility: str | None = None
+        allowed_tools: str | None = None
 
         for kv_match in YAML_KV_RE.finditer(yaml_content):
             key = kv_match.group(1)
-            value = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
+            value = (
+                kv_match.group(2) if kv_match.group(2) is not None else _parse_yaml_scalar_value(yaml_content, kv_match)
+            )
 
-            if key.lower() == "name":
+            key_lower = key.lower()
+            if key_lower == "name":
                 name = value
-            elif key.lower() == "description":
+            elif key_lower == "description":
                 description = value
+            elif key_lower == "license":
+                license_value = value
+            elif key_lower == "compatibility":
+                compatibility = value
+            elif key_lower == "allowed-tools":
+                allowed_tools = value
 
-        error = FileSkillsSource._validate_skill_metadata(name, description, skill_file_path)
+        # Parse metadata block (indented key-value pairs under "metadata:").
+        metadata: dict[str, str] | None = None
+        metadata_match = YAML_METADATA_BLOCK_RE.search(yaml_content)
+        if metadata_match:
+            metadata = {}
+            for kv_match in YAML_INDENTED_KV_RE.finditer(metadata_match.group(1)):
+                mk = kv_match.group(1)
+                mv = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
+                metadata[mk] = mv
+
+        error = FileSkillsSource._validate_skill_metadata(name, description, skill_file_path, compatibility)
         if error:
             logger.error(error)
             return None
 
-        # name and description are guaranteed non-None after validation
-        return name, description  # type: ignore[return-value]
+        # name and description are guaranteed non-None after validation;
+        # SkillFrontmatter re-validates as a defense-in-depth invariant.
+        return SkillFrontmatter(
+            name=cast(str, name),
+            description=cast(str, description),
+            license=license_value,
+            compatibility=compatibility,
+            allowed_tools=allowed_tools,
+            metadata=metadata,
+        )
 
     @staticmethod
     def _read_and_parse_skill_file(
         skill_dir_path: str,
-    ) -> tuple[str, str, str] | None:
+    ) -> tuple[SkillFrontmatter, str] | None:
         """Read and parse the SKILL.md file in *skill_dir_path*.
 
         Args:
             skill_dir_path: Absolute path to the directory containing ``SKILL.md``.
 
         Returns:
-            A ``(name, description, content)`` tuple where *content* is the
+            A ``(frontmatter, content)`` tuple where *content* is the
             full raw file text, or ``None`` if the file cannot be read or
             its frontmatter is invalid.
         """
@@ -2107,23 +3029,21 @@ class FileSkillsSource(SkillsSource):
             logger.error("Failed to read SKILL.md at '%s'", skill_file)
             return None
 
-        result = FileSkillsSource._extract_frontmatter(content, str(skill_file))
-        if result is None:
+        frontmatter = FileSkillsSource._extract_frontmatter(content, str(skill_file))
+        if frontmatter is None:
             return None
 
-        name, description = result
-
         dir_name = Path(skill_dir_path).name
-        if name != dir_name:
+        if frontmatter.name != dir_name:
             logger.error(
                 "SKILL.md at '%s' has frontmatter name '%s' that does not match the directory name '%s'; skipping.",
                 skill_file,
-                name,
+                frontmatter.name,
                 dir_name,
             )
             return None
 
-        return name, description, content
+        return frontmatter, content
 
     @staticmethod
     def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
@@ -2271,12 +3191,12 @@ class DeduplicatingSkillsSource(DelegatingSkillsSource):
         result: list[Skill] = []
 
         for skill in skills:
-            key = skill.name.lower()
+            key = skill.frontmatter.name.lower()
             if key in seen:
                 logger.warning(
                     "Duplicate skill name '%s': skill skipped in favor of existing skill '%s'",
-                    skill.name,
-                    seen[key].name,
+                    skill.frontmatter.name,
+                    seen[key].frontmatter.name,
                 )
                 continue
             seen[key] = skill
@@ -2297,7 +3217,7 @@ class FilteringSkillsSource(DelegatingSkillsSource):
 
             filtered = FilteringSkillsSource(
                 inner_source=my_source,
-                predicate=lambda s: s.name != "internal",
+                predicate=lambda s: s.frontmatter.name != "internal",
             )
             skills = await filtered.get_skills()
     """

@@ -152,7 +152,14 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             || options?.AllowBackgroundResponses is true;
         bool skipSimulation = isServiceManaged || isContinuationOrBackground;
 
-        var newMessages = messages as IList<ChatMessage> ?? messages.ToList();
+        // Snapshot the input messages into a private list. The caller (typically
+        // FunctionInvokingChatClient) reuses a single mutable buffer across iterations,
+        // and the streaming path can defer persistence until after the caller has already
+        // mutated that buffer for the next iteration (e.g. on the cooperative early-exit
+        // path NotifyProvidersOfEarlyExitInputAsync). Aliasing the caller's list would
+        // then cause us to persist the wrong messages — losing FunctionResultContent and
+        // corrupting history with dangling FunctionCallContent.
+        var newMessages = messages.ToList();
 
         // When simulating, load history and prepend it. When the service manages
         // history (real ConversationId) or this is a continuation/background run,
@@ -174,45 +181,83 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             throw;
         }
 
-        bool hasUpdates;
+        bool loopExitedNormally = false;
+        bool serviceErrorOccurred = false;
         try
         {
-            hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
-            throw;
-        }
-
-        while (hasUpdates)
-        {
-            var update = enumerator.Current;
-            responseUpdates.Add(update.Clone());
-
-            // If the service returned a real ConversationId on any update, remember that.
-            // Otherwise stamp our sentinel so FICC treats this as service-managed —
-            // unless this is a continuation/background run where the agent handles everything.
-            if (!string.IsNullOrEmpty(update.ConversationId))
-            {
-                isServiceManaged = true;
-            }
-            else if (!skipSimulation)
-            {
-                update.ConversationId = LocalHistoryConversationId;
-            }
-
-            yield return update;
-
+            bool hasUpdates;
             try
             {
                 hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
+                serviceErrorOccurred = true;
                 await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
                 throw;
             }
+
+            while (hasUpdates)
+            {
+                var update = enumerator.Current;
+                responseUpdates.Add(update.Clone());
+
+                // If the service returned a real ConversationId on any update, remember that.
+                // Otherwise stamp our sentinel so FICC treats this as service-managed —
+                // unless this is a continuation/background run where the agent handles everything.
+                if (!string.IsNullOrEmpty(update.ConversationId))
+                {
+                    isServiceManaged = true;
+                }
+                else if (!skipSimulation)
+                {
+                    update.ConversationId = LocalHistoryConversationId;
+                }
+
+                yield return update;
+
+                try
+                {
+                    hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    serviceErrorOccurred = true;
+                    await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
+                    throw;
+                }
+            }
+            loopExitedNormally = true;
+        }
+        finally
+        {
+            // If the iterator was disposed by the consumer before completing — e.g.
+            // ToolApprovalAgent does `yield break` after emitting an approval request — persist
+            // the input messages so that any in-flight FunctionResultContent paired with
+            // previously-persisted FunctionCallContent is not lost between turns. We only do
+            // this on the cooperative-pause path; service errors deliberately do NOT persist
+            // input messages (history of failed calls is the caller's responsibility, e.g.
+            // by retrying or starting from an earlier point).
+            if (!loopExitedNormally && !serviceErrorOccurred)
+            {
+                // Prefer the original cancellation token so cleanup remains responsive; fall
+                // back to None only if the caller's token has already been canceled (otherwise
+                // the notify call would observe the cancellation, throw, and mask the
+                // original early-exit reason).
+                var persistToken = cancellationToken.IsCancellationRequested ? CancellationToken.None : cancellationToken;
+                try
+                {
+                    await NotifyProvidersOfEarlyExitInputAsync(agent, session, newMessages, options, persistToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Best-effort persistence; swallow to avoid masking the original exit reason.
+                }
+            }
+
+            // Always dispose the underlying enumerator on every exit path (normal completion,
+            // exception, or early consumer disposal) to release the underlying HTTP/stream.
+            await enumerator.DisposeAsync().ConfigureAwait(false);
         }
 
         var chatResponse = responseUpdates.ToChatResponse();
@@ -234,6 +279,30 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             // Normal simulated path — set sentinel on session.
             session.ConversationId = LocalHistoryConversationId;
         }
+    }
+
+    /// <summary>
+    /// Notifies <see cref="ChatHistoryProvider"/>s of the input messages only (no response
+    /// messages) on the cooperative early-exit path — e.g. when <c>ToolApprovalAgent</c>
+    /// does <c>yield break</c> after emitting an approval request. This ensures any
+    /// in-flight <see cref="FunctionResultContent"/> paired with previously-persisted
+    /// <see cref="FunctionCallContent"/> is not orphaned in the persisted chat history.
+    /// The notification is routed through the same success channel used at the end of a
+    /// normal run; the providers themselves decide how (or whether) to persist.
+    /// </summary>
+    private static async Task NotifyProvidersOfEarlyExitInputAsync(
+        ChatClientAgent agent,
+        ChatClientAgentSession session,
+        List<ChatMessage> newMessages,
+        ChatOptions? options,
+        CancellationToken cancellationToken)
+    {
+        if (newMessages.Count == 0)
+        {
+            return;
+        }
+
+        await agent.NotifyProvidersOfNewMessagesAsync(session, newMessages, [], options, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

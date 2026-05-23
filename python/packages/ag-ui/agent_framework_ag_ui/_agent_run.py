@@ -49,8 +49,11 @@ from ._run_common import (
     _close_reasoning_block,  # type: ignore
     _emit_content,  # type: ignore
     _extract_resume_payload,  # type: ignore
+    _extract_tool_result_display,  # type: ignore
     _has_only_tool_calls,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
+    _resolve_ui_payload,  # type: ignore
+    _stringify_tool_result,  # type: ignore
 )
 from ._utils import (
     convert_agui_tools_to_agent_framework,
@@ -381,17 +384,23 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
 
 
 def _make_approval_tool_result_events(resolved_approval_results: list[Content]) -> list[ToolCallResultEvent]:
-    """Build TOOL_CALL_RESULT events for tools executed during approval resolution."""
+    """Build TOOL_CALL_RESULT events for tools executed during approval resolution.
+
+    Honors ``TOOL_RESULT_DISPLAY_KEY`` so tools returning
+    ``state_update(..., tool_result=...)`` route the display payload to the UI
+    event even when gated by HITL approval.
+    """
     events: list[ToolCallResultEvent] = []
     for resolved in resolved_approval_results:
         if resolved.call_id:
             raw = resolved.result if resolved.result is not None else ""
-            result_str = raw if isinstance(raw, str) else json.dumps(make_json_safe(raw))
+            llm_str = _stringify_tool_result(raw)
+            ui_str = _resolve_ui_payload(llm_str, _extract_tool_result_display(resolved))
             events.append(
                 ToolCallResultEvent(
                     message_id=generate_event_id(),
                     tool_call_id=resolved.call_id,
-                    content=result_str,
+                    content=ui_str,
                     role="tool",
                 )
             )

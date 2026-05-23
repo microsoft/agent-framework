@@ -9,8 +9,11 @@ import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Sequence
 from contextlib import suppress
+from dataclasses import asdict, is_dataclass
+from pathlib import Path
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from typing import Protocol, cast
 
 from agent_framework import (
@@ -24,12 +27,14 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
 )
+from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseEventStream,
     ResponseProviderProtocol,
     ResponsesServerOptions,
 )
+from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import (
     ApplyPatchToolCallItemParam,
@@ -107,11 +112,13 @@ from azure.ai.agentserver.responses.streaming._builders import (
     ReasoningSummaryPartBuilder,
     TextContentBuilder,
 )
+from mcp import McpError
 from typing_extensions import Any
 
 logger = logging.getLogger(__name__)
 
 
+# region Approval Storage
 class ApprovalStorage(Protocol):
     """Storage for saving function approval requests."""
 
@@ -205,6 +212,80 @@ class FileBasedFunctionApprovalStorage:
         return await asyncio.to_thread(self._load_sync, approval_request_id)
 
 
+def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpointStorage:
+    """Build a ``FileCheckpointStorage`` for ``context_id`` rooted under ``root``.
+
+    ``context_id`` originates from caller-controlled fields such as
+    ``previous_response_id`` or from server-generated fields such as
+    ``conversation_id`` / ``response_id``. In every case it must be treated as
+    an untrusted single path segment: path separators, drive letters, parent
+    references and similar would otherwise let the resulting directory escape
+    the configured checkpoint root (CWE-22). The check resolves the joined
+    path and verifies it stays under the resolved root before any directory is
+    created on disk.
+    """
+    if not isinstance(context_id, str) or not context_id:
+        raise RuntimeError("Invalid checkpoint context id: must be a non-empty string.")
+    # Reject any segment that is not a single safe path component. This covers
+    # POSIX/Windows separators, NUL bytes, drive letters, and all-dot segments
+    # (``.``, ``..``, ``...``, ...). We deliberately do not URL-decode the id
+    # here: the hosting layer never decodes context ids before joining them, so
+    # forms such as ``%2e%2e`` are accepted as literal directory names. Do NOT
+    # add decoding here without re-validating after the decode -- decode-then-
+    # join is exactly the pattern that reintroduces traversal. We also do not
+    # attempt to "sanitize" by stripping characters because that can introduce
+    # collisions between distinct ids.
+    if (
+        "/" in context_id
+        or "\\" in context_id
+        or "\x00" in context_id
+        # All-dot segments (``.``, ``..``, ``...``, ...) reduce to "" after stripping dots.
+        or context_id.strip(".") == ""
+        or os.path.isabs(context_id)
+        or os.path.splitdrive(context_id)[0]
+    ):
+        raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
+
+    root_path = Path(root).resolve()
+    storage_path = (root_path / context_id).resolve()
+    if not storage_path.is_relative_to(root_path):
+        raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
+    return FileCheckpointStorage(storage_path)
+
+
+# endregion Approval Storage
+
+# Foundry Toolbox Auth integration
+# Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
+CONSENT_ERROR_CODE = -32007
+
+
+def consent_url_from_error(exc: BaseException) -> str | None:
+    """Return the consent URL when ``exc`` wraps a Foundry MCP gateway consent error.
+
+    The Agent Framework MCP layer surfaces gateway consent failures by wrapping the underlying
+    ``McpError`` inside an :class:`AgentFrameworkException` (typically a ``ToolExecutionException``
+    raised from ``MCPStreamableHTTPTool.__aenter__``). This helper inspects ``exc.args`` for a
+    wrapped ``McpError`` whose ``error.code`` is :data:`CONSENT_ERROR_CODE`; when found, the
+    consent link the gateway returned in ``error.message`` is returned. Returns ``None`` for
+    anything else, so callers can do ``if (url := consent_url_from_error(ex)) is None: raise``.
+
+    Args:
+        exc: The exception to inspect.
+
+    Returns:
+        The consent URL if ``exc`` wraps a consent ``McpError``, otherwise ``None``.
+    """
+    inner_exception = next((arg for arg in exc.args if isinstance(arg, McpError)), None)
+    if inner_exception is not None and inner_exception.error.code == CONSENT_ERROR_CODE:
+        return inner_exception.error.message
+    return None
+
+
+# endregion Foundry Toolbox Auth integration
+
+
+# region ResponsesHostServer
 class ResponsesHostServer(ResponsesAgentServerHost):
     """A responses server host for an agent."""
 
@@ -273,7 +354,42 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if self.config.is_hosted
             else InMemoryFunctionApprovalStorage()
         )
+        # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
+        # the first request rather than at server startup, so that authentication
+        # failures during MCP connect can be surfaced to the client as an
+        # `oauth_consent_request` stream event instead of crashing the server.
+        self._agent_stack: AsyncExitStack | None = None
+        self._agent_init_lock = asyncio.Lock()
+        self.shutdown_handler(self._cleanup_agent)  # pyright: ignore[reportUnknownMemberType]
         self.response_handler(self._handle_response)  # pyright: ignore[reportUnknownMemberType]
+
+    async def _ensure_agent_ready(self) -> None:
+        """Lazily enter the agent's async context exactly once.
+
+        On failure the partial exit stack is closed and ``_agent_stack`` is left
+        as ``None`` so a subsequent request (e.g. after the user completes OAuth
+        consent) can retry the connection.
+        """
+        if self._agent_stack is not None:
+            return
+        async with self._agent_init_lock:
+            if self._agent_stack is not None:
+                return
+            stack = AsyncExitStack()
+            try:
+                if isinstance(self._agent, AbstractAsyncContextManager):
+                    await stack.enter_async_context(self._agent)
+            except BaseException:
+                await stack.aclose()
+                raise
+            self._agent_stack = stack
+
+    async def _cleanup_agent(self) -> None:
+        """Close the agent's async context. Registered as the server shutdown handler."""
+        stack = self._agent_stack
+        if stack is not None:
+            self._agent_stack = None
+            await stack.aclose()
 
     async def _handle_response(
         self,
@@ -317,45 +433,76 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         else:
             run_kwargs["options"] = chat_options
 
-        if not is_streaming_request:
-            # Run the agent in non-streaming mode
-            response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
-
-            for message in response.messages:
-                for content in message.contents:
-                    async for item in _to_outputs(
-                        response_event_stream,
-                        content,
-                        approval_storage=self._approval_storage,
-                    ):
-                        yield item
-
+        # Lazy-enter the agent (and any MCP tools it owns). The MCP client wraps gateway
+        # consent failures (and other connection-time errors) in AgentFrameworkException; if
+        # one of those is a consent error we surface the consent link to the client through
+        # the already-opened response stream instead of crashing the request. Other exception
+        # types propagate normally so the host can handle / log them.
+        try:
+            await self._ensure_agent_ready()
+        except AgentFrameworkException as ex:
+            consent_url = consent_url_from_error(ex)
+            if consent_url is None:
+                raise
+            logger.warning("OAuth consent required for Foundry MCP gateway.")
+            oauth_item = OAuthConsentRequestOutputItem(
+                id=IdGenerator.new_id("oacr"),
+                consent_link=consent_url,
+                server_label="Foundry Toolbox",
+            )
+            builder = response_event_stream.add_output_item(oauth_item.id)
+            yield builder.emit_added(oauth_item)
+            yield builder.emit_done(oauth_item)
             yield response_event_stream.emit_completed()
             return
 
         # Track the current active output item builder for streaming;
         # lazily created on matching content, closed when a different type arrives.
-        tracker = _OutputItemTracker(response_event_stream)
+        tracker: _OutputItemTracker | None = _OutputItemTracker(response_event_stream) if is_streaming_request else None
 
-        # Run the agent in streaming mode
-        async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
-            for content in update.contents:
-                for event in tracker.handle(content):
+        try:
+            if not is_streaming_request:
+                # Run the agent in non-streaming mode
+                response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
+
+                for message in response.messages:
+                    for content in message.contents:
+                        async for item in _to_outputs(
+                            response_event_stream,
+                            content,
+                            approval_storage=self._approval_storage,
+                        ):
+                            yield item
+                yield response_event_stream.emit_completed()
+            else:
+                if tracker is None:  # pragma: no cover - defensive, set above
+                    raise RuntimeError("Streaming tracker was not initialized.")
+                # Run the agent in streaming mode
+                async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
+                    for content in update.contents:
+                        for event in tracker.handle(content):
+                            yield event
+                        if tracker.needs_async:
+                            async for item in _to_outputs(
+                                response_event_stream,
+                                content,
+                                approval_storage=self._approval_storage,
+                            ):
+                                yield item
+                            tracker.needs_async = False
+
+                # Close any remaining active builder
+                for event in tracker.close():
                     yield event
-                if tracker.needs_async:
-                    async for item in _to_outputs(
-                        response_event_stream,
-                        content,
-                        approval_storage=self._approval_storage,
-                    ):
-                        yield item
-                    tracker.needs_async = False
-
-        # Close any remaining active builder
-        for event in tracker.close():
-            yield event
-
-        yield response_event_stream.emit_completed()
+                yield response_event_stream.emit_completed()
+        except Exception:
+            # Drain any in-progress streaming builder before emitting consent
+            # so the resulting stream stays well-formed.
+            if tracker is not None:
+                for event in tracker.close():
+                    yield event
+                yield response_event_stream.emit_completed()
+            raise
 
     async def _handle_inner_workflow(
         self,
@@ -387,6 +534,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
 
+        # Workflow agents are not async context managers in any built-in path,
+        # but call _ensure_agent_ready for symmetry with the regular path so
+        # any future async resources owned by the workflow are entered here.
+        await self._ensure_agent_ready()
+
         # Determine the latest checkpoint (if any) so we can resume the
         # workflow's prior state for this turn. The directory is keyed by
         # the inbound context id (conversation_id when set, otherwise
@@ -400,7 +552,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         latest_checkpoint_id: str | None = None
         restore_storage: FileCheckpointStorage | None = None
         if context_id is not None:
-            restore_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
+            restore_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
             latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
                 latest_checkpoint_id = latest_checkpoint.checkpoint_id
@@ -414,7 +566,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # supplied, restore_storage points at the *prior* response's
         # directory and write_storage points at the *current* response's.
         write_context_id = context.conversation_id or context.response_id
-        write_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, write_context_id))
+        write_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, write_context_id)
 
         # Multi-turn pattern: when we have a prior checkpoint, restore it
         # first (drive the workflow back to idle with prior state intact),
@@ -508,6 +660,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if checkpoint.checkpoint_id != latest_checkpoint.checkpoint_id:
                     await checkpoint_storage.delete(checkpoint.checkpoint_id)
 
+
+# endregion ResponsesHostServer
 
 # region Active Builder State
 
@@ -1352,11 +1506,20 @@ def _convert_message_content(content: MessageContent) -> Content:
 # region Output Item Conversion
 
 
-def _arguments_to_str(arguments: str | Mapping[str, Any] | None) -> str:
+def _argument_json_default(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _arguments_to_str(arguments: Any | None) -> str:
     """Convert arguments to a JSON string.
 
     Args:
-        arguments: The arguments to convert, can be a string, mapping, or None.
+        arguments: The arguments to convert, can be a string, JSON-like object, or None.
 
     Returns:
         The arguments as a JSON string.
@@ -1365,7 +1528,7 @@ def _arguments_to_str(arguments: str | Mapping[str, Any] | None) -> str:
         return ""
     if isinstance(arguments, str):
         return arguments
-    return json.dumps(arguments)
+    return json.dumps(arguments, default=_argument_json_default)
 
 
 async def _to_outputs(

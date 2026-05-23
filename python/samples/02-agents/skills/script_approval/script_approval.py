@@ -9,7 +9,7 @@ import os
 # warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 
-from agent_framework import Agent, InlineSkill, SkillsProvider
+from agent_framework import Agent, InlineSkill, SkillFrontmatter, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -43,8 +43,9 @@ load_dotenv()
 
 # Define a code skill with a script that performs a sensitive operation
 deployment_skill = InlineSkill(
-    name="deployment",
-    description="Tools for deploying application versions to production",
+    frontmatter=SkillFrontmatter(
+        name="deployment", description="Tools for deploying application versions to production"
+    ),
     instructions=dedent("""\
         Use this skill when the user asks to deploy an application.
 

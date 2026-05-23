@@ -246,3 +246,5 @@ dotnet/filtered-*.slnx
 # Local tool state
 .omc/
 .omx/
+
+**/issues/

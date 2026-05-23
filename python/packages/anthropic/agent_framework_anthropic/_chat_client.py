@@ -216,10 +216,12 @@ class AnthropicSettings(TypedDict, total=False):
     Keys:
         api_key: The Anthropic API key.
         chat_model: The Anthropic chat model.
+        base_url: Optional base URL for the Anthropic API endpoint.
     """
 
     api_key: SecretString | None
     chat_model: str | None
+    base_url: str | None
 
 
 class RawAnthropicClient(
@@ -248,6 +250,7 @@ class RawAnthropicClient(
         *,
         api_key: str | None = None,
         model: str | None = None,
+        base_url: str | None = None,
         anthropic_client: AnthropicAsyncClient | None = None,
         additional_beta_flags: list[str] | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -259,6 +262,8 @@ class RawAnthropicClient(
         Keyword Args:
             api_key: The Anthropic API key to use for authentication.
             model: The model to use.
+            base_url: Optional base URL for the Anthropic API endpoint. Useful for Foundry or
+                other compatible deployments. Falls back to ``ANTHROPIC_BASE_URL`` env variable.
             anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
@@ -282,6 +287,13 @@ class RawAnthropicClient(
                 client = RawAnthropicClient(
                     model="claude-sonnet-4-5-20250929",
                     api_key="your_anthropic_api_key",
+                )
+
+                # Or with a custom base URL (e.g. for Foundry-compatible endpoints)
+                client = RawAnthropicClient(
+                    model="claude-sonnet-4-5-20250929",
+                    api_key="your_anthropic_api_key",
+                    base_url="https://custom-anthropic-endpoint.com",
                 )
 
                 # Or loading from a .env file
@@ -316,12 +328,14 @@ class RawAnthropicClient(
             env_prefix="ANTHROPIC_",
             api_key=api_key,
             chat_model=model,
+            base_url=base_url,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
         api_key_secret = anthropic_settings.get("api_key")
         model_setting = anthropic_settings.get("chat_model")
+        base_url_setting = anthropic_settings.get("base_url")
 
         if anthropic_client is None:
             if api_key_secret is None:
@@ -332,6 +346,7 @@ class RawAnthropicClient(
 
             anthropic_client = AsyncAnthropic(
                 api_key=api_key_secret.get_secret_value(),
+                base_url=base_url_setting,
                 default_headers={"User-Agent": get_user_agent()},
             )
 
@@ -1409,6 +1424,7 @@ class AnthropicClient(
         *,
         api_key: str | None = None,
         model: str | None = None,
+        base_url: str | None = None,
         anthropic_client: AnthropicAsyncClient | None = None,
         additional_beta_flags: list[str] | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1422,6 +1438,8 @@ class AnthropicClient(
         Keyword Args:
             api_key: The Anthropic API key to use for authentication.
             model: The model to use.
+            base_url: Optional base URL for the Anthropic API endpoint. Useful for Foundry or
+                other compatible deployments. Falls back to ``ANTHROPIC_BASE_URL`` env variable.
             anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
@@ -1446,6 +1464,13 @@ class AnthropicClient(
                 client = AnthropicClient(
                     model="claude-sonnet-4-5-20250929",
                     api_key="your_anthropic_api_key",
+                )
+
+                # Or with a custom base URL (e.g. for Foundry-compatible endpoints)
+                client = AnthropicClient(
+                    model="claude-sonnet-4-5-20250929",
+                    api_key="your_anthropic_api_key",
+                    base_url="https://custom-anthropic-endpoint.com",
                 )
 
                 # Or loading from a .env file
@@ -1477,6 +1502,7 @@ class AnthropicClient(
         super().__init__(
             api_key=api_key,
             model=model,
+            base_url=base_url,
             anthropic_client=anthropic_client,
             additional_beta_flags=additional_beta_flags,
             additional_properties=additional_properties,

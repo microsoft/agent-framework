@@ -11,7 +11,7 @@ import os
 from textwrap import dedent
 from typing import Any
 
-from agent_framework import Agent, InlineSkill, InlineSkillResource, SkillsProvider
+from agent_framework import Agent, InlineSkill, InlineSkillResource, SkillFrontmatter, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -47,8 +47,9 @@ load_dotenv()
 # 1. Static Resources — inline content passed at construction time
 # ---------------------------------------------------------------------------
 unit_converter_skill = InlineSkill(
-    name="unit-converter",
-    description="Convert between common units using a conversion factor",
+    frontmatter=SkillFrontmatter(
+        name="unit-converter", description="Convert between common units using a conversion factor"
+    ),
     instructions=dedent("""\
         Use this skill when the user asks to convert between units.
 

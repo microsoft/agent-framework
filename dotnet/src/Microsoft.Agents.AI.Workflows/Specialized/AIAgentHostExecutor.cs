@@ -24,7 +24,7 @@ internal static class TurnExtensions
         => handoffState.TurnToken.ShouldEmitStreamingEvents(agentSetting);
 }
 
-internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
+internal class AIAgentHostExecutor : ChatProtocolExecutor
 {
     private readonly AIAgent _agent;
     private readonly AIAgentHostOptions _options;
@@ -40,7 +40,9 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         StringMessageChatRole = ChatRole.User
     };
 
-    public AIAgentHostExecutor(AIAgent agent, AIAgentHostOptions options) : base(id: agent.GetDescriptiveId(),
+    public static string IdFor(AIAgent agent) => agent.GetDescriptiveId();
+
+    public AIAgentHostExecutor(AIAgent agent, AIAgentHostOptions options) : base(id: IdFor(agent),
                                                                                  s_defaultChatProtocolOptions,
                                                                                  declareCrossRunShareable: false) // Explicitly false, because we maintain turn state on the instance
     {
@@ -67,7 +69,14 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder));
+        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder))
+                   .ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<ResetChatSignal>(this.ResetChat));
+    }
+
+    internal void ResetChat(ResetChatSignal signal, IWorkflowContext context)
+    {
+        this._session = null;
+        this._currentTurnEmitEvents = null;
     }
 
     private ValueTask HandleUserInputResponseAsync(

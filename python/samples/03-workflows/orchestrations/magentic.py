@@ -88,11 +88,12 @@ async def main() -> None:
 
     print("\nBuilding Magentic Workflow...")
 
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # Mark participant responses as intermediate so the stream shows the
+    # conversation as it unfolds while the manager's final answer remains the
+    # terminal workflow output.
     workflow = MagenticBuilder(
         participants=[researcher_agent, coder_agent],
-        intermediate_outputs=True,
+        intermediate_output_from=[researcher_agent, coder_agent],
         manager_agent=manager_agent,
         max_round_count=10,
         max_stall_count=3,
@@ -115,7 +116,7 @@ async def main() -> None:
     last_response_id: str | None = None
     output_event: WorkflowEvent | None = None
     async for event in workflow.run(task, stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+        if event.type in ("intermediate", "output") and isinstance(event.data, AgentResponseUpdate):
             response_id = event.data.response_id
             if response_id != last_response_id:
                 if last_response_id is not None:
