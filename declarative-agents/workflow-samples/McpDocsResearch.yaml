@@ -1,0 +1,67 @@
+#
+# This workflow demonstrates the *agent-level* MCP (Model Context Protocol) pattern,
+# where an MCP-backed agent reasons over MCP tools as part of its own turn,
+# instead of the workflow invoking MCP directly.
+#
+# Contrast with `dotnet/samples/03-workflows/Declarative/InvokeMcpTool/InvokeMcpTool.yaml`,
+# which uses the `InvokeMcpTool` action to call MCP servers at the workflow level.
+# Either pattern is valid; use this one when the agent should decide when and how
+# to query the MCP tool as part of its reasoning loop.
+#
+# The workflow is a simple sequential pipeline:
+#
+#   1. QueryPlannerAgent       Rewrites the user's question as a focused
+#                              Microsoft Learn search query.
+#   2. MicrosoftLearnAgent     MCP-backed agent that searches Microsoft Learn
+#                              via https://learn.microsoft.com/api/mcp and
+#                              produces an evidence-rich answer.
+#                              See: ../agent-samples/foundry/MicrosoftLearnAgent.yaml
+#   3. CitationReviewerAgent   Verifies the answer includes Microsoft Learn URL
+#                              citations and polishes the final response.
+#
+# Register the three agents with your runtime by name before executing this workflow.
+# The middle agent should be configured with the MCP tool wiring shown in
+# `agent-samples/foundry/MicrosoftLearnAgent.yaml`.
+#
+# Example input:
+# How do I configure managed identity for an Azure Function app calling a Cosmos DB account?
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_mcp_docs_research
+  actions:
+
+    # 1. Rephrase the user's question as a focused Microsoft Learn query.
+    - kind: InvokeAzureAgent
+      id: plan_query
+      conversationId: =System.ConversationId
+      agent:
+        name: QueryPlannerAgent
+      input:
+        messages: =UserMessage(System.LastMessage.Text)
+      output:
+        messages: Local.PlannedQuery
+
+    # 2. MCP-backed agent searches Microsoft Learn and drafts an evidence-rich answer.
+    - kind: InvokeAzureAgent
+      id: search_learn
+      conversationId: =System.ConversationId
+      agent:
+        name: MicrosoftLearnAgent
+      input:
+        messages: =UserMessage(MessageText(Local.PlannedQuery))
+      output:
+        messages: Local.DraftAnswer
+
+    # 3. Reviewer agent verifies citations and produces the final response.
+    - kind: InvokeAzureAgent
+      id: review_citations
+      conversationId: =System.ConversationId
+      agent:
+        name: CitationReviewerAgent
+      input:
+        messages: =UserMessage(MessageText(Local.DraftAnswer))
+      output:
+        autoSend: true
