@@ -3,8 +3,8 @@
 # where an MCP-backed agent reasons over MCP tools as part of its own turn,
 # instead of the workflow invoking MCP directly.
 #
-# Contrast with `dotnet/samples/03-workflows/Declarative/InvokeMcpTool/InvokeMcpTool.yaml`,
-# which uses the `InvokeMcpTool` action to call MCP servers at the workflow level.
+# Contrast with a workflow-level MCP pattern, where the workflow uses the
+# `InvokeMcpTool` action to call MCP servers directly.
 # Either pattern is valid; use this one when the agent should decide when and how
 # to query the MCP tool as part of its reasoning loop.
 #
