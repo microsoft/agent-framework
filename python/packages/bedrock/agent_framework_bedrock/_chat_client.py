@@ -117,6 +117,14 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
             translates to ``toolConfig.tools``.
         tool_choice: How the model should use tools,
             translates to ``toolConfig.toolChoice``.
+        response_format: Structured output format. Accepts a Pydantic BaseModel
+            subclass or an OpenAI-style dict schema
+            (``{"json_schema": {"name": ..., "schema": ...}}``).
+            When provided, the Converse API request includes
+            ``outputConfig.textFormat`` with the schema serialized as a JSON
+            string. ``ChatResponse.value`` will be populated with the parsed
+            model instance. Only supported on models that support
+            ``outputConfig.textFormat``. Unsupported models raise a ValueError.
 
         # Options not supported in Bedrock Converse API:
         seed: Not supported.
@@ -786,6 +794,11 @@ class BedrockChatClient(
                 schema_src = json.loads(schema_src)
             schema = copy.deepcopy(schema_src)
         else:
+            if not isinstance(response_format, type) or not issubclass(response_format, BaseModel):
+                raise TypeError(
+                    "response_format must be None, a dict JSON schema, "
+                    "or a Pydantic BaseModel subclass."
+                )
             # response_format is a Pydantic model class
             schema = response_format.model_json_schema()
             name = response_format.__name__
@@ -830,7 +843,9 @@ class BedrockChatClient(
                 if node.get("type") == "object" or (
                     "properties" in node and "type" not in node
                 ):
-                    node["additionalProperties"] = False
+                    existing = node.get("additionalProperties")
+                    if existing is None or existing is True:
+                        node["additionalProperties"] = False
                 for value in node.values():
                     if isinstance(value, (dict, list)):
                         walk(value)

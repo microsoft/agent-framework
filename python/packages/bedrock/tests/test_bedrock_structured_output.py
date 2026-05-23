@@ -258,4 +258,11 @@ async def test_unsupported_model_validation_exception() -> None:
     assert "Check the model's Bedrock Converse outputConfig/textFormat support." in str(exc.value)
 
 
+def test_invalid_response_format_type_raises() -> None:
+    """Non-dict, non-BaseModel response_format should raise TypeError."""
+    client, _ = _make_client()
+    with pytest.raises(TypeError, match="Pydantic BaseModel subclass"):
+        client._prepare_output_config("not_a_valid_format")
+
+
 # endregion
