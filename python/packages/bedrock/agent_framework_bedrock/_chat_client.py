@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import sys
@@ -36,6 +37,7 @@ from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 13):
@@ -121,7 +123,6 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
         frequency_penalty: Not supported.
         presence_penalty: Not supported.
         allow_multiple_tool_calls: Not supported (models handle parallel calls automatically).
-        response_format: Not directly supported (use model-specific prompting).
         user: Not supported.
         store: Not supported.
         logit_bias: Not supported.
@@ -160,9 +161,6 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
 
     allow_multiple_tool_calls: None  # type: ignore[misc]
     """Not supported. Bedrock models handle parallel tool calls automatically."""
-
-    response_format: None  # type: ignore[misc]
-    """Not directly supported. Use model-specific prompting for JSON output."""
 
     user: None  # type: ignore[misc]
     """Not supported in Bedrock Converse API."""
@@ -324,10 +322,19 @@ class BedrockChatClient(
         return Boto3Session(**session_kwargs)
 
     def _invoke_converse(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        response = self._bedrock_client.converse(**request)
-        if not isinstance(response, Mapping):
-            raise ChatClientInvalidResponseException("Bedrock converse response must be a mapping.")
-        return response
+        try:
+            response = self._bedrock_client.converse(**request)
+            if not isinstance(response, Mapping):
+                raise ChatClientInvalidResponseException("Bedrock converse response must be a mapping.")
+            return response
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ValidationException" and "outputConfig" in str(e):
+                raise ValueError(
+                    f"Model '{self.model}' does not support structured output via outputConfig.textFormat. "
+                    "Supported models include Claude Haiku/Sonnet/Opus 4.5+. "
+                    f"Original error: {e}"
+                ) from e
+            raise
 
     @override
     def _inner_get_response(
@@ -344,7 +351,7 @@ class BedrockChatClient(
             # Streaming mode - simulate streaming by yielding a single update
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 response = await asyncio.to_thread(self._invoke_converse, request)
-                parsed_response = self._process_converse_response(response)
+                parsed_response = self._process_converse_response(response, options)
                 contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
                 if parsed_response.usage_details:
                     contents.append(Content.from_usage(usage_details=parsed_response.usage_details))  # type: ignore[arg-type]
@@ -360,12 +367,12 @@ class BedrockChatClient(
                     raw_representation=parsed_response.raw_representation,
                 )
 
-            return self._build_response_stream(_stream())
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
             raw_response = await asyncio.to_thread(self._invoke_converse, request)
-            return self._process_converse_response(raw_response)
+            return self._process_converse_response(raw_response, options)
 
         return _get_response()
 
@@ -429,6 +436,9 @@ class BedrockChatClient(
                     raise ValueError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
         if tool_config:
             run_options["toolConfig"] = tool_config
+
+        if output_config := self._prepare_output_config(options.get("response_format")):
+            run_options["outputConfig"] = output_config
 
         return run_options
 
@@ -628,7 +638,9 @@ class BedrockChatClient(
     def _generate_tool_call_id() -> str:
         return f"tool-call-{uuid4().hex}"
 
-    def _process_converse_response(self, response: dict[str, Any]) -> ChatResponse:
+    def _process_converse_response(
+        self, response: dict[str, Any], options: Mapping[str, Any] | None = None
+    ) -> ChatResponse:
         """Convert Bedrock Converse API response to ChatResponse."""
         output = response.get("output") or {}
         message = output.get("message") or {}
@@ -646,6 +658,7 @@ class BedrockChatClient(
             usage_details=usage_details,
             model=model,
             finish_reason=finish_reason,
+            response_format=options.get("response_format") if options else None,
             raw_representation=response,
         )
 
@@ -727,6 +740,78 @@ class BedrockChatClient(
         if not reason:
             return None
         return FINISH_REASON_MAP.get(reason.lower())
+
+    def _prepare_output_config(self, response_format: Any | None) -> dict[str, Any] | None:
+        """Convert response_format into the AWS Bedrock outputConfig wire format.
+
+        Args:
+            response_format: A Pydantic model class or a dict schema, or None.
+
+        Returns:
+            A dict for the Converse API ``outputConfig`` parameter, or None if
+            response_format is not set.
+        """
+        if response_format is None:
+            return None
+
+        if isinstance(response_format, dict):
+            # response_format passed as a dict schema (possibly OpenAI-style)
+            schema_src = response_format.get("json_schema", {}).get("schema", response_format)
+            schema = copy.deepcopy(schema_src)
+            name = response_format.get("json_schema", {}).get("name", "output_schema")
+        else:
+            # response_format is a Pydantic model class
+            schema = response_format.model_json_schema()
+            name = response_format.__name__
+
+        self._set_additional_properties_false(schema)
+
+        json_schema: dict[str, Any] = {
+            "name": name,
+            "schema": json.dumps(schema),
+        }
+
+        description = getattr(response_format, "__doc__", None) if not isinstance(response_format, dict) else None
+        if description and isinstance(description, str) and description.strip():
+            json_schema["description"] = description.strip()
+
+        return {
+            "textFormat": {
+                "type": "json_schema",
+                "structure": {
+                    "jsonSchema": json_schema
+                },
+            }
+        }
+
+    def _set_additional_properties_false(self, schema: dict[str, Any]) -> None:
+        """Recursively set additionalProperties: false on all object types in a JSON schema.
+
+        AWS requires strict schema enforcement. This mirrors the approach used by
+        AnthropicChatClient._prepare_response_format().
+
+        Args:
+            schema: The JSON schema dict to modify in-place.
+        """
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+        for value in schema.get("properties", {}).values():
+            if isinstance(value, dict):
+                self._set_additional_properties_false(value)
+        items = schema.get("items")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    self._set_additional_properties_false(item)
+        elif isinstance(items, dict):
+            self._set_additional_properties_false(items)
+        for sub in schema.get("anyOf", []) + schema.get("allOf", []) + schema.get("oneOf", []):
+            if isinstance(sub, dict):
+                self._set_additional_properties_false(sub)
+        if "$defs" in schema:
+            for definition in schema["$defs"].values():
+                if isinstance(definition, dict):
+                    self._set_additional_properties_false(definition)
 
     def service_url(self) -> str:
         """Returns the service URL for the Bedrock runtime in the configured AWS region.
