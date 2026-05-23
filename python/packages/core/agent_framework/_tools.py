@@ -212,13 +212,17 @@ def _restore_explicit_none_fields(value: Any, dumped: Any) -> None:
         return
 
     if isinstance(value, Mapping) and isinstance(dumped, Mapping):
-        for key, item in value.items():
-            if key in dumped:
-                _restore_explicit_none_fields(item, dumped[key])
+        value_mapping = cast(Mapping[Any, Any], value)
+        dumped_mapping = cast(Mapping[Any, Any], dumped)
+        for key, item in value_mapping.items():
+            if key in dumped_mapping:
+                _restore_explicit_none_fields(item, dumped_mapping[key])
         return
 
     if isinstance(value, list | tuple) and isinstance(dumped, list):
-        for item, dumped_item in zip(value, dumped):
+        value_sequence = cast(Sequence[Any], value)
+        dumped_list = cast(list[Any], dumped)
+        for item, dumped_item in zip(value_sequence, dumped_list):
             _restore_explicit_none_fields(item, dumped_item)
 
 
