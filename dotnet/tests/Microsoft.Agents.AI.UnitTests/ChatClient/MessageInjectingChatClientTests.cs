@@ -407,6 +407,67 @@ public class MessageInjectingChatClientTests
         Assert.Equal("conv-123", capturedConversationIds[1]); // Second call: propagated from first response
     }
 
+    [Fact]
+    public async Task RunAsync_KeepsInjectedMessagesInFunctionLoopHistoryAsync()
+    {
+        // Arrange
+        int serviceCallCount = 0;
+        int toolCallCount = 0;
+        List<List<string>> capturedMessageTexts = [];
+        MessageInjectingChatClient? injectorRef = null;
+        ChatClientAgentSession? sessionRef = null;
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+            {
+                serviceCallCount++;
+                capturedMessageTexts.Add(msgs.Select(m => m.Text).ToList());
+
+                return Task.FromResult(serviceCallCount switch
+                {
+                    1 => new ChatResponse([new(ChatRole.Assistant,
+                        [new FunctionCallContent("call1", "myTool", new Dictionary<string, object?>())])]),
+                    2 => new ChatResponse([new(ChatRole.Assistant,
+                        [new FunctionCallContent("call2", "myTool", new Dictionary<string, object?>())])]),
+                    _ => new ChatResponse([new(ChatRole.Assistant, "final")]),
+                });
+            });
+
+        var tool = AIFunctionFactory.Create(() =>
+        {
+            toolCallCount++;
+            if (toolCallCount == 1)
+            {
+                injectorRef!.EnqueueMessages(sessionRef!, [new ChatMessage(ChatRole.User, "injected correction")]);
+            }
+
+            return "tool result";
+        }, "myTool", "A test tool");
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Tools = [tool] },
+            EnableMessageInjection = true,
+        }, services: new ServiceCollection().BuildServiceProvider());
+
+        injectorRef = agent.ChatClient.GetService<MessageInjectingChatClient>()!;
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        sessionRef = session;
+        await agent.RunAsync([new(ChatRole.User, "original")], session);
+
+        // Assert
+        Assert.Equal(3, serviceCallCount);
+        Assert.Contains(capturedMessageTexts[1], text => text == "injected correction");
+        Assert.Contains(capturedMessageTexts[2], text => text == "injected correction");
+    }
+
     /// <summary>
     /// Verifies that a session with pending injected messages can be serialized and deserialized,
     /// and that the deserialized session correctly delivers the injected messages on the next run.

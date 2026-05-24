@@ -263,8 +263,7 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
     }
 
     /// <summary>
-    /// Drains all pending injected messages from the queue and returns a new list combining
-    /// the original messages with the drained messages. The original list is never modified.
+    /// Drains all pending injected messages from the queue and returns the combined messages.
     /// </summary>
     private static IList<ChatMessage> DrainInjectedMessages(List<ChatMessage> queue, IList<ChatMessage> newMessages)
     {
@@ -273,6 +272,14 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
             if (queue.Count == 0)
             {
                 return newMessages;
+            }
+
+            if (newMessages is List<ChatMessage> mutableMessages)
+            {
+                // Keep the outer function loop's history list in sync with what was sent to the model.
+                mutableMessages.AddRange(queue);
+                queue.Clear();
+                return mutableMessages;
             }
 
             var combined = new List<ChatMessage>(newMessages);
