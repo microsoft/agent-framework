@@ -17,9 +17,9 @@
 
 using System.ComponentModel;
 using Azure.AI.OpenAI;
-using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
+using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.AI.Hosting;
@@ -191,31 +191,4 @@ static string GetWeather(
     string[] conditions = ["sunny", "partly cloudy", "overcast", "rainy", "snowy", "windy", "foggy"];
     var condition = conditions[rng.Next(conditions.Length)];
     return $"Weather in {location}: {temp}C, {condition}. Humidity: {rng.Next(30, 90)}%. Wind: {rng.Next(5, 30)} km/h.";
-}
-
-internal sealed class DevTemporaryTokenCredential : TokenCredential
-{
-    private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
-    private readonly string? _token;
-
-    public DevTemporaryTokenCredential()
-    {
-        this._token = Environment.GetEnvironmentVariable(EnvironmentVariable);
-    }
-
-    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => this.GetAccessToken();
-
-    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => new(this.GetAccessToken());
-
-    private AccessToken GetAccessToken()
-    {
-        if (string.IsNullOrEmpty(this._token) || this._token == "DefaultAzureCredential")
-        {
-            throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
-        }
-
-        return new AccessToken(this._token, DateTimeOffset.UtcNow.AddHours(1));
-    }
 }

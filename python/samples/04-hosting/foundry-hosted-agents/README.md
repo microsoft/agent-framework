@@ -13,7 +13,13 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 3 | [MCP](responses/03_mcp/) | An agent connected to a remote MCP server (GitHub), demonstrating external MCP tool provider integration. |
 | 4 | [Foundry Toolbox](responses/04_foundry_toolbox/) | An agent using Azure Foundry Toolbox, demonstrating toolbox provisioning and querying available tools at runtime. |
 | 5 | [Workflows](responses/05_workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
-| 6 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
+| 6 | [Files](responses/06_files/) | An agent demonstrating how to work with files in a hosted agent session, including uploading files to a hosted agent session and having the agent read and manipulate those files at runtime. |
+| 7 | [Observability](responses/07_observability/) | A sample demonstrating how to enable observability for the agent deployed to Foundry. |
+| 8 | [Azure AI Search RAG](responses/08_azure_search_rag/) | An agent with Retrieval Augmented Generation (RAG) capabilities backed by Azure AI Search, grounding answers in documents indexed in a pre-provisioned search index. |
+| 9 | [Foundry Skills](responses/09_foundry_skills/) | An agent that uploads `SKILL.md` files to the Foundry Skills REST API and downloads them at startup, decoupling tone/policy guidelines from agent code. |
+| 10 | [Foundry Memory](responses/10_foundry_memory/) | An agent with persistent semantic memory backed by an Azure AI Foundry Memory Store, using `FoundryMemoryProvider` to remember user facts across sessions. |
+| 11 | [Monty CodeAct](responses/11_monty_codeact/) | An agent with a Monty-backed CodeAct context provider, exposing a single `execute_code` tool that runs Python in a [pydantic-monty](https://github.com/pydantic/monty) interpreter and invokes typed host tools (`compute`, `fetch_data`) from inside the sandbox. Uses the alpha `agent-framework-monty` package. |
+| 12 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
 
 ### Invocations API
 
@@ -133,22 +139,29 @@ cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
 
 #### Environment setup
 
-1. Navigate to the sample directory you want to explore. Create a virtual environment:
+1. Navigate to the sample directory you want to explore. Create and activate a virtual environment using [uv](https://docs.astral.sh/uv/) (recommended):
 
    ```bash
-   python -m venv .venv
+   uv venv .venv
+   ```
 
-   # Windows
-   .venv\Scripts\Activate
+   ```bash
+   # Windows (PowerShell)
+   .venv\Scripts\Activate.ps1
+
+   # Windows (Command Prompt)
+   .venv\Scripts\activate.bat
 
    # macOS/Linux
    source .venv/bin/activate
    ```
 
+   > **Note:** `python -m venv .venv` also works, but can hang indefinitely on Windows with Microsoft Store Python due to a known `ensurepip` issue. Use `uv venv .venv` to avoid this.
+
 2. Install dependencies:
 
    ```bash
-   pip install -r requirements.txt
+   uv pip install -r requirements.txt
    ```
 
 3. Create a `.env` file with your Foundry configuration following the `env.example` file in the sample.

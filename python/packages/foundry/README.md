@@ -21,32 +21,7 @@ For hosted `FoundryAgent`, the toolbox must already be attached to the agent in 
 
 ### Using toolboxes with `FoundryChatClient`
 
-There are two patterns for wiring a toolbox into a `FoundryChatClient`-backed agent.
-
-**1. Fetch, optionally filter, and pass the tools directly**
-
-Load the toolbox from the Microsoft Foundry project, optionally select a subset of its tools, and hand them to an `Agent` alongside any other tools you own:
-
-```python
-from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, select_toolbox_tools
-
-client = FoundryChatClient(...)
-toolbox = await client.get_toolbox("my-toolbox", version="3")
-
-# Pass the whole toolbox:
-agent = Agent(client=client, tools=toolbox)
-
-# Or filter to a subset first:
-selected = select_toolbox_tools(toolbox, include_types=["code_interpreter", "mcp"])
-agent = Agent(client=client, tools=selected)
-```
-
-See [`foundry_chat_client_with_toolbox.py`](../../samples/02-agents/providers/foundry/foundry_chat_client_with_toolbox.py) for a full example, including combining multiple toolboxes.
-
-**2. Connect to the toolbox's MCP endpoint with `MCPStreamableHTTPTool`**
-
-Each toolbox is reachable as an MCP server. Instead of fetching and fanning out its individual tool definitions, you can point a MAF `MCPStreamableHTTPTool` at the toolbox's MCP endpoint — the agent then discovers and calls its tools over MCP at runtime:
+Each toolbox is reachable as an MCP server. Connect to the toolbox's MCP endpoint with `MCPStreamableHTTPTool` — the agent then discovers and calls its tools over MCP at runtime:
 
 ```python
 from agent_framework import Agent, MCPStreamableHTTPTool
@@ -64,3 +39,70 @@ async with Agent(
     result = await agent.run("What tools are available?")
     print(result.text)
 ```
+
+## Hosted tool factories
+
+`FoundryChatClient` exposes static factory methods that return Foundry SDK tool
+configurations ready to pass to an `Agent`'s `tools=[...]` argument. These
+factories don't require a `FoundryChatClient` instance — you can call them
+statically and reuse the same tool configuration across agents.
+
+```python
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
+
+agent = Agent(
+    client=FoundryChatClient(...),
+    instructions="...",
+    tools=[
+        FoundryChatClient.get_web_search_tool(),
+        FoundryChatClient.get_code_interpreter_tool(),
+    ],
+)
+```
+
+Generally available factories: `get_code_interpreter_tool`,
+`get_file_search_tool`, `get_web_search_tool`,
+`get_image_generation_tool`, `get_mcp_tool`.
+
+> **Choosing a web grounding tool.** `get_web_search_tool` is the recommended
+> default — it requires no separate Bing resource and works with Azure OpenAI
+> models out of the box. Reach for `get_bing_grounding_tool` (experimental,
+> see below) when you need finer Bing parameters (`count`, `freshness`,
+> `market`, `set_lang`), are grounding non-OpenAI Foundry models, or are
+> migrating from Grounding with Bing Search on the classic platform — it
+> requires a Grounding with Bing Search Azure resource that you manage.
+> `get_bing_custom_search_tool` (also experimental) is for grounding
+> restricted to a curated list of domains via a Bing Custom Search instance.
+> See the
+> [web grounding overview](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/web-overview)
+> for the full comparison.
+
+> **Experimental — `ExperimentalFeature.FOUNDRY_TOOLS`.** The following
+> factories wrap GA Foundry tool SDK classes but are new wrappers in
+> `agent-framework-foundry` and may change before the wrappers themselves
+> reach GA. Calls emit an `ExperimentalWarning` the first time the
+> `FOUNDRY_TOOLS` feature is exercised in a process (then deduplicated).
+
+| Factory | Foundry SDK tool |
+|---------|-----------------|
+| `get_azure_ai_search_tool(index_connection_id, index_name, ...)` | `AzureAISearchTool` |
+| `get_bing_grounding_tool(connection_id, ...)` | `BingGroundingTool` |
+
+> **Experimental — `ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS`.** The
+> following factories wrap **preview** Foundry tool SDK types — the underlying
+> Foundry capability itself is in preview and may change or be removed before
+> reaching GA. Calls emit a separate `ExperimentalWarning` the first time the
+> `FOUNDRY_PREVIEW_TOOLS` feature is exercised in a process (then
+> deduplicated). Use `FOUNDRY_TOOLS` for "wrapper is new" and
+> `FOUNDRY_PREVIEW_TOOLS` for "underlying Foundry feature is preview".
+
+| Factory | Foundry SDK tool |
+|---------|-----------------|
+| `get_sharepoint_tool(connection_id)` | `SharepointPreviewTool` |
+| `get_fabric_tool(connection_id)` | `MicrosoftFabricPreviewTool` |
+| `get_memory_search_tool(memory_store_name, scope, ...)` | `MemorySearchPreviewTool` |
+| `get_computer_use_tool(environment, display_width, display_height)` | `ComputerUsePreviewTool` |
+| `get_browser_automation_tool(connection_id)` | `BrowserAutomationPreviewTool` |
+| `get_bing_custom_search_tool(connection_id, instance_name, ...)` | `BingCustomSearchPreviewTool` |
+| `get_a2a_tool(base_url=..., project_connection_id=..., ...)` | `A2APreviewTool` |

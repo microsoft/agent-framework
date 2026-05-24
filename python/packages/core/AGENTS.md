@@ -7,6 +7,7 @@ The foundation package containing all core abstractions, types, and built-in Ope
 ```
 agent_framework/
 ├── __init__.py          # Public API exports
+├── security.py          # Public security primitives, middleware, and tools
 ├── _agents.py           # Agent implementations
 ├── _clients.py          # Chat client base classes and protocols
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
@@ -68,7 +69,8 @@ agent_framework/
 
 ### Skills (`_skills.py`)
 
-- **`Skill`** - A skill definition bundling instructions (`content`) with metadata, resources, and scripts. Supports `@skill.resource` and `@skill.script` decorators for adding components.
+- **`Skill`** - Abstract base for a skill definition bundling instructions (`content`) with frontmatter metadata, resources, and scripts. Concrete subclasses (`InlineSkill`, `FileSkill`, `ClassSkill`) accept a `frontmatter=SkillFrontmatter(...)` argument carrying the spec fields. Adding new spec fields is done in one place — on `SkillFrontmatter` — keeping the subclass constructors stable.
+- **`SkillFrontmatter`** - L1 discovery metadata for a skill (`name`, `description`, `license`, `compatibility`, `allowed_tools`, `metadata`). All fields are mutable plain attributes; the constructor validates `name`, `description`, and `compatibility` against the spec but post-construction assignments are not re-validated. Spec fields are reachable on every skill via `skill.frontmatter`.
 - **`SkillResource`** - Named supplementary content attached to a skill; holds either static `content` or a dynamic `function` (sync or async). Exactly one must be provided.
 - **`SkillScript`** - An executable script attached to a skill; holds either an inline `function` (code-defined, runs in-process) or a `path` to a file on disk (file-based, delegated to a runner). Exactly one must be provided.
 - **`SkillScriptRunner`** - Protocol for file-based script execution. Any callable matching `(skill, script, args) -> Any` satisfies it. Code-defined scripts do not use a runner.
@@ -77,7 +79,14 @@ agent_framework/
 ### Workflows (`_workflows/`)
 
 - **`Workflow`** - Graph-based workflow definition
-- **`WorkflowBuilder`** - Fluent API for building workflows
+- **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
+  `output_from` / `intermediate_output_from` selection for caller-facing emissions. `output_from`
+  is an allow-list for **Workflow Output**; unselected executor payloads are hidden unless
+  `intermediate_output_from` selects them as **Intermediate Output**. Use `output_from="all"` for
+  explicit all-output behavior and `intermediate_output_from="all_other"` for visible progress from
+  every output-capable executor not selected by `output_from`.
+- **`WorkflowRunResult`** - Non-streaming workflow result with Workflow Output `get_outputs()`
+  and Intermediate Output `get_intermediate_outputs()` accessors
 - **Orchestrators**: `SequentialOrchestrator`, `ConcurrentOrchestrator`, `GroupChatOrchestrator`, `MagenticOrchestrator`, `HandoffOrchestrator`
 
 ## Built-in Providers

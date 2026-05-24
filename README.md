@@ -6,8 +6,12 @@
 [![MS Learn Documentation](https://img.shields.io/badge/MS%20Learn-Documentation-blue)](https://learn.microsoft.com/en-us/agent-framework/)
 [![PyPI](https://img.shields.io/pypi/v/agent-framework)](https://pypi.org/project/agent-framework/)
 [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI)](https://www.nuget.org/profiles/MicrosoftAgentFramework/)
+[![GitHub stars](https://img.shields.io/github/stars/microsoft/agent-framework?style=social)](https://github.com/microsoft/agent-framework/stargazers)
 
-Welcome to Microsoft's comprehensive multi-language framework for building, orchestrating, and deploying AI agents with support for both .NET and Python implementations. This framework provides everything from simple chat agents to complex multi-agent workflows with graph-based orchestration.
+
+Microsoft Agent Framework (MAF) is an open, multi-language framework for building **production-grade AI agents and multi-agent workflows** in **.NET and Python**.
+
+Microsoft Agent Framework is built for teams taking agents from prototype to production. It provides a consistent foundation for building, orchestrating, and operating agent systems across Python and .NET, while keeping architecture choices open as requirements evolve, and supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI, and the GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=AAgdMhftj8w" title="Watch the full Agent Framework introduction (30 min)">
@@ -21,10 +25,54 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
   </a>
 </p>
 
-## 📋 Getting Started
+## Is this the right framework for you?
 
-### 📦 Installation
+MAF is a strong fit if you:
+- are building agents and workflows you expect to run in production,
+- need orchestration beyond a single prompt or stateless chat loop,
+- want graph-based patterns such as sequential, concurrent, handoff, and group collaboration,
+- care about durability, restartability, observability, governance, or human-in-the-loop control,
+- need provider flexibility so your architecture can evolve without major rewrites.
 
+## Key Features
+Explore new MAF capabilities and real implementation patterns on the [official blog](https://devblogs.microsoft.com/agent-framework/).
+
+- **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
+  - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
+- **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
+  - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/)
+- **Middleware**: Flexible middleware system for request/response processing, exception handling, and custom pipelines
+  - [Python middleware](./python/samples/02-agents/middleware/) | [.NET middleware](./dotnet/samples/02-agents/Agents/Agent_Step11_Middleware/)
+- **Orchestration Patterns & Workflows**: Build multi-agent systems with graph-based workflows supporting sequential, concurrent, handoff, and group collaboration patterns; includes checkpointing, streaming, human-in-the-loop, and time-travel
+  - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/03-workflows/)
+- **Foundry Hosted Agents (new)**: Deploy and host your agents to Foundry-hosted infrastructure with just 2 additional lines of code
+  - [Python samples](./python/samples/04-hosting/foundry-hosted-agents/) | [.NET samples](./dotnet/samples/04-hosting/FoundryHostedAgents/)
+- **Observability**: Built-in OpenTelemetry integration for distributed tracing, monitoring, and debugging
+  - [Python observability](./python/samples/02-agents/observability/) | [.NET telemetry](./dotnet/samples/02-agents/AgentOpenTelemetry/)
+- **Declarative Agents**: Define agents using YAML for faster setup and versioning
+  - [Declarative agent samples](./declarative-agents/)
+- **Agent Skills**: Build domain-specific knowledge bases from multiple sources—files, inline code, class libraries—for agents to discover and use
+  - [Skills design](./docs/decisions/0021-agent-skills-design.md)
+- **AF Labs**: Experimental packages for cutting-edge features including benchmarking, reinforcement learning, and research initiatives
+  - [Labs directory](./python/packages/lab/)
+- **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
+  - [See the DevUI in action](https://www.youtube.com/watch?v=mOAaGY4WPvc)
+
+## Table of Contents
+
+- [Getting Started](#getting-started)
+  - [Installation](#installation)
+  - [Learning Resources](#learning-resources)
+  - [Quickstart](#quickstart)
+    - [Basic Agent - Python](#basic-agent---python)
+    - [Basic Agent - .NET](#basic-agent---net)
+- [More Examples & Samples](#more-examples--samples)
+- [Community & Feedback](#community--feedback)
+- [Troubleshooting](#troubleshooting)
+- [Contributor Resources](#contributor-resources)
+
+## Getting Started
+### Installation
 Python
 
 ```bash
@@ -37,9 +85,13 @@ pip install agent-framework
 
 ```bash
 dotnet add package Microsoft.Agents.AI
+# For Foundry integration (used in the .NET quickstart below):
+dotnet add package Microsoft.Agents.AI.Foundry
+dotnet add package Azure.AI.Projects
+dotnet add package Azure.Identity
 ```
 
-### 📚 Documentation
+### Learning Resources
 
 - **[Overview](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview)** - High level overview of the framework
 - **[Quick Start](https://learn.microsoft.com/agent-framework/tutorials/quick-start)** - Get started with a simple agent
@@ -48,44 +100,9 @@ dotnet add package Microsoft.Agents.AI
 - **[Migration from Semantic Kernel](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-semantic-kernel)** - Guide to migrate from Semantic Kernel
 - **[Migration from AutoGen](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-autogen)** - Guide to migrate from AutoGen
 
-Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-community-office-hours) or ask questions in our [Discord channel](https://discord.gg/b5zjErwbQM) to get help from the team and other users.
+### Quickstart
 
-### ✨ **Highlights**
-
-- **Graph-based Workflows**: Connect agents and deterministic functions using data flows with streaming, checkpointing, human-in-the-loop, and time-travel capabilities
-  - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/03-workflows/)
-- **AF Labs**: Experimental packages for cutting-edge features including benchmarking, reinforcement learning, and research initiatives
-  - [Labs directory](./python/packages/lab/)
-- **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
-  - [DevUI package](./python/packages/devui/)
-
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=mOAaGY4WPvc">
-    <img src="https://img.youtube.com/vi/mOAaGY4WPvc/hqdefault.jpg" alt="See the DevUI in action" width="480">
-  </a>
-</p>
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=mOAaGY4WPvc">
-    See the DevUI in action (1 min)
-  </a>
-</p>
-
-- **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
-  - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
-- **Observability**: Built-in OpenTelemetry integration for distributed tracing, monitoring, and debugging
-  - [Python observability](./python/samples/02-agents/observability/) | [.NET telemetry](./dotnet/samples/02-agents/AgentOpenTelemetry/)
-- **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
-  - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/)
-- **Middleware**: Flexible middleware system for request/response processing, exception handling, and custom pipelines
-  - [Python middleware](./python/samples/02-agents/middleware/) | [.NET middleware](./dotnet/samples/02-agents/Agents/Agent_Step11_Middleware/)
-
-### 💬 **We want your feedback!**
-
-- For bugs, please file a [GitHub issue](https://github.com/microsoft/agent-framework/issues).
-
-## Quickstart
-
-### Basic Agent - Python
+#### Basic Agent - Python
 
 Create a simple Azure Responses Agent that writes a haiku about the Microsoft Agent Framework
 
@@ -109,7 +126,7 @@ async def main():
           # project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
           # model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
       ),
-      name="HaikuBot",
+      name="HaikuAgent",
       instructions="You are an upbeat assistant that writes beautifully.",
     )
 
@@ -119,40 +136,24 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### Basic Agent - .NET
-Create a simple Agent, using Microsoft Foundry with token-based auth, that writes a haiku about the Microsoft Agent Framework
+#### Basic Agent - .NET
+Create a simple Agent, using Microsoft Foundry that writes a haiku about the Microsoft Agent Framework
 
 ```c#
-// dotnet add package Microsoft.Agents.AI.Foundry
-// Use `az login` to authenticate with Azure CLI
+// This sample shows how to create and run a basic agent with AIProjectClient.AsAIAgent(...).
+
 using Azure.AI.Projects;
 using Azure.Identity;
-using System;
-using Azure.AI.Projects;
-using Azure.Identity;
+using Microsoft.Agents.AI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
-var agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
-    .AsAIAgent(model: deploymentName, name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+AIAgent agent =
+    new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: deploymentName, instructions: "You are an upbeat assistant that writes beautifully.", name: "HaikuAgent");
 
-Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
-```
-
-Create a simple Agent, using OpenAI Responses, that writes a haiku about the Microsoft Agent Framework
-
-```c#
-// dotnet add package Microsoft.Agents.AI.OpenAI
-using System;
-using OpenAI;
-using OpenAI.Responses;
-
-// Replace the <apikey> with your OpenAI API key.
-var agent = new OpenAIClient("<apikey>")
-    .GetResponsesClient()
-    .AsAIAgent(model: "gpt-5.4-mini", name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
-
+// Once you have the agent, you can invoke it like any other AIAgent.
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
 
@@ -175,6 +176,12 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 - [Hosting](./dotnet/samples/04-hosting): A2A, Durable Agents, Durable Workflows
 - [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
 
+## Community & Feedback
+
+- **Found a bug?** File a [GitHub issue](https://github.com/microsoft/agent-framework/issues) to help us improve.
+- **Enjoying MAF?** [![GitHub stars](https://img.shields.io/badge/Star-us%20on%20GitHub-yellow)](https://github.com/microsoft/agent-framework) to show your support and help others discover the project.
+- **Have questions?** Join our [Discord](https://discord.gg/b5zjErwbQM) or visit [weekly office hours](./COMMUNITY.md#public-community-office-hours).
+
 ## Troubleshooting
 
 ### Authentication
@@ -187,16 +194,7 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 > **Tip:** `DefaultAzureCredential` is convenient for development but in production, consider using a specific credential (e.g., `ManagedIdentityCredential`) to avoid latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 
 ### Environment Variables
-
-The samples typically read configuration from environment variables. Common required variables:
-
-| Variable | Used by | Purpose |
-|----------|---------|---------|
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI samples | Your Azure OpenAI resource URL |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Azure OpenAI samples | Model deployment name (e.g. `gpt-4o-mini`) |
-| `AZURE_AI_PROJECT_ENDPOINT` | Microsoft Foundry samples | Your Microsoft Foundry project endpoint |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Microsoft Foundry samples | Model deployment name |
-| `OPENAI_API_KEY` | OpenAI (non-Azure) samples | Your OpenAI platform API key |
+For environment variable configuration specific to each sample, refer to the README in the sample directory ([Python samples](./python/samples/) | [.NET samples](./dotnet/samples/)).
 
 ## Contributor Resources
 

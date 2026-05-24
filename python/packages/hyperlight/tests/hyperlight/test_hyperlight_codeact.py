@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import dataclasses
+import gc
 import importlib.metadata
 import importlib.util
 import inspect
@@ -420,6 +423,175 @@ async def test_execute_code_tool_populates_input_dir_with_workspace_and_file_mou
     input_root = Path(_FakeSandbox.instances[0].input_dir)
     assert (input_root / "notes.txt").read_text(encoding="utf-8") == "workspace note"
     assert (input_root / "data" / "input.txt").read_text(encoding="utf-8") == "hello from mount"
+
+
+def _build_run_config(
+    *,
+    workspace_root: Path | None = None,
+    file_mounts: tuple = (),
+) -> Any:
+    """Build a minimal _RunConfig for tests that exercise _populate_input_dir directly."""
+    return execute_code_module._RunConfig(
+        backend="wasm",
+        module="python_guest.path",
+        module_path=None,
+        approval_mode="never_require",
+        tools=(),
+        workspace_root=workspace_root,
+        workspace_signature=(),
+        file_mounts=file_mounts,
+        allowed_domains=(),
+    )
+
+
+def _symlinks_supported(tmp: Path) -> bool:
+    """Return True if the current platform/environment supports symlinks.
+
+    Mirrors python/packages/core/tests/core/test_skills.py so the symlink
+    regression tests are skipped on restricted Windows CI runners instead of
+    failing on ``OSError`` / ``NotImplementedError`` during creation.
+    """
+    test_target = tmp / "_symlink_test_target"
+    test_link = tmp / "_symlink_test_link"
+    try:
+        test_target.write_text("test", encoding="utf-8")
+        test_link.symlink_to(test_target)
+        return True
+    except (OSError, NotImplementedError):
+        return False
+    finally:
+        test_link.unlink(missing_ok=True)
+        test_target.unlink(missing_ok=True)
+
+
+def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Path) -> None:
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside-content", encoding="utf-8")
+    (workspace / "real.txt").write_text("real-content", encoding="utf-8")
+    (workspace / "link.txt").symlink_to(outside)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    execute_code_module._populate_input_dir(
+        config=_build_run_config(workspace_root=workspace),
+        input_root=input_root,
+    )
+
+    # Real file copied; symlink and its target are absent.
+    assert (input_root / "real.txt").read_text(encoding="utf-8") == "real-content"
+    assert not (input_root / "link.txt").exists()
+    assert not (input_root / "link.txt").is_symlink()
+    # Sanity: no outside-content anywhere in the input tree.
+    leaked = [
+        path
+        for path in input_root.rglob("*")
+        if path.is_file() and path.read_text(encoding="utf-8") == "outside-content"
+    ]
+    assert leaked == []
+
+
+def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path: Path) -> None:
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-content", encoding="utf-8")
+    (workspace / "linked_dir").symlink_to(outside_dir, target_is_directory=True)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    execute_code_module._populate_input_dir(
+        config=_build_run_config(workspace_root=workspace),
+        input_root=input_root,
+    )
+
+    # Neither the symlink itself nor anything under the symlinked target leaks.
+    assert not (input_root / "linked_dir").exists()
+    leaked = [
+        path for path in input_root.rglob("*") if path.is_file() and path.read_text(encoding="utf-8") == "deep-content"
+    ]
+    assert leaked == []
+
+
+def test_populate_input_dir_skips_nested_symlinks(tmp_path: Path) -> None:
+    """A symlink several levels deep inside a real subdir must also be skipped."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    workspace = tmp_path / "workspace"
+    (workspace / "real_sub").mkdir(parents=True)
+    (workspace / "real_sub" / "ok.txt").write_text("ok", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside-content", encoding="utf-8")
+    (workspace / "real_sub" / "link.txt").symlink_to(outside)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    execute_code_module._populate_input_dir(
+        config=_build_run_config(workspace_root=workspace),
+        input_root=input_root,
+    )
+
+    assert (input_root / "real_sub" / "ok.txt").read_text(encoding="utf-8") == "ok"
+    assert not (input_root / "real_sub" / "link.txt").exists()
+
+
+def test_path_tree_signature_does_not_follow_symlinks(tmp_path: Path) -> None:
+    """The cache-key signature must reflect only real files (mirrors the staged tree)."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    real = workspace / "real.txt"
+    real.write_text("real-content", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside-content", encoding="utf-8")
+    (workspace / "link.txt").symlink_to(outside)
+
+    signature = execute_code_module._path_tree_signature(workspace)
+
+    names = [entry[0] for entry in signature]
+    assert "real.txt" in names
+    assert "link.txt" not in names
+
+
+def test_path_tree_signature_walks_through_symlinked_root(tmp_path: Path) -> None:
+    """A symlinked workspace root must produce a real signature, not an empty one.
+
+    Defends against the cache never invalidating when a caller passes a
+    symlinked workspace and the underlying real directory's contents change.
+    """
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+
+    real_workspace = tmp_path / "real_workspace"
+    real_workspace.mkdir()
+    target = real_workspace / "data.txt"
+    target.write_text("v1", encoding="utf-8")
+
+    linked_workspace = tmp_path / "linked_workspace"
+    linked_workspace.symlink_to(real_workspace, target_is_directory=True)
+
+    signature_v1 = execute_code_module._path_tree_signature(linked_workspace)
+    names = [entry[0] for entry in signature_v1]
+    assert "data.txt" in names, f"signature should include the target's contents, got {signature_v1!r}"
+
+    # Mutate the real contents; the symlinked-root signature must reflect the change
+    # so the cache key invalidates.
+    import time
+
+    time.sleep(0.01)  # ensure mtime_ns moves on filesystems with coarse granularity
+    target.write_text("v2-content-larger", encoding="utf-8")
+    signature_v2 = execute_code_module._path_tree_signature(linked_workspace)
+    assert signature_v1 != signature_v2, "signature should change when symlinked target contents change"
 
 
 def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by_target() -> None:
@@ -1042,9 +1214,8 @@ def test_sandbox_registry_close_shuts_down_workers(monkeypatch: pytest.MonkeyPat
     registry.close()
 
     assert registry._entries == {}
-    # Submitting after shutdown must fail; this proves the executor was actually torn down.
-    with pytest.raises(RuntimeError):
-        worker.submit(lambda: None)
+    # After shutdown, the worker must report itself as no longer accepting work.
+    assert worker.is_alive() is False
 
 
 def test_sandbox_registry_close_releases_per_entry_resources(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1125,3 +1296,243 @@ async def test_make_sandbox_callback_propagates_exceptions() -> None:
     callback = execute_code_module._make_sandbox_callback(boom)
     with pytest.raises(RuntimeError, match="nope"):
         callback(x=1)
+
+
+class _OwnerThreadTrackedResult:
+    """Fake sandbox.run() return value that mirrors a PyO3 ``unsendable`` object's Drop.
+
+    Records (rather than panics, since CPython swallows __del__ exceptions) the OS thread
+    that finalized the object, so tests can assert it was dropped on the sandbox's owner
+    thread and not on whatever thread happened to GC it.
+    """
+
+    drop_thread_violations: list[str] = []
+
+    def __init__(self, *, owner_thread: int, success: bool = True, stdout: str = "", stderr: str = "") -> None:
+        self._owner_thread = owner_thread
+        self.success = success
+        self.stdout = stdout
+        self.stderr = stderr
+
+    def __del__(self) -> None:
+        ident = threading.get_ident()
+        if ident != self._owner_thread:
+            type(self).drop_thread_violations.append(
+                f"_OwnerThreadTrackedResult dropped on thread {ident}, owner was {self._owner_thread}"
+            )
+
+
+class _ResultDropTrackingFakeSandbox(_FakeSandbox):
+    """Fake sandbox whose ``run()`` returns an owner-thread-tracking result."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._owner_thread = threading.get_ident()
+
+    def run(self, code: str) -> Any:
+        del code
+        # Real Hyperlight runs almost always have non-empty stdout (the executed Python
+        # ``print`` output); that is the path where _build_execution_contents attaches
+        # raw_representation=result and the unsendable object escapes the worker thread.
+        return _OwnerThreadTrackedResult(owner_thread=self._owner_thread, success=True, stdout="hello\n")
+
+
+def test_sandbox_run_result_is_finalized_on_owner_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: the object returned by ``sandbox.run`` must not escape its owner thread.
+
+    The Hyperlight ``WasmSandbox`` is unsendable; the value its ``run()`` returns can carry
+    a back-reference to the sandbox and is itself unsendable. Attaching it to
+    ``Content.raw_representation`` lets it ride out of the worker thread and be garbage
+    collected on whichever thread the asyncio loop / agent state ends up on, which trips
+    the PyO3 ``Drop`` panic. Drop must happen on the worker thread that ran ``run()``.
+    """
+    _OwnerThreadTrackedResult.drop_thread_violations.clear()
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _ResultDropTrackingFakeSandbox)
+
+    execute_code = HyperlightExecuteCodeTool()
+
+    def _drive() -> None:
+        # Run the whole invocation inside a helper frame so every local
+        # reference (contents, awaitable, asyncio frames) dies when the
+        # function returns. Anything still pinning the result is the bug.
+        contents = asyncio.run(execute_code.invoke(arguments={"code": "None"}))
+        assert contents and contents[0].type == "text"
+
+    _drive()
+    for _ in range(3):
+        gc.collect()
+
+    assert _OwnerThreadTrackedResult.drop_thread_violations == []
+
+
+def test_sandbox_is_finalized_on_owner_thread_after_registry_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: dropping the sandbox object itself must occur on its owner thread.
+
+    ``_SandboxRegistry.close()`` previously held entries in a local list whose lifetime
+    extended onto the caller's thread. When that list went out of scope the unsendable
+    sandbox was finalized on the caller's thread, panicking PyO3 with
+    "WasmSandbox is unsendable, but is being dropped by another thread".
+    """
+    drop_violations: list[str] = []
+
+    class _OwnerDropFakeSandbox(_FakeSandbox):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self._owner_thread = threading.get_ident()
+            # Do not pin ourselves on the class-level instances list; we want the
+            # registry/entry to hold the only strong reference so that dispose-time
+            # drop is what determines the finalizer thread.
+            _FakeSandbox.instances.remove(self)
+
+        def __del__(self) -> None:
+            ident = threading.get_ident()
+            if ident != self._owner_thread:
+                drop_violations.append(f"sandbox dropped on thread {ident}, owner was {self._owner_thread}")
+
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _OwnerDropFakeSandbox)
+
+    registry = execute_code_module._SandboxRegistry()
+    execute_code = HyperlightExecuteCodeTool(_registry=registry)
+    asyncio.run(execute_code.invoke(arguments={"code": "None"}))
+
+    registry.close()
+
+    # Release the registry/tool references and force a GC. With the fix in place the
+    # sandbox is already disposed on the worker thread inside close(); dropping these
+    # local references must not trigger a wrong-thread __del__ now.
+    del registry
+    del execute_code
+    for _ in range(3):
+        gc.collect()
+
+    assert drop_violations == [], f"sandbox was dropped off-thread despite registry close: {drop_violations}"
+
+
+def test_worker_failure_does_not_leak_unsendable_via_exception_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: an exception raised inside a worker closure must not leak unsendable refs.
+
+    Production failure mode: ``_build_sandbox`` (or ``sandbox.run``) raises on the
+    worker thread. ``concurrent.futures`` propagates the exception via
+    ``Future.result()`` to the caller's thread. Python's exception object retains
+    ``__traceback__`` whose frames reference local variables -- including the
+    partially-built PyO3 unsendable sandbox. When the caller's thread eventually
+    GCs the exception, those locals are dec_ref'd on the wrong thread and PyO3
+    panics with
+    ``_native_wasm::WasmSandbox is unsendable, but is being dropped on another thread``.
+
+    The fix routes every worker closure through ``_run_on_worker``, which catches
+    the exception on the worker thread, drops its traceback there, and re-raises
+    a fresh exception on the caller side carrying only the message.
+    """
+    drop_violations: list[str] = []
+
+    class _RaisingFakeSandbox(_FakeSandbox):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self._owner_thread = threading.get_ident()
+            _FakeSandbox.instances.remove(self)
+            # Simulate production bug: build raises while ``self`` is alive in
+            # the calling frame's locals -- the exception traceback will retain
+            # a reference to this object.
+            raise RuntimeError("simulated build failure with unsendable in frame locals")
+
+        def __del__(self) -> None:
+            ident = threading.get_ident()
+            if ident != self._owner_thread:
+                drop_violations.append(f"sandbox dropped on thread {ident}, owner was {self._owner_thread}")
+
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _RaisingFakeSandbox)
+
+    registry = execute_code_module._SandboxRegistry()
+    execute_code = HyperlightExecuteCodeTool(_registry=registry)
+
+    async def _drive(tool: HyperlightExecuteCodeTool) -> None:
+        for _ in range(4):
+            with contextlib.suppress(Exception):
+                await tool.invoke(arguments={"code": "None"})
+
+    asyncio.run(_drive(execute_code))
+    registry.close()
+
+    del registry
+    del execute_code
+    for _ in range(5):
+        gc.collect()
+
+    assert drop_violations == [], (
+        f"sandbox dropped off-thread despite worker raising on the owner thread: {drop_violations}"
+    )
+
+
+def test_sandbox_entry_does_not_expose_unsendable_attributes() -> None:
+    """Architectural regression: the entry must not hold sandbox/snapshot as attributes.
+
+    The unsendable PyO3 sandbox/snapshot must live ONLY inside the per-entry worker
+    thread, accessible only via worker-submitted closures. Any direct ``entry.sandbox``
+    or ``entry.snapshot`` attribute would let callers obtain a strong reference that
+    can be released on a non-owner thread, triggering PyO3's unsendable Drop panic
+    (the production bug we are fixing).
+    """
+    fields = {f.name for f in dataclasses.fields(execute_code_module._SandboxEntry)}
+    assert "sandbox" not in fields, "_SandboxEntry must not expose `sandbox` directly"
+    assert "snapshot" not in fields, "_SandboxEntry must not expose `snapshot` directly"
+    # Whatever attributes remain must be sendable / safe to GC on any thread.
+    assert fields <= {"worker", "input_dir", "output_dir"}
+
+
+def test_sandbox_survives_external_thread_holding_stale_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: stale refs held by external executors must not cause wrong-thread Drop.
+
+    Production traceback was ``concurrent.futures.thread._worker:95 del work_item`` on
+    ``asyncio_0`` -- an external ``ThreadPoolExecutor`` whose ``_WorkItem`` transitively
+    held a strong reference to the sandbox via ``self._registry.execute``. When that
+    work_item was deleted on the external worker thread, the sandbox's refcount could
+    reach zero there, panicking PyO3.
+
+    With the actor-model refactor, ``HyperlightExecuteCodeTool._run_code`` runs the
+    sandbox call via ``asyncio.to_thread(self._registry.execute, ...)`` which creates
+    an external work_item containing ``self._registry.execute`` -- but that reference
+    transitively holds only the registry, not the sandbox. The sandbox lives entirely
+    inside the per-entry ``_SandboxWorker`` and never escapes; so when the external
+    work_item is deleted on a non-owner thread, the sandbox's refcount cannot reach
+    zero there.
+    """
+    drop_violations: list[str] = []
+
+    class _OwnerDropFakeSandbox(_FakeSandbox):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self._owner_thread = threading.get_ident()
+            _FakeSandbox.instances.remove(self)
+
+        def __del__(self) -> None:
+            ident = threading.get_ident()
+            if ident != self._owner_thread:
+                drop_violations.append(f"sandbox dropped on thread {ident}, owner was {self._owner_thread}")
+
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _OwnerDropFakeSandbox)
+
+    registry = execute_code_module._SandboxRegistry()
+    execute_code = HyperlightExecuteCodeTool(_registry=registry)
+
+    async def _drive_many(tool: HyperlightExecuteCodeTool) -> None:
+        # Many concurrent invocations push work_items into asyncio's default executor;
+        # each work_item's args transitively reference the registry. If the registry
+        # were the sandbox holder, the work_items' deletion on asyncio_0/asyncio_1 etc.
+        # could trigger a wrong-thread Drop -- which is exactly the production bug.
+        await asyncio.gather(*[tool.invoke(arguments={"code": "None"}) for _ in range(8)])
+
+    asyncio.run(_drive_many(execute_code))
+    registry.close()
+
+    del registry
+    del execute_code
+    for _ in range(5):
+        gc.collect()
+
+    assert drop_violations == []

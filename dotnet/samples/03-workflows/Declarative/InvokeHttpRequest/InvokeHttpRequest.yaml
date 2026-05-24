@@ -1,0 +1,76 @@
+#
+# This workflow demonstrates using HttpRequestAction to call a REST API directly
+# from the workflow without going through an AI agent first.
+#
+# HttpRequestAction allows workflows to:
+# - Fetch data from external HTTP endpoints
+# - Store the parsed response in workflow variables for later use
+# - Add the response body to the conversation so a downstream agent can
+#   answer questions based on it
+#
+# This sample fetches public metadata for the dotnet/runtime repository from
+# the GitHub REST API (no authentication required) and uses an agent to
+# answer follow-up questions about it.
+#
+# Example input:
+# How many subscribers does the repository have?
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_http_request_demo
+  actions:
+
+    # Capture the original user message for input to the follow-up agent.
+    - kind: SetVariable
+      id: set_user_message
+      variable: Local.InputMessage
+      value: =System.LastMessage
+
+    # Set the repository org/name used to form the request URL.
+    - kind: SetVariable
+      id: set_repo_name
+      variable: Local.RepoName
+      value: microsoft/agent-framework
+
+    # Invoke the GitHub repo API. The response body is parsed into Local.RepoInfo
+    # and also added to the conversation (via conversationId) so the agent below
+    # can answer questions based on it.
+    - kind: HttpRequestAction
+      id: fetch_repo_info
+      conversationId: =System.ConversationId
+      method: GET
+      url: =Concatenate("https://api.github.com/repos/", Local.RepoName)
+      headers:
+        Accept: application/vnd.github+json
+        User-Agent: agent-framework-sample
+      response: Local.RepoInfo
+
+    # Display a confirmation message showing key fields from the parsed response.
+    - kind: SendMessage
+      id: show_repo_summary
+      message: "Fetched repo: visibility={Local.RepoInfo.visibility}, description={Local.RepoInfo.description}"
+
+    # Use the agent to summarize the repo using the conversation context.
+    - kind: InvokeAzureAgent
+      id: summarize_repo
+      conversationId: =System.ConversationId
+      agent:
+        name: GitHubRepoInfoAgent
+      input:
+        messages: =UserMessage("Please provide a brief summary of this GitHub repository based on the data already in the conversation.")
+      output:
+        autoSend: true
+        messages: Local.AgentResponse
+
+    # Allow the user to ask follow-up questions about the repo in a loop.
+    - kind: InvokeAzureAgent
+      id: invoke_followup
+      conversationId: =System.ConversationId
+      agent:
+        name: GitHubRepoInfoAgent
+      input:
+        messages: =Local.InputMessage
+        externalLoop:
+          when: =Upper(System.LastMessage.Text) <> "EXIT"

@@ -1,15 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel.Primitives;
 using System.Diagnostics.CodeAnalysis;
-using System.Reflection;
-using System.Threading.Tasks;
+using System.Runtime.CompilerServices;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
 using Azure.Identity;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Shared.DiagnosticIds;
@@ -36,7 +35,7 @@ public static class FoundryHostingExtensions
     /// <para>
     /// Example:
     /// <code>
-    /// builder.AddAIAgent("my-agent", ...);
+    /// builder.Services.AddKeyedSingleton&lt;AIAgent&gt;("my-agent", myAgent);
     /// builder.Services.AddFoundryResponses();
     ///
     /// var app = builder.Build();
@@ -50,7 +49,7 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddResponsesServer();
-        services.TryAddSingleton<AgentSessionStore, InMemoryAgentSessionStore>();
+        services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
     }
@@ -77,7 +76,7 @@ public static class FoundryHostingExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, an in-memory session store will be used.</param>
+    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, a file-system session store is used, rooted at <c>/.checkpoints</c> when running in a Foundry hosted environment and <c>{cwd}/.checkpoints</c> locally.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore = null)
     {
@@ -85,7 +84,7 @@ public static class FoundryHostingExtensions
         ArgumentNullException.ThrowIfNull(agent);
 
         services.AddResponsesServer();
-        agentSessionStore ??= new InMemoryAgentSessionStore();
+        agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
         {
@@ -181,20 +180,11 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         endpoints.MapResponsesServer(prefix);
-
-        if (endpoints is IApplicationBuilder app)
-        {
-            // Ensure the middleware is added to the pipeline
-            app.UseMiddleware<AgentFrameworkUserAgentMiddleware>();
-        }
-
         return endpoints;
     }
 
     /// <summary>
     /// The ActivitySource name for the Responses hosting pipeline.
-    /// Matches the value previously exposed by <c>AgentHostTelemetry.ResponsesSourceName</c>
-    /// in <c>Azure.AI.AgentServer.Core</c>.
     /// </summary>
     private const string ResponsesSourceName = "Azure.AI.AgentServer.Responses";
 
@@ -216,46 +206,46 @@ public static class FoundryHostingExtensions
                     .Build();
     }
 
-    private sealed class AgentFrameworkUserAgentMiddleware(RequestDelegate next)
+    /// <summary>
+    /// Registers the hosted-agent <c>User-Agent</c> supplement policy
+    /// (<see cref="HostedAgentUserAgentPolicy"/>) on the agent's underlying chat client via the
+    /// MEAI 10.5.1 <see cref="OpenAIRequestPolicies"/> hook so every outgoing OpenAI Responses
+    /// request carries the segment <c>foundry-hosting/agent-framework-dotnet/{version}</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Best-effort and idempotent. The method is a no-op when:
+    /// <list type="bullet">
+    /// <item><description><paramref name="agent"/> exposes no <see cref="IChatClient"/>;</description></item>
+    /// <item><description>the chat client is not OpenAI-backed (the <see cref="OpenAIRequestPolicies"/> service lookup returns <see langword="null"/>);</description></item>
+    /// <item><description>the policy was already registered on this client by a prior invocation (deduped via reflection on <c>OpenAIRequestPolicies._entries</c>).</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// Returns the same <paramref name="agent"/> instance unchanged. The policy is installed
+    /// on the chat client; the agent itself is not wrapped.
+    /// </para>
+    /// </remarks>
+    internal static AIAgent TryApplyUserAgent(AIAgent agent)
     {
-        private static readonly string s_userAgentValue = CreateUserAgentValue();
-
-        public async Task InvokeAsync(HttpContext context)
+        var chatClient = agent.GetService<IChatClient>();
+        if (chatClient?.GetService<OpenAIRequestPolicies>() is { } policies)
         {
-            var headers = context.Request.Headers;
-            var userAgent = headers.UserAgent.ToString();
-
-            if (string.IsNullOrEmpty(userAgent))
+            // Hosted agents are typically singletons resolved per request, so AddPolicy must be
+            // called at most once per OpenAIRequestPolicies instance to avoid unbounded growth of
+            // the policy list (each entry adds per-request CPU work even though the User-Agent
+            // value stays stable). Track which instances we have already wired with a
+            // ConditionalWeakTable keyed on the OpenAIRequestPolicies reference; the table holds
+            // weak references so it does not extend the lifetime of the chat client.
+            if (s_userAgentRegistrations.TryAdd(policies, s_boxedTrue))
             {
-                headers.UserAgent = s_userAgentValue;
+                policies.AddPolicy(HostedAgentUserAgentPolicy.Instance, PipelinePosition.PerCall);
             }
-            else if (!userAgent.Contains(s_userAgentValue, StringComparison.OrdinalIgnoreCase))
-            {
-                headers.UserAgent = $"{userAgent} {s_userAgentValue}";
-            }
-
-            await next(context).ConfigureAwait(false);
         }
 
-        private static string CreateUserAgentValue()
-        {
-            const string Name = "agent-framework-dotnet";
-
-            if (typeof(AgentFrameworkUserAgentMiddleware).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is string version)
-            {
-                int pos = version.IndexOf('+');
-                if (pos >= 0)
-                {
-                    version = version.Substring(0, pos);
-                }
-
-                if (version.Length > 0)
-                {
-                    return $"{Name}/{version}";
-                }
-            }
-
-            return Name;
-        }
+        return agent;
     }
+
+    private static readonly object s_boxedTrue = new();
+    private static readonly ConditionalWeakTable<OpenAIRequestPolicies, object> s_userAgentRegistrations = new();
 }

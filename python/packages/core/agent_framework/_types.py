@@ -3246,10 +3246,12 @@ class ToolMode(TypedDict, total=False):
     Fields:
         mode: One of "auto", "required", or "none".
         required_function_name: Optional function name when `mode == "required"`.
+        allowed_tools: Optional list of tool names when `mode` is `"auto"` or `"required"`.
     """
 
     mode: Literal["auto", "required", "none"]
     required_function_name: str
+    allowed_tools: list[str]
 
 
 # region TypedDict-based Chat Options
@@ -3482,7 +3484,7 @@ def validate_tool_mode(
 
     Returns:
         A ToolMode dict (contains keys: "mode", and optionally
-        "required_function_name"), or ``None`` when not provided.
+        "required_function_name" or "allowed_tools"), or ``None`` when not provided.
 
     Raises:
         ContentError: If the tool_choice string is invalid.
@@ -3499,6 +3501,17 @@ def validate_tool_mode(
         raise ContentError(f"Invalid tool choice: {tool_choice['mode']}")
     if tool_choice["mode"] != "required" and "required_function_name" in tool_choice:
         raise ContentError("tool_choice with mode other than 'required' cannot have 'required_function_name'")
+    if tool_choice["mode"] not in ("auto", "required") and "allowed_tools" in tool_choice:
+        raise ContentError("tool_choice 'allowed_tools' is only valid when mode is 'auto' or 'required'")
+    if "allowed_tools" in tool_choice:
+        allowed_tools = tool_choice["allowed_tools"]
+        if isinstance(allowed_tools, str) or not isinstance(allowed_tools, Sequence):
+            raise ContentError("tool_choice 'allowed_tools' must be a non-string sequence of strings")
+        if not all(isinstance(tool_name, str) for tool_name in allowed_tools):
+            raise ContentError("tool_choice 'allowed_tools' must contain only strings")
+        normalized_tool_choice = dict(tool_choice)
+        normalized_tool_choice["allowed_tools"] = list(allowed_tools)
+        return cast(ToolMode, normalized_tool_choice)
     return tool_choice
 
 

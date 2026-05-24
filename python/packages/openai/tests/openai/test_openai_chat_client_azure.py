@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from functools import wraps
 from pathlib import Path
@@ -76,6 +77,15 @@ async def create_vector_store(client: OpenAIChatClient) -> tuple[str, Content]:
     )
     if result.last_error is not None:
         raise RuntimeError(f"Vector store file processing failed with status: {result.last_error.message}")
+
+    # Wait for the vector store index to be fully searchable.
+    # create_and_poll confirms file processing, but the search index is eventually consistent.
+    for _ in range(10):
+        vs = await client.client.vector_stores.retrieve(vector_store.id)
+        if vs.file_counts.completed >= 1 and vs.file_counts.in_progress == 0:
+            break
+        await asyncio.sleep(1)
+    await asyncio.sleep(2)
 
     return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
@@ -355,7 +365,6 @@ async def test_integration_web_search() -> None:
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
 @_with_azure_openai_debug()
-@pytest.mark.skip(reason="Azure OpenAI with files raises 500 error. Needs investigation.")
 async def test_integration_client_file_search() -> None:
     async with AzureCliCredential() as credential:
         client = OpenAIChatClient(credential=credential)
@@ -381,7 +390,6 @@ async def test_integration_client_file_search() -> None:
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
 @_with_azure_openai_debug()
-@pytest.mark.skip(reason="Azure OpenAI with files raises 500 error. Needs investigation.")
 async def test_integration_client_file_search_streaming() -> None:
     async with AzureCliCredential() as credential:
         client = OpenAIChatClient(credential=credential)

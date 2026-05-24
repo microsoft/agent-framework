@@ -10,13 +10,25 @@ You can also create a Foundry Toolbox in the Foundry portal. Read more about it 
 
 > If you set up a project with this sample and provision the resources using `azd provision`, a Foundry Toolbox will be created with the specified tools in [`agent.manifest.yaml`](agent.manifest.yaml).
 
+### Authentication Methods
+
+You can connect to MCP servers in Foundry Toolbox that use different authentication methods. This sample demonstrates the following authentication methods:
+
+- **No authentication**: The tool does not require any authentication. The agent can invoke the tool without providing any credentials. Sample MCP server: `https://gitmcp.io/Azure/azure-rest-api-specs`
+- **Key-based authentication**: The tool requires a key to authenticate. Sample MCP server: `https://api.githubcopilot.com/mcp` (GitHub MCP server) with a Personal Access Token (PAT) for authentication.
+- **OAuth2 authentication (managed)**: The tool requires OAuth2 to authenticate. Sample MCP server: `https://api.githubcopilot.com/mcp` (GitHub MCP server) with OAuth2 for authentication.
+- **Agent identity authentication**: The tool requires an agent identity token to authenticate. Sample MCP server: `https://{foundry-resource-name}.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview` (Azure Language MCP server) with agent identity for authentication.
+- **Entra Pass-through authentication**: The tool requires an Entra pass-through token to authenticate. Sample MCP server: Microsoft Outlook MCP server with Entra pass-through for authentication.
+
+> Definitions of these authentication methods can be found in the [agent.manifest.yaml](agent.manifest.yaml) file in this sample.
+
+There are also Non-MCP tools in the toolbox that support different authentication methods. Learn more at the [Foundry sample repository](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS.md).
+
 ## How It Works
 
 ### Model Integration
 
-The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It loads a named Foundry Toolbox via `client.get_toolbox(name)` — the toolbox is a server-side bundle of tool configurations (e.g., `code_interpreter`, `web_search`) defined in the Foundry portal or by `azd provision`. Omitting `version` resolves the toolbox's current default version at runtime.
-
-The sample then narrows the toolbox to a subset of tool types via `select_toolbox_tools(toolbox, include_types=[...])` before handing it to the agent. This demonstrates how one toolbox can be reused across agents that each expose only the tools they need — here, the agent only sees `code_interpreter` even though the toolbox also includes `web_search`.
+The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It connects to the toolbox's MCP endpoint via `MCPStreamableHTTPTool`, which discovers and invokes the toolbox's tools over MCP at runtime. The endpoint URL is provided through the `FOUNDRY_TOOLBOX_ENDPOINT` environment variable.
 
 See [main.py](main.py) for the full implementation.
 
@@ -27,6 +39,29 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 ## Running the Agent Host
 
 Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
+
+An extra environment variable must be set to point to the toolbox MCP endpoint. You can provide it in one of two ways:
+
+**Option A – Set `FOUNDRY_TOOLBOX_ENDPOINT` directly** (recommended for local development):
+
+```bash
+export FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/mcp?api-version=v1"
+```
+
+Or in PowerShell:
+
+```powershell
+$env:FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/mcp?api-version=v1"
+```
+
+**Option B – Set `TOOLBOX_NAME`** (used automatically by the Foundry hosting scaffolding after `azd provision`):
+
+The agent derives the endpoint at runtime as:
+```
+{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{TOOLBOX_NAME}/mcp?api-version=v1
+```
+
+When deployed via `azd provision`, the scaffolding injects `TOOLBOX_NAME=agent-tools` and `FOUNDRY_PROJECT_ENDPOINT` automatically from the provisioned resources declared in [`agent.manifest.yaml`](agent.manifest.yaml).
 
 ## Interacting with the agent
 

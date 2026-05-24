@@ -582,7 +582,7 @@ def test_sample_peak_renderer_rss_mb_uses_browser_process_tree(
 def memory_regression_server() -> Generator[tuple[str, str]]:
     """Start DevUI with a synthetic streaming agent and yield the base URL plus entity ID."""
 
-    server = DevServer(host="127.0.0.1", port=0)
+    server = DevServer(host="127.0.0.1", port=0, auth_enabled=False)
     server.register_entities([
         MemoryStressAgent(
             id="memory-stream-agent",

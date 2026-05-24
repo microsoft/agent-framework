@@ -1157,6 +1157,86 @@ async def test_unknown_tool_choice_mode_is_ignored() -> None:
     assert not hasattr(config, "tool_config") or config.tool_config is None
 
 
+async def test_tool_choice_auto_with_allowed_tools_uses_VALIDATED() -> None:
+    """Maps auto + allowed_tools to FunctionCallingConfigMode.VALIDATED with allowed_function_names."""
+    tool = _make_dummy_tool()
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={
+            "tools": [tool],
+            "tool_choice": {"mode": "auto", "allowed_tools": ["dummy", "other"]},
+        },
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_calling_config = config.tool_config.function_calling_config
+    assert function_calling_config.mode == "VALIDATED"
+    assert function_calling_config.allowed_function_names == ["dummy", "other"]
+
+
+async def test_tool_choice_auto_with_empty_allowed_tools_uses_VALIDATED() -> None:
+    """Maps auto + empty allowed_tools to VALIDATED with empty allowed_function_names."""
+    tool = _make_dummy_tool()
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={
+            "tools": [tool],
+            "tool_choice": {"mode": "auto", "allowed_tools": []},
+        },
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_calling_config = config.tool_config.function_calling_config
+    assert function_calling_config.mode == "VALIDATED"
+    assert function_calling_config.allowed_function_names == []
+
+
+async def test_tool_choice_required_with_allowed_tools_uses_ANY() -> None:
+    """Maps required + allowed_tools to ANY with allowed_function_names."""
+    tool = _make_dummy_tool()
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={
+            "tools": [tool],
+            "tool_choice": {"mode": "required", "allowed_tools": ["dummy"]},
+        },
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_calling_config = config.tool_config.function_calling_config
+    assert function_calling_config.mode == "ANY"
+    assert function_calling_config.allowed_function_names == ["dummy"]
+
+
+async def test_tool_choice_required_function_name_takes_precedence_over_allowed_tools() -> None:
+    """When both required_function_name and allowed_tools are present, required_function_name wins."""
+    tool = _make_dummy_tool()
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={
+            "tools": [tool],
+            "tool_choice": {"mode": "required", "required_function_name": "dummy", "allowed_tools": ["other"]},
+        },
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_calling_config = config.tool_config.function_calling_config
+    assert function_calling_config.mode == "ANY"
+    assert function_calling_config.allowed_function_names == ["dummy"]
+
+
 # built-in tool factories
 
 

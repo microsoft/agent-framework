@@ -27,6 +27,12 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     private readonly FoundryToolboxService? _toolboxService;
 
     /// <summary>
+    /// Cached fallback used when no <see cref="HostedSessionIsolationKeyProvider"/> is registered in DI.
+    /// Avoids a per-request allocation on the request hot path.
+    /// </summary>
+    private static readonly HostedSessionIsolationKeyProvider s_defaultIsolationKeyProvider = new PlatformHostedSessionIsolationKeyProvider();
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
     /// that resolves agents from keyed DI services.
     /// </summary>
@@ -67,6 +73,42 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
                 : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
+        // 2.5. Resolve and apply the per-request hosted session identity context.
+        // Fresh sessions are tagged once. Resumed sessions are validated against the live request
+        // to detect cross-user session leaks and in-process tampering of the persisted identity.
+        var isolationKeyProvider = this._serviceProvider.GetService<HostedSessionIsolationKeyProvider>()
+            ?? s_defaultIsolationKeyProvider;
+        var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
+        if (resolvedHostedContext is null)
+        {
+            throw new InvalidOperationException(
+                $"The registered {nameof(HostedSessionIsolationKeyProvider)} returned null for the current request. " +
+                "Ensure the Foundry platform is providing the x-agent-user-isolation-key and x-agent-chat-isolation-key headers, " +
+                "or register a custom provider that supplies fallback values for local development.");
+        }
+
+        if (session is not null)
+        {
+            var existingHostedContext = session.GetHostedContext();
+            if (existingHostedContext is null)
+            {
+                // Fresh path: the session has no hosted context yet (either freshly created here,
+                // or freshly loaded for a conversation_id that the platform supplied without any
+                // prior hosted-agent request having stamped a context). Stamp it now.
+                session.SetHostedContext(resolvedHostedContext);
+            }
+            else if (!string.Equals(existingHostedContext.UserId, resolvedHostedContext.UserId, StringComparison.Ordinal)
+                || !string.Equals(existingHostedContext.ChatId, resolvedHostedContext.ChatId, StringComparison.Ordinal))
+            {
+                // Resume path: the persisted identity must match the live request. A mismatch
+                // signals either a cross-user session leak or in-process tampering of the
+                // persisted identity. Reject the request hard.
+                throw new ResponsesApiException(
+                    new Error("hosted_session_identity_mismatch", "Hosted session identity context mismatch"),
+                    403);
+            }
+        }
+
         // 3. Create the SDK event stream builder
         var stream = new ResponseEventStream(context, request);
 
@@ -77,23 +119,31 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // 4. Convert input: history + current input → ChatMessage[]
         var messages = new List<ChatMessage>();
 
-        // Load conversation history if available
-        var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
-        if (history.Count > 0)
+        // Load conversation history only for fresh sessions. When a session already exists
+        // (e.g. resuming a workflow paused at an external-input port), the workflow's
+        // checkpointed state already contains the prior turns' messages — replaying history
+        // would re-drive completed actions and break HITL resume semantics.
+        var isResume = !string.IsNullOrWhiteSpace(sessionConversationId)
+            && session?.StateBag?.Count > 0;
+        if (!isResume)
         {
-            messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history));
+            var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
+            if (history.Count > 0)
+            {
+                messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
+            }
         }
 
         // Load and convert current input items
         var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         if (inputItems.Count > 0)
         {
-            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems));
+            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems, session?.StateBag));
         }
         else
         {
             // Fall back to raw request input
-            messages.AddRange(InputConverter.ConvertInputToMessages(request));
+            messages.AddRange(InputConverter.ConvertInputToMessages(request, session?.StateBag));
         }
 
         // 5. Build chat options
@@ -191,6 +241,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
+            session?.StateBag,
             cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {
@@ -297,6 +348,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             var agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
             if (agent is not null)
             {
+                FoundryHostingExtensions.TryApplyUserAgent(agent);
                 return FoundryHostingExtensions.ApplyOpenTelemetry(agent);
             }
 
@@ -310,12 +362,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var defaultAgent = this._serviceProvider.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
+            FoundryHostingExtensions.TryApplyUserAgent(defaultAgent);
             return FoundryHostingExtensions.ApplyOpenTelemetry(defaultAgent);
         }
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AIAgent is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via AddAIAgent(\"{agentName}\", ...) or as a default AIAgent.";
+            : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
@@ -352,7 +405,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via AddAIAgent(\"{agentName}\", ...) or as a default AgentSessionStore.";
+            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }

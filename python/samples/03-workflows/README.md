@@ -55,7 +55,7 @@ Write workflows as plain Python async functions — no graph concepts, no execut
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py)             | Wrap a workflow so it can behave like an agent (reflection pattern)                                  |
 | Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
 | Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
-| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
+| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @tool tools |
 
 ### checkpoint
 
@@ -89,6 +89,7 @@ Write workflows as plain Python async functions — no graph concepts, no execut
 | Multi-Selection Edge Group | [control-flow/multi_selection_edge_group.py](./control-flow/multi_selection_edge_group.py) | Select one or many targets dynamically (subset fan-out) |
 | Simple Loop                | [control-flow/simple_loop.py](./control-flow/simple_loop.py)                               | Feedback loop where an agent judges ABOVE/BELOW/MATCHED |
 | Workflow Cancellation      | [control-flow/workflow_cancellation.py](./control-flow/workflow_cancellation.py)           | Cancel a running workflow using asyncio tasks           |
+| Workflow and Intermediate Outputs | [control-flow/intermediate_vs_terminal_outputs.py](./control-flow/intermediate_vs_terminal_outputs.py) | Select Workflow Output and Intermediate Output executors; hide unselected yields; map Intermediate Output events to `text_reasoning` content via `as_agent` |
 
 ### human-in-the-loop
 
@@ -117,6 +118,43 @@ For additional observability samples in Agent Framework, see the [observability 
 
 Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magentic), including builder-based
 `workflow.as_agent(...)` variants, are documented in the [orchestrations](./orchestrations/README.md) directory.
+
+### output selection
+
+Workflow Output selection controls which `ctx.yield_output(...)` calls are visible to callers as `type='output'`
+events and through `WorkflowRunResult.get_outputs()`. The core rule is that `output_from` is an allow-list for
+Workflow Output, not a routing rule for every other executor output. Unselected executor payloads are hidden unless
+`intermediate_output_from` explicitly selects them as Intermediate Output.
+
+Use `output_from` and `intermediate_output_from` as the canonical API:
+
+| Selection | Workflow Output | Intermediate Output | Hidden payloads |
+| --- | --- | --- | --- |
+| Omit both selections | Every executor `yield_output`; emits a deprecation warning | None | None |
+| `output_from="all"` | Every executor `yield_output`; no warning | None | None |
+| `output_from=[answerer]` | Only `answerer` | None | All other executor payloads |
+| `output_from=[answerer], intermediate_output_from="all_other"` | Only `answerer` | Every output-capable executor not selected by `output_from` | None |
+| `intermediate_output_from="all_other"` | None | Every output-capable executor | None |
+| `output_from=[], intermediate_output_from="all_other"` | None | Every output-capable executor | None |
+| `output_from=[answerer], intermediate_output_from=[planner, researcher]` | Only `answerer` | `planner` and `researcher` | Any other executor payloads |
+
+Invalid selections fail at construction or build time:
+
+| Invalid selection | Why it fails |
+| --- | --- |
+| `output_from="all_other"` | `"all_other"` is only valid for `intermediate_output_from` |
+| `intermediate_output_from="all"` | `"all"` is only valid for `output_from` |
+| The same executor in both selections | One payload cannot be both Workflow Output and Intermediate Output |
+| Duplicate executor selections | Duplicates are treated as configuration errors |
+| Unknown executor selections | Typos and missing participants are rejected |
+| `output_from=[], intermediate_output_from=[]` | Both explicit selections are empty |
+
+Compatibility aliases such as `output_executors` emit deprecation warnings where supported. New samples and
+applications should use `output_from` and `intermediate_output_from`.
+
+When a workflow is wrapped with `workflow.as_agent()`, Workflow Output becomes normal agent text content. Intermediate
+Output becomes `text_reasoning` content, so `AgentResponse.text` remains focused on the caller-facing answer while
+callers can still inspect progress or supporting work from the response messages.
 
 ### parallelism
 
@@ -174,7 +212,7 @@ Sequential orchestration uses a few small adapter nodes for plumbing:
 
 - "input-conversation" normalizes input to `list[Message]`
 - "to-conversation:<participant>" converts agent responses into the shared conversation
-- "complete" publishes the final output event (type='output')
+- "complete" publishes the Workflow Output event (`type='output'`)
   These may appear in event streams (executor_invoked/executor_completed). They're analogous to
   concurrent’s dispatcher and aggregator and can be ignored if you only care about agent activity.
 

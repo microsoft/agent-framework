@@ -3,7 +3,7 @@ from asyncio import CancelledError
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from a2a.types import Task, TaskState, TextPart
+from a2a.types import Part, Task, TaskState
 from agent_framework import (
     AgentResponseUpdate,
     Content,
@@ -48,7 +48,7 @@ def mock_task() -> Task:
     task = MagicMock(spec=Task)
     task.id = str(uuid4())
     task.context_id = str(uuid4())
-    task.state = TaskState.completed
+    task.state = TaskState.TASK_STATE_COMPLETED
     return task
 
 
@@ -244,7 +244,7 @@ class TestA2AExecutorExecute:
         executor._agent.run = AsyncMock(return_value=response)
         executor._agent.create_session = MagicMock()
 
-        with patch("agent_framework_a2a._a2a_executor.new_task") as mock_new_task:
+        with patch("agent_framework_a2a._a2a_executor.new_task_from_user_message") as mock_new_task:
             mock_task = MagicMock(spec=Task)
             mock_task.id = "task-new"
             mock_task.context_id = "ctx-123"
@@ -341,9 +341,7 @@ class TestA2AExecutorExecute:
             # Assert
             mock_updater.update_status.assert_called()
             call_args_list = mock_updater.update_status.call_args_list
-            assert any(
-                call[1].get("state") == TaskState.canceled and call[1].get("final") is True for call in call_args_list
-            )
+            assert any(call[1].get("state") == TaskState.TASK_STATE_CANCELED for call in call_args_list)
 
     async def test_execute_handles_generic_exception(
         self,
@@ -382,14 +380,12 @@ class TestA2AExecutorExecute:
             args, _ = mock_updater.new_agent_message.call_args
             parts = args[0]
             assert len(parts) == 1
-            assert isinstance(parts[0].root, TextPart)
-            assert parts[0].root.text == error_message
+            assert isinstance(parts[0], Part)
+            assert parts[0].text == error_message
 
             call_args_list = mock_updater.update_status.call_args_list
             assert any(
-                call[1].get("state") == TaskState.failed
-                and call[1].get("final") is True
-                and call[1].get("message") == "error_message_obj"
+                call[1].get("state") == TaskState.TASK_STATE_FAILED and call[1].get("message") == "error_message_obj"
                 for call in call_args_list
             )
 
@@ -630,7 +626,7 @@ class TestA2AExecutorHandleEvents:
         # Assert
         mock_updater.update_status.assert_called_once()
         call_args = mock_updater.update_status.call_args
-        assert call_args.kwargs["state"] == TaskState.working
+        assert call_args.kwargs["state"] == TaskState.TASK_STATE_WORKING
         assert mock_updater.new_agent_message.called
 
     async def test_handle_multiple_text_contents(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
@@ -666,7 +662,7 @@ class TestA2AExecutorHandleEvents:
         # Assert
         mock_updater.update_status.assert_called_once()
         call_args = mock_updater.update_status.call_args
-        assert call_args.kwargs["state"] == TaskState.working
+        assert call_args.kwargs["state"] == TaskState.TASK_STATE_WORKING
 
     async def test_handle_uri_content(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
         """Test handling messages with URI content."""
@@ -683,7 +679,7 @@ class TestA2AExecutorHandleEvents:
         # Assert
         mock_updater.update_status.assert_called_once()
         call_args = mock_updater.update_status.call_args
-        assert call_args.kwargs["state"] == TaskState.working
+        assert call_args.kwargs["state"] == TaskState.TASK_STATE_WORKING
 
     async def test_handle_mixed_content_types(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
         """Test handling messages with mixed content types."""
@@ -705,7 +701,7 @@ class TestA2AExecutorHandleEvents:
         # Assert
         mock_updater.update_status.assert_called_once()
         call_args = mock_updater.update_status.call_args
-        assert call_args.kwargs["state"] == TaskState.working
+        assert call_args.kwargs["state"] == TaskState.TASK_STATE_WORKING
 
     async def test_handle_with_additional_properties(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
         """Test handling messages with additional properties metadata."""
@@ -778,7 +774,7 @@ class TestA2AExecutorHandleEvents:
 
         # Assert
         call_kwargs = mock_updater.update_status.call_args.kwargs
-        assert call_kwargs["state"] == TaskState.working
+        assert call_kwargs["state"] == TaskState.TASK_STATE_WORKING
 
     async def test_handle_agent_response_update_no_streamed_set(
         self, executor: A2AExecutor, mock_updater: MagicMock

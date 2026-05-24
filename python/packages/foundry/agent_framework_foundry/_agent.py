@@ -135,6 +135,18 @@ def _uses_foundry_agent_session(conversation_id: Any) -> bool:
     )
 
 
+def _build_agent_reference(agent_name: str, agent_version: str | None) -> dict[str, str]:
+    """Build the Responses API ``agent_reference`` payload for non-preview Foundry agent calls.
+
+    Used for both Prompt Agents and HostedAgents on the ``allow_preview=False`` code path —
+    the preview branch instead injects identity via ``project_client.get_openai_client(agent_name=...)``.
+    """
+    ref: dict[str, str] = {"name": agent_name, "type": "agent_reference"}
+    if agent_version:
+        ref["version"] = agent_version
+    return ref
+
+
 class RawFoundryAgentChatClient(  # type: ignore[misc]
     RawOpenAIChatClient[FoundryAgentOptionsT],
     Generic[FoundryAgentOptionsT],
@@ -342,6 +354,12 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             run_options.pop("previous_response_id", None)
             run_options.pop("conversation", None)
             extra_body["agent_session_id"] = conversation_id
+        # Non-preview Prompt/Hosted Agent calls need agent_reference in the request body to
+        # tell the Responses API which Foundry agent (and version) is in use, since ``model``
+        # is stripped below. The preview path injects the reference via the OpenAI client kwarg
+        # ``agent_name`` instead, so skip there. See issue #5582.
+        if not self.allow_preview:
+            extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
         if extra_body:
             run_options["extra_body"] = extra_body
 
@@ -400,12 +418,6 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         self,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
     ) -> list[Any]:
-        """Prepare tools for Foundry agent Responses API calls.
-
-        Mirrors ``RawFoundryChatClient`` sanitization so toolbox-fetched MCP
-        tools with extra read-model fields continue to work through the agent
-        surface.
-        """
         response_tools = super()._prepare_tools_for_openai(tools)
         return [_sanitize_foundry_response_tool(tool_item) for tool_item in response_tools]
 
@@ -781,7 +793,21 @@ class RawFoundryAgent(  # type: ignore[misc]
         Raises:
             ImportError: If azure-monitor-opentelemetry-exporter is not installed.
         """
+        from agent_framework.observability import (
+            OBSERVABILITY_SETTINGS,
+            create_metric_views,
+            create_resource,
+            enable_instrumentation,
+        )
         from azure.core.exceptions import ResourceNotFoundError
+
+        if OBSERVABILITY_SETTINGS.is_user_disabled:
+            logger.info(
+                "FoundryAgent.configure_azure_monitor(): Skipping setup because instrumentation was "
+                "explicitly disabled via disable_instrumentation(). Call enable_instrumentation(force=True) "
+                "to re-enable, then re-invoke configure_azure_monitor()."
+            )
+            return
 
         client = self.client
         if not isinstance(client, RawFoundryAgentChatClient):
@@ -804,8 +830,6 @@ class RawFoundryAgent(  # type: ignore[misc]
                 "azure-monitor-opentelemetry is required for Azure Monitor integration. "
                 "Install it with: pip install azure-monitor-opentelemetry"
             ) from exc
-
-        from agent_framework.observability import create_metric_views, create_resource, enable_instrumentation
 
         if "resource" not in kwargs:
             kwargs["resource"] = create_resource()

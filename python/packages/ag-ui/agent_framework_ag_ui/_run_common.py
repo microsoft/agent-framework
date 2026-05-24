@@ -32,10 +32,13 @@ from ag_ui.core import (
 from agent_framework import Content
 
 from ._orchestration._predictive_state import PredictiveStateHandler
-from ._state import TOOL_RESULT_STATE_KEY
+from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 from ._utils import generate_event_id, make_json_safe
 
 logger = logging.getLogger(__name__)
+
+# Sentinel for an unset display_result; distinguishes "caller didn't pass" from None/{}/"".
+_UNSET = object()
 
 
 def _has_only_tool_calls(contents: list[Any]) -> bool:
@@ -235,6 +238,22 @@ def _emit_tool_call(
     return events
 
 
+def _extract_tool_result_marker_values(content: Content, key: str) -> list[Any]:
+    """Extract marker values from outer and inner tool-result content."""
+    values: list[Any] = []
+
+    outer_ap = getattr(content, "additional_properties", None) or {}
+    if key in outer_ap:
+        values.append(outer_ap[key])
+
+    for item in content.items or ():
+        item_ap = getattr(item, "additional_properties", None) or {}
+        if key in item_ap:
+            values.append(item_ap[key])
+
+    return values
+
+
 def _extract_tool_result_state(content: Content) -> dict[str, Any] | None:
     """Extract a deterministic AG-UI state update from a tool-result ``Content``.
 
@@ -252,14 +271,7 @@ def _extract_tool_result_state(content: Content) -> dict[str, Any] | None:
     """
     merged: dict[str, Any] | None = None
 
-    outer_ap = getattr(content, "additional_properties", None) or {}
-    outer_state = outer_ap.get(TOOL_RESULT_STATE_KEY)
-    if isinstance(outer_state, dict):
-        merged = dict(outer_state)
-
-    for item in content.items or ():
-        item_ap = getattr(item, "additional_properties", None) or {}
-        item_state = item_ap.get(TOOL_RESULT_STATE_KEY)
+    for item_state in _extract_tool_result_marker_values(content, TOOL_RESULT_STATE_KEY):
         if isinstance(item_state, dict):
             if merged is None:
                 merged = dict(item_state)
@@ -269,6 +281,21 @@ def _extract_tool_result_state(content: Content) -> dict[str, Any] | None:
     return merged
 
 
+def _extract_tool_result_display(content: Content) -> Any:  # noqa: ANN401
+    """Extract a UI-only AG-UI tool result display payload, if present."""
+    display_values = _extract_tool_result_marker_values(content, TOOL_RESULT_DISPLAY_KEY)
+    return display_values[-1] if display_values else _UNSET
+
+
+def _stringify_tool_result(raw_result: Any) -> str:  # noqa: ANN401
+    return raw_result if isinstance(raw_result, str) else json.dumps(make_json_safe(raw_result))
+
+
+def _resolve_ui_payload(llm_str: str, display_result: Any) -> str:  # noqa: ANN401
+    """Pick the UI-bound string: the serialized display payload when set, else the LLM string."""
+    return llm_str if display_result is _UNSET else _stringify_tool_result(display_result)
+
+
 def _emit_tool_result_common(
     call_id: str,
     raw_result: Any,
@@ -276,6 +303,7 @@ def _emit_tool_result_common(
     predictive_handler: PredictiveStateHandler | None = None,
     *,
     state_update: Mapping[str, Any] | None = None,
+    display_result: Any = _UNSET,  # noqa: ANN401
 ) -> list[BaseEvent]:
     """Shared helper for emitting ToolCallEnd + ToolCallResult events and performing FlowState cleanup.
 
@@ -301,13 +329,14 @@ def _emit_tool_result_common(
     events.append(ToolCallEndEvent(tool_call_id=call_id))
     flow.tool_calls_ended.add(call_id)
 
-    result_content = raw_result if isinstance(raw_result, str) else json.dumps(make_json_safe(raw_result))
+    result_content = _stringify_tool_result(raw_result)
+    ui_result_content = _resolve_ui_payload(result_content, display_result)
     message_id = generate_event_id()
     events.append(
         ToolCallResultEvent(
             message_id=message_id,
             tool_call_id=call_id,
-            content=result_content,
+            content=ui_result_content,
             role="tool",
         )
     )
@@ -358,12 +387,14 @@ def _emit_tool_result(
         return []
     raw_result = content.result if content.result is not None else ""
     state_update = _extract_tool_result_state(content)
+    display_result = _extract_tool_result_display(content)
     return _emit_tool_result_common(
         content.call_id,
         raw_result,
         flow,
         predictive_handler,
         state_update=state_update,
+        display_result=display_result,
     )
 
 
@@ -530,12 +561,14 @@ def _emit_mcp_tool_result(
         return []
     raw_output = content.output if content.output is not None else ""
     state_update = _extract_tool_result_state(content)
+    display_result = _extract_tool_result_display(content)
     return _emit_tool_result_common(
         content.call_id,
         raw_output,
         flow,
         predictive_handler,
         state_update=state_update,
+        display_result=display_result,
     )
 
 

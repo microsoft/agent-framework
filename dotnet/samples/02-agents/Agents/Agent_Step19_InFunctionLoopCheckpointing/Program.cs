@@ -8,6 +8,11 @@
 // even if the process is interrupted mid-loop, but may also result in chat history that is not
 // yet finalized (e.g., tool calls without results) being persisted, which may be undesirable in some cases.
 //
+// Additionally, this sample demonstrates the MessageInjectingChatClient feature, which allows tool
+// code to inject new user messages during the function execution loop. When a tool or anything else enqueues
+// a message via MessageInjectingChatClient.EnqueueMessages during the tool execution loop, the PerServiceCallChatHistoryPersistingChatClient
+// detects the pending message before the next service call and includes the injected message in the request.
+//
 // To use end-of-run persistence instead (atomic run semantics), remove the
 // RequirePerServiceCallChatHistoryPersistence = true setting (or set it to false). End-of-run
 // persistence is the default behavior.
@@ -54,6 +59,37 @@ static string GetTime([Description("The city name.")] string city) =>
         _ => $"{city}: time data not available."
     };
 
+// This tool demonstrates message injection during the function execution loop.
+// When called, it checks travel advisories for a city. If an advisory is active, it uses
+// the ambient run context to resolve MessageInjectingChatClient and injects a follow-up user message
+// asking for alternative destinations. The model will process this injected message on the next
+// service call — even though the parent FunctionInvokingChatClient loop would otherwise stop.
+[Description("Check current travel advisories for a city.")]
+static string CheckTravelAdvisory([Description("The city name.")] string city)
+{
+    // Simulated travel advisory data.
+    var advisory = city.ToUpperInvariant() switch
+    {
+        "LONDON" => "Travel advisory: Severe fog warnings in London. Flights may be delayed or cancelled.",
+        "SEATTLE" => "Travel advisory: Heavy rainfall expected. Flooding possible in low-lying areas.",
+        _ => null
+    };
+
+    if (advisory is null)
+    {
+        return $"{city}: No active travel advisories.";
+    }
+
+    // When an advisory is found, inject a follow-up question so the model automatically
+    // suggests alternatives without the user needing to ask.
+    var runContext = AIAgent.CurrentRunContext!;
+    runContext.Agent.GetService<MessageInjectingChatClient>()?.EnqueueMessages(
+        runContext.Session!,
+        [new ChatMessage(ChatRole.User, $"Given the travel advisory for {city}, what alternative cities would you recommend instead?")]);
+
+    return advisory;
+}
+
 // Create the agent — per-service-call persistence is enabled via RequirePerServiceCallChatHistoryPersistence.
 // The in-memory ChatHistoryProvider is used by default when the service does not require service stored chat
 // history, so for those cases, we can inspect the chat history via session.TryGetInMemoryChatHistory().
@@ -65,10 +101,11 @@ AIAgent agent = chatClient.AsAIAgent(
     {
         Name = "WeatherAssistant",
         RequirePerServiceCallChatHistoryPersistence = true,
+        EnableMessageInjection = true,
         ChatOptions = new()
         {
-            Instructions = "You are a helpful assistant. When asked about multiple cities, call the appropriate tool for each city.",
-            Tools = [AIFunctionFactory.Create(GetWeather), AIFunctionFactory.Create(GetTime)]
+            Instructions = "You are a helpful travel assistant. When asked about cities, call the appropriate tools for each city.",
+            Tools = [AIFunctionFactory.Create(GetWeather), AIFunctionFactory.Create(GetTime), AIFunctionFactory.Create(CheckTravelAdvisory)]
         },
     });
 
@@ -109,6 +146,18 @@ async Task RunNonStreamingAsync()
     response = await agent.RunAsync(FollowUp2, session);
     PrintAgentResponse(response.Text);
     PrintChatHistory(session, "After third run", ref lastChatHistorySize, ref lastConversationId);
+
+    // Fourth turn — demonstrates message injection during the function loop.
+    // The CheckTravelAdvisory tool detects an advisory for London and injects a follow-up
+    // user message asking for alternative cities. After the tool completes, the internal loop
+    // in PerServiceCallChatHistoryPersistingChatClient detects the pending injected message
+    // and calls the service again, so the model answers the follow-up automatically.
+    const string TravelPrompt = "I'm planning to travel to London next week. Check if there are any travel advisories.";
+    PrintUserMessage(TravelPrompt);
+
+    response = await agent.RunAsync(TravelPrompt, session);
+    PrintAgentResponse(response.Text);
+    PrintChatHistory(session, "After travel advisory run", ref lastChatHistorySize, ref lastConversationId);
 }
 
 async Task RunStreamingAsync()
@@ -181,6 +230,30 @@ async Task RunStreamingAsync()
 
     Console.WriteLine();
     PrintChatHistory(session, "After third run", ref lastChatHistorySize, ref lastConversationId);
+
+    // Fourth turn — demonstrates message injection during the function loop (streaming).
+    // The CheckTravelAdvisory tool detects an advisory for London and injects a follow-up
+    // user message asking for alternative cities. After the tool completes, the internal loop
+    // in PerServiceCallChatHistoryPersistingChatClient detects the pending injected message
+    // and calls the service again, so the model answers the follow-up automatically.
+    const string TravelPrompt = "I'm planning to travel to London next week. Check if there are any travel advisories.";
+    PrintUserMessage(TravelPrompt);
+
+    Console.ForegroundColor = ConsoleColor.Cyan;
+    Console.Write("\n[Agent] ");
+    Console.ResetColor();
+
+    await foreach (var update in agent.RunStreamingAsync(TravelPrompt, session))
+    {
+        Console.Write(update);
+
+        // During streaming we should be able to see updates to the chat history
+        // before the full run completes, as each service call is made and persisted.
+        PrintChatHistory(session, "During travel advisory run", ref lastChatHistorySize, ref lastConversationId);
+    }
+
+    Console.WriteLine();
+    PrintChatHistory(session, "After travel advisory run", ref lastChatHistorySize, ref lastConversationId);
 }
 
 void PrintUserMessage(string message)

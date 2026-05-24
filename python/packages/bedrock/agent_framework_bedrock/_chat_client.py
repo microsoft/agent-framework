@@ -405,16 +405,22 @@ class BedrockChatClient(
 
         tool_config = self._prepare_tools(options.get("tools"))
         if tool_mode := validate_tool_mode(options.get("tool_choice")):
+            if "allowed_tools" in tool_mode:
+                logger.warning("allowed_tools is not supported by Bedrock; the setting will be ignored")
             match tool_mode.get("mode"):
                 case "none":
                     # Bedrock doesn't support toolChoice "none".
                     # Omit toolConfig entirely so the model won't attempt tool calls.
                     tool_config = None
                 case "auto":
-                    tool_config = tool_config or {}
-                    tool_config["toolChoice"] = {"auto": {}}
+                    if tool_config and "tools" in tool_config:
+                        tool_config["toolChoice"] = {"auto": {}}
                 case "required":
-                    tool_config = tool_config or {}
+                    if not (tool_config and "tools" in tool_config):
+                        raise ValueError(
+                            "tool_choice='required' requires at least one tool to be configured, "
+                            "but no tools were provided."
+                        )
                     if required_name := tool_mode.get("required_function_name"):
                         tool_config["toolChoice"] = {"tool": {"name": required_name}}
                     else:

@@ -4,10 +4,8 @@
 
 import pytest
 
-from agent_framework_declarative._workflows._factory import (
-    DeclarativeWorkflowError,
-    WorkflowFactory,
-)
+from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
+from agent_framework_declarative._workflows._factory import WorkflowFactory
 
 try:
     import powerfx  # noqa: F401

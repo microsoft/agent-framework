@@ -823,19 +823,28 @@ class RawGeminiChatClient(
 
         match tool_mode.get("mode"):
             case "auto":
-                function_calling_mode, allowed_names = types.FunctionCallingConfigMode.AUTO, None
+                if "allowed_tools" in tool_mode:
+                    function_calling_mode = types.FunctionCallingConfigMode.VALIDATED
+                    allowed_names = list(tool_mode["allowed_tools"])
+                else:
+                    function_calling_mode, allowed_names = types.FunctionCallingConfigMode.AUTO, None
             case "none":
                 function_calling_mode, allowed_names = types.FunctionCallingConfigMode.NONE, None
             case "required":
                 function_calling_mode = types.FunctionCallingConfigMode.ANY
                 name = tool_mode.get("required_function_name")
-                allowed_names = [name] if name else None
+                if name:
+                    allowed_names = [name]
+                elif "allowed_tools" in tool_mode:
+                    allowed_names = list(tool_mode["allowed_tools"])
+                else:
+                    allowed_names = None
             case unknown_mode:
                 logger.warning("Unsupported tool_choice mode for Gemini: %s", unknown_mode)
                 return None
 
         function_calling_kwargs: dict[str, Any] = {"mode": function_calling_mode}
-        if allowed_names:
+        if allowed_names is not None:
             function_calling_kwargs["allowed_function_names"] = allowed_names
 
         return types.ToolConfig(function_calling_config=types.FunctionCallingConfig(**function_calling_kwargs))
