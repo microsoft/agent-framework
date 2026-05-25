@@ -412,7 +412,11 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         // Recurse into subdirectories if within depth limit
         if (currentDepth < this._searchDepth)
         {
+#if NET
+            foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory, "*", enumerationOptions))
+#else
             foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory))
+#endif
             {
                 this.ScanDirectoryForResources(subdirectory, skillDirectoryFullPath, skillName, resources, currentDepth + 1);
             }
@@ -523,7 +527,11 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         // Recurse into subdirectories if within depth limit
         if (currentDepth < this._searchDepth)
         {
+#if NET
+            foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory, "*", enumerationOptions))
+#else
             foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory))
+#endif
             {
                 this.ScanDirectoryForScripts(subdirectory, skillDirectoryFullPath, skillName, scripts, currentDepth + 1);
             }

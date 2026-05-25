@@ -45,8 +45,8 @@ public sealed class AgentFileSkillsSourceOptions
 
     /// <summary>
     /// Gets or sets a predicate that filters discovered script files.
-    /// The predicate receives an <see cref="AgentFileSkillFilterContext"/> containing the skill's
-    /// full and relative paths and the file's relative path within the skill directory.
+    /// The predicate receives an <see cref="AgentFileSkillFilterContext"/> containing the skill's name
+    /// and the file's path relative to the skill directory.
     /// Return <see langword="true"/> to include the file or <see langword="false"/> to exclude it.
     /// When <see langword="null"/>, all scripts matching the allowed extensions are included.
     /// </summary>
@@ -54,8 +54,8 @@ public sealed class AgentFileSkillsSourceOptions
 
     /// <summary>
     /// Gets or sets a predicate that filters discovered resource files.
-    /// The predicate receives an <see cref="AgentFileSkillFilterContext"/> containing the skill's
-    /// full and relative paths and the file's relative path within the skill directory.
+    /// The predicate receives an <see cref="AgentFileSkillFilterContext"/> containing the skill's name
+    /// and the file's path relative to the skill directory.
     /// Return <see langword="true"/> to include the file or <see langword="false"/> to exclude it.
     /// When <see langword="null"/>, all resources matching the allowed extensions are included.
     /// </summary>
