@@ -25,6 +25,17 @@ public abstract class ConsoleObserver
     }
 
     /// <summary>
+    /// Called for each <see cref="AgentResponseUpdate"/> in the response stream, regardless of
+    /// whether it contains content. Override to inspect update-level metadata such as
+    /// <see cref="AgentResponseUpdate.RawRepresentation"/> for provider-specific events.
+    /// </summary>
+    /// <param name="ux">The UX state driver, used for rendering output.</param>
+    /// <param name="update">The streaming response update.</param>
+    /// <param name="agent">The agent being interacted with.</param>
+    /// <param name="session">The current agent session.</param>
+    public virtual Task OnResponseUpdateAsync(IUXStateDriver ux, AgentResponseUpdate update, AIAgent agent, AgentSession session) => Task.CompletedTask;
+
+    /// <summary>
     /// Called for each <see cref="AIContent"/> item in the response stream.
     /// </summary>
     /// <param name="ux">The UX state driver, used for rendering output.</param>

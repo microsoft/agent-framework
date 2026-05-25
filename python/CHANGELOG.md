@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-05-21
+
+### Added
+- **agent-framework-core**: Shell tool with support for local and Docker execution ([#5664](https://github.com/microsoft/agent-framework/pull/5664))
+- **agent-framework-monty**: New Monty-backed CodeAct provider package ([#5915](https://github.com/microsoft/agent-framework/pull/5915))
+- **agent-framework-foundry**: Add experimental hosted tool factories on `FoundryChatClient` ([#5958](https://github.com/microsoft/agent-framework/pull/5958))
+- **agent-framework-foundry**: Include tool definitions for Foundry agent evals ([#5974](https://github.com/microsoft/agent-framework/pull/5974))
+- **agent-framework-a2a**: Use non-streaming transport and `return_immediately` for background ops ([#5963](https://github.com/microsoft/agent-framework/pull/5963))
+
+### Changed
+- **agent-framework-core**, **agent-framework-foundry**: [BREAKING] Enable instrumentation by default ([#5865](https://github.com/microsoft/agent-framework/pull/5865))
+- **agent-framework-foundry**: Show more authentication methods in Foundry Toolbox MCP ([#5719](https://github.com/microsoft/agent-framework/pull/5719))
+
+### Fixed
+- **agent-framework-core**: Skip MCP prompt loading when unsupported ([#5370](https://github.com/microsoft/agent-framework/pull/5370))
+
+## [1.5.0] - 2026-05-19
+
+### Added
+- **agent-framework-core**, **agent-framework-foundry**, **agent-framework-openai**: Record actual served model from Azure OpenAI ([#5910](https://github.com/microsoft/agent-framework/pull/5910))
+- **samples**: New Foundry Hosted Agents samples for RAG, Skills, and Memory ([#5822](https://github.com/microsoft/agent-framework/pull/5822))
+
+### Changed
+- **agent-framework-core**, **agent-framework-azurefunctions**, **agent-framework-devui**, **agent-framework-foundry**, **agent-framework-orchestrations**: Improve handling of intermediate outputs for workflows and orchestrations ([#5623](https://github.com/microsoft/agent-framework/pull/5623))
+- **agent-framework-durabletask**: Pin `durabletask` and `durabletask-azuremanaged` floors to `>=1.4.0` and exclude upstream `durabletask` 1.4.1, 1.4.2, and 1.4.3 from the supported version range.
+- **agent-framework-orchestrations**: Bumped package to release candidate stage.
+
+### Fixed
+- **agent-framework-core**: Parse YAML block scalars in SKILL.md frontmatter ([#5863](https://github.com/microsoft/agent-framework/pull/5863))
+- **agent-framework-github-copilot**: Include tools added by `ContextProvider.before_run` in session creation ([#5780](https://github.com/microsoft/agent-framework/pull/5780))
+- **agent-framework-hyperlight**: Skip symlinks when staging sandbox input ([#5919](https://github.com/microsoft/agent-framework/pull/5919))
+- **agent-framework-purview**: Remove duplicate pop in `InMemoryCacheProvider.remove` ([#5795](https://github.com/microsoft/agent-framework/pull/5795))
+
 ## [1.4.0] - 2026-05-14
 
 ### Added
@@ -1071,7 +1104,9 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.4.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.6.0...HEAD
+[1.6.0]: https://github.com/microsoft/agent-framework/compare/python-1.5.0...python-1.6.0
+[1.5.0]: https://github.com/microsoft/agent-framework/compare/python-1.4.0...python-1.5.0
 [1.4.0]: https://github.com/microsoft/agent-framework/compare/python-1.3.0...python-1.4.0
 [1.3.0]: https://github.com/microsoft/agent-framework/compare/python-1.2.2...python-1.3.0
 [1.2.2]: https://github.com/microsoft/agent-framework/compare/python-1.2.1...python-1.2.2

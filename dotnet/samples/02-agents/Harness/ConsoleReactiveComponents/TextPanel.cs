@@ -17,7 +17,7 @@ public record TextPanelProps : ConsoleReactiveProps
 /// <summary>
 /// A component that renders a list of pre-rendered string items vertically.
 /// Designed for rendering dynamic items in a non-scroll region that may be
-/// re-rendered on each update. If the component's <see cref="ConsoleReactiveComponent.Height"/>
+/// re-rendered on each update. If the component's <see cref="ConsoleReactiveProps.Height"/>
 /// exceeds the number of output lines, leftover lines are erased.
 /// </summary>
 public class TextPanel : ConsoleReactiveComponent<TextPanelProps, ConsoleReactiveState>
@@ -51,18 +51,18 @@ public class TextPanel : ConsoleReactiveComponent<TextPanelProps, ConsoleReactiv
 
             for (int j = 0; j < lineCount; j++)
             {
-                Console.Write(AnsiEscapes.MoveAndEraseLine(this.Y + currentRow));
+                Console.Write(AnsiEscapes.MoveAndEraseLine(props.Y + currentRow));
                 Console.Write(lines[j]);
                 currentRow++;
             }
         }
 
         // If the component height exceeds the output, erase leftover lines
-        if (this.Height > currentRow)
+        if (props.Height > currentRow)
         {
-            for (int i = currentRow; i < this.Height; i++)
+            for (int i = currentRow; i < props.Height; i++)
             {
-                Console.Write(AnsiEscapes.MoveAndEraseLine(this.Y + i));
+                Console.Write(AnsiEscapes.MoveAndEraseLine(props.Y + i));
             }
         }
     }

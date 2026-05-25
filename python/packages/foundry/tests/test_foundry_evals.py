@@ -745,7 +745,12 @@ class TestBuildTestingCriteria:
         assert "conversation" not in criteria[1]["data_mapping"]
 
     def test_tool_evaluator_includes_tool_definitions(self) -> None:
-        criteria = _build_testing_criteria(["relevance", "tool_call_accuracy"], "gpt-4o", include_data_mapping=True)
+        criteria = _build_testing_criteria(
+            ["relevance", "tool_call_accuracy"],
+            "gpt-4o",
+            include_data_mapping=True,
+            include_tool_definitions=True,
+        )
         # relevance: string query/response
         assert criteria[0]["data_mapping"]["query"] == "{{item.query}}"
         assert criteria[0]["data_mapping"]["response"] == "{{item.response}}"
@@ -761,6 +766,17 @@ class TestBuildTestingCriteria:
         for c in criteria:
             assert c["data_mapping"]["query"] == "{{item.query_messages}}", f"{c['name']}"
             assert c["data_mapping"]["response"] == "{{item.response_messages}}", f"{c['name']}"
+
+    def test_agent_evaluators_include_tool_definitions_when_tools_present(self) -> None:
+        agent_evals = ["task_adherence", "intent_resolution", "task_completion", "task_navigation_efficiency"]
+        criteria = _build_testing_criteria(
+            agent_evals,
+            "gpt-4o",
+            include_data_mapping=True,
+            include_tool_definitions=True,
+        )
+        for c in criteria:
+            assert c["data_mapping"]["tool_definitions"] == "{{item.tool_definitions}}", f"{c['name']}"
 
     def test_quality_evaluators_use_strings(self) -> None:
         quality_evals = ["coherence", "relevance", "fluency"]
@@ -781,7 +797,12 @@ class TestBuildTestingCriteria:
             "tool_output_utilization",
             "tool_call_success",
         ]
-        criteria = _build_testing_criteria(tool_evals, "gpt-4o", include_data_mapping=True)
+        criteria = _build_testing_criteria(
+            tool_evals,
+            "gpt-4o",
+            include_data_mapping=True,
+            include_tool_definitions=True,
+        )
         for c in criteria:
             assert "tool_definitions" in c["data_mapping"], f"{c['name']} missing tool_definitions"
 

@@ -793,7 +793,21 @@ class RawFoundryAgent(  # type: ignore[misc]
         Raises:
             ImportError: If azure-monitor-opentelemetry-exporter is not installed.
         """
+        from agent_framework.observability import (
+            OBSERVABILITY_SETTINGS,
+            create_metric_views,
+            create_resource,
+            enable_instrumentation,
+        )
         from azure.core.exceptions import ResourceNotFoundError
+
+        if OBSERVABILITY_SETTINGS.is_user_disabled:
+            logger.info(
+                "FoundryAgent.configure_azure_monitor(): Skipping setup because instrumentation was "
+                "explicitly disabled via disable_instrumentation(). Call enable_instrumentation(force=True) "
+                "to re-enable, then re-invoke configure_azure_monitor()."
+            )
+            return
 
         client = self.client
         if not isinstance(client, RawFoundryAgentChatClient):
@@ -816,8 +830,6 @@ class RawFoundryAgent(  # type: ignore[misc]
                 "azure-monitor-opentelemetry is required for Azure Monitor integration. "
                 "Install it with: pip install azure-monitor-opentelemetry"
             ) from exc
-
-        from agent_framework.observability import create_metric_views, create_resource, enable_instrumentation
 
         if "resource" not in kwargs:
             kwargs["resource"] = create_resource()
