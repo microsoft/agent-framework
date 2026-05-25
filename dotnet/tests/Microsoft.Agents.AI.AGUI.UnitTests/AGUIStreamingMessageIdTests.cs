@@ -109,11 +109,13 @@ public sealed class AGUIStreamingMessageIdTests
     }
 
     /// <summary>
-    /// When ChatResponseUpdate has empty string MessageId, the AGUI layer generates
-    /// a fallback so ToolCallStartEvent.ParentMessageId is valid.
+    /// When ChatResponseUpdate has empty string MessageId, the AGUI layer passes
+    /// through the raw provider value for ToolCallStartEvent.ParentMessageId.
+    /// Tool-call chunks should NOT receive the text-event fallback GUID — that
+    /// would collapse parallel tool calls into one assistant message in the FE.
     /// </summary>
     [Fact]
-    public async Task ToolCalls_EmptyMessageId_GeneratesFallbackParentMessageIdAsync()
+    public async Task ToolCalls_EmptyMessageId_DoesNotGenerateFallbackParentMessageIdAsync()
     {
         // Arrange - ChatResponseUpdate with a tool call but empty MessageId
         FunctionCallContent functionCall = new("call_abc123", "GetWeather")
@@ -139,14 +141,14 @@ public sealed class AGUIStreamingMessageIdTests
             aguiEvents.Add(evt);
         }
 
-        // Assert — ParentMessageId should have a generated fallback
+        // Assert — ParentMessageId should be empty (raw provider value, no synthetic fallback)
         ToolCallStartEvent? toolCallStart = aguiEvents.OfType<ToolCallStartEvent>().FirstOrDefault();
         Assert.NotNull(toolCallStart);
         Assert.Equal("call_abc123", toolCallStart.ToolCallId);
         Assert.Equal("GetWeather", toolCallStart.ToolCallName);
-        Assert.False(
+        Assert.True(
             string.IsNullOrEmpty(toolCallStart.ParentMessageId),
-            "ParentMessageId should have a generated fallback for empty provider MessageId");
+            "ParentMessageId should be empty when provider omits MessageId (raw pass-through)");
     }
 
     /// <summary>
@@ -183,10 +185,13 @@ public sealed class AGUIStreamingMessageIdTests
         ToolCallStartEvent toolCallStart = Assert.Single(aguiEvents.OfType<ToolCallStartEvent>());
         ToolCallResultEvent toolCallResult = Assert.Single(aguiEvents.OfType<ToolCallResultEvent>());
 
-        Assert.Equal(textStart.MessageId, toolCallStart.ParentMessageId);
+        // Tool-call ParentMessageId should NOT leak the text fallback GUID
+        Assert.NotEqual(textStart.MessageId, toolCallStart.ParentMessageId);
         Assert.Equal("call_abc123", toolCallResult.ToolCallId);
         Assert.False(string.IsNullOrEmpty(toolCallResult.MessageId));
         Assert.NotEqual(textStart.MessageId, toolCallResult.MessageId);
+        // Result MessageId should be deterministic based on CallId
+        Assert.Equal("result-call_abc123", toolCallResult.MessageId);
     }
 
     [Fact]
@@ -230,10 +235,11 @@ public sealed class AGUIStreamingMessageIdTests
         ToolCallStartEvent toolCallStart = Assert.Single(aguiEvents.OfType<ToolCallStartEvent>());
         ToolCallResultEvent toolCallResult = Assert.Single(aguiEvents.OfType<ToolCallResultEvent>());
 
-        Assert.Equal(textStarts[0].MessageId, toolCallStart.ParentMessageId);
+        // Tool-call ParentMessageId should NOT leak the text fallback GUID
+        Assert.NotEqual(textStarts[0].MessageId, toolCallStart.ParentMessageId);
         Assert.NotEqual(textStarts[0].MessageId, toolCallResult.MessageId);
-        Assert.Equal(toolCallResult.MessageId, toolText.MessageId);
-        Assert.Equal(textStarts[^1].MessageId, toolCallResult.MessageId);
+        // Result MessageId should be deterministic based on CallId
+        Assert.Equal("result-call_abc123", toolCallResult.MessageId);
     }
 
     /// <summary>
@@ -273,6 +279,86 @@ public sealed class AGUIStreamingMessageIdTests
 
         Assert.Equal(2, contentEvents.Count);
         Assert.All(contentEvents, e => Assert.Equal("chatcmpl-abc123", e.MessageId));
+    }
+
+    /// <summary>
+    /// Bug #1 reproduction: parallel tool calls with empty MessageId should NOT all
+    /// share the same synthetic ParentMessageId. Each should pass through the raw
+    /// provider value (empty), allowing the FE to render them as distinct cards.
+    /// </summary>
+    [Fact]
+    public async Task ParallelToolCalls_EmptyMessageId_DoNotShareParentMessageIdAsync()
+    {
+        // Arrange — 3 parallel tool calls with empty MessageId (real OpenAI behavior)
+        List<ChatResponseUpdate> providerUpdates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, "Let me run those queries.") { MessageId = "chatcmpl-real" },
+            new ChatResponseUpdate { Role = ChatRole.Assistant, MessageId = "", Contents = [new FunctionCallContent("call_A", "query") { Arguments = new Dictionary<string, object?> { ["q"] = "1" } }] },
+            new ChatResponseUpdate { Role = ChatRole.Assistant, MessageId = "", Contents = [new FunctionCallContent("call_B", "query") { Arguments = new Dictionary<string, object?> { ["q"] = "2" } }] },
+            new ChatResponseUpdate { Role = ChatRole.Assistant, MessageId = "", Contents = [new FunctionCallContent("call_C", "query") { Arguments = new Dictionary<string, object?> { ["q"] = "3" } }] },
+        ];
+
+        // Act
+        List<BaseEvent> aguiEvents = [];
+        await foreach (BaseEvent evt in providerUpdates.ToAsyncEnumerableAsync()
+            .AsAGUIEventStreamAsync("thread-1", "run-1", AGUIJsonSerializerContext.Default.Options))
+        {
+            aguiEvents.Add(evt);
+        }
+
+        // Assert — all 3 tool calls should have empty ParentMessageId (raw provider value),
+        // NOT the text fallback GUID
+        List<ToolCallStartEvent> toolCallStarts = aguiEvents.OfType<ToolCallStartEvent>().ToList();
+        Assert.Equal(3, toolCallStarts.Count);
+        Assert.All(toolCallStarts, tc => Assert.True(string.IsNullOrEmpty(tc.ParentMessageId)));
+
+        // Text events should still have a valid fallback MessageId
+        TextMessageStartEvent textStart = Assert.Single(aguiEvents.OfType<TextMessageStartEvent>());
+        Assert.False(string.IsNullOrEmpty(textStart.MessageId));
+    }
+
+    /// <summary>
+    /// Bug #2 reproduction: tool results batched into one ChatResponseUpdate with a
+    /// shared MEAI MessageId should each get a unique deterministic MessageId.
+    /// </summary>
+    [Fact]
+    public async Task ToolCallResults_SharedMeaiMessageId_HaveUniqueMessageIdsPerCallAsync()
+    {
+        // Arrange — MEAI batches all FunctionResultContent into one update with shared id
+        List<ChatResponseUpdate> providerUpdates =
+        [
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Tool,
+                MessageId = "meai-shared-id",
+                Contents =
+                [
+                    new FunctionResultContent("call_A", "result1"),
+                    new FunctionResultContent("call_B", "result2"),
+                    new FunctionResultContent("call_C", "result3"),
+                ]
+            },
+        ];
+
+        // Act
+        List<BaseEvent> aguiEvents = [];
+        await foreach (BaseEvent evt in providerUpdates.ToAsyncEnumerableAsync()
+            .AsAGUIEventStreamAsync("thread-1", "run-1", AGUIJsonSerializerContext.Default.Options))
+        {
+            aguiEvents.Add(evt);
+        }
+
+        // Assert — each result should have a unique MessageId
+        List<ToolCallResultEvent> toolResults = aguiEvents.OfType<ToolCallResultEvent>().ToList();
+        Assert.Equal(3, toolResults.Count);
+
+        string?[] distinctIds = toolResults.Select(r => r.MessageId).Distinct().ToArray();
+        Assert.Equal(3, distinctIds.Length);
+
+        // Verify deterministic format
+        Assert.Equal("result-call_A", toolResults[0].MessageId);
+        Assert.Equal("result-call_B", toolResults[1].MessageId);
+        Assert.Equal("result-call_C", toolResults[2].MessageId);
     }
 }
 

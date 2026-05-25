@@ -192,6 +192,11 @@ public sealed class HarnessAgentRunner : IDisposable
                         }
                     }
 
+                    foreach (var observer in this._observers)
+                    {
+                        await observer.OnResponseUpdateAsync(this._ux, update, this._agent, this._session).ConfigureAwait(false);
+                    }
+
                     if (!string.IsNullOrEmpty(update.Text))
                     {
                         foreach (var observer in this._observers)

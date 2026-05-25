@@ -199,6 +199,7 @@ human-only operation; CI only adds and deletes versions under existing agents.
 | `CustomStorageHostedAgentFixture` | `custom-storage` | `it-custom-storage` | Round trip with custom `IResponsesStorageProvider`; multi turn reads from the custom store (placeholder). |
 | `AzureSearchRagHostedAgentFixture` | `azure-search-rag` | `it-azure-search-rag` | RAG against a real Azure AI Search index seeded with Contoso Outdoors documents; verifies the model cites the retrieved sources. |
 | `SessionFilesHostedAgentFixture` | `session-files` | `it-session-files` | End-to-end: upload via `AgentSessionFiles` (alpha) into a pinned `agent_session_id`, invoke the agent, assert it reads the file via the container's `ReadFile` tool. |
+| `AgentSkillsHostedAgentFixture` | `agent-skills` | `it-agent-skills` | Agent skills via `AgentSkillsProvider`: advertises two Contoso Outdoors skills (support-style, escalation-policy) in the system prompt, loads them on demand via `load_skill`, verifies canary tokens prove the skill was loaded. |
 
 The placeholder scenarios will be wired up in the test container `Program.cs` once the
 relevant `Microsoft.Agents.AI.Foundry.Hosting` API surfaces stabilize.
