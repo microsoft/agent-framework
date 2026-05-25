@@ -751,7 +751,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — skill loads but scripts from the symlinked directory are not discovered
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-script-skip");
         Assert.NotNull(skill);
-        Assert.False(skill.HasScripts);
+        Assert.Null(await skill.GetScriptAsync("any-script"));
     }
 
     [Fact]
@@ -1066,7 +1066,6 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — backslash variant deduplicated
         Assert.Single(skills);
-        Assert.True(skills[0].HasScripts);
         var script = await skills[0].GetScriptAsync("scripts/run.py");
         Assert.NotNull(script);
         Assert.Equal("scripts/run.py", script!.Name);
@@ -1190,7 +1189,6 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — script at the skill root should be discovered
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "root-script-skill");
         Assert.NotNull(skill);
-        Assert.True(skill.HasScripts);
         var script = await skill.GetScriptAsync("run.py");
         Assert.NotNull(script);
         Assert.Equal("run.py", script!.Name);

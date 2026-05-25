@@ -99,12 +99,6 @@ public sealed class AgentInlineSkill : AgentSkill
     }
 
     /// <inheritdoc/>
-    public override bool HasResources => this._resources is { Count: > 0 };
-
-    /// <inheritdoc/>
-    public override bool HasScripts => this._scripts is { Count: > 0 };
-
-    /// <inheritdoc/>
     public override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
         var resource = this._resources?.FirstOrDefault(r => r.Name == name);

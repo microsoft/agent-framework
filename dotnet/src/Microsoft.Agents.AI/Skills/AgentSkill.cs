@@ -45,24 +45,6 @@ public abstract class AgentSkill
     public abstract ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Gets a value indicating whether this skill may have resources that can be served via <see cref="GetResourceAsync"/>.
-    /// </summary>
-    /// <remarks>
-    /// The default implementation returns <see langword="false"/>. For skills whose resource
-    /// availability cannot be determined in advance (e.g. MCP skills), this should return
-    /// <see langword="true"/> as a conservative default.
-    /// </remarks>
-    public virtual bool HasResources => false;
-
-    /// <summary>
-    /// Gets a value indicating whether this skill may have scripts that can be served via <see cref="GetScriptAsync"/>.
-    /// </summary>
-    /// <remarks>
-    /// The default implementation returns <see langword="false"/>.
-    /// </remarks>
-    public virtual bool HasScripts => false;
-
-    /// <summary>
     /// Gets a resource owned by this skill by name.
     /// </summary>
     /// <param name="name">The resource name (e.g. an identifier or a relative path referenced inside the skill content).</param>
@@ -72,7 +54,7 @@ public abstract class AgentSkill
     /// </returns>
     /// <remarks>
     /// The default implementation returns <see langword="null"/>. Override in derived classes that
-    /// expose resources, and set <see cref="HasResources"/> to <see langword="true"/>.
+    /// expose resources.
     /// </remarks>
     public virtual ValueTask<AgentSkillResource?> GetResourceAsync(
         string name,
@@ -88,7 +70,7 @@ public abstract class AgentSkill
     /// </returns>
     /// <remarks>
     /// The default implementation returns <see langword="null"/>. Override in derived classes that
-    /// expose scripts, and set <see cref="HasScripts"/> to <see langword="true"/>.
+    /// expose scripts.
     /// </remarks>
     public virtual ValueTask<AgentSkillScript?> GetScriptAsync(
         string name,

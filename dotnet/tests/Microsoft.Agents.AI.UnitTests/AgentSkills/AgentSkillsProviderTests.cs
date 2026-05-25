@@ -68,11 +68,12 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Contains("provider-skill", result.Instructions);
         Assert.Contains("Provider skill test", result.Instructions);
 
-        // Should have load_skill tool (no resources, so no read_skill_resource)
+        // Should have load_skill, read_skill_resource, and run_skill_script tools
         Assert.NotNull(result.Tools);
         var toolNames = result.Tools!.Select(t => t.Name).ToList();
         Assert.Contains("load_skill", toolNames);
-        Assert.DoesNotContain("read_skill_resource", toolNames);
+        Assert.Contains("read_skill_resource", toolNames);
+        Assert.Contains("run_skill_script", toolNames);
     }
 
     [Fact]
@@ -316,7 +317,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task InvokingCoreAsync_WithoutScripts_NoRunSkillScriptToolAsync()
+    public async Task InvokingCoreAsync_WithoutScripts_StillIncludesAllToolsAsync()
     {
         // Arrange
         this.CreateSkill("no-script-skill", "No scripts", "Body.");
@@ -328,10 +329,12 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Act
         var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
-        // Assert
+        // Assert — all tools are always included regardless of skill content
         Assert.NotNull(result.Tools);
         var toolNames = result.Tools!.Select(t => t.Name).ToList();
-        Assert.DoesNotContain("run_skill_script", toolNames);
+        Assert.Contains("load_skill", toolNames);
+        Assert.Contains("read_skill_resource", toolNames);
+        Assert.Contains("run_skill_script", toolNames);
     }
 
     [Fact]

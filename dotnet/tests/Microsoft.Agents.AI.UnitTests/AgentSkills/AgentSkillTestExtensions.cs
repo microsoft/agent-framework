@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 /// </summary>
 /// <remarks>
 /// The public <see cref="AgentSkill"/> API exposes resources only through
-/// <see cref="AgentSkill.HasResources"/> and <see cref="AgentSkill.GetResourceAsync"/>.
+/// <see cref="AgentSkill.GetResourceAsync"/>.
 /// These helpers exist purely to allow unit tests for <see cref="AgentFileSkill"/> and
 /// <see cref="AgentInlineSkill"/> to inspect the concrete enumerated list a skill carries.
 /// </remarks>

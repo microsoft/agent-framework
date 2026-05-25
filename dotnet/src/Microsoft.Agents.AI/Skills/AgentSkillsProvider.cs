@@ -186,13 +186,10 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             return await base.ProvideAIContextAsync(context, cancellationToken).ConfigureAwait(false);
         }
 
-        bool hasScripts = skills.Any(s => s.HasScripts);
-        bool hasResources = skills.Any(s => s.HasResources);
-
         return new AIContext
         {
-            Instructions = this.BuildSkillsInstructions(skills, includeScriptInstructions: hasScripts, hasResources),
-            Tools = this.BuildTools(skills, hasScripts, hasResources),
+            Instructions = this.BuildSkillsInstructions(skills),
+            Tools = this.BuildTools(skills),
         };
     }
 
@@ -219,7 +216,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         }
     }
 
-    private IList<AIFunction> BuildTools(IList<AgentSkill> skills, bool hasScripts, bool hasResources)
+    private IList<AIFunction> BuildTools(IList<AgentSkill> skills)
     {
         IList<AIFunction> tools =
         [
@@ -227,21 +224,12 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
                 (string skillName, CancellationToken cancellationToken) => this.LoadSkillAsync(skills, skillName, cancellationToken),
                 name: "load_skill",
                 description: "Loads the full content of a specific skill"),
-        ];
-
-        if (hasResources)
-        {
-            tools.Add(AIFunctionFactory.Create(
+            AIFunctionFactory.Create(
                 (string skillName, string resourceName, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default) =>
                     this.ReadSkillResourceAsync(skills, skillName, resourceName, serviceProvider, cancellationToken),
                 name: "read_skill_resource",
-                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data."));
-        }
-
-        if (!hasScripts)
-        {
-            return tools;
-        }
+                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data."),
+        ];
 
         AIFunction scriptFunction = AIFunctionFactory.Create(
             (string skillName, string scriptName, JsonElement? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default) =>
@@ -257,7 +245,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         return [.. tools, scriptFunction];
     }
 
-    private string? BuildSkillsInstructions(IList<AgentSkill> skills, bool includeScriptInstructions, bool includeResourceInstructions)
+    private string? BuildSkillsInstructions(IList<AgentSkill> skills)
     {
         string promptTemplate = this._options?.SkillsInstructionPrompt ?? DefaultSkillsInstructionPrompt;
 
@@ -270,21 +258,18 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             sb.AppendLine("  </skill>");
         }
 
-        string resourceInstruction = includeResourceInstructions
-            ? """
+        const string ResourceInstruction =
+            """
             - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
                (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
-            """
-            : string.Empty;
+            """;
 
-        string scriptInstruction = includeScriptInstructions
-            ? "- Use `run_skill_script` to run referenced scripts, using the name exactly as listed."
-            : string.Empty;
+        const string ScriptInstruction = "- Use `run_skill_script` to run referenced scripts, using the name exactly as listed.";
 
         return new StringBuilder(promptTemplate)
             .Replace(SkillsPlaceholder, sb.ToString().TrimEnd())
-            .Replace(ResourceInstructionsPlaceholder, resourceInstruction)
-            .Replace(ScriptInstructionsPlaceholder, scriptInstruction)
+            .Replace(ResourceInstructionsPlaceholder, ResourceInstruction)
+            .Replace(ScriptInstructionsPlaceholder, ScriptInstruction)
             .ToString();
     }
 

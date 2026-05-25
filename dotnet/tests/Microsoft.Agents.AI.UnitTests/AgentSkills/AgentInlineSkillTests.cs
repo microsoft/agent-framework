@@ -284,45 +284,13 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Scripts_WhenNoneAdded_ReturnsNull()
+    public async Task Scripts_WhenNoneAdded_ReturnsNullAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act & Assert
-        Assert.False(skill.HasScripts);
-    }
-
-    [Fact]
-    public void HasResources_ReturnsTrue_WhenResourcesAdded()
-    {
-        // Arrange
-        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
-        skill.AddResource("r1", "v1");
-
-        // Act & Assert
-        Assert.True(skill.HasResources);
-    }
-
-    [Fact]
-    public void HasResources_ReturnsFalse_WhenNoResourcesAdded()
-    {
-        // Arrange
-        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
-
-        // Act & Assert
-        Assert.False(skill.HasResources);
-    }
-
-    [Fact]
-    public void HasScripts_ReturnsTrue_WhenScriptsAdded()
-    {
-        // Arrange
-        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
-        skill.AddScript("s1", () => "ok");
-
-        // Act & Assert
-        Assert.True(skill.HasScripts);
+        Assert.Null(await skill.GetScriptAsync("nonexistent"));
     }
 
     [Fact]

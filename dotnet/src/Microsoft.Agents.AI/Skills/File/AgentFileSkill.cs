@@ -67,12 +67,6 @@ public sealed class AgentFileSkill : AgentSkill
     public string Path { get; }
 
     /// <inheritdoc/>
-    public override bool HasResources => this._resources.Count > 0;
-
-    /// <inheritdoc/>
-    public override bool HasScripts => this._scripts.Count > 0;
-
-    /// <inheritdoc/>
     public override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
         var resource = this._resources.FirstOrDefault(r => r.Name == name);

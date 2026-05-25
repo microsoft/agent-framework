@@ -45,7 +45,6 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         // Assert
         Assert.Single(skills);
         var skill = skills[0];
-        Assert.True(skill.HasScripts);
         var script = await skill.GetScriptAsync("scripts/convert.py");
         Assert.NotNull(script);
         Assert.Equal("scripts/convert.py", script!.Name);
@@ -70,7 +69,6 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         // Assert
         Assert.Single(skills);
         // Assert — verify all expected scripts are discoverable
-        Assert.True(skills[0].HasScripts);
         foreach (var name in (string[])["scripts/run.cs", "scripts/run.csx", "scripts/run.js", "scripts/run.ps1", "scripts/run.py", "scripts/run.sh"])
         {
             var script = await skills[0].GetScriptAsync(name);
@@ -94,7 +92,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 
         // Assert
         Assert.Single(skills);
-        Assert.False(skills[0].HasScripts);
+        Assert.Null(await skills[0].GetScriptAsync("scripts/data.txt"));
     }
 
     [Fact]
@@ -109,7 +107,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 
         // Assert
         Assert.Single(skills);
-        Assert.False(skills[0].HasScripts);
+        Assert.Null(await skills[0].GetScriptAsync("any-script"));
     }
 
     [Fact]
@@ -127,7 +125,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 
         // Assert — neither file is in the default scripts/ directory, so no scripts are discovered
         Assert.Single(skills);
-        Assert.False(skills[0].HasScripts);
+        Assert.Null(await skills[0].GetScriptAsync("convert.py"));
     }
 
     [Fact]
@@ -194,7 +192,6 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 
         // Assert
         Assert.Single(skills);
-        Assert.True(skills[0].HasScripts);
         var rbScript = await skills[0].GetScriptAsync("scripts/run.rb");
         Assert.NotNull(rbScript);
         Assert.Equal("scripts/run.rb", rbScript!.Name);
@@ -241,7 +238,6 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 
         // Assert — script file inside the deeply nested directory is discovered
         Assert.Single(skills);
-        Assert.True(skills[0].HasScripts);
         var nestedScript = await skills[0].GetScriptAsync("f1/f2/f3/run.py");
         Assert.NotNull(nestedScript);
         Assert.Equal("f1/f2/f3/run.py", nestedScript!.Name);
@@ -270,7 +266,6 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 
         // Assert — scripts are discovered with names identical to using directories without "./"
         Assert.Single(skills);
-        Assert.True(skills[0].HasScripts);
         foreach (string directory in directories)
         {
             string expectedName = $"{directory.Substring(2)}/run.py";

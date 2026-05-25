@@ -32,9 +32,6 @@ internal sealed class TestAgentSkill : AgentSkill
 
     /// <inheritdoc/>
     public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default) => new(this._content);
-
-    /// <inheritdoc/>
-    public override bool HasScripts => false;
 }
 
 /// <summary>

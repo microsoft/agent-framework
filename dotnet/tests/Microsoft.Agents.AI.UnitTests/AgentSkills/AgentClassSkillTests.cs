@@ -26,7 +26,6 @@ public sealed class AgentClassSkillTests
         // Act & Assert — null overrides
         Assert.Equal("minimal", skill.Frontmatter.Name);
         Assert.Null(skill.Resources);
-        Assert.False(skill.HasScripts);
 
         // Act & Assert — synthesized XML content
         Assert.Contains("<name>minimal</name>", await skill.GetContentAsync());
@@ -115,46 +114,6 @@ public sealed class AgentClassSkillTests
         Assert.Null(resourceOnly.Scripts);
         Assert.Null(scriptOnly.Resources);
         Assert.Single(scriptOnly.Scripts!);
-    }
-
-    [Fact]
-    public void HasResources_ReturnsTrue_WhenSkillHasResources()
-    {
-        // Arrange
-        var skill = new FullClassSkill();
-
-        // Act & Assert
-        Assert.True(skill.HasResources);
-    }
-
-    [Fact]
-    public void HasResources_ReturnsFalse_WhenSkillHasNoResources()
-    {
-        // Arrange
-        var skill = new MinimalClassSkill();
-
-        // Act & Assert
-        Assert.False(skill.HasResources);
-    }
-
-    [Fact]
-    public void HasScripts_ReturnsTrue_WhenSkillHasScripts()
-    {
-        // Arrange
-        var skill = new FullClassSkill();
-
-        // Act & Assert
-        Assert.True(skill.HasScripts);
-    }
-
-    [Fact]
-    public void HasScripts_ReturnsFalse_WhenSkillHasNoScripts()
-    {
-        // Arrange
-        var skill = new MinimalClassSkill();
-
-        // Act & Assert
-        Assert.False(skill.HasScripts);
     }
 
     [Fact]

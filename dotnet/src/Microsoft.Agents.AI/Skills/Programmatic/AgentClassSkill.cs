@@ -168,12 +168,6 @@ public abstract class AgentClassSkill<
     public virtual IReadOnlyList<AgentSkillScript>? Scripts => this._scripts.Value;
 
     /// <inheritdoc/>
-    public sealed override bool HasResources => this.Resources is { Count: > 0 };
-
-    /// <inheritdoc/>
-    public sealed override bool HasScripts => this.Scripts is { Count: > 0 };
-
-    /// <inheritdoc/>
     public sealed override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
         var resource = this.Resources?.FirstOrDefault(r => r.Name == name);
