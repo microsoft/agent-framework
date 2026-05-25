@@ -968,7 +968,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — scripts in subdirectories are NOT discovered at depth 1
         Assert.Single(skills);
-        Assert.Empty(skills[0].Scripts!);
+        Assert.Null(await skills[0].GetScriptAsync("scripts/run.py"));
     }
 
     [Fact]
@@ -1060,7 +1060,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — resource at depth 4 is NOT discovered with default depth=2
         Assert.Single(skills);
-        Assert.DoesNotContain(skills[0].Resources!, r => r.Name == "f1/f2/f3/data.json");
+        Assert.Empty(skills[0].GetTestResources()!);
     }
 
     [Fact]

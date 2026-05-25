@@ -415,7 +415,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 #if NET
             foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory, "*", enumerationOptions))
 #else
-            foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory))
+            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory))
 #endif
             {
                 this.ScanDirectoryForResources(subdirectory, skillDirectoryFullPath, skillName, resources, currentDepth + 1);
@@ -530,7 +530,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 #if NET
             foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory, "*", enumerationOptions))
 #else
-            foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory))
+            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory))
 #endif
             {
                 this.ScanDirectoryForScripts(subdirectory, skillDirectoryFullPath, skillName, scripts, currentDepth + 1);
@@ -562,6 +562,31 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
         return false;
     }
+
+#if !NET
+    /// <summary>
+    /// Best-effort directory enumeration for target frameworks without
+    /// <c>EnumerationOptions.IgnoreInaccessible</c> support. Returns an empty
+    /// array when the caller lacks permission to read the directory contents,
+    /// so a single inaccessible child does not abort the entire skill scan.
+    /// </summary>
+    private string[] SafeEnumerateDirectories(string path)
+    {
+        try
+        {
+            return Directory.GetDirectories(path);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            if (this._logger.IsEnabled(LogLevel.Warning))
+            {
+                LogDirectoryAccessDenied(this._logger, SanitizePathForLog(path));
+            }
+
+            return Array.Empty<string>();
+        }
+    }
+#endif
 
     private static string ParseYamlScalarValue(string yamlContent, Match kvMatch)
     {
@@ -723,4 +748,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
     [LoggerMessage(LogLevel.Warning, "Skipping script directory '{DirectoryName}' in skill '{SkillName}': directory path contains a symlink")]
     private static partial void LogScriptSymlinkDirectory(ILogger logger, string skillName, string directoryName);
+
+    [LoggerMessage(LogLevel.Warning, "Skipping directory '{DirectoryPath}': access denied")]
+    private static partial void LogDirectoryAccessDenied(ILogger logger, string directoryPath);
 }
