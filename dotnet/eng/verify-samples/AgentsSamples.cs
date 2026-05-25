@@ -1153,6 +1153,25 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
+            Name = "Agent_MCP_LongRunningTask_Client",
+            ProjectPath = "samples/02-agents/ModelContextProtocol/Agent_MCP_LongRunningTask_Client",
+            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
+            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            MustContain =
+            [
+                "=== Transparent long-running MCP task (RunAsync) ===",
+                "=== Transparent long-running MCP task (RunStreamingAsync) ===",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should show an agent analyzing a dataset named 'sales-2025-q1' and producing a summary mentioning rows, revenue, anomalies, or outliers.",
+                "The output should contain both a non-streaming response (after RunAsync) and a streaming response (after RunStreamingAsync) for the same analysis question.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
             Name = "AGUI_Step01_GettingStarted_Client",
             ProjectPath = "samples/02-agents/AGUI/Step01_GettingStarted/Client",
             RequiredEnvironmentVariables = [],

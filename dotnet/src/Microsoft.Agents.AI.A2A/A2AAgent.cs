@@ -474,6 +474,7 @@ public sealed class A2AAgent : AIAgent
             ResponseId = statusUpdateEvent.TaskId,
             RawRepresentation = statusUpdateEvent,
             Role = ChatRole.Assistant,
+            MessageId = statusUpdateEvent.Status.Message?.MessageId,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
             Contents = statusUpdateEvent.Status.GetUserInputRequests(),
