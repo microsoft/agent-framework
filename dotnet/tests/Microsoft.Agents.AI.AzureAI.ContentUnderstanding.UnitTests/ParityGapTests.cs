@@ -87,26 +87,39 @@ public sealed class ParityGapTests
 
     // parity: python tests/cu/test_context_provider.py::TestDuplicateDocumentKey::test_duplicate_in_same_turn_rejected
     [Fact]
-    public async Task InvokingAsync_DuplicateFilenameInSameTurn_Throws()
+    public async Task InvokingAsync_DuplicateFilenameInSameTurn_RejectsWithoutThrowing()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
             "invoice.pdf",
             new AnalysisOutcome(true, SharedTestFixtures.MakeInvoiceResult(), "op-1", null, TimeSpan.FromMilliseconds(20)));
 
         await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
+        AgentSessionFake session = new();
 
         DataContent first = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
         DataContent second = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
         ChatMessage userMessage = new(ChatRole.User, [new TextContent("Two attachments same name"), first, second]);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            provider.InvokingAsync(
-                new AIContextProvider.InvokingContext(
-                    new TestAIAgentStub(), new AgentSessionFake(),
-                    new AIContext { Messages = new List<ChatMessage> { userMessage } }),
-                CancellationToken.None).AsTask());
+        AIContext result = await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(
+                new TestAIAgentStub(), session,
+                new AIContext { Messages = new List<ChatMessage> { userMessage } }),
+            CancellationToken.None);
 
-        Assert.Contains("invoice.pdf", ex.Message, StringComparison.Ordinal);
+        // First wins; analyzer invoked exactly once for the duplicate filename.
+        Assert.Equal(1, analyzer.CallCount);
+
+        ContentUnderstandingProviderState state = provider.GetStateForTesting(session);
+        Assert.Single(state.Documents);
+        Assert.Equal(DocumentStatus.Ready, state.Documents["invoice.pdf"].Status);
+
+        List<ChatMessage> messages = result.Messages!.ToList();
+        Assert.DoesNotContain(messages.SelectMany(m => m.Contents), c => c is DataContent);
+        Assert.Contains(messages, m =>
+            m.Role == ChatRole.System
+            && m.Contents.OfType<TextContent>().Any(t =>
+                t.Text.Contains("invoice.pdf", StringComparison.Ordinal)
+                && t.Text.Contains("already uploaded", StringComparison.Ordinal)));
     }
 
     // parity: python tests/cu/test_context_provider.py::TestSupportedMediaTypes::test_pdf_supported

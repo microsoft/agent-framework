@@ -28,6 +28,70 @@ internal static class ItemContentConverter
         mediaType.Equals("audio/flac", StringComparison.OrdinalIgnoreCase) ? "flac" :
         mediaType.Equals("audio/pcm", StringComparison.OrdinalIgnoreCase) ? "pcm16" :
         "mp3";
+
+    // The DevUI frontend (and some other clients) sends `file_data` as bare base64 with the
+    // `data:<mime>;base64,` prefix stripped. `DataContent(string, ...)` requires a data URI and
+    // throws "The provided URI is not a data URI" on raw base64, so we accept either form and
+    // recover the media type from the filename when only raw bytes are present.
+    // Propagate the caller-supplied filename to DataContent.Name so downstream consumers
+    // (e.g., the Content Understanding context provider) see the original upload name instead
+    // of synthesizing one from a content hash.
+    private static DataContent CreateFileDataContent(string fileData, string? filename)
+    {
+        var mediaType = GuessMediaTypeFromFilename(filename) ?? "application/octet-stream";
+
+        DataContent content = fileData.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+            ? new DataContent(fileData, mediaType)
+            : new DataContent(Convert.FromBase64String(fileData), mediaType);
+
+        if (!string.IsNullOrEmpty(filename))
+        {
+            content.Name = filename;
+        }
+
+        return content;
+    }
+
+    private static string? GuessMediaTypeFromFilename(string? filename)
+    {
+        if (string.IsNullOrEmpty(filename))
+        {
+            return null;
+        }
+
+        var ext = System.IO.Path.GetExtension(filename).ToUpperInvariant();
+        return ext switch
+        {
+            ".PDF" => "application/pdf",
+            ".TXT" => "text/plain",
+            ".CSV" => "text/csv",
+            ".TSV" => "text/tab-separated-values",
+            ".JSON" => "application/json",
+            ".XML" => "application/xml",
+            ".HTML" or ".HTM" => "text/html",
+            ".MD" => "text/markdown",
+            ".DOC" => "application/msword",
+            ".DOCX" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".XLS" => "application/vnd.ms-excel",
+            ".XLSX" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".PPT" => "application/vnd.ms-powerpoint",
+            ".PPTX" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".PNG" => "image/png",
+            ".JPG" or ".JPEG" => "image/jpeg",
+            ".GIF" => "image/gif",
+            ".WEBP" => "image/webp",
+            ".BMP" => "image/bmp",
+            ".TIF" or ".TIFF" => "image/tiff",
+            ".MP3" => "audio/mpeg",
+            ".WAV" => "audio/wav",
+            ".M4A" => "audio/mp4",
+            ".MP4" => "video/mp4",
+            ".MOV" => "video/quicktime",
+            ".WEBM" => "video/webm",
+            _ => null,
+        };
+    }
+
     /// <summary>
     /// Converts <see cref="ItemContent"/> to <see cref="AIContent"/>.
     /// </summary>
@@ -62,7 +126,7 @@ internal static class ItemContentConverter
             ItemContentInputFile inputFile when !string.IsNullOrEmpty(inputFile.FileId) =>
                 new HostedFileContent(inputFile.FileId!),
             ItemContentInputFile inputFile when !string.IsNullOrEmpty(inputFile.FileData) =>
-                new DataContent(inputFile.FileData!, "application/octet-stream"),
+                CreateFileDataContent(inputFile.FileData!, inputFile.Filename),
 
             // Audio content - map to DataContent with media type based on format
             ItemContentInputAudio inputAudio =>

@@ -29,6 +29,16 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         "Markdown. Treat each block as authoritative source material and cite documents by " +
         "their filename.";
 
+    // Python parity: when a user re-uploads a file with a name already present in this
+    // session, we skip re-analysis and inject a hint so the LLM tells the user to rename
+    // the file. See python/packages/azure-contentunderstanding/.../before_run.
+    private const string DuplicateFilenameNoticePrefix = "The user tried to upload '";
+    private const string DuplicateFilenameNoticeSuffix =
+        "', but a file with that name was already uploaded earlier in this session. " +
+        "The new upload was rejected and was not analyzed. " +
+        "Tell the user that a file with the same name already exists and they need to " +
+        "rename the file before uploading again.";
+
     private const string FileSearchInstructions =
         "Tool usage guidelines: Use `file_search` ONLY when answering questions about document " +
         "content. Use `list_documents()` for status queries. Do NOT call `file_search` for " +
@@ -156,15 +166,20 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         // payload must NOT reach the LLM.
         HashSet<AIContent> toStrip = new(AIContentReferenceEqualityComparer.Instance);
         List<DocumentEntry> newlyReady = new();
+        List<string> rejectedDuplicates = new();
 
         foreach (DetectedAttachment att in detected)
         {
             toStrip.Add(att.OriginalContent);
 
+            // Python parity: same-session duplicate filenames are rejected without throwing.
+            // The first file with a given filename wins; subsequent uploads (this turn or a
+            // later turn) are skipped and a hint is injected so the LLM asks the user to
+            // rename the file. The existing entry stays untouched.
             if (providerState.Documents.ContainsKey(att.Filename))
             {
-                throw new InvalidOperationException(
-                    $"Duplicate document filename in session: '{att.Filename}'. Each filename may be analyzed at most once per session.");
+                rejectedDuplicates.Add(att.Filename);
+                continue;
             }
 
             string analyzerId = AnalyzerSelector.Select(att.ResolvedMediaType, this._options.AnalyzerId);
@@ -346,6 +361,17 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
 
             // InjectedKeys mutated → re-save state.
             this._state.SaveState(context.Session, providerState);
+        }
+
+        if (rejectedDuplicates.Count > 0)
+        {
+            List<AIContent> rejectionContents = new(rejectedDuplicates.Count);
+            foreach (string filename in rejectedDuplicates)
+            {
+                rejectionContents.Add(new TextContent(
+                    DuplicateFilenameNoticePrefix + filename + DuplicateFilenameNoticeSuffix));
+            }
+            sanitized.Add(new ChatMessage(ChatRole.System, rejectionContents));
         }
 
         IEnumerable<AITool>? outTools = providerState.Documents.IsEmpty
