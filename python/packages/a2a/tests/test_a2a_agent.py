@@ -701,7 +701,46 @@ def test_a2a_agent_initialization_with_timeout_parameter() -> None:
         assert isinstance(timeout_arg, httpx.Timeout)
 
 
-# region Continuation Token Tests
+def test_a2a_agent_initialization_with_supported_protocol_bindings() -> None:
+    """Test A2AAgent initialization with custom supported_protocol_bindings."""
+    with (
+        patch("agent_framework_a2a._agent.httpx.AsyncClient") as mock_async_client,
+        patch("agent_framework_a2a._agent.ClientConfig") as mock_config,
+        patch("agent_framework_a2a._agent.ClientFactory") as mock_factory,
+    ):
+        mock_async_client.return_value = MagicMock()
+        mock_client_instance = MagicMock()
+        mock_factory.return_value.create.return_value = mock_client_instance
+
+        A2AAgent(
+            name="Test Agent",
+            url="https://test-agent.example.com",
+            supported_protocol_bindings=["GRPC", "JSONRPC"],
+        )
+
+        # Verify ClientConfig was called with our custom bindings for both streaming and non-streaming
+        assert mock_config.call_count == 2
+        for call in mock_config.call_args_list:
+            assert call.kwargs["supported_protocol_bindings"] == ["GRPC", "JSONRPC"]
+
+
+def test_a2a_agent_initialization_defaults_to_jsonrpc() -> None:
+    """Test A2AAgent defaults to JSONRPC when supported_protocol_bindings is not provided."""
+    with (
+        patch("agent_framework_a2a._agent.httpx.AsyncClient") as mock_async_client,
+        patch("agent_framework_a2a._agent.ClientConfig") as mock_config,
+        patch("agent_framework_a2a._agent.ClientFactory") as mock_factory,
+    ):
+        mock_async_client.return_value = MagicMock()
+        mock_client_instance = MagicMock()
+        mock_factory.return_value.create.return_value = mock_client_instance
+
+        A2AAgent(name="Test Agent", url="https://test-agent.example.com")
+
+        # Verify ClientConfig was called with default JSONRPC bindings
+        assert mock_config.call_count == 2
+        for call in mock_config.call_args_list:
+            assert call.kwargs["supported_protocol_bindings"] == ["JSONRPC"]
 
 
 async def test_working_task_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
