@@ -239,7 +239,7 @@ class FileSearchResult(SerializationMixin):
         if not isinstance(raw_matching_lines, list):
             raise ValueError("FileSearchResult.matching_lines must be a list.")
         matching_lines: list[FileSearchMatch] = []
-        for item in cast(list[Any], raw_matching_lines):
+        for item in cast(list[object], raw_matching_lines):
             if not isinstance(item, Mapping):
                 raise ValueError("FileSearchResult.matching_lines elements must be mappings.")
             matching_lines.append(FileSearchMatch.from_dict(cast(MutableMapping[str, Any], item)))
