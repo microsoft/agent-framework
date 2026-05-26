@@ -82,9 +82,9 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
             fileSearchTool);
     }));
 
-const string agentName = "FileSearchDocAgent";
+const string AgentName = "FileSearchDocAgent";
 
-builder.AddAIAgent(agentName, (sp, key) =>
+builder.AddAIAgent(AgentName, (sp, key) =>
 {
     var cu = sp.GetRequiredService<ContentUnderstandingContextProvider>();
     var client = sp.GetRequiredService<IChatClient>();

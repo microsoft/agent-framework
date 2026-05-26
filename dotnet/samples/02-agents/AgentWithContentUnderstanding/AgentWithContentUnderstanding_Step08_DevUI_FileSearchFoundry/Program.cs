@@ -73,9 +73,9 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
             fileSearchTool);
     }));
 
-const string agentName = "FoundryFileSearchDocAgent";
+const string AgentName = "FoundryFileSearchDocAgent";
 
-builder.AddAIAgent(agentName, (sp, key) =>
+builder.AddAIAgent(AgentName, (sp, key) =>
 {
     var cu = sp.GetRequiredService<ContentUnderstandingContextProvider>();
     return aiProjectClient.AsAIAgent(new ChatClientAgentOptions

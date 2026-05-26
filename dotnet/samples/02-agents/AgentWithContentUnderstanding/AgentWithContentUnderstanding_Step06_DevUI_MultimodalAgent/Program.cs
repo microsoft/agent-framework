@@ -55,9 +55,9 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
         options.MaxWait = TimeSpan.FromSeconds(5);
     }));
 
-const string agentName = "MultiModalDocAgent";
+const string AgentName = "MultiModalDocAgent";
 
-builder.AddAIAgent(agentName, (sp, key) =>
+builder.AddAIAgent(AgentName, (sp, key) =>
 {
     var cu = sp.GetRequiredService<ContentUnderstandingContextProvider>();
     return aiProjectClient.AsAIAgent(new ChatClientAgentOptions
