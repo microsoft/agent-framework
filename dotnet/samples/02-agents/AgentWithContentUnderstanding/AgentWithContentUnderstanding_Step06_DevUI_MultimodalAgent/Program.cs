@@ -72,7 +72,9 @@ builder.AddAIAgent(agentName, (sp, key) =>
                 + "and to see which files are available for answering questions. "
                 + "Tell the user if any documents are still being analyzed. "
                 + "You can process PDFs, scanned documents, handwritten images, audio recordings, and video files. "
-                + "When answering, cite specific content from the documents.",
+                + "When answering, cite specific content from the documents. "
+                + "Whenever you mention a file name to the user, wrap it in backticks "
+                + "(for example, `report_q1.pdf`) so the UI renders underscores correctly.",
         },
         AIContextProviders = [cu],
     });

@@ -91,7 +91,9 @@ builder.AddAIAgent(agentName, (sp, key) =>
                 + "is still pending, let the user know and suggest they ask again shortly. "
                 + "You can process PDFs, scanned documents, handwritten images, audio recordings, and video files. "
                 + "Multiple files can be uploaded and queried in the same conversation. "
-                + "When answering, cite specific content from the documents.",
+                + "When answering, cite specific content from the documents. "
+                + "Whenever you mention a file name to the user, wrap it in backticks "
+                + "(for example, `report_q1.pdf`) so the UI renders underscores correctly.",
         },
         AIContextProviders = [cu],
     });
