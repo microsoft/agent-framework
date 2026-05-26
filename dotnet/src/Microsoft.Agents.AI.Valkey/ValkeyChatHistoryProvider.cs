@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -48,6 +47,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
     private readonly string _keyPrefix;
     private readonly int? _maxMessages;
     private readonly int? _maxMessagesToRetrieve;
+    private readonly JsonSerializerOptions _jsonSerializerOptions;
     private readonly ILogger<ValkeyChatHistoryProvider>? _logger;
 
     /// <summary>
@@ -72,6 +72,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
         this._keyPrefix = options?.KeyPrefix ?? "chat_history";
         this._maxMessages = options?.MaxMessages;
         this._maxMessagesToRetrieve = options?.MaxMessagesToRetrieve;
+        this._jsonSerializerOptions = options?.JsonSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions;
         this._logger = loggerFactory?.CreateLogger<ValkeyChatHistoryProvider>();
     }
 
@@ -79,8 +80,6 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
     public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <inheritdoc />
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "ChatMessage serialization uses known types.")]
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "ChatMessage serialization uses known types.")]
     protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
@@ -114,7 +113,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
 
             try
             {
-                var message = JsonSerializer.Deserialize<ChatMessage>(value.ToString());
+                var message = JsonSerializer.Deserialize(value.ToString(), this._jsonSerializerOptions.GetTypeInfo(typeof(ChatMessage))) as ChatMessage;
                 if (message is not null)
                 {
                     messages.Add(message);
@@ -135,8 +134,6 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
     }
 
     /// <inheritdoc />
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "ChatMessage serialization uses known types.")]
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "ChatMessage serialization uses known types.")]
     protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
@@ -157,7 +154,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
         for (int i = 0; i < messageList.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            serialized[i] = JsonSerializer.Serialize(messageList[i]);
+            serialized[i] = JsonSerializer.Serialize(messageList[i], this._jsonSerializerOptions.GetTypeInfo(typeof(ChatMessage)));
         }
 
         await db.ListRightPushAsync(key, serialized).ConfigureAwait(false);
