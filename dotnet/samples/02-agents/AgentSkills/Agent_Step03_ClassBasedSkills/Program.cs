@@ -51,7 +51,7 @@ Console.WriteLine($"Agent: {response.Text}");
 /// Properties annotated with <see cref="AgentSkillResourceAttribute"/> are automatically
 /// discovered as skill resources, and methods annotated with <see cref="AgentSkillScriptAttribute"/>
 /// are automatically discovered as skill scripts. Alternatively,
-/// <see cref="AgentSkill.Resources"/> and <see cref="AgentSkill.Scripts"/> can be overridden.
+/// <see cref="AgentClassSkill{TSelf}.Resources"/> and <see cref="AgentClassSkill{TSelf}.Scripts"/> can be overridden.
 /// </remarks>
 internal sealed class UnitConverterSkill : AgentClassSkill<UnitConverterSkill>
 {
