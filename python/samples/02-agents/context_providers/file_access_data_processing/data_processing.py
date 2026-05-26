@@ -117,31 +117,29 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 
-"""
-Sample output (truncated):
-
-User: What files do you have access to?
-Assistant: I can see one file in the working directory: sales.csv.
-
-User: Read sales.csv and summarize what columns it contains and how many rows it has.
-Assistant: sales.csv has 50 data rows and 7 columns: date, product, category,
-quantity, unit_price, region, salesperson.
-
-User: Calculate the total revenue (quantity * unit_price) per region and show the result as a table.
-Assistant:
-| Region | Total Revenue |
-|--------|---------------|
-| North  | $X,XXX.XX     |
-| South  | $X,XXX.XX     |
-| West   | $X,XXX.XX     |
-
-User: Save a markdown report named region_totals.md ...
-Assistant: I wrote region_totals.md to the working folder.
-
-User: List the files again so I can confirm region_totals.md was created.
-Assistant: The working folder now contains: region_totals.md, sales.csv.
-
-Final contents of working/:
-  - region_totals.md (NNN bytes)
-  - sales.csv (3175 bytes)
-"""
+# Sample output (truncated):
+#
+# User: What files do you have access to?
+# Assistant: I can see one file in the working directory: sales.csv.
+#
+# User: Read sales.csv and summarize what columns it contains and how many rows it has.
+# Assistant: sales.csv has 50 data rows and 7 columns: date, product, category,
+# quantity, unit_price, region, salesperson.
+#
+# User: Calculate the total revenue (quantity * unit_price) per region and show the result as a table.
+# Assistant:
+# | Region | Total Revenue |
+# |--------|---------------|
+# | North  | $X,XXX.XX     |
+# | South  | $X,XXX.XX     |
+# | West   | $X,XXX.XX     |
+#
+# User: Save a markdown report named region_totals.md ...
+# Assistant: I wrote region_totals.md to the working folder.
+#
+# User: List the files again so I can confirm region_totals.md was created.
+# Assistant: The working folder now contains: region_totals.md, sales.csv.
+#
+# Final contents of working/:
+#   - region_totals.md (NNN bytes)
+#   - sales.csv (3175 bytes)

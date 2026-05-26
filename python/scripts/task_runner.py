@@ -18,9 +18,9 @@ from collections.abc import Sequence
 from fnmatch import fnmatch
 from pathlib import Path
 
-# On Windows, stdout defaults to cp1252 under non-interactive callers (e.g. prek
-# hooks). Reconfigure to UTF-8 before importing rich so unicode glyphs like
-# ``\u2713`` don't raise ``UnicodeEncodeError``.
+# On Windows, stdout defaults to cp1252 under non-interactive callers (e.g.
+# prek / pre-commit hooks). Reconfigure to UTF-8 before importing rich so
+# unicode glyphs like ``\u2713`` don't raise ``UnicodeEncodeError``.
 if sys.platform == "win32":
     for _stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(_stream, "reconfigure", None)

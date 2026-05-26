@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -106,6 +107,9 @@ def test_file_search_result_round_trips() -> None:
     with pytest.raises(ValueError, match="matching_lines must be a list"):
         FileSearchResult.from_dict({"file_name": "x", "snippet": "", "matching_lines": {}})
 
+    with pytest.raises(ValueError, match="elements must be mappings"):
+        FileSearchResult.from_dict({"file_name": "x", "snippet": "", "matching_lines": ["not-a-dict"]})
+
 
 async def test_in_memory_store_round_trips_files() -> None:
     """The in-memory store should support write/read/exists/delete/list operations."""
@@ -143,6 +147,18 @@ async def test_in_memory_store_search_returns_matches_with_snippets() -> None:
     # No glob -> searches every file.
     results_all = await store.search_files("", "error")
     assert {result.file_name for result in results_all} == {"a.md", "notes.txt"}
+
+
+async def test_in_memory_store_search_rejects_invalid_and_oversize_regex() -> None:
+    """``search_files`` should surface clean errors for bad regex input."""
+    store = InMemoryAgentFileStore()
+    await store.write_file("a.md", "hello")
+
+    with pytest.raises(re.error):
+        await store.search_files("", "[unclosed")
+
+    with pytest.raises(ValueError, match="too long"):
+        await store.search_files("", "a" * 257)
 
 
 async def test_in_memory_store_normalizes_paths() -> None:
@@ -202,6 +218,30 @@ async def test_filesystem_store_rejects_symlinks_into_root(tmp_path: Path) -> No
     assert await store.list_files() == []
 
 
+async def test_filesystem_store_rejects_in_root_symlinks(tmp_path: Path) -> None:
+    """Symlinks whose target lives under the root must still be rejected.
+
+    ``Path.resolve`` collapses the symlink, so a naive resolved-path check
+    would silently follow it. The symlink probe must operate on the
+    unresolved candidate for this case to fail closed.
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    real = root / "real.txt"
+    real.write_text("payload", encoding="utf-8")
+    link = root / "alias.txt"
+    try:
+        link.symlink_to(real)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Symbolic links are not supported in this environment: {exc!r}")
+
+    store = FileSystemAgentFileStore(root)
+    with pytest.raises(ValueError, match="symbolic link"):
+        await store.read_file("alias.txt")
+    # The non-symlinked sibling must still be readable.
+    assert await store.read_file("real.txt") == "payload"
+
+
 async def test_filesystem_store_search_matches_lines_and_filters_globs(tmp_path: Path) -> None:
     """The filesystem store should search files on disk and apply glob filters by file name."""
     store = FileSystemAgentFileStore(tmp_path)
@@ -216,6 +256,16 @@ async def test_filesystem_store_search_matches_lines_and_filters_globs(tmp_path:
 
     results_all = await store.search_files("", "error")
     assert {result.file_name for result in results_all} == {"a.md", "b.txt"}
+
+
+async def test_filesystem_store_search_skips_non_utf8_files(tmp_path: Path) -> None:
+    """The filesystem store should silently skip non-UTF-8 files instead of aborting the search."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write_file("notes.md", "ERROR happens here")
+    (tmp_path / "blob.bin").write_bytes(b"\x80\x81\x82\x83")
+
+    results = await store.search_files("", "error")
+    assert [result.file_name for result in results] == ["notes.md"]
 
 
 async def test_filesystem_store_create_directory(tmp_path: Path) -> None:

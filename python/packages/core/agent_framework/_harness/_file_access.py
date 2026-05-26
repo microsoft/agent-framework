@@ -25,7 +25,7 @@ import fnmatch
 import os
 import re
 from abc import ABC, abstractmethod
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -50,6 +50,29 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
 # Maximum number of characters of context to include on either side of the first
 # regex match when building a result snippet.
 _SEARCH_SNIPPET_RADIUS = 50
+
+# Hard cap on the length of a user-supplied search regex. Python's ``re`` module
+# has no built-in timeout, so a catastrophic-backtracking pattern (such as
+# ``(a+)+$``) submitted by the model could block the event loop indefinitely.
+# Capping pattern length is a simple, predictable mitigation; pathological
+# ReDoS patterns are typically far shorter than this limit, so the cap mostly
+# rejects obviously-malformed input while still allowing realistic queries.
+_MAX_SEARCH_PATTERN_LENGTH = 256
+
+
+def _compile_search_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a case-insensitive search regex, enforcing the length cap.
+
+    Raises:
+        ValueError: When ``pattern`` exceeds ``_MAX_SEARCH_PATTERN_LENGTH`` characters.
+        re.error: When ``pattern`` is not a valid regular expression.
+    """
+    if len(pattern) > _MAX_SEARCH_PATTERN_LENGTH:
+        raise ValueError(
+            f"Regex pattern is too long ({len(pattern)} characters). "
+            f"Maximum supported length is {_MAX_SEARCH_PATTERN_LENGTH} characters."
+        )
+    return re.compile(pattern, flags=re.IGNORECASE)
 
 
 def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
@@ -215,9 +238,11 @@ class FileSearchResult(SerializationMixin):
             raise ValueError("FileSearchResult.snippet must be a string.")
         if not isinstance(raw_matching_lines, list):
             raise ValueError("FileSearchResult.matching_lines must be a list.")
-        matching_lines = [
-            FileSearchMatch.from_dict(cast(MutableMapping[str, Any], item)) for item in raw_matching_lines
-        ]
+        matching_lines: list[FileSearchMatch] = []
+        for item in cast(list[Any], raw_matching_lines):
+            if not isinstance(item, Mapping):
+                raise ValueError("FileSearchResult.matching_lines elements must be mappings.")
+            matching_lines.append(FileSearchMatch.from_dict(cast(MutableMapping[str, Any], item)))
         return cls(file_name=file_name, snippet=snippet, matching_lines=matching_lines)
 
     def __eq__(self, other: object) -> bool:
@@ -418,9 +443,7 @@ class InMemoryAgentFileStore(AgentFileStore):
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
-        # Compiled here once for reuse across files. Python's stdlib ``re`` has
-        # no built-in timeout, matching the existing approach in ``_memory.py``.
-        regex = re.compile(regex_pattern, flags=re.IGNORECASE)
+        regex = _compile_search_regex(regex_pattern)
 
         async with self._lock:
             entries = list(self._files.items())
@@ -478,15 +501,25 @@ class FileSystemAgentFileStore(AgentFileStore):
         return self._root_path
 
     def _resolve_safe_path(self, relative_path: str) -> Path:
-        """Resolve a relative file path safely under the root directory."""
+        """Resolve a relative file path safely under the root directory.
+
+        Symbolic links and reparse points are detected on the *unresolved* path
+        before any call to :meth:`~pathlib.Path.resolve`. ``Path.resolve``
+        collapses symbolic links, so probing for them on a resolved path would
+        either silently follow in-root symlinks or produce a misleading
+        "escapes the root" error for out-of-root targets. Checking the
+        unresolved candidate first keeps the rejection deterministic and gives
+        the caller the specific symlink error.
+        """
         normalized = _normalize_relative_path(relative_path)
-        candidate = (self._root_path / normalized).resolve()
+        candidate = self._root_path / normalized
+        self._throw_if_contains_symlink(candidate)
+        resolved = candidate.resolve()
         try:
-            candidate.relative_to(self._root_path)
+            resolved.relative_to(self._root_path)
         except ValueError as exc:
             raise ValueError(f"Invalid path: {relative_path!r}. The resolved path escapes the root directory.") from exc
-        self._throw_if_contains_symlink(candidate)
-        return candidate
+        return resolved
 
     def _resolve_safe_directory_path(self, relative_directory: str) -> Path:
         """Resolve a relative directory path safely under the root directory.
@@ -500,9 +533,11 @@ class FileSystemAgentFileStore(AgentFileStore):
     def _throw_if_contains_symlink(self, candidate: Path) -> None:
         """Reject any segment between the root and ``candidate`` that is a symlink/reparse point.
 
-        Walks each ancestor down from the root. Stops once a segment does not
-        exist on disk so write scenarios remain allowed. ``Path.is_symlink``
-        detects both POSIX symlinks and Windows reparse points (junctions).
+        Walks each ancestor down from the root on the *unresolved* candidate so
+        ``Path.is_symlink`` observes the on-disk entries instead of their
+        canonical targets. Stops once a segment does not exist on disk so write
+        scenarios remain allowed. ``Path.is_symlink`` detects both POSIX
+        symlinks and Windows reparse points (junctions).
         """
         try:
             relative_parts = candidate.relative_to(self._root_path).parts
@@ -594,7 +629,7 @@ class FileSystemAgentFileStore(AgentFileStore):
     ) -> list[FileSearchResult]:
         """Search file contents for ``regex_pattern`` matches."""
         full_dir = self._resolve_safe_directory_path(directory)
-        regex = re.compile(regex_pattern, flags=re.IGNORECASE)
+        regex = _compile_search_regex(regex_pattern)
         return await asyncio.to_thread(self._search_files_sync, full_dir, regex, file_pattern)
 
     @staticmethod
@@ -608,7 +643,12 @@ class FileSystemAgentFileStore(AgentFileStore):
             file_name = entry.name
             if not _matches_glob(file_name, file_pattern):
                 continue
-            file_content = entry.read_text(encoding="utf-8")
+            try:
+                file_content = entry.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                # Skip binary or otherwise non-UTF-8 files so a single
+                # un-decodable entry doesn't abort the whole directory search.
+                continue
             result = _search_file_content(file_name, file_content, regex)
             if result is not None:
                 results.append(result)
@@ -706,7 +746,7 @@ class FileAccessProvider(ContextProvider):
 
         @tool(name="file_access_search_files", approval_mode="never_require")
         async def file_access_search_files(regex_pattern: str, file_pattern: str | None = None) -> list[dict[str, Any]]:
-            """Search file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Returns matching file names, snippets, and matching lines with line numbers."""  # noqa: E501
+            """Search file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Returns matching file names, snippets, and matching lines with line numbers. The regex_pattern must be 256 characters or fewer."""  # noqa: E501
             pattern = file_pattern if file_pattern and file_pattern.strip() else None
             results = await self.store.search_files("", regex_pattern, pattern)
             return [result.to_dict() for result in results]
