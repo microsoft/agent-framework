@@ -370,6 +370,9 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Handoff/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Handoff/HostedWorkflowHandoff.csproj" />
   </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-AgentSkills/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-AgentSkills/HostedAgentSkills.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/DurableAgents/" />
   <Folder Name="/Samples/04-hosting/DurableAgents/AzureFunctions/">
     <File Path="samples/04-hosting/DurableAgents/AzureFunctions/.editorconfig" />
