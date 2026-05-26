@@ -65,6 +65,25 @@ class AggregatorExecutor(Executor):
         await ctx.yield_output(sum(msg.data for msg in messages))
 
 
+class SlowProgressExecutor(Executor):
+    """A mock executor that emits ``step_count`` outputs via ``yield_output``,
+    sleeping ``step_sleep`` seconds between each. Simulates an executor that
+    emits progress events during a multi-step handler (e.g. an agent doing
+    planning, retrieval, and answer generation in sequence).
+    """
+
+    def __init__(self, id: str, *, step_count: int = 4, step_sleep: float = 0.1) -> None:
+        super().__init__(id=id)
+        self.step_count = step_count
+        self.step_sleep = step_sleep
+
+    @handler
+    async def mock_handler(self, _message: str, ctx: WorkflowContext[str, str]) -> None:
+        for i in range(self.step_count):
+            await ctx.yield_output(f"step {i}")
+            await asyncio.sleep(self.step_sleep)
+
+
 @dataclass
 class MockRequest:
     """A mock request message for testing purposes."""
@@ -141,6 +160,50 @@ async def test_workflow_run_stream_not_completed():
     with pytest.raises(WorkflowConvergenceException):
         async for _ in workflow.run(NumberMessage(data=0), stream=True):
             pass
+
+
+async def test_workflow_run_stream_does_not_buffer_initial_executor_outputs() -> None:
+    """Outputs emitted by the start executor via ``ctx.yield_output(...)``
+    must reach the ``run(..., stream=True)`` consumer as they happen, not
+    be buffered until ``execute()`` returns.
+
+    Regression target: previously the initial executor was awaited to
+    completion before ``run_until_convergence`` began iterating, so every
+    ``yield_output`` only enqueued onto the runner context's event queue
+    and the entire backlog was drained as a burst via
+    ``run_until_convergence``'s pre-loop drain. Manifested as N seconds
+    of silence followed by all events arriving in the same millisecond,
+    even though ``stream=True`` was set and each ``yield_output`` returned
+    promptly.
+    """
+    import time
+
+    step_count = 4
+    step_sleep = 0.1
+
+    executor = SlowProgressExecutor(id="slow", step_count=step_count, step_sleep=step_sleep)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    arrivals: list[float] = []
+    t0 = time.monotonic()
+    async for event in workflow.run("go", stream=True):
+        if event.type == "output":
+            arrivals.append(time.monotonic() - t0)
+
+    assert len(arrivals) == step_count, f"expected {step_count} outputs, got {len(arrivals)}"
+
+    # Buggy behavior packs all arrivals within milliseconds of each other
+    # at the end of execute(). Fixed behavior spreads them across the run.
+    # Require the spread between first and last arrival to be at least
+    # half the expected total sleep time — CI-tolerant but still catches
+    # the burst pattern (which would yield a spread of ~ms).
+    expected_total = (step_count - 1) * step_sleep
+    spread = arrivals[-1] - arrivals[0]
+    assert spread >= expected_total * 0.5, (
+        f"outputs arrived as a burst rather than streamed: "
+        f"spread={spread * 1000:.1f}ms (expected >= {expected_total * 500:.1f}ms); "
+        f"arrivals: {[f'+{t * 1000:.1f}ms' for t in arrivals]}"
+    )
 
 
 async def test_workflow_run():
