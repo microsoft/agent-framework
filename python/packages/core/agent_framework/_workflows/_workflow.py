@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import hashlib
 import json
@@ -558,7 +559,35 @@ class Workflow(DictConvertible):
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
-                    await initial_executor_fn()
+                    # concurrently with event polling so events emitted by
+                    # yield_output stream in real time. Vanilla behavior awaits
+                    # initial_executor_fn to completion, then
+                    # run_until_convergence drains the pre-loop queue as a
+                    # burst — manifests as N seconds of silence followed by
+                    # all events arriving at once. Mirrors the
+                    # iteration_task pattern already used inside
+                    # run_until_convergence.
+                    async def _run_initial() -> None:
+                        await initial_executor_fn()
+
+                    initial_task = asyncio.create_task(_run_initial())
+                    try:
+                        while not initial_task.done():
+                            try:
+                                event = await asyncio.wait_for(self._runner_context.next_event(), timeout=0.05)
+                                yield event
+                            except asyncio.TimeoutError:
+                                continue
+                        if await self._runner_context.has_events():
+                            for event in await self._runner_context.drain_events():
+                                yield event
+                        await initial_task  # propagate exception if any
+                    except asyncio.CancelledError:
+                        if not initial_task.done():
+                            initial_task.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await initial_task
+                        raise
 
                 # All executor executions happen within workflow span
                 async for event in self._runner.run_until_convergence():
