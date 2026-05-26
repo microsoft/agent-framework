@@ -242,10 +242,11 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
 
         string sourceName = this._sourceName;
-        static IChatClient WrapIfNeeded(IChatClient cc, string sourceName) =>
+        bool enableSensitiveData = this.EnableSensitiveData;
+        static IChatClient WrapIfNeeded(IChatClient cc, string sourceName, bool enableSensitiveData) =>
             cc.GetService(typeof(OpenTelemetryChatClient)) is not null
                 ? cc
-                : cc.AsBuilder().UseOpenTelemetry(sourceName: sourceName).Build();
+                : cc.AsBuilder().UseOpenTelemetry(sourceName: sourceName, configure: o => o.EnableSensitiveData = enableSensitiveData).Build();
 
         if (options is ChatClientAgentRunOptions ccOptions)
         {
@@ -253,7 +254,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             // If the user factory already returns an OpenTelemetry-instrumented client, don't double-wrap.
             var clone = (ChatClientAgentRunOptions)ccOptions.Clone();
             var userFactory = clone.ChatClientFactory;
-            clone.ChatClientFactory = cc => WrapIfNeeded(userFactory is null ? cc : userFactory(cc), sourceName);
+            clone.ChatClientFactory = cc => WrapIfNeeded(userFactory is null ? cc : userFactory(cc), sourceName, enableSensitiveData);
             return clone;
         }
 
@@ -261,7 +262,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         // any base AgentRunOptions properties from the caller so they reach the inner agent.
         var newOptions = new ChatClientAgentRunOptions
         {
-            ChatClientFactory = cc => WrapIfNeeded(cc, sourceName),
+            ChatClientFactory = cc => WrapIfNeeded(cc, sourceName, enableSensitiveData),
         };
 
         if (options is not null)
