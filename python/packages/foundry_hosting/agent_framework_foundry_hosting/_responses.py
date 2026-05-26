@@ -9,11 +9,10 @@ import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Sequence
-from contextlib import suppress
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from typing import Protocol, cast
 
 from agent_framework import (
