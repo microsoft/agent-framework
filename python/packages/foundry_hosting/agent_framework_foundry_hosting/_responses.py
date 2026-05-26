@@ -9,7 +9,7 @@ import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -464,10 +464,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # Run the agent in non-streaming mode
                 response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
 
-                response_contents = [content for message in response.messages for content in message.contents]
                 async for item in _to_outputs_for_contents(
                     response_event_stream,
-                    response_contents,
+                    (content for message in response.messages for content in message.contents),
                     approval_storage=self._approval_storage,
                 ):
                     yield item
@@ -611,8 +610,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 checkpoint_storage=write_storage,
             )
 
-            response_contents = [content for message in response.messages for content in message.contents]
-            async for item in _to_outputs_for_contents(response_event_stream, response_contents):
+            async for item in _to_outputs_for_contents(
+                response_event_stream,
+                (content for message in response.messages for content in message.contents),
+            ):
                 yield item
 
             await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
@@ -1680,10 +1681,14 @@ def _stringify_mcp_output(output: Any) -> str:
     if isinstance(output, str):
         return output
     if isinstance(output, Mapping):
-        text = cast(Any, output).get("text")
+        mapping_output = cast(Mapping[object, object], output)
+        text = cast(Any, mapping_output).get("text")
         if isinstance(text, str):
             return text
-        return json.dumps(output, default=str)
+        try:
+            return json.dumps(mapping_output, default=str)
+        except TypeError:
+            return str(mapping_output)
     if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
         parts: list[str] = []
         entries = cast(Sequence[object], output)
@@ -1717,11 +1722,11 @@ def _emit_completed_mcp_call(
 
 async def _to_outputs_for_contents(
     stream: ResponseEventStream,
-    contents: Sequence[Content],
+    contents: Iterable[Content],
     *,
     approval_storage: ApprovalStorage | None = None,
 ) -> AsyncIterator[ResponseStreamEvent]:
-    """Convert a sequence of contents to output events with hosted-MCP call/result coalescing."""
+    """Convert content items to output events with hosted-MCP call/result coalescing."""
     pending_mcp_call: Content | None = None
 
     for content in contents:
