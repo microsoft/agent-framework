@@ -52,6 +52,7 @@ members = [
     "agent-framework-github-copilot",
     "agent-framework-hyperlight",
     "agent-framework-lab",
+    "agent-framework-local-codeact",
     "agent-framework-mem0",
     "agent-framework-mistral",
     "agent-framework-monty",
@@ -711,6 +712,17 @@ dev = [
     { name = "tomli-w", specifier = "==1.2.0" },
     { name = "uv", specifier = "==0.11.17" },
 ]
+
+[[package]]
+name = "agent-framework-local-codeact"
+version = "1.0.0a260526"
+source = { editable = "packages/local_codeact" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-framework-mem0"

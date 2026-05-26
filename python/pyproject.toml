@@ -89,6 +89,7 @@ agent-framework-gemini = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
+agent-framework-local-codeact = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-mistral = { workspace = true }
 agent-framework-monty = { workspace = true }
