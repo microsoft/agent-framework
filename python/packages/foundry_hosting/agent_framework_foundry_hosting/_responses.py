@@ -1686,7 +1686,8 @@ def _stringify_mcp_output(output: Any) -> str:
         return json.dumps(output, default=str)
     if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
         parts: list[str] = []
-        for entry in cast(Sequence[Any], output):
+        entries = cast(Sequence[object], output)
+        for entry in entries:
             if isinstance(entry, Content) and entry.type == "text":
                 parts.append(entry.text or "")
                 continue
