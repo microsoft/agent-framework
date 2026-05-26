@@ -22,9 +22,6 @@ ignorePatterns:
   - pattern: "https://openai.github.io/openai-agents-js/openai/agents/classes/"
   - pattern: "https:\/\/dotnet.microsoft.com\/download"
   - pattern: "https://github.com/Rel1cx/eslint-react"
-  - pattern: "https:\/\/www.nuget.org\/packages\/Microsoft.Agents.AI.AzureAI.ContentUnderstanding"
-  - pattern: "https:\/\/github.com\/microsoft\/agent-framework\/pull\/3803"
-  - pattern: "https:\/\/github.com\/a2aproject\/A2A\/blob\/main\/docs\/topics\/streaming-and-async.md"
 # excludedDirs:
   # Folders which include links to localhost, since it's not ignored with regular expressions
 baseUrl: https://github.com/microsoft/agent-framework/

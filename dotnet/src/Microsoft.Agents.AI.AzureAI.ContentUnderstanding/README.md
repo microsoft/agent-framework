@@ -1,6 +1,8 @@
 # Microsoft.Agents.AI.AzureAI.ContentUnderstanding
 
+<!-- NuGet badge will be enabled after first publish:
 [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI.AzureAI.ContentUnderstanding.svg?label=NuGet)](https://www.nuget.org/packages/Microsoft.Agents.AI.AzureAI.ContentUnderstanding)
+-->
 
 Microsoft Agent Framework integration for [Azure AI Content Understanding](https://learn.microsoft.com/azure/ai-services/content-understanding/).
 
