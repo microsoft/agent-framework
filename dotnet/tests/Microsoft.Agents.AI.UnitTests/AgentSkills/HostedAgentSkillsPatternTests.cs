@@ -155,9 +155,9 @@ public sealed class HostedAgentSkillsPatternTests : IDisposable
         Assert.NotNull(result.Tools);
         var toolNames = result.Tools!.Select(t => t.Name).ToList();
         Assert.Contains("load_skill", toolNames);
-        // No scripts or resources => no read_skill_resource or run_skill_script
-        Assert.DoesNotContain("read_skill_resource", toolNames);
-        Assert.DoesNotContain("run_skill_script", toolNames);
+        // All tools are always included regardless of whether skills have resources or scripts
+        Assert.Contains("read_skill_resource", toolNames);
+        Assert.Contains("run_skill_script", toolNames);
     }
 
     [Fact]

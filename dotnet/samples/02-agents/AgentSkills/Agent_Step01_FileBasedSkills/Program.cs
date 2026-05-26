@@ -24,6 +24,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 var skillsProvider = new AgentSkillsProvider(
     Path.Combine(AppContext.BaseDirectory, "skills"),
     SubprocessScriptRunner.RunAsync);
+
 // --- Agent Setup ---
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
     .GetResponsesClient()

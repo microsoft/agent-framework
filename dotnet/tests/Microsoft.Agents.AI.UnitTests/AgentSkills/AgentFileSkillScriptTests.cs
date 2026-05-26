@@ -105,7 +105,7 @@ public sealed class AgentFileSkillScriptTests
     }
 
     [Fact]
-    public void Content_WithScripts_AppendsPerScriptEntries()
+    public async Task Content_WithScripts_AppendsPerScriptEntriesAsync()
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
@@ -118,7 +118,7 @@ public sealed class AgentFileSkillScriptTests
             scripts: [script1, script2]);
 
         // Act
-        var content = fileSkill.Content;
+        var content = await fileSkill.GetContentAsync();
 
         // Assert — content starts with original and appends per-script entries
         Assert.StartsWith("Original content", content);
@@ -130,7 +130,7 @@ public sealed class AgentFileSkillScriptTests
     }
 
     [Fact]
-    public void Content_WithoutScripts_ReturnsOriginalContent()
+    public async Task Content_WithoutScripts_ReturnsOriginalContentAsync()
     {
         // Arrange
         var fileSkill = new AgentFileSkill(
@@ -139,14 +139,14 @@ public sealed class AgentFileSkillScriptTests
             "/skills/my-skill");
 
         // Act
-        var content = fileSkill.Content;
+        var content = await fileSkill.GetContentAsync();
 
         // Assert
         Assert.Equal("Original content only", content);
     }
 
     [Fact]
-    public void Content_WithScripts_IsCached()
+    public async Task Content_WithScripts_IsCachedAsync()
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
@@ -158,8 +158,8 @@ public sealed class AgentFileSkillScriptTests
             scripts: [script]);
 
         // Act
-        var content1 = fileSkill.Content;
-        var content2 = fileSkill.Content;
+        var content1 = await fileSkill.GetContentAsync();
+        var content2 = await fileSkill.GetContentAsync();
 
         // Assert
         Assert.Same(content1, content2);
@@ -232,7 +232,7 @@ public sealed class AgentFileSkillScriptTests
     }
 
     [Fact]
-    public void Content_WithScripts_ContainsDefaultParametersSchema()
+    public async Task Content_WithScripts_ContainsDefaultParametersSchemaAsync()
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
@@ -244,7 +244,7 @@ public sealed class AgentFileSkillScriptTests
             scripts: [script]);
 
         // Act
-        var content = fileSkill.Content;
+        var content = await fileSkill.GetContentAsync();
 
         // Assert — the appended block contains the actual default schema from AgentFileSkillScript
         Assert.Contains("""{"type":"array","items":{"type":"string"}}""", content);

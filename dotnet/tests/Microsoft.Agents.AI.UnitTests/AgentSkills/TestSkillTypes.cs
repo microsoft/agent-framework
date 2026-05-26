@@ -31,13 +31,7 @@ internal sealed class TestAgentSkill : AgentSkill
     public override AgentSkillFrontmatter Frontmatter => this._frontmatter;
 
     /// <inheritdoc/>
-    public override string Content => this._content;
-
-    /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillResource>? Resources => null;
-
-    /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillScript>? Scripts => null;
+    public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default) => new(this._content);
 }
 
 /// <summary>
