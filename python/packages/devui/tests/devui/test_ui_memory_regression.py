@@ -444,6 +444,7 @@ async def _sample_browser_memory_probe(client: _CDPClient, *, session_id: str) -
         """
         (() => {
           const storagePrefix = "devui_streaming_state_";
+          const textEncoder = new TextEncoder();
           let streamingStateStorageBytes = 0;
           for (let index = 0; index < localStorage.length; index += 1) {
             const key = localStorage.key(index);
@@ -452,7 +453,7 @@ async def _sample_browser_memory_probe(client: _CDPClient, *, session_id: str) -
             }
 
             const item = localStorage.getItem(key) || "";
-            streamingStateStorageBytes += key.length + item.length;
+            streamingStateStorageBytes += textEncoder.encode(key).length + textEncoder.encode(item).length;
           }
 
           return {
@@ -826,10 +827,20 @@ async def test_devui_streaming_renderer_memory_is_bounded(
                     f"budget={_MAX_STREAMING_STATE_STORAGE_BYTES} bytes "
                     f"probe_samples={probe_samples}"
                 )
+                assert max_streaming_state_storage_bytes > 0, (
+                    "DevUI streaming state storage was never written during the stress run "
+                    "(cap assertion would be vacuous). "
+                    f"probe_samples={probe_samples}"
+                )
                 assert max_debug_event_dom_items <= _MAX_DEBUG_EVENT_DOM_ITEMS, (
                     "DevUI debug panel rendered too many retained streaming events. "
                     f"peak={max_debug_event_dom_items} "
                     f"budget={_MAX_DEBUG_EVENT_DOM_ITEMS} "
+                    f"probe_samples={probe_samples}"
+                )
+                assert max_debug_event_dom_items > 0, (
+                    "DevUI debug panel rendered zero events during the stress run "
+                    "(cap assertion would be vacuous). "
                     f"probe_samples={probe_samples}"
                 )
         finally:

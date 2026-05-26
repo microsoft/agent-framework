@@ -39,6 +39,21 @@ function getStorageKey(conversationId: string): string {
   return `${STORAGE_KEY_PREFIX}${conversationId}`;
 }
 
+function normalizeAccumulatedTextPreview(state: StreamingState): StreamingState {
+  if (
+    state.accumulatedText === undefined ||
+    state.accumulatedText.length <= MAX_ACCUMULATED_TEXT_PREVIEW_CHARS
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    accumulatedText: state.accumulatedText.slice(-MAX_ACCUMULATED_TEXT_PREVIEW_CHARS),
+    accumulatedTextIsPreview: true,
+  };
+}
+
 /**
  * Read raw streaming state from storage, including completed entries.
  */
@@ -59,7 +74,7 @@ function readStreamingState(conversationId: string): StreamingState | null {
     return null;
   }
 
-  return state;
+  return normalizeAccumulatedTextPreview(state);
 }
 
 /**
@@ -73,7 +88,7 @@ export function createStreamingState({
   accumulatedText,
   accumulatedTextIsPreview = false,
 }: CreateStreamingStateOptions): StreamingState {
-  return {
+  return normalizeAccumulatedTextPreview({
     conversationId,
     responseId,
     lastMessageId,
@@ -82,7 +97,7 @@ export function createStreamingState({
     completed: false,
     accumulatedText,
     accumulatedTextIsPreview,
-  };
+  });
 }
 
 /**
@@ -133,7 +148,7 @@ export function applyStreamingEventToState(
 export function saveStreamingState(state: StreamingState): void {
   try {
     const key = getStorageKey(state.conversationId);
-    const data = JSON.stringify(state);
+    const data = JSON.stringify(normalizeAccumulatedTextPreview(state));
     localStorage.setItem(key, data);
   } catch (error) {
     console.error("Failed to save streaming state:", error);
@@ -142,7 +157,7 @@ export function saveStreamingState(state: StreamingState): void {
       clearExpiredStreamingStates();
       // Try again
       const key = getStorageKey(state.conversationId);
-      const data = JSON.stringify(state);
+      const data = JSON.stringify(normalizeAccumulatedTextPreview(state));
       localStorage.setItem(key, data);
     } catch {
       console.error("Failed to save streaming state even after cleanup");
