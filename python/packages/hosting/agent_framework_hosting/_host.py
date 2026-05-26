@@ -81,15 +81,13 @@ from ._types import (
     ChannelPush,
     ChannelPushCodec,
     ChannelRequest,
-    ChannelResponseContext,
-    ChannelResponseHook,
     DurableTaskPayloadMode,
     DurableTaskRunner,
     HostedRunResult,
     HostStatePaths,
     PushPayloadNotSerializable,
     ResponseTargetKind,
-    apply_response_hook,
+    apply_channel_response_hook,
 )
 
 if TYPE_CHECKING:
@@ -1896,17 +1894,15 @@ class AgentFrameworkHost:
         contract; richer surfaces stay attribute-level so adding hook
         support to a new channel does not require updating the Protocol.
         """
-        shaped: HostedRunResult[Any] = payload.replace()
-        hook = cast(ChannelResponseHook | None, getattr(channel, "response_hook", None))
-        if callable(hook):
-            ctx = ChannelResponseContext(
-                request=request,
-                channel_name=channel.name,
-                destination_identity=identity,
-                originating=False,
-                is_echo=is_echo,
-            )
-            shaped = await apply_response_hook(hook, shaped, context=ctx)
+        shaped = await apply_channel_response_hook(
+            channel,
+            payload,
+            request=request,
+            destination_identity=identity,
+            originating=False,
+            is_echo=is_echo,
+            clone=True,
+        )
         await channel.push(identity, shaped)
         return shaped
 

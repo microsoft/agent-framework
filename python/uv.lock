@@ -53,6 +53,7 @@ members = [
     "agent-framework-hosting-telegram",
     "agent-framework-hosting-activity-protocol",
     "agent-framework-hosting-entra",
+    "agent-framework-hosting-discord",
     "agent-framework-hyperlight",
     "agent-framework-lab",
     "agent-framework-mem0",
@@ -651,10 +652,24 @@ dev = [{ name = "httpx", specifier = ">=0.28.1" }]
 name = "agent-framework-hosting-telegram"
 version = "1.0.0a260424"
 source = { editable = "packages/hosting-telegram" }
+
+[[package]]
+name = "agent-framework-hosting-discord"
+version = "1.0.0a260526"
+source = { editable = "packages/hosting-discord" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pynacl", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "pynacl", specifier = ">=1.2.0,<2" },
 ]
 
 [[package]]
@@ -678,6 +693,8 @@ dependencies = [
     { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 
+
+]
 
 [package.metadata]
 requires-dist = [

@@ -71,6 +71,7 @@ from ._types import (
     RetryPolicy,
     TaskHandle,
     TaskStatus,
+    apply_channel_response_hook,
     apply_response_hook,
     apply_run_hook,
 )
@@ -134,6 +135,7 @@ __all__ = [
     "TaskHandle",
     "TaskStatus",
     "__version__",
+    "apply_channel_response_hook",
     "apply_response_hook",
     "apply_run_hook",
     "get_current_isolation_keys",
