@@ -555,20 +555,20 @@ public sealed class FoundryChatClientTests
 
     #endregion
 
-    #region AgentFrameworkUserAgentPolicy registration + dedup
+    #region AgentFrameworkUserAgentPolicy + ServedModelPolicy registration + dedup
 
     [Fact]
     public void Register_AgentFrameworkUserAgentPolicy_OnUnderlyingOpenAIRequestPolicies()
     {
         // Arrange + Act: constructing a FoundryChatClient should register the
-        // AgentFrameworkUserAgentPolicy on the inner chat client's OpenAIRequestPolicies.
+        // AgentFrameworkUserAgentPolicy and ServedModelPolicy on the inner chat client's OpenAIRequestPolicies.
         var chatClient = new FoundryChatClient(CreateProjectClient(), "gpt-4o-mini");
 
         // Assert: the inner chat client (MEAI's OpenAIResponsesChatClient) exposes
-        // OpenAIRequestPolicies via GetService, and our policy is present in its entries.
+        // OpenAIRequestPolicies via GetService, and both policies are present in its entries.
         var policies = chatClient.GetService<OpenAIRequestPolicies>();
         Assert.NotNull(policies);
-        Assert.Equal(1, EntriesCount(policies!));
+        Assert.Equal(2, EntriesCount(policies!));
     }
 
     [Fact]
@@ -576,7 +576,7 @@ public sealed class FoundryChatClientTests
     {
         // Arrange: construct via the ProjectsAgentVersion mode-2 variant, which chains via
         // :this(...) into the AgentReference ctor. If the policy registration code were
-        // inadvertently called twice along the chain, we would see 2 entries.
+        // inadvertently called twice along the chain, we would see more than 2 entries.
         var projectClient = CreateProjectClient();
         var agentVersion = ModelReaderWriter.Read<ProjectsAgentVersion>(
             BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson()))!;
@@ -585,10 +585,10 @@ public sealed class FoundryChatClientTests
         var chatClient = new FoundryChatClient(projectClient, agentVersion, baseChatOptions: null);
 
         // Assert: even though the version variant funnels through the AgentReference ctor
-        // via :this(...), the policy is registered exactly once on the inner pipeline.
+        // via :this(...), each policy is registered exactly once on the inner pipeline.
         var policies = chatClient.GetService<OpenAIRequestPolicies>();
         Assert.NotNull(policies);
-        Assert.Equal(1, EntriesCount(policies!));
+        Assert.Equal(2, EntriesCount(policies!));
         Assert.Same(agentVersion, chatClient.GetService<ProjectsAgentVersion>());
         Assert.NotNull(chatClient.GetService<AgentReference>());
     }

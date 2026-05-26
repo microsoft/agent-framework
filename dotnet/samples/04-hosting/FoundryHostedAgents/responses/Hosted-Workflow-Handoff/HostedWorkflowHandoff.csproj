@@ -32,11 +32,11 @@
 
   <!-- For end-users: uncomment the PackageReference below and remove the ProjectReference above
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI.Foundry" />
-    <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" />
-    <PackageReference Include="Microsoft.Agents.AI.Hosting" />
-    <PackageReference Include="Microsoft.Agents.AI.OpenAI" />
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.6.1-preview.260514.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.6.1-preview.260514.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="1.6.1-preview.260514.1" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.6.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.6.1" />
   </ItemGroup>
   -->
 

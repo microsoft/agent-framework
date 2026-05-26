@@ -900,7 +900,7 @@ async def test_integration_web_search() -> None:
         "messages": [
             Message(
                 role="user",
-                contents=["Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer."],
+                contents=["Where is Microsoft's headquarters? Do a web search to find the answer."],
             )
         ],
         "options": {"tool_choice": "auto", "tools": [web_search_tool]},
@@ -908,9 +908,7 @@ async def test_integration_web_search() -> None:
     response = await client.get_response(stream=True, **content).get_final_response()
 
     assert isinstance(response, ChatResponse)
-    assert "Rumi" in response.text
-    assert "Mira" in response.text
-    assert "Zoey" in response.text
+    assert "redmond" in response.text.lower()
 
 
 @pytest.mark.flaky

@@ -4,9 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 
@@ -34,9 +36,9 @@ namespace Microsoft.Agents.AI;
 /// discovered via reflection on <typeparamref name="TSelf"/>. This approach is compatible with Native AOT.
 /// </item>
 /// <item>
-/// <b>Explicit override:</b> Override <see cref="AgentSkill.Resources"/> and <see cref="AgentSkill.Scripts"/>, using
-/// <see cref="CreateResource(string, object, string?)"/>, <see cref="CreateResource(string, Delegate, string?, JsonSerializerOptions?)"/>,
-/// and <see cref="CreateScript"/> to define inline resources and scripts. This approach is also compatible with Native AOT.
+/// <b>Explicit override:</b> Override <see cref="Resources"/> and <see cref="Scripts"/>, using <see cref="CreateResource(string, object, string?)"/>,
+/// <see cref="CreateResource(string, Delegate, string?, JsonSerializerOptions?)"/>, and <see cref="CreateScript"/> to define
+/// inline resources and scripts. This approach is also compatible with Native AOT.
 /// </item>
 /// </list>
 /// </para>
@@ -97,11 +99,24 @@ public abstract class AgentClassSkill<
 {
     private const BindingFlags DiscoveryBindingFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
 
-    private string? _content;
-    private bool _resourcesDiscovered;
-    private bool _scriptsDiscovered;
-    private IReadOnlyList<AgentSkillResource>? _reflectedResources;
-    private IReadOnlyList<AgentSkillScript>? _reflectedScripts;
+    private readonly Lazy<IReadOnlyList<AgentSkillResource>?> _resources;
+    private readonly Lazy<IReadOnlyList<AgentSkillScript>?> _scripts;
+    private readonly Lazy<string> _content;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentClassSkill{TSelf}"/> class.
+    /// </summary>
+    protected AgentClassSkill()
+    {
+        this._resources = new Lazy<IReadOnlyList<AgentSkillResource>?>(this.DiscoverResources);
+        this._scripts = new Lazy<IReadOnlyList<AgentSkillScript>?>(this.DiscoverScripts);
+        this._content = new Lazy<string>(() => AgentInlineSkillContentBuilder.Build(
+            this.Frontmatter.Name,
+            this.Frontmatter.Description,
+            this.Instructions,
+            this.Resources,
+            this.Scripts));
+    }
 
     /// <summary>
     /// Gets the raw instructions text for this skill.
@@ -126,53 +141,44 @@ public abstract class AgentClassSkill<
     /// Returns a synthesized XML document containing name, description, instructions, resources, and scripts.
     /// The result is cached after the first access. Override to provide custom content.
     /// </remarks>
-    public override string Content => this._content ??= AgentInlineSkillContentBuilder.Build(
-        this.Frontmatter.Name,
-        this.Frontmatter.Description,
-        this.Instructions,
-        this.Resources,
-        this.Scripts);
+    public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default) => new(this._content.Value);
+
+    /// <summary>
+    /// Gets the resources associated with this skill, or <see langword="null"/> if none.
+    /// </summary>
+    /// <remarks>
+    /// The default implementation returns resources discovered via reflection by scanning
+    /// <typeparamref name="TSelf"/> for members annotated with <see cref="AgentSkillResourceAttribute"/>.
+    /// This discovery is compatible with Native AOT because <typeparamref name="TSelf"/> is annotated with
+    /// <see cref="DynamicallyAccessedMembersAttribute"/>. The result is cached after the first access.
+    /// Override this property in derived classes to provide skill-specific resources.
+    /// </remarks>
+    public virtual IReadOnlyList<AgentSkillResource>? Resources => this._resources.Value;
+
+    /// <summary>
+    /// Gets the scripts associated with this skill, or <see langword="null"/> if none.
+    /// </summary>
+    /// <remarks>
+    /// The default implementation returns scripts discovered via reflection by scanning
+    /// <typeparamref name="TSelf"/> for methods annotated with <see cref="AgentSkillScriptAttribute"/>.
+    /// This discovery is compatible with Native AOT because <typeparamref name="TSelf"/> is annotated with
+    /// <see cref="DynamicallyAccessedMembersAttribute"/>. The result is cached after the first access.
+    /// Override this property in derived classes to provide skill-specific scripts.
+    /// </remarks>
+    public virtual IReadOnlyList<AgentSkillScript>? Scripts => this._scripts.Value;
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// Returns resources discovered via reflection by scanning <typeparamref name="TSelf"/> for
-    /// members annotated with <see cref="AgentSkillResourceAttribute"/>. This discovery is
-    /// compatible with Native AOT because <typeparamref name="TSelf"/> is annotated with
-    /// <see cref="DynamicallyAccessedMembersAttribute"/>. The result is cached after the first access.
-    /// </remarks>
-    public override IReadOnlyList<AgentSkillResource>? Resources
+    public sealed override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
-        get
-        {
-            if (!this._resourcesDiscovered)
-            {
-                this._reflectedResources = this.DiscoverResources();
-                this._resourcesDiscovered = true;
-            }
-
-            return this._reflectedResources;
-        }
+        var resource = this.Resources?.FirstOrDefault(r => r.Name == name);
+        return new(resource);
     }
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// Returns scripts discovered via reflection by scanning <typeparamref name="TSelf"/> for
-    /// methods annotated with <see cref="AgentSkillScriptAttribute"/>. This discovery is
-    /// compatible with Native AOT because <typeparamref name="TSelf"/> is annotated with
-    /// <see cref="DynamicallyAccessedMembersAttribute"/>. The result is cached after the first access.
-    /// </remarks>
-    public override IReadOnlyList<AgentSkillScript>? Scripts
+    public sealed override ValueTask<AgentSkillScript?> GetScriptAsync(string name, CancellationToken cancellationToken = default)
     {
-        get
-        {
-            if (!this._scriptsDiscovered)
-            {
-                this._reflectedScripts = this.DiscoverScripts();
-                this._scriptsDiscovered = true;
-            }
-
-            return this._reflectedScripts;
-        }
+        var script = this.Scripts?.FirstOrDefault(s => s.Name == name);
+        return new(script);
     }
 
     /// <summary>
