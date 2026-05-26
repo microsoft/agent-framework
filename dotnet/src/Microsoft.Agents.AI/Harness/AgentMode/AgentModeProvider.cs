@@ -29,8 +29,8 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// This provider exposes the following tools to the agent:
 /// <list type="bullet">
-/// <item><description><c>AgentMode_Set</c> — Switch the agent's operating mode.</description></item>
-/// <item><description><c>AgentMode_Get</c> — Retrieve the agent's current operating mode.</description></item>
+/// <item><description><c>mode_set</c> — Switch the agent's operating mode.</description></item>
+/// <item><description><c>mode_get</c> — Retrieve the agent's current operating mode.</description></item>
 /// </list>
 /// </para>
 /// <para>
@@ -49,8 +49,8 @@ public sealed class AgentModeProvider : AIContextProvider
         - You must check the current mode after any user input, since the user may have changed the mode themselves,
           e.g. the user may have switched to 'plan' mode after a previous research task finished in 'execute' mode, meaning they want to review a plan first before execution.
 
-        Use the AgentMode_Get tool to check your current operating mode.
-        Use the AgentMode_Set tool to switch between modes as your work progresses. Only use AgentMode_Set if the user explicitly instructs/allows you to change modes.
+        Use the mode_get tool to check your current operating mode.
+        Use the mode_set tool to switch between modes as your work progresses. Only use mode_set if the user explicitly instructs/allows you to change modes.
 
         You are currently operating in the {current_mode} mode.
 
@@ -79,7 +79,7 @@ public sealed class AgentModeProvider : AIContextProvider
               4. Do short exploratory research if it helps with being able to ask sensible clarifications from the user.
             5. Write the plan to a memory file, so that it is retained even if compaction happens. Make sure to update the plan file if the user requests changes.
             6. Present the plan to the user and ask for approval to switch to execute mode and process the plan.
-            7. When approval is granted, always switch to execute mode (using the `AgentMode_Set` tool), and follow the steps for *Execute mode*.
+            7. When approval is granted, always switch to execute mode (using the `mode_set` tool), and follow the steps for *Execute mode*.
             """),
         new(
             "execute",
@@ -263,7 +263,7 @@ public sealed class AgentModeProvider : AIContextProvider
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "AgentMode_Set",
+                    Name = "mode_set",
                     Description = $"Switch the agent's operating mode. Supported modes: \"{this._modeNamesDisplay}\".",
                     SerializerOptions = serializerOptions,
                 }),
@@ -272,7 +272,7 @@ public sealed class AgentModeProvider : AIContextProvider
                 () => state.CurrentMode,
                 new AIFunctionFactoryOptions
                 {
-                    Name = "AgentMode_Get",
+                    Name = "mode_get",
                     Description = "Get the agent's current operating mode.",
                     SerializerOptions = serializerOptions,
                 }),

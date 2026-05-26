@@ -20,8 +20,28 @@ internal static class AGUIChatMessageExtensions
         this IEnumerable<AGUIMessage> aguiMessages,
         JsonSerializerOptions jsonSerializerOptions)
     {
+        // Coalesce consecutive AGUIAssistantMessages that carry tool_calls into a single
+        // ChatMessage. The AG-UI client (e.g. @ag-ui/client) creates a separate assistant
+        // message per tool call when ToolCallStartEvent.parentMessageId is empty, but
+        // OpenAI's chat-completion API requires every assistant message with tool_calls
+        // to be IMMEDIATELY followed by tool responses for each of its tool_call_ids.
+        // Sending two consecutive single-tool-call assistant messages before any tool
+        // result triggers HTTP 400 "tool_call_ids did not have response messages".
+        List<AIContent>? pendingContents = null;
+        string? pendingId = null;
+
         foreach (var message in aguiMessages)
         {
+            bool isAssistantWithToolCalls =
+                message is AGUIAssistantMessage am && am.ToolCalls is { Length: > 0 };
+
+            if (pendingContents is not null && !isAssistantWithToolCalls)
+            {
+                yield return new ChatMessage(ChatRole.Assistant, pendingContents) { MessageId = pendingId };
+                pendingContents = null;
+                pendingId = null;
+            }
+
             var role = MapChatRole(message.Role);
 
             switch (message)
@@ -84,14 +104,14 @@ internal static class AGUIChatMessageExtensions
 
                 case AGUIAssistantMessage assistantMessage when assistantMessage.ToolCalls is { Length: > 0 }:
                 {
-                    var contents = new List<AIContent>();
+                    pendingContents ??= new List<AIContent>();
+                    pendingId ??= message.Id;
 
                     if (!string.IsNullOrEmpty(assistantMessage.Content))
                     {
-                        contents.Add(new TextContent(assistantMessage.Content));
+                        pendingContents.Add(new TextContent(assistantMessage.Content));
                     }
 
-                    // Add tool calls
                     foreach (var toolCall in assistantMessage.ToolCalls)
                     {
                         Dictionary<string, object?>? arguments = null;
@@ -102,16 +122,12 @@ internal static class AGUIChatMessageExtensions
                                 jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
                         }
 
-                        contents.Add(new FunctionCallContent(
+                        pendingContents.Add(new FunctionCallContent(
                             toolCall.Id,
                             toolCall.Function.Name,
                             arguments));
                     }
 
-                    yield return new ChatMessage(role, contents)
-                    {
-                        MessageId = message.Id
-                    };
                     break;
                 }
 
@@ -133,6 +149,12 @@ internal static class AGUIChatMessageExtensions
                     break;
                 }
             }
+        }
+
+        // Flush remaining pending assistant-tool-call entry at end of stream.
+        if (pendingContents is not null)
+        {
+            yield return new ChatMessage(ChatRole.Assistant, pendingContents) { MessageId = pendingId };
         }
     }
 

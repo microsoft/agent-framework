@@ -281,9 +281,9 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert
         Assert.Single(skills);
         var skill = skills[0];
-        Assert.Equal(2, skill.Resources!.Count);
-        Assert.Contains(skill.Resources!, r => r.Name.Equals("references/FAQ.md", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(skill.Resources!, r => r.Name.Equals("assets/data.json", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(2, skill.GetTestResources()!.Count);
+        Assert.Contains(skill.GetTestResources()!, r => r.Name.Equals("references/FAQ.md", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(skill.GetTestResources()!, r => r.Name.Equals("assets/data.json", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -306,8 +306,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert
         Assert.Single(skills);
         var skill = skills[0];
-        Assert.Single(skill.Resources!);
-        Assert.Equal("references/data.json", skill.Resources![0].Name);
+        Assert.Single(skill.GetTestResources()!);
+        Assert.Equal("references/data.json", skill.GetTestResources()![0].Name);
     }
 
     [Fact]
@@ -329,8 +329,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert
         Assert.Single(skills);
         var skill = skills[0];
-        Assert.Single(skill.Resources!);
-        Assert.Equal("references/notes.md", skill.Resources![0].Name);
+        Assert.Single(skill.GetTestResources()!);
+        Assert.Equal("references/notes.md", skill.GetTestResources()![0].Name);
     }
 
     [Fact]
@@ -355,9 +355,9 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — only the file directly in references/ is discovered; the nested file is not
         Assert.Single(skills);
         var skill = skills[0];
-        Assert.Single(skill.Resources!);
-        Assert.Contains(skill.Resources!, r => r.Name.Equals("references/top.md", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(skill.Resources!, r => r.Name.Contains("deep.md", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(skill.GetTestResources()!);
+        Assert.Contains(skill.GetTestResources()!, r => r.Name.Equals("references/top.md", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(skill.GetTestResources()!, r => r.Name.Contains("deep.md", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -380,8 +380,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — only .custom files should be discovered, not .json
         Assert.Single(skills);
         var skill = skills[0];
-        Assert.Single(skill.Resources!);
-        Assert.Equal("references/data.custom", skill.Resources![0].Name);
+        Assert.Single(skill.GetTestResources()!);
+        Assert.Equal("references/data.custom", skill.GetTestResources()![0].Name);
     }
 
     [Theory]
@@ -406,7 +406,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — default extensions include .md
         var skills = await source.GetSkillsAsync();
-        Assert.Single(skills[0].Resources!);
+        Assert.Single(skills[0].GetTestResources()!);
     }
 
     [Fact]
@@ -442,7 +442,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — root-level files are NOT discovered unless "." is in ResourceDirectories
         Assert.Single(skills);
-        Assert.Empty(skills[0].Resources!);
+        Assert.Empty(skills[0].GetTestResources()!);
     }
 
     [Fact]
@@ -465,9 +465,9 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — both root-level resource files (and SKILL.md excluded) should be discovered
         Assert.Single(skills);
         var skill = skills[0];
-        Assert.Equal(2, skill.Resources!.Count);
-        Assert.Contains(skill.Resources!, r => r.Name.Equals("guide.md", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(skill.Resources!, r => r.Name.Equals("config.json", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(2, skill.GetTestResources()!.Count);
+        Assert.Contains(skill.GetTestResources()!, r => r.Name.Equals("guide.md", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(skill.GetTestResources()!, r => r.Name.Equals("config.json", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -488,7 +488,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — non-spec directories are not scanned by default
         Assert.Single(skills);
-        Assert.Empty(skills[0].Resources!);
+        Assert.Empty(skills[0].GetTestResources()!);
     }
 
     [Fact]
@@ -514,8 +514,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — only docs/ is scanned; references/ is NOT scanned
         Assert.Single(skills);
         var skill = skills[0];
-        Assert.Single(skill.Resources!);
-        Assert.Equal("docs/readme.md", skill.Resources![0].Name);
+        Assert.Single(skill.GetTestResources()!);
+        Assert.Equal("docs/readme.md", skill.GetTestResources()![0].Name);
     }
 
     [Fact]
@@ -530,7 +530,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert
         Assert.Single(skills);
-        Assert.Empty(skills[0].Resources!);
+        Assert.Empty(skills[0].GetTestResources()!);
     }
 
     [Fact]
@@ -588,7 +588,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         File.WriteAllText(Path.Combine(refsDir, "doc.md"), "Document content here.");
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
         var skills = await source.GetSkillsAsync();
-        var resource = skills[0].Resources!.First(r => r.Name == "references/doc.md");
+        var resource = skills[0].GetTestResources()!.First(r => r.Name == "references/doc.md");
 
         // Act
         var content = await resource.ReadAsync();
@@ -672,8 +672,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — skill should still load, the symlinked references/ is skipped, assets/legit.md is found
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-escape-skill");
         Assert.NotNull(skill);
-        Assert.Single(skill.Resources!);
-        Assert.Equal("assets/legit.md", skill.Resources![0].Name);
+        Assert.Single(skill.GetTestResources()!);
+        Assert.Equal("assets/legit.md", skill.GetTestResources()![0].Name);
     }
 
     [Fact]
@@ -714,8 +714,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — only assets/legit.md is found; the symlinked references/ directory is skipped entirely
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-directory-skip");
         Assert.NotNull(skill);
-        Assert.Single(skill.Resources!);
-        Assert.Equal("assets/legit.md", skill.Resources![0].Name);
+        Assert.Single(skill.GetTestResources()!);
+        Assert.Equal("assets/legit.md", skill.GetTestResources()![0].Name);
     }
 
     [Fact]
@@ -751,7 +751,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — skill loads but scripts from the symlinked directory are not discovered
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-script-skip");
         Assert.NotNull(skill);
-        Assert.Empty(skill.Scripts!);
+        Assert.Null(await skill.GetScriptAsync("any-script"));
     }
 
     [Fact]
@@ -791,7 +791,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — the symlinked intermediate segment causes the directory to be skipped
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-intermediate");
         Assert.NotNull(skill);
-        Assert.Empty(skill.Resources!);
+        Assert.Empty(skill.GetTestResources()!);
     }
 #endif
 
@@ -1020,8 +1020,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — only one copy of the resource despite two equivalent directory entries
         Assert.Single(skills);
-        Assert.Single(skills[0].Resources!);
-        Assert.Equal("references/FAQ.md", skills[0].Resources![0].Name);
+        Assert.Single(skills[0].GetTestResources()!);
+        Assert.Equal("references/FAQ.md", skills[0].GetTestResources()![0].Name);
     }
 
     [Fact]
@@ -1043,8 +1043,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — trailing slash variant deduplicated
         Assert.Single(skills);
-        Assert.Single(skills[0].Resources!);
-        Assert.Equal("references/data.json", skills[0].Resources![0].Name);
+        Assert.Single(skills[0].GetTestResources()!);
+        Assert.Equal("references/data.json", skills[0].GetTestResources()![0].Name);
     }
 
     [Fact]
@@ -1066,8 +1066,9 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — backslash variant deduplicated
         Assert.Single(skills);
-        Assert.Single(skills[0].Scripts!);
-        Assert.Equal("scripts/run.py", skills[0].Scripts![0].Name);
+        var script = await skills[0].GetScriptAsync("scripts/run.py");
+        Assert.NotNull(script);
+        Assert.Equal("scripts/run.py", script!.Name);
     }
 
     [Theory]
@@ -1093,8 +1094,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert — the resource is discovered with a name identical to using the directory without "./"
         Assert.Single(skills);
-        Assert.Single(skills[0].Resources!);
-        Assert.Equal($"{directoryWithoutDotSlash}/data.json", skills[0].Resources![0].Name);
+        Assert.Single(skills[0].GetTestResources()!);
+        Assert.Equal($"{directoryWithoutDotSlash}/data.json", skills[0].GetTestResources()![0].Name);
     }
 
     [Fact]
@@ -1117,8 +1118,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — resource file inside the deeply nested directory is discovered
         Assert.Single(skills);
         var skill = skills[0];
-        Assert.Single(skill.Resources!);
-        Assert.Equal("f1/f2/f3/data.json", skill.Resources![0].Name);
+        Assert.Single(skill.GetTestResources()!);
+        Assert.Equal("f1/f2/f3/data.json", skill.GetTestResources()![0].Name);
     }
 
     private string CreateSkillDirectory(string name, string description, string body)
@@ -1188,8 +1189,9 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — script at the skill root should be discovered
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "root-script-skill");
         Assert.NotNull(skill);
-        Assert.Single(skill.Scripts!);
-        Assert.Equal("run.py", skill.Scripts![0].Name);
+        var script = await skill.GetScriptAsync("run.py");
+        Assert.NotNull(script);
+        Assert.Equal("run.py", script!.Name);
     }
 
 #if NET
@@ -1229,8 +1231,8 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert — only legit.md should be discovered; the symlinked leak.md is skipped
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-file-skill");
         Assert.NotNull(skill);
-        Assert.Single(skill.Resources!);
-        Assert.Equal("references/legit.md", skill.Resources![0].Name);
+        Assert.Single(skill.GetTestResources()!);
+        Assert.Equal("references/legit.md", skill.GetTestResources()![0].Name);
     }
 #endif
 }

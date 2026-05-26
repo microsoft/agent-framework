@@ -47,7 +47,8 @@ $Scenarios = @(
     'custom-storage',
     'memory',
     'azure-search-rag',
-    'session-files'
+    'session-files',
+    'agent-skills'
 )
 
 # Resolve project ARM scope from the endpoint.

@@ -129,6 +129,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         self._timeout_config = self._create_timeout_config(timeout)
         if client is not None:
             self.client = client
+            self._non_streaming_client: Client | None = None
             self._close_http_client = True
             return
         if agent_card is None:
@@ -144,17 +145,30 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             self._http_client = http_client  # Store for cleanup
             self._close_http_client = True
 
-        # Create A2A client using factory
-        config = ClientConfig(
+        interceptors = [auth_interceptor] if auth_interceptor is not None else None
+
+        # Create streaming client (SSE transport for stream=True)
+        streaming_config = ClientConfig(
             httpx_client=http_client,
+            streaming=True,
             supported_protocol_bindings=["JSONRPC"],
         )
-        factory = ClientFactory(config)
-        interceptors = [auth_interceptor] if auth_interceptor is not None else None
+        # Create non-streaming client (single request/response for stream=False)
+        non_streaming_config = ClientConfig(
+            httpx_client=http_client,
+            streaming=False,
+            supported_protocol_bindings=["JSONRPC"],
+        )
+        streaming_factory = ClientFactory(streaming_config)
+        non_streaming_factory = ClientFactory(non_streaming_config)
 
         # Attempt transport negotiation with the provided agent card
         try:
-            self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
+            self.client = streaming_factory.create(agent_card, interceptors=interceptors)  # type: ignore
+            self._non_streaming_client = non_streaming_factory.create(
+                agent_card,
+                interceptors=interceptors,  # type: ignore
+            )
         except Exception as transport_error:
             # Transport negotiation failed - fall back to minimal agent card with JSONRPC
             fallback_url = agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url
@@ -166,7 +180,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 ) from transport_error
             fallback_card = minimal_agent_card(fallback_url, ["JSONRPC"])
             try:
-                self.client = factory.create(fallback_card, interceptors=interceptors)  # type: ignore
+                self.client = streaming_factory.create(fallback_card, interceptors=interceptors)  # type: ignore
+                self._non_streaming_client = non_streaming_factory.create(
+                    fallback_card,
+                    interceptors=interceptors,  # type: ignore
+                )
             except Exception as fallback_error:
                 raise RuntimeError(
                     f"A2A transport negotiation failed. "
@@ -282,6 +300,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         del function_invocation_kwargs, client_kwargs, kwargs
         normalized_messages = normalize_messages(messages)
 
+        # Use non-streaming transport for non-streaming calls when available.
+        # This sends a single HTTP request/response instead of opening an SSE
+        # connection, matching the protocol's intent for synchronous operations.
+        active_client = (
+            self._non_streaming_client if (not stream and self._non_streaming_client is not None) else self.client
+        )
+
         if continuation_token is not None:
             a2a_stream: AsyncIterable[A2AStreamItem] = self.client.subscribe(
                 SubscribeToTaskRequest(id=continuation_token["task_id"])
@@ -293,7 +318,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 normalized_messages[-1],
                 context_id=session.service_session_id if session else None,
             )
-            a2a_stream = self.client.send_message(SendMessageRequest(message=a2a_message))
+            request = SendMessageRequest(message=a2a_message)
+            if background and not stream:
+                # return_immediately only applies to non-streaming (message/send)
+                request.configuration.return_immediately = True
+            a2a_stream = active_client.send_message(request)
 
         provider_session = session
         if provider_session is None and self.context_providers:
