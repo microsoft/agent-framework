@@ -42,14 +42,20 @@ def test_normalize_relative_path_collapses_and_validates() -> None:
     assert _normalize_relative_path("foo/bar.txt") == "foo/bar.txt"
     assert _normalize_relative_path("foo\\bar.txt") == "foo/bar.txt"
     assert _normalize_relative_path("foo//bar.txt") == "foo/bar.txt"
+    assert _normalize_relative_path("  foo/bar.txt  ") == "foo/bar.txt"
     assert _normalize_relative_path("", is_directory=True) == ""
     assert _normalize_relative_path("   ", is_directory=True) == ""
     assert _normalize_relative_path("sub/", is_directory=True) == "sub"
+    assert _normalize_relative_path("sub\\", is_directory=True) == "sub"
 
     with pytest.raises(ValueError, match="must not be empty"):
         _normalize_relative_path("")
     with pytest.raises(ValueError, match="must not be empty"):
         _normalize_relative_path("   ")
+    with pytest.raises(ValueError, match="must not end with a path separator"):
+        _normalize_relative_path("foo/")
+    with pytest.raises(ValueError, match="must not end with a path separator"):
+        _normalize_relative_path("foo\\")
     with pytest.raises(ValueError, match="'..' segments"):
         _normalize_relative_path("foo/../bar.txt")
     with pytest.raises(ValueError, match="'..' segments"):
@@ -273,6 +279,14 @@ async def test_filesystem_store_create_directory(tmp_path: Path) -> None:
     store = FileSystemAgentFileStore(tmp_path)
     await store.create_directory("nested/inner")
     assert (tmp_path / "nested" / "inner").is_dir()
+
+
+async def test_filesystem_store_list_files_accepts_blank_directory(tmp_path: Path) -> None:
+    """Whitespace-only directory inputs should resolve to the root, matching the in-memory store."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write_file("a.txt", "alpha")
+    assert sorted(await store.list_files("")) == ["a.txt"]
+    assert sorted(await store.list_files("   ")) == ["a.txt"]
 
 
 def test_filesystem_store_requires_non_empty_root() -> None:

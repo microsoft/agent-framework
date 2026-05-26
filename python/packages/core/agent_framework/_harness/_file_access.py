@@ -78,31 +78,44 @@ def _compile_search_regex(pattern: str) -> re.Pattern[str]:
 def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
     """Normalize and validate a relative store path.
 
-    Replaces backslashes with forward slashes, collapses repeated separators, and
-    rejects rooted paths, drive letters, and ``.``/``..`` segments. When
-    ``is_directory`` is True, an empty result is allowed and represents the root;
-    otherwise an empty result is rejected.
+    Trims surrounding whitespace, replaces backslashes with forward slashes,
+    collapses repeated separators, and rejects rooted paths, drive letters, and
+    ``.``/``..`` segments. When ``is_directory`` is True, an empty result is
+    allowed and represents the root; otherwise an empty result is rejected and
+    trailing separators are not accepted (so ``"foo/"`` does not silently
+    become the file path ``"foo"``).
 
     Args:
         path: The relative path to normalize.
 
     Keyword Args:
         is_directory: Whether the path represents a directory (allows empty
-            results) or a file (rejects empty results).
+            results and trailing separators) or a file (rejects empty results
+            and trailing separators).
 
     Returns:
         The normalized forward-slash relative path.
 
     Raises:
         ValueError: When the path is rooted, starts with a drive letter, contains
-            ``.``/``..`` segments, or is empty for a file path.
+            ``.``/``..`` segments, is empty for a file path, or ends with a
+            separator for a file path.
     """
     if not path or not path.strip():
         if not is_directory:
             raise ValueError("A file path must not be empty or whitespace-only.")
         return ""
 
-    normalized = path.replace("\\", "/").strip("/")
+    # Trim surrounding whitespace so spaces never leak into file segments.
+    path = path.strip()
+    converted = path.replace("\\", "/")
+
+    # For file paths reject trailing separators so a directory-shaped string
+    # such as ``"foo/"`` is never silently treated as the file ``"foo"``.
+    if not is_directory and converted.endswith("/"):
+        raise ValueError(f"Invalid path: {path!r}. A file path must not end with a path separator.")
+
+    normalized = converted.strip("/")
 
     if (
         os.path.isabs(path)
@@ -524,11 +537,14 @@ class FileSystemAgentFileStore(AgentFileStore):
     def _resolve_safe_directory_path(self, relative_directory: str) -> Path:
         """Resolve a relative directory path safely under the root directory.
 
-        An empty string resolves to the root directory itself.
+        Empty and whitespace-only inputs both resolve to the root directory,
+        matching the behavior of ``_normalize_relative_path(..., is_directory=True)``
+        and the convention used by :class:`InMemoryAgentFileStore`.
         """
-        if not relative_directory:
+        normalized = _normalize_relative_path(relative_directory, is_directory=True)
+        if not normalized:
             return self._root_path
-        return self._resolve_safe_path(relative_directory)
+        return self._resolve_safe_path(normalized)
 
     def _throw_if_contains_symlink(self, candidate: Path) -> None:
         """Reject any segment between the root and ``candidate`` that is a symlink/reparse point.
