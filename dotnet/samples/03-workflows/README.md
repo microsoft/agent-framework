@@ -62,3 +62,4 @@ Once completed, please proceed to the other samples listed below.
 | Sample | Concepts |
 |--------|----------|
 | [Handoff Orchestration](./Orchestration/Handoff) | Introduces the Handoff Orchestration pattern |
+| [Magentic Orchestration](./Orchestration/Magentic) | Coordinates multiple agents with a Magentic manager, streamed plan events, and a final transcript |

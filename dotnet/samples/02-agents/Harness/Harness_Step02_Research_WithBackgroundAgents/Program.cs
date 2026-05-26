@@ -16,6 +16,7 @@ using System.ClientModel.Primitives;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Harness.Shared.Console;
+using Harness.Shared.Console.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -102,10 +103,7 @@ AIAgent parentAgent =
         DisableFileAccess = true,   // If enabled, this would allow the agent to read/write files in a working directory
         DisableToolApproval = true, // If enabled, this allows don't-ask-again approval functionality.
         DisableWebSearch = true,
-        AIContextProviders =
-        [
-            new BackgroundAgentsProvider([webSearchAgent]),
-        ],
+        BackgroundAgents = [webSearchAgent],
         ChatOptions = new ChatOptions
         {
             Instructions = parentInstructions,
@@ -116,4 +114,8 @@ AIAgent parentAgent =
 // Run the interactive console session.
 await HarnessConsole.RunAgentAsync(
     parentAgent,
-    userPrompt: "Enter a list of stock tickers (e.g., BAC, MSFT, BA):");
+    userPrompt: "Enter a list of stock tickers (e.g., BAC, MSFT, BA):",
+    options: new HarnessConsoleOptions
+    {
+        Observers = [new OpenAIResponsesErrorObserver(), .. HarnessConsoleOptions.BuildDefaultObservers()],
+    });
