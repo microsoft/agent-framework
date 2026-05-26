@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -21,11 +22,13 @@ from agent_framework import (
     Message,
     SupportsChatGetResponse,
 )
+from agent_framework._harness import _file_access as _file_access_module
 from agent_framework._harness._file_access import (
     DEFAULT_FILE_ACCESS_INSTRUCTIONS,
     DEFAULT_FILE_ACCESS_SOURCE_ID,
     _matches_glob,
     _normalize_relative_path,
+    _run_search_with_timeout,
 )
 
 
@@ -391,6 +394,64 @@ async def test_file_access_provider_accepts_custom_instructions() -> None:
     provider = FileAccessProvider(store=store, instructions="custom-banner")
     assert provider.instructions == "custom-banner"
     assert provider.source_id == DEFAULT_FILE_ACCESS_SOURCE_ID
+
+
+async def test_in_memory_store_write_file_raises_when_exists_and_no_overwrite() -> None:
+    """The atomic exclusive-create path should raise ``FileExistsError`` under the lock."""
+    store = InMemoryAgentFileStore()
+    await store.write_file("plan.md", "v1")
+
+    with pytest.raises(FileExistsError):
+        await store.write_file("plan.md", "v2", overwrite=False)
+
+    # The original content is preserved.
+    assert await store.read_file("plan.md") == "v1"
+
+    # Default ``overwrite=True`` still replaces.
+    await store.write_file("plan.md", "v3")
+    assert await store.read_file("plan.md") == "v3"
+
+
+async def test_filesystem_store_write_file_raises_when_exists_and_no_overwrite(tmp_path: Path) -> None:
+    """The filesystem store should use exclusive-create semantics when ``overwrite=False``."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write_file("plan.md", "v1")
+
+    with pytest.raises(FileExistsError):
+        await store.write_file("plan.md", "v2", overwrite=False)
+
+    assert (tmp_path / "plan.md").read_text(encoding="utf-8") == "v1"
+
+    await store.write_file("plan.md", "v3", overwrite=True)
+    assert (tmp_path / "plan.md").read_text(encoding="utf-8") == "v3"
+
+
+async def test_run_search_with_timeout_raises_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scan that exceeds the timeout should surface a clean ``ValueError``."""
+    monkeypatch.setattr(_file_access_module, "_SEARCH_TIMEOUT_SECONDS", 0.01)
+
+    def slow() -> list[FileSearchResult]:
+        time.sleep(0.5)
+        return []
+
+    with pytest.raises(ValueError, match="did not complete"):
+        await _run_search_with_timeout(slow)
+
+
+async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If ``Path.is_symlink`` raises during the probe, the operation must be refused."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write_file("ok.txt", "content")
+
+    def boom(self: Path) -> bool:
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(Path, "is_symlink", boom)
+
+    with pytest.raises(ValueError, match="symbolic link or reparse point"):
+        await store.read_file("ok.txt")
 
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:

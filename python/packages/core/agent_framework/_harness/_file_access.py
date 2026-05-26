@@ -25,7 +25,7 @@ import fnmatch
 import os
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -53,11 +53,14 @@ _SEARCH_SNIPPET_RADIUS = 50
 
 # Hard cap on the length of a user-supplied search regex. Python's ``re`` module
 # has no built-in timeout, so a catastrophic-backtracking pattern (such as
-# ``(a+)+$``) submitted by the model could block the event loop indefinitely.
-# Capping pattern length is a simple, predictable mitigation; pathological
-# ReDoS patterns are typically far shorter than this limit, so the cap mostly
-# rejects obviously-malformed input while still allowing realistic queries.
+# ``(a+)+$``) submitted by the model could spin the CPU indefinitely. The cap
+# alone does not stop short pathological patterns, so :meth:`search_files`
+# additionally executes the regex scan in a worker thread and bounds the wall
+# clock with :data:`_SEARCH_TIMEOUT_SECONDS`. The thread itself cannot be
+# safely interrupted from Python, so a runaway scan continues until the
+# regex engine returns, but the caller and event loop stay responsive.
 _MAX_SEARCH_PATTERN_LENGTH = 256
+_SEARCH_TIMEOUT_SECONDS = 10.0
 
 
 def _compile_search_regex(pattern: str) -> re.Pattern[str]:
@@ -73,6 +76,24 @@ def _compile_search_regex(pattern: str) -> re.Pattern[str]:
             f"Maximum supported length is {_MAX_SEARCH_PATTERN_LENGTH} characters."
         )
     return re.compile(pattern, flags=re.IGNORECASE)
+
+
+async def _run_search_with_timeout(
+    fn: Callable[[], list[FileSearchResult]],
+) -> list[FileSearchResult]:
+    """Run ``fn`` in a worker thread with a bounded wall-clock timeout.
+
+    Raises:
+        ValueError: When the search does not complete within
+            :data:`_SEARCH_TIMEOUT_SECONDS` seconds.
+    """
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn), timeout=_SEARCH_TIMEOUT_SECONDS)
+    except TimeoutError as exc:
+        raise ValueError(
+            f"Regex search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. "
+            "Use a more specific pattern (avoid nested quantifiers such as '(a+)+')."
+        ) from exc
 
 
 def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
@@ -316,12 +337,22 @@ class AgentFileStore(ABC):
     """
 
     @abstractmethod
-    async def write_file(self, path: str, content: str) -> None:
-        """Write ``content`` to the file at ``path``, creating or overwriting it.
+    async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+        """Write ``content`` to the file at ``path``.
 
         Args:
             path: The relative path of the file to write.
             content: The content to write to the file.
+
+        Keyword Args:
+            overwrite: When ``True`` (default) any existing file is replaced.
+                When ``False`` the implementation must perform an atomic
+                exclusive create and raise :class:`FileExistsError` if a file
+                already exists at ``path``.
+
+        Raises:
+            FileExistsError: When ``overwrite`` is ``False`` and a file already
+                exists at ``path``.
         """
 
     @abstractmethod
@@ -413,10 +444,17 @@ class InMemoryAgentFileStore(AgentFileStore):
     def _key(path: str) -> str:
         return _normalize_relative_path(path).lower()
 
-    async def write_file(self, path: str, content: str) -> None:
-        """Write ``content`` to the file at ``path``."""
+    async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+        """Write ``content`` to the file at ``path``.
+
+        When ``overwrite`` is ``False`` the check-and-write happens under the
+        store lock so concurrent callers cannot both observe a missing file
+        and race to create it.
+        """
         key = self._key(path)
         async with self._lock:
+            if not overwrite and key in self._files:
+                raise FileExistsError(f"File already exists: {path!r}")
             self._files[key] = content
 
     async def read_file(self, path: str) -> str | None:
@@ -452,7 +490,12 @@ class InMemoryAgentFileStore(AgentFileStore):
         regex_pattern: str,
         file_pattern: str | None = None,
     ) -> list[FileSearchResult]:
-        """Search file contents for ``regex_pattern`` matches."""
+        """Search file contents for ``regex_pattern`` matches.
+
+        Snapshots the entries under the store lock and offloads the regex scan
+        to a worker thread with a bounded timeout so a pathological pattern
+        cannot stall the event loop.
+        """
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
@@ -461,19 +504,22 @@ class InMemoryAgentFileStore(AgentFileStore):
         async with self._lock:
             entries = list(self._files.items())
 
-        results: list[FileSearchResult] = []
-        for key, file_content in entries:
-            if not key.startswith(prefix):
-                continue
-            relative_name = key[len(prefix) :]
-            if "/" in relative_name:
-                continue
-            if not _matches_glob(relative_name, file_pattern):
-                continue
-            result = _search_file_content(relative_name, file_content, regex)
-            if result is not None:
-                results.append(result)
-        return results
+        def scan() -> list[FileSearchResult]:
+            results: list[FileSearchResult] = []
+            for key, file_content in entries:
+                if not key.startswith(prefix):
+                    continue
+                relative_name = key[len(prefix) :]
+                if "/" in relative_name:
+                    continue
+                if not _matches_glob(relative_name, file_pattern):
+                    continue
+                result = _search_file_content(relative_name, file_content, regex)
+                if result is not None:
+                    results.append(result)
+            return results
+
+        return await _run_search_with_timeout(scan)
 
     async def create_directory(self, path: str) -> None:
         """No-op: directories are implicit from file paths in the in-memory store."""
@@ -567,26 +613,38 @@ class FileSystemAgentFileStore(AgentFileStore):
         for segment in relative_parts:
             current = current / segment
             try:
-                if current.is_symlink():
-                    raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.")
-            except OSError:
-                # Permission errors and similar transient OS errors during the
-                # symlink probe should not silently allow the access; treat as
-                # missing and stop checking so the underlying I/O surfaces the
-                # real error.
-                break
+                is_link = current.is_symlink()
+            except OSError as exc:
+                # Fail closed: if we cannot verify whether a segment is a
+                # symlink/reparse point we refuse the operation rather than
+                # silently allow access that may escape the root.
+                raise ValueError(
+                    f"Invalid path: unable to verify whether '{segment}' is a symbolic link or reparse point."
+                ) from exc
+            if is_link:
+                raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.")
             if not current.exists():
                 break
 
-    async def write_file(self, path: str, content: str) -> None:
-        """Write ``content`` to the file at ``path``."""
+    async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+        """Write ``content`` to the file at ``path``.
+
+        When ``overwrite`` is ``False`` the file is created using ``mode="x"``
+        so the underlying ``open`` call performs an atomic exclusive create
+        (``O_EXCL`` on POSIX, ``CREATE_NEW`` on Windows) and raises
+        :class:`FileExistsError` if a file already exists.
+        """
         full_path = self._resolve_safe_path(path)
-        await asyncio.to_thread(self._write_file_sync, full_path, content)
+        await asyncio.to_thread(self._write_file_sync, full_path, content, overwrite)
 
     @staticmethod
-    def _write_file_sync(full_path: Path, content: str) -> None:
+    def _write_file_sync(full_path: Path, content: str, overwrite: bool) -> None:
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(content, encoding="utf-8")
+        if overwrite:
+            full_path.write_text(content, encoding="utf-8")
+            return
+        with full_path.open("x", encoding="utf-8") as handle:
+            handle.write(content)
 
     async def read_file(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist."""
@@ -646,7 +704,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         """Search file contents for ``regex_pattern`` matches."""
         full_dir = self._resolve_safe_directory_path(directory)
         regex = _compile_search_regex(regex_pattern)
-        return await asyncio.to_thread(self._search_files_sync, full_dir, regex, file_pattern)
+        return await _run_search_with_timeout(lambda: self._search_files_sync(full_dir, regex, file_pattern))
 
     @staticmethod
     def _search_files_sync(full_dir: Path, regex: re.Pattern[str], file_pattern: str | None) -> list[FileSearchResult]:
@@ -736,9 +794,10 @@ class FileAccessProvider(ContextProvider):
         async def file_access_save_file(file_name: str, content: str, overwrite: bool = False) -> str:
             """Save a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # noqa: E501
             normalized = _normalize_relative_path(file_name)
-            if not overwrite and await self.store.file_exists(normalized):
+            try:
+                await self.store.write_file(normalized, content, overwrite=overwrite)
+            except FileExistsError:
                 return f"File '{file_name}' already exists. To replace it, save again with overwrite set to true."
-            await self.store.write_file(normalized, content)
             return f"File '{file_name}' saved."
 
         @tool(name="file_access_read_file", approval_mode="never_require")
