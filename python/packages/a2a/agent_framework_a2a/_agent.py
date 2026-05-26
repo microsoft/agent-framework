@@ -131,7 +131,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
         self._timeout_config = self._create_timeout_config(timeout)
-        bindings = supported_protocol_bindings or ["JSONRPC"]
+        bindings = supported_protocol_bindings if supported_protocol_bindings is not None else ["JSONRPC"]
         if client is not None:
             self.client = client
             self._non_streaming_client: Client | None = None

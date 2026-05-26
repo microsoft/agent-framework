@@ -743,6 +743,54 @@ def test_a2a_agent_initialization_defaults_to_jsonrpc() -> None:
             assert call.kwargs["supported_protocol_bindings"] == ["JSONRPC"]
 
 
+def test_a2a_agent_initialization_empty_list_preserved() -> None:
+    """Test that an explicit empty list is preserved and not replaced with defaults."""
+    with (
+        patch("agent_framework_a2a._agent.httpx.AsyncClient") as mock_async_client,
+        patch("agent_framework_a2a._agent.ClientConfig") as mock_config,
+        patch("agent_framework_a2a._agent.ClientFactory") as mock_factory,
+    ):
+        mock_async_client.return_value = MagicMock()
+        mock_client_instance = MagicMock()
+        mock_factory.return_value.create.return_value = mock_client_instance
+
+        A2AAgent(
+            name="Test Agent",
+            url="https://test-agent.example.com",
+            supported_protocol_bindings=[],
+        )
+
+        # Verify ClientConfig was called with the explicit empty list, not the default
+        assert mock_config.call_count == 2
+        for call in mock_config.call_args_list:
+            assert call.kwargs["supported_protocol_bindings"] == []
+
+
+def test_a2a_agent_fallback_uses_custom_bindings() -> None:
+    """Test that transport fallback path uses custom bindings."""
+    mock_agent_card = MagicMock()
+    mock_agent_card.supported_interfaces = [MagicMock(url="https://fallback.example.com")]
+
+    mock_factory = MagicMock()
+    # First create() call fails (primary streaming), then fallback calls succeed
+    primary_error = Exception("no compatible transports found")
+    mock_factory.create.side_effect = [primary_error, MagicMock(), MagicMock()]
+
+    with (
+        patch("agent_framework_a2a._agent.ClientFactory", return_value=mock_factory),
+        patch("agent_framework_a2a._agent.minimal_agent_card") as mock_minimal_card,
+        patch("agent_framework_a2a._agent.httpx.AsyncClient"),
+    ):
+        A2AAgent(
+            name="test-agent",
+            agent_card=mock_agent_card,
+            supported_protocol_bindings=["GRPC", "HTTP+JSON"],
+        )
+
+        # Verify minimal_agent_card was called with the custom bindings
+        mock_minimal_card.assert_called_once_with("https://fallback.example.com", ["GRPC", "HTTP+JSON"])
+
+
 async def test_working_task_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test that a working (non-terminal) task yields an update with a continuation token when background=True."""
     mock_a2a_client.add_in_progress_task_response("task-wip", context_id="ctx-1", state=TaskState.TASK_STATE_WORKING)
