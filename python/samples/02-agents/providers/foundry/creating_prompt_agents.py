@@ -6,7 +6,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient, create_prompt_agent, to_prompt_agent
+from agent_framework.foundry import FoundryChatClient, to_prompt_agent
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
@@ -20,18 +20,17 @@ Foundry Prompt Agent Example
 This sample demonstrates how a single Agent definition can be both:
 
 1. Run locally via the Foundry Responses API (``agent.run(...)``).
-2. Published in one step via ``create_prompt_agent(agent)``, which reuses
-   the FoundryChatClient's project client and lifts ``agent_name`` /
-   ``description`` from the Agent itself, the recommended path.
-3. Published in two steps via ``to_prompt_agent(agent)`` plus
-   ``AIProjectClient.agents.create_version(...)`` for when you need a
-   standalone definition you can inspect, serialize, or pass to a separately
-   managed ``AIProjectClient``.
+2. Converted to a ``PromptAgentDefinition`` with ``to_prompt_agent(agent)`` and
+   published via ``AIProjectClient.agents.create_version(...)``.
 
-The model is lifted from the bound ``FoundryChatClient`` so the agent's
-``model``/``instructions``/``tools`` stay as the single source of truth.
+The model is lifted from the bound ``FoundryChatClient`` and generation
+parameters (``temperature``, ``top_p``, ``tool_choice``) are sourced from the
+agent's ``default_options`` so the ``model``/``instructions``/``tools`` stay as
+the single source of truth. Foundry-specific knobs such as ``reasoning``,
+``rai_config``, ``text``, and ``structured_inputs`` are exposed as explicit
+keyword arguments on ``to_prompt_agent``.
 
-``to_prompt_agent`` and ``create_prompt_agent`` are experimental
+``to_prompt_agent`` is experimental
 (``ExperimentalFeature.TO_PROMPT_AGENT``) and may change before reaching GA.
 
 Function tools defined in this file are exposed to the prompt agent as
@@ -53,6 +52,7 @@ async def main() -> None:
     print("=== Foundry Prompt Agent Example ===\n")
 
     credential = AzureCliCredential()
+    project_client = AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential)
 
     agent = Agent(
         client=FoundryChatClient(
@@ -62,7 +62,6 @@ async def main() -> None:
         ),
         # The Agent is the single source of truth for the agent that gets published:
         # `name` becomes the Foundry agent name and `description` becomes the version description.
-        # Neither needs to be restated below.
         name="travel-agent",
         description="Helps Contoso employees book travel.",
         instructions="You are a helpful travel assistant. Use the booking tool when asked.",
@@ -71,6 +70,8 @@ async def main() -> None:
             FoundryChatClient.get_code_interpreter_tool(),
             book_hotel,
         ],
+        # Generation parameters set on the Agent flow through to the published prompt agent.
+        default_options={"temperature": 0.3, "top_p": 0.95},
     )
 
     # 1) Run locally via the Foundry Responses API
@@ -79,28 +80,18 @@ async def main() -> None:
     response = await agent.run(local_query)
     print(f"Agent: {response}\n")
 
-    # 2) Recommended: one-step deploy. `create_prompt_agent` reuses the FoundryChatClient's
-    # project client AND lifts `agent_name` / `description` from the Agent itself, so the call
-    # site stays minimal. `metadata` and any extra kwargs fall through to
-    # AIProjectClient.agents.create_version.
-    created = await create_prompt_agent(agent)
-    print(f"Prompt agent published via create_prompt_agent: {created.name} v{created.version}")
-
-    # 3) Two-step alternative: use `to_prompt_agent` when you want a standalone definition you
-    # can inspect, serialize, or pass to a separately managed AIProjectClient.
+    # 2) Convert and publish. `to_prompt_agent` lifts `model`, `instructions`, `tools`, and the
+    # generation parameters from `default_options`. Use kwargs to set Foundry-specific fields
+    # (e.g. `reasoning`, `rai_config`) or to override a value from `default_options`.
     definition = to_prompt_agent(agent)
-    project_client = AIProjectClient(
-        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        credential=credential,
-    )
-    created_v2 = await project_client.agents.create_version(
+    created = await project_client.agents.create_version(
         agent_name=agent.name,
         definition=definition,
         description=agent.description,
     )
-    print(f"Prompt agent published via to_prompt_agent: {created_v2.name} v{created_v2.version}")
+    print(f"Prompt agent published: {created.name} v{created.version}")
 
-    # 4) Cleanup: delete the agent (and all its versions) so re-running the sample stays idempotent.
+    # 3) Cleanup: delete the agent (and all its versions) so re-running the sample stays idempotent.
     await project_client.agents.delete(agent_name=agent.name)
     print(f"Deleted prompt agent {agent.name!r} and all its versions.")
 

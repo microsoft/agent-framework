@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from agent_framework import Agent, MCPStdioTool, tool
@@ -11,6 +11,11 @@ from agent_framework._feature_stage import ExperimentalFeature
 from azure.ai.projects.models import (
     CodeInterpreterTool,
     PromptAgentDefinition,
+    PromptAgentDefinitionTextOptions,
+    RaiConfig,
+    Reasoning,
+    StructuredInputDefinition,
+    ToolChoiceFunction,
     WebSearchTool,
 )
 from azure.ai.projects.models import (
@@ -26,7 +31,6 @@ from azure.ai.projects.models import (
 from agent_framework_foundry import (
     FoundryChatClient,
     RawFoundryChatClient,
-    create_prompt_agent,
     to_prompt_agent,
 )
 
@@ -47,6 +51,11 @@ def _make_foundry_chat_client(model: str | None = "gpt-4o-mini") -> FoundryChatC
 def _make_agent(client: Any, **agent_kwargs: Any) -> Agent:
     """Build an Agent without entering the async context manager."""
     return Agent(client=client, **agent_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Core conversion: model resolution and client-type guarding
+# ---------------------------------------------------------------------------
 
 
 def test_to_prompt_agent_minimal() -> None:
@@ -136,6 +145,29 @@ def test_to_prompt_agent_falls_back_to_client_model() -> None:
     definition = to_prompt_agent(agent)
 
     assert definition.model == "client-model"
+
+
+def test_to_prompt_agent_works_with_raw_foundry_chat_client() -> None:
+    """to_prompt_agent accepts subclasses too — RawFoundryChatClient works."""
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    raw_client = RawFoundryChatClient(project_client=mock_project, model="gpt-4o")
+    agent = _make_agent(raw_client, instructions="x")
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.model == "gpt-4o"
+
+
+def test_to_prompt_agent_is_marked_experimental() -> None:
+    """to_prompt_agent carries the TO_PROMPT_AGENT experimental metadata."""
+    assert getattr(to_prompt_agent, "__feature_stage__", None) == "experimental"
+    assert getattr(to_prompt_agent, "__feature_id__", None) == ExperimentalFeature.TO_PROMPT_AGENT.value
+
+
+# ---------------------------------------------------------------------------
+# Tool conversion
+# ---------------------------------------------------------------------------
 
 
 def test_to_prompt_agent_passes_through_sdk_tool_instances() -> None:
@@ -258,144 +290,215 @@ def test_to_prompt_agent_rejects_dict_tool_without_type() -> None:
         to_prompt_agent(agent)
 
 
-def test_to_prompt_agent_works_with_raw_foundry_chat_client() -> None:
-    """to_prompt_agent accepts subclasses too — RawFoundryChatClient works."""
-    mock_project = MagicMock()
-    mock_project.get_openai_client.return_value = MagicMock()
-    raw_client = RawFoundryChatClient(project_client=mock_project, model="gpt-4o")
-    agent = _make_agent(raw_client, instructions="x")
+# ---------------------------------------------------------------------------
+# Generation parameters sourced from default_options (with kwarg overrides)
+# ---------------------------------------------------------------------------
+
+
+def test_to_prompt_agent_temperature_top_p_unset_by_default() -> None:
+    """Without default_options or kwargs, temperature/top_p are unset on the definition."""
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
 
     definition = to_prompt_agent(agent)
 
-    assert definition.model == "gpt-4o"
+    assert definition.temperature is None
+    assert definition.top_p is None
+    payload = definition.as_dict()
+    assert "temperature" not in payload
+    assert "top_p" not in payload
 
 
-def test_to_prompt_agent_is_marked_experimental() -> None:
-    """to_prompt_agent carries the TO_PROMPT_AGENT experimental metadata."""
-    assert getattr(to_prompt_agent, "__feature_stage__", None) == "experimental"
-    assert getattr(to_prompt_agent, "__feature_id__", None) == ExperimentalFeature.TO_PROMPT_AGENT.value
+def test_to_prompt_agent_lifts_temperature_top_p_from_default_options() -> None:
+    """temperature/top_p in default_options flow through to the definition."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"temperature": 0.42, "top_p": 0.8},
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.temperature == 0.42
+    assert definition.top_p == 0.8
 
 
-def _make_foundry_chat_client_with_async_agents_ops(
-    model: str | None = "gpt-4o-mini",
-) -> tuple[FoundryChatClient, AsyncMock]:
-    """Build a FoundryChatClient backed by a mocked project client whose ``agents.create_version`` is awaitable."""
-    mock_project = MagicMock()
-    mock_project.get_openai_client.return_value = MagicMock()
-    create_version = AsyncMock(return_value=MagicMock(name="travel-agent", version="1"))
-    mock_project.agents = MagicMock(create_version=create_version)
-    client = FoundryChatClient(project_client=mock_project, model=model or "placeholder")
-    return client, create_version
+def test_to_prompt_agent_temperature_top_p_kwargs_win_over_default_options() -> None:
+    """Explicit kwargs override values present in default_options."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"temperature": 0.42, "top_p": 0.8},
+    )
+
+    definition = to_prompt_agent(agent, temperature=0.1, top_p=0.2)
+
+    assert definition.temperature == 0.1
+    assert definition.top_p == 0.2
 
 
-async def test_create_prompt_agent_publishes_definition() -> None:
-    """create_prompt_agent calls project_client.agents.create_version with the converted definition."""
-    client, create_version = _make_foundry_chat_client_with_async_agents_ops()
-    agent = _make_agent(client, instructions="x", tools=[WebSearchTool()])
+def test_to_prompt_agent_temperature_zero_kwarg_is_honored() -> None:
+    """A literal ``0.0`` kwarg is treated as explicit, not as "fall back to default_options".
 
-    result = await create_prompt_agent(agent, agent_name="travel-agent")
+    Guards against an ``if temperature:`` truthiness check that would silently drop the value.
+    """
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"temperature": 0.7},
+    )
 
-    create_version.assert_awaited_once()
-    call_kwargs = create_version.await_args.kwargs
-    assert call_kwargs["agent_name"] == "travel-agent"
-    definition = call_kwargs["definition"]
-    assert isinstance(definition, PromptAgentDefinition)
-    assert definition.model == "gpt-4o-mini"
+    definition = to_prompt_agent(agent, temperature=0.0, top_p=0.0)
+
+    assert definition.temperature == 0.0
+    assert definition.top_p == 0.0
+
+
+def test_to_prompt_agent_defaults_tool_choice_to_auto() -> None:
+    """Agent.__init__ inserts tool_choice='auto' by default; the converter propagates it."""
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.tool_choice == "auto"
+
+
+def test_to_prompt_agent_lifts_string_tool_choice_from_default_options() -> None:
+    """A string ``tool_choice`` in default_options propagates to the definition."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"tool_choice": "required"},
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.tool_choice == "required"
+
+
+def test_to_prompt_agent_ignores_non_string_tool_choice_from_default_options() -> None:
+    """Non-string ``tool_choice`` values (e.g. AF ToolMode) are not auto-propagated."""
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+    # Replace the str default with a non-str sentinel to mimic an AF ToolMode value.
+    agent.default_options["tool_choice"] = object()  # type: ignore[typeddict-item]
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.tool_choice is None
+
+
+def test_to_prompt_agent_tool_choice_kwarg_wins_over_default_options() -> None:
+    """An explicit ``tool_choice`` kwarg wins over a default_options entry."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"tool_choice": "auto"},
+    )
+
+    definition = to_prompt_agent(agent, tool_choice="none")
+
+    assert definition.tool_choice == "none"
+
+
+def test_to_prompt_agent_tool_choice_accepts_param_model() -> None:
+    """A ``ToolChoiceParam`` instance passed as kwarg is forwarded to the definition."""
+    choice = ToolChoiceFunction(name="get_weather")
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+
+    definition = to_prompt_agent(agent, tool_choice=choice)
+
+    assert definition.tool_choice is choice
+
+
+# ---------------------------------------------------------------------------
+# Foundry-specific kwargs (no AF ChatOptions equivalent)
+# ---------------------------------------------------------------------------
+
+
+def test_to_prompt_agent_kwarg_only_fields_unset_by_default() -> None:
+    """reasoning, text, structured_inputs, rai_config are absent from the payload when unset."""
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+
+    payload = to_prompt_agent(agent).as_dict()
+
+    assert "reasoning" not in payload
+    assert "text" not in payload
+    assert "structured_inputs" not in payload
+    assert "rai_config" not in payload
+
+
+def test_to_prompt_agent_forwards_reasoning_kwarg() -> None:
+    """A ``Reasoning`` kwarg is forwarded to the definition."""
+    reasoning = Reasoning(effort="high")
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+
+    definition = to_prompt_agent(agent, reasoning=reasoning)
+
+    assert definition.reasoning is reasoning
+
+
+def test_to_prompt_agent_forwards_text_kwarg() -> None:
+    """A ``PromptAgentDefinitionTextOptions`` kwarg is forwarded to the definition."""
+    text = PromptAgentDefinitionTextOptions()
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+
+    definition = to_prompt_agent(agent, text=text)
+
+    assert definition.text is text
+
+
+def test_to_prompt_agent_forwards_structured_inputs_kwarg() -> None:
+    """A ``structured_inputs`` mapping is forwarded (and copied to a new dict)."""
+    inputs = {"city": StructuredInputDefinition(description="Target city.")}
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+
+    definition = to_prompt_agent(agent, structured_inputs=inputs)
+
+    assert definition.structured_inputs is not None
+    assert set(definition.structured_inputs) == {"city"}
+    assert definition.structured_inputs["city"] is inputs["city"]
+    # Defensive copy: mutating the caller's mapping after the call does not leak in.
+    inputs["other"] = StructuredInputDefinition(description="x")
+    assert "other" not in definition.structured_inputs
+
+
+def test_to_prompt_agent_forwards_rai_config_kwarg() -> None:
+    """A ``RaiConfig`` kwarg is forwarded to the definition."""
+    rai_config = RaiConfig()
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+
+    definition = to_prompt_agent(agent, rai_config=rai_config)
+
+    assert definition.rai_config is rai_config
+
+
+def test_to_prompt_agent_combines_all_parameters() -> None:
+    """Every parameter routes through to a single definition simultaneously."""
+    reasoning = Reasoning(effort="medium")
+    text = PromptAgentDefinitionTextOptions()
+    rai_config = RaiConfig()
+    structured = {"q": StructuredInputDefinition(description="query")}
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"temperature": 0.3, "top_p": 0.95, "tool_choice": "auto"},
+        tools=[get_weather],
+    )
+
+    definition = to_prompt_agent(
+        agent,
+        temperature=0.5,
+        reasoning=reasoning,
+        text=text,
+        structured_inputs=structured,
+        rai_config=rai_config,
+    )
+
+    # Kwargs overrode default_options for temperature; top_p and tool_choice came from default_options.
+    assert definition.temperature == 0.5
+    assert definition.top_p == 0.95
+    assert definition.tool_choice == "auto"
+    assert definition.reasoning is reasoning
+    assert definition.text is text
+    assert definition.rai_config is rai_config
+    assert definition.structured_inputs is not None and "q" in definition.structured_inputs
     assert definition.tools is not None and len(definition.tools) == 1
-    assert "metadata" not in call_kwargs
-    assert "description" not in call_kwargs
-    assert result is create_version.return_value
-
-
-async def test_create_prompt_agent_defaults_name_and_description_from_agent() -> None:
-    """When the Agent has name/description, the helper lifts them so the call site stays minimal."""
-    client, create_version = _make_foundry_chat_client_with_async_agents_ops()
-    agent = _make_agent(
-        client,
-        instructions="x",
-        name="travel-agent",
-        description="Helps Contoso employees book travel.",
-    )
-
-    await create_prompt_agent(agent)
-
-    call_kwargs = create_version.await_args.kwargs
-    assert call_kwargs["agent_name"] == "travel-agent"
-    assert call_kwargs["description"] == "Helps Contoso employees book travel."
-
-
-async def test_create_prompt_agent_explicit_overrides_win() -> None:
-    """Explicit agent_name and description kwargs override the values from the Agent."""
-    client, create_version = _make_foundry_chat_client_with_async_agents_ops()
-    agent = _make_agent(
-        client,
-        instructions="x",
-        name="travel-agent",
-        description="Agent-level description",
-    )
-
-    await create_prompt_agent(
-        agent,
-        agent_name="travel-agent-v2",
-        description="Override description",
-    )
-
-    call_kwargs = create_version.await_args.kwargs
-    assert call_kwargs["agent_name"] == "travel-agent-v2"
-    assert call_kwargs["description"] == "Override description"
-
-
-async def test_create_prompt_agent_requires_an_agent_name() -> None:
-    """If neither agent_name nor agent.name is set, a ValueError is raised before any service call."""
-    client, create_version = _make_foundry_chat_client_with_async_agents_ops()
-    agent = _make_agent(client, instructions="x")
-    agent.name = None  # mirror an Agent constructed without a name
-
-    with pytest.raises(ValueError, match="agent_name"):
-        await create_prompt_agent(agent)
-    create_version.assert_not_awaited()
-
-
-async def test_create_prompt_agent_forwards_metadata_and_description() -> None:
-    """Optional metadata + description land on the create_version call."""
-    client, create_version = _make_foundry_chat_client_with_async_agents_ops()
-    agent = _make_agent(client, instructions="x")
-
-    await create_prompt_agent(
-        agent,
-        agent_name="travel-agent",
-        metadata={"env": "prod"},
-        description="Production travel agent",
-    )
-
-    call_kwargs = create_version.await_args.kwargs
-    assert call_kwargs["metadata"] == {"env": "prod"}
-    assert call_kwargs["description"] == "Production travel agent"
-
-
-async def test_create_prompt_agent_forwards_extra_kwargs() -> None:
-    """Extra keyword args fall through to project_client.agents.create_version."""
-    client, create_version = _make_foundry_chat_client_with_async_agents_ops()
-    agent = _make_agent(client, instructions="x")
-
-    await create_prompt_agent(agent, agent_name="travel-agent", headers={"x-trace": "abc"})
-
-    assert create_version.await_args.kwargs["headers"] == {"x-trace": "abc"}
-
-
-async def test_create_prompt_agent_rejects_non_foundry_client() -> None:
-    """A non-FoundryChatClient client raises TypeError before any service call."""
-
-    class NotFoundryChatClient:
-        """Stand-in for a different chat client implementation."""
-
-    agent = _make_agent(NotFoundryChatClient())
-
-    with pytest.raises(TypeError, match="FoundryChatClient"):
-        await create_prompt_agent(agent, agent_name="travel-agent")
-
-
-def test_create_prompt_agent_is_marked_experimental() -> None:
-    """create_prompt_agent carries the TO_PROMPT_AGENT experimental metadata."""
-    assert getattr(create_prompt_agent, "__feature_stage__", None) == "experimental"
-    assert getattr(create_prompt_agent, "__feature_id__", None) == ExperimentalFeature.TO_PROMPT_AGENT.value
