@@ -176,19 +176,20 @@ async def test_workflow_run_stream_does_not_buffer_initial_executor_outputs() ->
     even though ``stream=True`` was set and each ``yield_output`` returned
     promptly.
     """
-    import time
-
     step_count = 4
-    step_sleep = 0.1
+    step_sleep = 0.15  # slightly above pytest-asyncio's default scheduling jitter on loaded CI
 
     executor = SlowProgressExecutor(id="slow", step_count=step_count, step_sleep=step_sleep)
     workflow = WorkflowBuilder(start_executor=executor).build()
 
+    # Event-loop clock — same monotonic source as asyncio.sleep(), avoids
+    # drift between wall-clock time.monotonic() and loop scheduling.
+    loop = asyncio.get_running_loop()
     arrivals: list[float] = []
-    t0 = time.monotonic()
+    t0 = loop.time()
     async for event in workflow.run("go", stream=True):
         if event.type == "output":
-            arrivals.append(time.monotonic() - t0)
+            arrivals.append(loop.time() - t0)
 
     assert len(arrivals) == step_count, f"expected {step_count} outputs, got {len(arrivals)}"
 

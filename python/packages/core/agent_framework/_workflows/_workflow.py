@@ -559,25 +559,32 @@ class Workflow(DictConvertible):
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
-                    # concurrently with event polling so events emitted by
-                    # yield_output stream in real time. Vanilla behavior awaits
-                    # initial_executor_fn to completion, then
-                    # run_until_convergence drains the pre-loop queue as a
-                    # burst — manifests as N seconds of silence followed by
-                    # all events arriving at once. Mirrors the
-                    # iteration_task pattern already used inside
-                    # run_until_convergence.
+                    # Run the initial executor concurrently with event streaming so
+                    # events emitted by yield_output during its run reach the
+                    # consumer in real time. Vanilla behavior awaited
+                    # initial_executor_fn() to completion, so run_until_convergence
+                    # then drained the pre-loop queue as a burst — N seconds of
+                    # silence followed by all events arriving at once.
                     async def _run_initial() -> None:
                         await initial_executor_fn()
 
                     initial_task = asyncio.create_task(_run_initial())
+                    event_task: asyncio.Task[WorkflowEvent[Any]] | None = None
                     try:
-                        while not initial_task.done():
-                            try:
-                                event = await asyncio.wait_for(self._runner_context.next_event(), timeout=0.05)
-                                yield event
-                            except asyncio.TimeoutError:
-                                continue
+                        while True:
+                            if event_task is None:
+                                event_task = asyncio.create_task(self._runner_context.next_event())
+                            done, _pending = await asyncio.wait(
+                                {initial_task, event_task},
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if event_task in done:
+                                yield event_task.result()
+                                event_task = None
+                            if initial_task in done:
+                                break
+                        # Drain any events that landed between initial_task
+                        # finishing and the next_event task being cancelled.
                         if await self._runner_context.has_events():
                             for event in await self._runner_context.drain_events():
                                 yield event
@@ -588,6 +595,11 @@ class Workflow(DictConvertible):
                             with contextlib.suppress(asyncio.CancelledError):
                                 await initial_task
                         raise
+                    finally:
+                        if event_task is not None and not event_task.done():
+                            event_task.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await event_task
 
                 # All executor executions happen within workflow span
                 async for event in self._runner.run_until_convergence():
