@@ -355,7 +355,7 @@ class DiscordChannel:
             accumulated.append(chunk)
             now = time.monotonic()
             if self._edit_interval <= 0 or now - last_edit >= self._edit_interval:
-                await self._edit_original(token, "".join(accumulated))
+                await self._edit_original(token, _stream_preview_content("".join(accumulated)))
                 last_edit = now
 
         final = _text_result("".join(accumulated))
@@ -555,11 +555,15 @@ class _DiscordInteractionReply:
         self.sent = False
 
     async def __call__(self, body: str) -> None:
+        chunks = _split_content(body)
         if not self.sent:
-            await self._channel._edit_original(self._token, body)  # pyright: ignore[reportPrivateUsage]
+            await self._channel._edit_original(self._token, chunks[0])  # pyright: ignore[reportPrivateUsage]
             self.sent = True
+            for chunk in chunks[1:]:
+                await self._channel._send_followup(self._token, chunk)  # pyright: ignore[reportPrivateUsage]
             return
-        await self._channel._send_followup(self._token, body)  # pyright: ignore[reportPrivateUsage]
+        for chunk in chunks:
+            await self._channel._send_followup(self._token, chunk)  # pyright: ignore[reportPrivateUsage]
 
 
 def _user_from_interaction(interaction: DiscordInteraction) -> Mapping[str, Any]:
@@ -625,6 +629,10 @@ def _update_text(update: AgentResponseUpdate) -> str:
 def _split_content(content: str) -> list[str]:
     normalized = _normalize_content(content)
     return [normalized[i : i + _DISCORD_MAX_CONTENT_LEN] for i in range(0, len(normalized), _DISCORD_MAX_CONTENT_LEN)]
+
+
+def _stream_preview_content(content: str) -> str:
+    return _split_content(content)[0]
 
 
 def _normalize_content(content: str) -> str:

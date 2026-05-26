@@ -384,6 +384,30 @@ async def test_channel_command_reply_sends_followups_after_first_edit() -> None:
     assert recorder.json_payloads == [{"content": "first"}, {"content": "second"}]
 
 
+async def test_channel_command_reply_chunks_long_content() -> None:
+    recorder = _DiscordRecorder()
+
+    async def handler(ctx: ChannelCommandContext) -> None:
+        await ctx.reply("a" * 2001)
+
+    command = ChannelCommand(name="reset", description="Reset", handle=handler)
+    context = _FakeContext()
+    channel = DiscordChannel(
+        application_id="app-1",
+        public_key=SigningKey.generate().verify_key.encode().hex(),
+        register_commands=False,
+        commands=[command],
+        api_base_url="https://discord.test",
+    )
+    channel.contribute(context)  # type: ignore[arg-type]
+    channel._http = httpx.AsyncClient(base_url="https://discord.test", transport=recorder.transport())
+
+    await channel._run_channel_command(command, _interaction(command="reset"), "token")
+
+    assert [request.method for request in recorder.requests] == ["PATCH", "POST"]
+    assert [len(payload["content"]) for payload in recorder.json_payloads] == [2000, 1]
+
+
 async def test_channel_command_edits_done_when_handler_does_not_reply() -> None:
     recorder = _DiscordRecorder()
 
@@ -577,6 +601,28 @@ async def test_streaming_edits_original_and_delivers_final_response() -> None:
     assert [payload["content"] for payload in recorder.json_payloads] == ["a", "ab", "ab"]
     assert len(context.delivered) == 1
     assert context.delivered[0][1].result.text == "ab"
+
+
+async def test_streaming_preview_is_limited_and_final_reply_is_chunked() -> None:
+    recorder = _DiscordRecorder()
+    context = _FakeContext()
+    context.stream = _FakeStream(["a" * 2001])
+    channel = DiscordChannel(
+        application_id="app-1",
+        public_key=SigningKey.generate().verify_key.encode().hex(),
+        register_commands=False,
+        streaming=True,
+        edit_interval=0,
+        api_base_url="https://discord.test",
+    )
+    channel.contribute(context)  # type: ignore[arg-type]
+    channel._http = httpx.AsyncClient(base_url="https://discord.test", transport=recorder.transport())
+
+    await channel._run_agent_command(_interaction(), "token")
+
+    assert [request.method for request in recorder.requests] == ["PATCH", "PATCH", "POST"]
+    assert [len(payload["content"]) for payload in recorder.json_payloads] == [2000, 2000, 1]
+    assert len(context.delivered[0][1].result.text) == 2001
 
 
 async def test_stream_transform_hook_can_drop_updates_and_disable_originating_reply() -> None:
