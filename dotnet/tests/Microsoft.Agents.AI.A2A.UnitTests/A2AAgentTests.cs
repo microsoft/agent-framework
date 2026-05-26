@@ -1124,12 +1124,57 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
         Assert.Null(update0.FinishReason);
+        Assert.Null(update0.MessageId);
         Assert.IsType<TaskStatusUpdateEvent>(update0.RawRepresentation);
 
         // Assert - session should be updated with context and task IDs
         var a2aSession = (A2AAgentSession)session;
         Assert.Equal(ContextId, a2aSession.ContextId);
         Assert.Equal(TaskId, a2aSession.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithTaskStatusUpdateEventAndMessageId_YieldsMessageIdAsync()
+    {
+        // Arrange
+        const string TaskId = "task-status-msg-123";
+        const string ContextId = "ctx-status-msg-456";
+        const string ExpectedMessageId = "msg-status-789";
+
+        this._handler.StreamingResponseToReturn = new StreamResponse
+        {
+            StatusUpdate = new TaskStatusUpdateEvent
+            {
+                TaskId = TaskId,
+                ContextId = ContextId,
+                Status = new()
+                {
+                    State = TaskState.Working,
+                    Message = new Message
+                    {
+                        MessageId = ExpectedMessageId,
+                        Parts = [Part.FromText("Processing your request...")]
+                    }
+                }
+            }
+        };
+
+        var session = await this._agent.CreateSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Check task status", session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ExpectedMessageId, update0.MessageId);
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.IsType<TaskStatusUpdateEvent>(update0.RawRepresentation);
     }
 
     [Fact]
@@ -1150,6 +1195,7 @@ public sealed class A2AAgentTests : IDisposable
                     State = TaskState.InputRequired,
                     Message = new Message
                     {
+                        MessageId = "input-msg-789",
                         Parts = [Part.FromText("Where would you like to fly?")]
                     }
                 }
@@ -1170,6 +1216,7 @@ public sealed class A2AAgentTests : IDisposable
 
         var update0 = updates[0];
         Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal("input-msg-789", update0.MessageId);
         Assert.Null(update0.FinishReason);
 
         var textContent = Assert.Single(update0.Contents.OfType<TextContent>());

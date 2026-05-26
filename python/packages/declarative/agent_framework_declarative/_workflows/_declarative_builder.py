@@ -24,6 +24,7 @@ from agent_framework import (
 from ._declarative_base import (
     ConditionResult,
     DeclarativeActionExecutor,
+    DeclarativeEnvConfig,
     LoopIterationResult,
 )
 from ._errors import DeclarativeWorkflowError
@@ -140,6 +141,7 @@ class DeclarativeWorkflowBuilder:
         max_iterations: int | None = None,
         http_request_handler: HttpRequestHandler | None = None,
         mcp_tool_handler: MCPToolHandler | None = None,
+        env_config: DeclarativeEnvConfig | None = None,
     ):
         """Initialize the builder.
 
@@ -158,6 +160,10 @@ class DeclarativeWorkflowBuilder:
             mcp_tool_handler: Handler used to dispatch InvokeMcpTool calls.
                 Must be supplied when the workflow contains any InvokeMcpTool;
                 otherwise build raises ``DeclarativeWorkflowError``.
+            env_config: Optional :class:`DeclarativeEnvConfig` controlling
+                how the ``Env`` PowerFx symbol is populated for every
+                executor built by this builder. Defaults to an empty
+                configuration (``Env`` not exposed).
         """
         self._yaml_def = yaml_definition
         self._workflow_id = workflow_id or yaml_definition.get("name", "declarative_workflow")
@@ -171,6 +177,7 @@ class DeclarativeWorkflowBuilder:
         self._seen_explicit_ids: set[str] = set()  # Track explicit IDs for duplicate detection
         self._http_request_handler = http_request_handler
         self._mcp_tool_handler = mcp_tool_handler
+        self._env_config: DeclarativeEnvConfig = env_config if env_config is not None else DeclarativeEnvConfig()
         # Resolve max_iterations: explicit arg > YAML maxTurns > core default
         resolved = max_iterations if max_iterations is not None else yaml_definition.get("maxTurns")
         if resolved is not None and (not isinstance(resolved, int) or resolved <= 0):
@@ -220,6 +227,15 @@ class DeclarativeWorkflowBuilder:
 
         # Resolve pending gotos (back-edges for loops, forward-edges for jumps)
         self._resolve_pending_gotos(builder)
+
+        # Stamp the resolved DeclarativeEnvConfig onto every executor so they
+        # expose the configured Env binding through their _get_state(). This
+        # happens after _create_executors_for_actions and _resolve_pending_gotos
+        # so it covers the entry node, join nodes, evaluators, foreach
+        # init/next/exit nodes, and goto placeholders.
+        for executor in self._executors.values():
+            if isinstance(executor, DeclarativeActionExecutor):
+                executor.set_declarative_env_config(self._env_config)
 
         return builder.build()
 
@@ -817,10 +833,14 @@ class DeclarativeWorkflowBuilder:
                 condition=lambda msg: isinstance(msg, LoopIterationResult) and msg.has_next,
             )
 
-            # Body exit -> Next (get all exits from body and wire to next_executor)
-            body_exits = self._get_source_exits(body_entry)
-            for body_exit in body_exits:
-                builder.add_edge(source=body_exit, target=next_executor)
+            # Wire from the LAST body action so the loop only advances after the
+            # whole body completes. _get_branch_exit walks the chain, skips
+            # terminators (Break/Continue), and returns nested If/Switch
+            # structures so _get_source_exits can flatten their branch exits.
+            body_exit = self._get_branch_exit(body_entry)
+            if body_exit is not None:
+                for source_exit in self._get_source_exits(body_exit):
+                    builder.add_edge(source=source_exit, target=next_executor)
 
             # Next -> body (when has_next=True, loop back)
             builder.add_edge(
@@ -1008,16 +1028,12 @@ class DeclarativeWorkflowBuilder:
         return entry.evaluator if is_structure else entry
 
     def _get_branch_exit(self, branch_entry: Any) -> Any | None:
-        """Get the exit executor of a branch.
+        """Get the exit point of a branch for downstream wiring.
 
-        For a linear sequence of actions, returns the last executor.
-        For nested structures, returns None (they have their own branch_exits).
-
-        Args:
-            branch_entry: The first executor of the branch
-
-        Returns:
-            The exit executor, or None if branch is empty or ends with a structure
+        Returns the last executor (or its ``_exit_executor``) for a linear chain,
+        the nested If/Switch structure itself when the chain ends in one (so
+        callers can flatten ``branch_exits`` via :meth:`_get_source_exits`), or
+        ``None`` when the branch is empty or ends in a terminator action.
         """
         if branch_entry is None:
             return None

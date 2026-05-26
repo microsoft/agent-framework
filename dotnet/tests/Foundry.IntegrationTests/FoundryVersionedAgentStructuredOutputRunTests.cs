@@ -11,7 +11,7 @@ namespace Foundry.IntegrationTests;
 public class FoundryVersionedAgentStructuredOutputRunTests() : StructuredOutputRunTests<FoundryVersionedAgentStructuredOutputFixture<CityInfo>>(() => new FoundryVersionedAgentStructuredOutputFixture<CityInfo>())
 {
     private const string NotSupported = "Versioned Foundry agents do not support specifying structured output type at invocation time.";
-    private const string ResponseFormatNotSupported = "AzureAIProjectChatClient clears ResponseFormat for versioned agents; structured output must be defined in the server-side agent definition.";
+    private const string ResponseFormatNotSupported = "FoundryChatClient clears ResponseFormat for versioned agents; structured output must be defined in the server-side agent definition.";
 
     /// <summary>
     /// Verifies that response format provided at agent initialization is used when invoking RunAsync.
@@ -41,7 +41,7 @@ public class FoundryVersionedAgentStructuredOutputRunTests() : StructuredOutputR
     /// </summary>
     /// <remarks>
     /// Versioned Foundry agents do not support specifying the structured output type at invocation time yet.
-    /// The type T provided to RunAsync&lt;T&gt; is ignored by AzureAIProjectChatClient and is only used
+    /// The type T provided to RunAsync&lt;T&gt; is ignored by FoundryChatClient and is only used
     /// for deserializing the agent response by AgentResponse&lt;T&gt;.Result.
     /// </remarks>
     [RetryFact(Constants.RetryCount, Constants.RetryDelay, Skip = ResponseFormatNotSupported)]

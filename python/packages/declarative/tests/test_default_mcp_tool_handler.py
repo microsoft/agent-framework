@@ -13,6 +13,7 @@ owned-vs-caller httpx close semantics.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from typing import Any
 from unittest.mock import patch
@@ -33,6 +34,55 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+class FakeListToolsResult:  # noqa: B903 - mimics ``mcp.types.ListToolsResult`` shape, not a value type
+    """Stand-in for ``mcp.types.ListToolsResult`` returned by ``session.list_tools()``."""
+
+    def __init__(self, tools: list[Any], next_cursor: str | None = None) -> None:
+        self.tools = tools
+        self.nextCursor = next_cursor
+
+
+class FakeMcpTool:
+    """Stand-in for an MCP ``Tool`` (subset used by ``_invoke_list_tools``)."""
+
+    def __init__(
+        self,
+        name: str,
+        description: str | None = None,
+        inputSchema: dict[str, Any] | None = None,
+        outputSchema: dict[str, Any] | None = None,
+    ) -> None:
+        self.name = name
+        self.description = description
+        self.inputSchema = inputSchema if inputSchema is not None else {"type": "object", "properties": {}}
+        self.outputSchema = outputSchema
+
+
+class FakeMcpSession:
+    """Stand-in for ``mcp.ClientSession``.
+
+    ``list_tools_pages`` lets a test enqueue multiple paginated responses;
+    when None (default), an empty single-page result is returned. ``list_tools_error``
+    raises a synthetic error on the next call when set.
+    """
+
+    def __init__(self) -> None:
+        self.list_tools_pages: list[FakeListToolsResult] | None = None
+        self.list_tools_calls: list[Any] = []
+        self.list_tools_error: BaseException | None = None
+
+    async def list_tools(self, params: Any = None) -> FakeListToolsResult:
+        self.list_tools_calls.append(params)
+        if self.list_tools_error is not None:
+            raise self.list_tools_error
+        if self.list_tools_pages is None:
+            return FakeListToolsResult(tools=[])
+        index = len(self.list_tools_calls) - 1
+        if index >= len(self.list_tools_pages):
+            return FakeListToolsResult(tools=[])
+        return self.list_tools_pages[index]
+
+
 class FakeTool:
     """Stand-in for ``MCPStreamableHTTPTool``.
 
@@ -50,6 +100,7 @@ class FakeTool:
         self.connect_error: BaseException | None = None
         self.call_handler: Any = lambda **_a: [Content.from_text("ok")]
         self._httpx_client: httpx.AsyncClient | None = None
+        self.session: FakeMcpSession | None = None
         # Mimic MCPStreamableHTTPTool: when no caller client AND header_provider
         # is set, lazily allocate an owned httpx client during connect.
         FakeTool.instances.append(self)
@@ -63,6 +114,9 @@ class FakeTool:
         # Mimic lazy httpx allocation when no client provided AND header_provider set.
         if self.kwargs.get("http_client") is None and self.kwargs.get("header_provider") is not None:
             self._httpx_client = httpx.AsyncClient()
+        # Mimic MCPStreamableHTTPTool: a live session becomes available after connect.
+        if self.session is None:
+            self.session = FakeMcpSession()
 
     async def close(self) -> None:
         self.close_count += 1
@@ -541,3 +595,185 @@ class TestCacheKey:
         k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"X": "Bearer-A"})
         k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"X": "bearer-a"})
         assert k1 != k2
+
+
+# ---------- tools/list reserved name --------------------------------------
+
+
+class TestListTools:
+    """Exercise the reserved :attr:`DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME` interception path."""
+
+    @pytest.mark.asyncio
+    async def test_list_tools_returns_json_catalog(self) -> None:
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            # Prime the cache so the FakeTool session exists.
+            await handler.invoke_tool(_invocation())
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+                FakeListToolsResult(
+                    tools=[
+                        FakeMcpTool(
+                            name="search",
+                            description="Search docs",
+                            inputSchema={"type": "object", "properties": {"q": {"type": "string"}}},
+                            outputSchema={"type": "object"},
+                        ),
+                        FakeMcpTool(name="echo", description=None, outputSchema=None),
+                    ],
+                ),
+            ]
+            result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
+        assert result.is_error is False
+        assert len(result.outputs) == 1
+        payload = json.loads(result.outputs[0].text)  # type: ignore[reportAttributeAccessIssue]
+        assert payload == {
+            "tools": [
+                {
+                    "name": "search",
+                    "description": "Search docs",
+                    "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}},
+                    "outputSchema": {"type": "object"},
+                },
+                {
+                    "name": "echo",
+                    "description": None,
+                    "inputSchema": {"type": "object", "properties": {}},
+                    "outputSchema": None,
+                },
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_list_tools_property_order_is_stable(self) -> None:
+        """JSON property order is stable: name, description, inputSchema, outputSchema."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation())
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+                FakeListToolsResult(tools=[FakeMcpTool(name="t1", description="d")]),
+            ]
+            result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
+        text = result.outputs[0].text  # type: ignore[reportAttributeAccessIssue]
+        name_idx = text.find('"name"')
+        desc_idx = text.find('"description"')
+        input_idx = text.find('"inputSchema"')
+        output_idx = text.find('"outputSchema"')
+        assert 0 <= name_idx < desc_idx < input_idx < output_idx
+
+    @pytest.mark.asyncio
+    async def test_list_tools_indented_output(self) -> None:
+        """Output is JSON with a 2-space indent so the conversation log is human-readable."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation())
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+                FakeListToolsResult(tools=[FakeMcpTool(name="t1")]),
+            ]
+            result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
+        text = result.outputs[0].text  # type: ignore[reportAttributeAccessIssue]
+        # Indented output contains newlines and a 2-space indented key.
+        assert "\n  " in text
+
+    @pytest.mark.asyncio
+    async def test_list_tools_rejects_arguments(self) -> None:
+        """Reserved name does NOT accept tool arguments. Fails fast before connect."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            result = await handler.invoke_tool(
+                _invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME, arguments={"q": "test"}),
+            )
+        assert result.is_error is True
+        assert "does not accept tool arguments" in (result.error_message or "")
+        # Args validation runs before connect, so no tool was instantiated.
+        assert FakeTool.instances == []
+
+    @pytest.mark.asyncio
+    async def test_list_tools_empty_args_dict_is_accepted(self) -> None:
+        """An empty arguments dict is equivalent to no arguments."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation())
+            result = await handler.invoke_tool(
+                _invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME, arguments={}),
+            )
+        assert result.is_error is False
+
+    @pytest.mark.asyncio
+    async def test_list_tools_paginates(self) -> None:
+        """Pagination loop calls list_tools repeatedly until nextCursor is empty."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation())
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+                FakeListToolsResult(tools=[FakeMcpTool(name="a")], next_cursor="cursor1"),
+                FakeListToolsResult(tools=[FakeMcpTool(name="b")], next_cursor="cursor2"),
+                FakeListToolsResult(tools=[FakeMcpTool(name="c")], next_cursor=None),
+            ]
+            result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
+        payload = json.loads(result.outputs[0].text)  # type: ignore[reportAttributeAccessIssue]
+        assert [t["name"] for t in payload["tools"]] == ["a", "b", "c"]
+        session = FakeTool.instances[0].session
+        assert session is not None
+        assert len(session.list_tools_calls) == 3
+        # First call has no cursor; second/third use the cursor from the prior page.
+        assert session.list_tools_calls[0] is None
+        assert getattr(session.list_tools_calls[1], "cursor", None) == "cursor1"
+        assert getattr(session.list_tools_calls[2], "cursor", None) == "cursor2"
+
+    @pytest.mark.asyncio
+    async def test_list_tools_shares_cache_with_call_tool(self) -> None:
+        """tools/list reuses the same cached MCP session as a regular call_tool."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation(tool_name="search"))
+            await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
+        assert len(FakeTool.instances) == 1
+        assert FakeTool.instances[0].connect_count == 1
+
+    @pytest.mark.asyncio
+    async def test_list_tools_propagates_session_errors_as_error_result(self) -> None:
+        """Errors raised by session.list_tools become MCPToolResult(is_error=True), not crashes."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation())
+            FakeTool.instances[0].session.list_tools_error = httpx.ReadTimeout("read timed out")  # type: ignore[union-attr]
+            result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
+        assert result.is_error is True
+        assert "ReadTimeout" in (result.error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_list_tools_returns_error_when_session_is_none(self) -> None:
+        """If somehow the cached tool has no session, return a clear error rather than crashing."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation())
+            FakeTool.instances[0].session = None
+            result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
+        assert result.is_error is True
+        assert "not connected" in (result.error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_list_tools_does_not_call_call_tool(self) -> None:
+        """The reserved name is intercepted; the inner call_tool path is bypassed."""
+        handler = DefaultMCPToolHandler()
+        call_tool_invoked = False
+
+        def fail(**_a: Any) -> Any:
+            nonlocal call_tool_invoked
+            call_tool_invoked = True
+            raise AssertionError("call_tool should not run for tools/list")
+
+        with _patch_tool():
+            await handler.invoke_tool(_invocation())
+            FakeTool.instances[0].call_handler = fail
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+                FakeListToolsResult(tools=[]),
+            ]
+            result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
+        assert call_tool_invoked is False
+        assert result.is_error is False
+
+    def test_class_attribute_value(self) -> None:
+        # Constant must equal the MCP protocol method name so a single
+        # string travels unchanged through host code, YAML, and the wire.
+        assert DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME == "tools/list"

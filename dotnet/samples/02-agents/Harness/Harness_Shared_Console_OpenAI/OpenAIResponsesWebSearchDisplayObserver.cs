@@ -3,19 +3,18 @@
 #pragma warning disable OPENAI001 // Suppress experimental API warnings for Responses API usage.
 
 using System.Text;
-using Harness.Shared.Console;
 using Harness.Shared.Console.Observers;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
-namespace SampleApp;
+namespace Harness.Shared.Console.OpenAI;
 
 /// <summary>
 /// Displays web search activity in the scroll area. Shows search queries,
 /// page opens, and find-in-page actions as they stream in from the API.
 /// </summary>
-internal sealed class OpenAIResponsesWebSearchDisplayObserver : ConsoleObserver
+public sealed class OpenAIResponsesWebSearchDisplayObserver : ConsoleObserver
 {
     private const int MaxQueryDisplayLength = 120;
 

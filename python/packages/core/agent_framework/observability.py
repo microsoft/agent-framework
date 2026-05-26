@@ -2153,15 +2153,14 @@ def _capture_messages(
     finish_reason: FinishReason | None = None,
 ) -> None:
     """Log messages with extra information."""
-    from ._types import normalize_messages, prepend_instructions_to_messages
+    from ._types import normalize_messages
 
-    prepped = prepend_instructions_to_messages(normalize_messages(messages), system_instructions)
+    normalized_messages = normalize_messages(messages)
     otel_messages: list[dict[str, Any]] = []
-    for index, message in enumerate(prepped):
+    for index, message in enumerate(normalized_messages):
         # Reuse the otel message representation for logging instead of calling to_dict()
         # to avoid expensive Pydantic serialization overhead
         otel_message = _to_otel_message(message)
-        otel_messages.append(otel_message)
         logger.info(
             otel_message,
             extra={
@@ -2170,6 +2169,7 @@ def _capture_messages(
                 MessageListTimestampFilter.INDEX_KEY: index,
             },
         )
+        otel_messages.append(otel_message)
     if finish_reason:
         otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
     span.set_attribute(
