@@ -103,7 +103,10 @@ builder.AddAIAgent(agentName, (sp, key) =>
                 + "Multiple files can be uploaded and queried in the same conversation. "
                 + "When answering, cite specific content from the documents. "
                 + "Whenever you mention a file name to the user, wrap it in backticks "
-                + "(for example, `report_q1.pdf`) so the UI renders underscores correctly.",
+                + "(for example, `report_q1.pdf`) so the UI renders underscores correctly. "
+                + "Format all responses as GitHub-flavored Markdown. When presenting tabular data, "
+                + "use Markdown table syntax (| col1 | col2 |\\n|---|---|\\n| val1 | val2 |) — "
+                + "never emit raw HTML tags like <table>, <tr>, or <td>, since the chat UI does not render HTML.",
         },
         AIContextProviders = [cu],
     });
