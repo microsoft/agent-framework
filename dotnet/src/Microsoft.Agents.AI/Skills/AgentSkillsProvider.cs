@@ -186,13 +186,10 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             return await base.ProvideAIContextAsync(context, cancellationToken).ConfigureAwait(false);
         }
 
-        bool hasScripts = skills.Any(s => s.Scripts is { Count: > 0 });
-        bool hasResources = skills.Any(s => s.Resources is { Count: > 0 });
-
         return new AIContext
         {
-            Instructions = this.BuildSkillsInstructions(skills, includeScriptInstructions: hasScripts, hasResources),
-            Tools = this.BuildTools(skills, hasScripts, hasResources),
+            Instructions = this.BuildSkillsInstructions(skills),
+            Tools = this.BuildTools(skills),
         };
     }
 
@@ -219,29 +216,20 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         }
     }
 
-    private IList<AIFunction> BuildTools(IList<AgentSkill> skills, bool hasScripts, bool hasResources)
+    private IList<AIFunction> BuildTools(IList<AgentSkill> skills)
     {
         IList<AIFunction> tools =
         [
             AIFunctionFactory.Create(
-                (string skillName) => this.LoadSkill(skills, skillName),
+                (string skillName, CancellationToken cancellationToken) => this.LoadSkillAsync(skills, skillName, cancellationToken),
                 name: "load_skill",
                 description: "Loads the full content of a specific skill"),
-        ];
-
-        if (hasResources)
-        {
-            tools.Add(AIFunctionFactory.Create(
+            AIFunctionFactory.Create(
                 (string skillName, string resourceName, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default) =>
                     this.ReadSkillResourceAsync(skills, skillName, resourceName, serviceProvider, cancellationToken),
                 name: "read_skill_resource",
-                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data."));
-        }
-
-        if (!hasScripts)
-        {
-            return tools;
-        }
+                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data."),
+        ];
 
         AIFunction scriptFunction = AIFunctionFactory.Create(
             (string skillName, string scriptName, JsonElement? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default) =>
@@ -257,7 +245,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         return [.. tools, scriptFunction];
     }
 
-    private string? BuildSkillsInstructions(IList<AgentSkill> skills, bool includeScriptInstructions, bool includeResourceInstructions)
+    private string? BuildSkillsInstructions(IList<AgentSkill> skills)
     {
         string promptTemplate = this._options?.SkillsInstructionPrompt ?? DefaultSkillsInstructionPrompt;
 
@@ -270,32 +258,29 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             sb.AppendLine("  </skill>");
         }
 
-        string resourceInstruction = includeResourceInstructions
-            ? """
+        const string ResourceInstruction =
+            """
             - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
                (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
-            """
-            : string.Empty;
+            """;
 
-        string scriptInstruction = includeScriptInstructions
-            ? "- Use `run_skill_script` to run referenced scripts, using the name exactly as listed."
-            : string.Empty;
+        const string ScriptInstruction = "- Use `run_skill_script` to run referenced scripts, using the name exactly as listed.";
 
         return new StringBuilder(promptTemplate)
             .Replace(SkillsPlaceholder, sb.ToString().TrimEnd())
-            .Replace(ResourceInstructionsPlaceholder, resourceInstruction)
-            .Replace(ScriptInstructionsPlaceholder, scriptInstruction)
+            .Replace(ResourceInstructionsPlaceholder, ResourceInstruction)
+            .Replace(ScriptInstructionsPlaceholder, ScriptInstruction)
             .ToString();
     }
 
-    private string LoadSkill(IList<AgentSkill> skills, string skillName)
+    private async Task<string> LoadSkillAsync(IList<AgentSkill> skills, string skillName, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(skillName))
         {
             return "Error: Skill name cannot be empty.";
         }
 
-        var skill = skills?.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
+        var skill = skills.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
         if (skill == null)
         {
             return $"Error: Skill '{skillName}' not found.";
@@ -303,7 +288,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
 
         LogSkillLoading(this._logger, skillName);
 
-        return skill.Content;
+        return await skill.GetContentAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<object?> ReadSkillResourceAsync(IList<AgentSkill> skills, string skillName, string resourceName, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default)
@@ -318,20 +303,20 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             return "Error: Resource name cannot be empty.";
         }
 
-        var skill = skills?.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
+        var skill = skills.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
         if (skill == null)
         {
             return $"Error: Skill '{skillName}' not found.";
         }
 
-        var resource = skill.Resources?.FirstOrDefault(resource => resource.Name == resourceName);
-        if (resource is null)
-        {
-            return $"Error: Resource '{resourceName}' not found in skill '{skillName}'.";
-        }
-
         try
         {
+            var resource = await skill.GetResourceAsync(resourceName, cancellationToken).ConfigureAwait(false);
+            if (resource is null)
+            {
+                return $"Error: Resource '{resourceName}' not found in skill '{skillName}'.";
+            }
+
             return await resource.ReadAsync(serviceProvider, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -353,20 +338,20 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             return "Error: Script name cannot be empty.";
         }
 
-        var skill = skills?.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
+        var skill = skills.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
         if (skill == null)
         {
             return $"Error: Skill '{skillName}' not found.";
         }
 
-        var script = skill.Scripts?.FirstOrDefault(resource => resource.Name == scriptName);
-        if (script is null)
-        {
-            return $"Error: Script '{scriptName}' not found in skill '{skillName}'.";
-        }
-
         try
         {
+            var script = await skill.GetScriptAsync(scriptName, cancellationToken).ConfigureAwait(false);
+            if (script is null)
+            {
+                return $"Error: Script '{scriptName}' not found in skill '{skillName}'.";
+            }
+
             return await script.RunAsync(skill, arguments, serviceProvider, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)

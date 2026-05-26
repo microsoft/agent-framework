@@ -2224,6 +2224,101 @@ class TestBuilderControlFlowCreation:
 class TestBuilderEdgeWiring:
     """Tests for builder edge wiring methods."""
 
+    def test_foreach_advance_edge_wired_from_last_body_action(self):
+        """Advance edge must come from the last body action."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "foreach_seq",
+            "actions": [
+                {"kind": "SetValue", "id": "set_items", "path": "Local.items", "value": ["A", "B"]},
+                {
+                    "kind": "Foreach",
+                    "id": "loop",
+                    "itemsSource": "=Local.items",
+                    "iteratorVariable": "Local.item",
+                    "actions": [
+                        {"kind": "SendActivity", "id": "step_1", "activity": {"text": "one"}},
+                        {"kind": "SendActivity", "id": "step_2", "activity": {"text": "two"}},
+                        {"kind": "SendActivity", "id": "step_3", "activity": {"text": "three"}},
+                    ],
+                },
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("step_3", "loop_next") in edges
+        assert ("step_1", "loop_next") not in edges
+        assert ("step_2", "loop_next") not in edges
+        assert ("step_1", "step_2") in edges
+        assert ("step_2", "step_3") in edges
+
+    def test_foreach_advance_edge_skipped_for_terminator_body(self):
+        """BreakLoop at end of body wires itself to loop_next; no duplicate edge."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "foreach_terminator",
+            "actions": [
+                {"kind": "SetValue", "id": "set_items", "path": "Local.items", "value": ["A"]},
+                {
+                    "kind": "Foreach",
+                    "id": "loop",
+                    "itemsSource": "=Local.items",
+                    "iteratorVariable": "Local.item",
+                    "actions": [
+                        {"kind": "SendActivity", "id": "step_1", "activity": {"text": "one"}},
+                        {"kind": "BreakLoop", "id": "stop"},
+                    ],
+                },
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        all_edges = [(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges]
+        assert all_edges.count(("stop", "loop_next")) == 1
+        assert ("step_1", "loop_next") not in all_edges
+
+    def test_foreach_advance_edge_with_if_as_last_body_action(self):
+        """Trailing If in a Foreach body wires every branch exit to loop_next."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "foreach_if_last",
+            "actions": [
+                {"kind": "SetValue", "id": "set_items", "path": "Local.items", "value": ["A", "B"]},
+                {
+                    "kind": "Foreach",
+                    "id": "loop",
+                    "itemsSource": "=Local.items",
+                    "iteratorVariable": "Local.item",
+                    "actions": [
+                        {"kind": "SendActivity", "id": "step_1", "activity": {"text": "one"}},
+                        {
+                            "kind": "If",
+                            "id": "check",
+                            "condition": '=Local.item = "A"',
+                            "then": [
+                                {"kind": "SendActivity", "id": "then_action", "activity": {"text": "then"}},
+                            ],
+                            "else": [
+                                {"kind": "SendActivity", "id": "else_action", "activity": {"text": "else"}},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("then_action", "loop_next") in edges
+        assert ("else_action", "loop_next") in edges
+        assert ("step_1", "loop_next") not in edges
+
     def test_wire_to_target_with_if_structure(self):
         """Test wiring to an If structure routes to evaluator."""
         from agent_framework import WorkflowBuilder
