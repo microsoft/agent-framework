@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol.Client;
 
@@ -10,7 +8,6 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// MCP-specific extension methods for <see cref="AgentSkillsProviderBuilder"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class AgentSkillsProviderBuilderMcpExtensions
 {
     /// <summary>

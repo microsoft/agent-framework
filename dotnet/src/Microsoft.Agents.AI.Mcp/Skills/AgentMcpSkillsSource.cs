@@ -9,7 +9,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -38,7 +37,6 @@ namespace Microsoft.Agents.AI;
 /// <see cref="AgentSkill.GetResourceAsync"/>; they do not enumerate sibling files up front.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 {
     /// <summary>
