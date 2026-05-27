@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import ast
+import builtins as _builtins
 from typing import Any
+
+_PYTHON_BUILTIN_NAMES: frozenset[str] = frozenset(dir(_builtins))
 
 # Allowed imports that generated code may use.
 ALLOWED_IMPORTS: set[str] = {
@@ -306,18 +309,17 @@ class _CodeValidator(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         """Validate function calls.
 
-        Note: We only validate calls to known builtins against the block-list.
-        Calls to user-defined functions and registered tools are allowed (validated at runtime).
-        The allowed_builtins parameter exists for customization but does not enforce
-        an allow-list by default to permit user code and tools.
+        For names that match a real Python builtin we enforce both the block-list
+        and the allow-list. Names that are not builtins are treated as user-defined
+        functions or registered tools and are allowed (validated at runtime).
         """
-        # Check for blocked builtins
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name in self._blocked_builtins:
                 self._errors.append(f"Call to builtin '{func_name}' is not allowed")
-            # Note: We don't enforce allowed_builtins for Names to allow user-defined
-            # functions and registered tools. Custom blocked_builtins can restrict specific names.
+            elif func_name in _PYTHON_BUILTIN_NAMES and func_name not in self._allowed_builtins:
+                # Real builtin that wasn't explicitly allowed — reject so the allow-list is meaningful.
+                self._errors.append(f"Call to builtin '{func_name}' is not in the allowed builtins list")
 
         # Check for attribute access to dangerous methods
         if isinstance(node.func, ast.Attribute):
