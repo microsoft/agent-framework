@@ -199,7 +199,9 @@ async def test_subprocess_timeout_returns_error_content() -> None:
 
     assert len(result) == 1
     assert result[0].type == "error"
-    assert "exceeded" in (result[0].error_details or "")
+    # Python 3.10 returns "TimeoutError: ", 3.11+ returns more detail
+    assert result[0].error_details is not None
+    assert "TimeoutError" in result[0].error_details
 
 
 async def test_file_capture_skips_symlinks_and_returns_written_files(tmp_path: Path) -> None:
