@@ -444,6 +444,49 @@ class BaseAgent(SerializationMixin):
         """
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
+    def as_eval_source(
+        self,
+        *,
+        include_instructions: bool = True,
+        include_tools: bool = True,
+        include_context_providers: bool = False,
+        include_examples: bool = False,
+        examples: Sequence[str] | None = None,
+    ) -> str:
+        """Render this agent as a textual dossier for rubric-evaluator generation.
+
+        Packages the agent's name, description, instructions, tool
+        definitions, and optional context-provider class names into a
+        single plain-text dossier suitable for passing to a rubric
+        generation pipeline (e.g. ``FoundryEvals.generate_rubric``).
+
+        Defaults are conservative: instructions and tools are included;
+        examples and context-provider class names are not.
+
+        Keyword Args:
+            include_instructions: Whether to include the agent's
+                instructions text.
+            include_tools: Whether to include tool definitions.
+            include_context_providers: Whether to include attached
+                context-provider class names.
+            include_examples: Whether to include the supplied ``examples``.
+            examples: Sample queries / interactions to include when
+                ``include_examples`` is true.
+
+        Returns:
+            A plain-text dossier describing the agent.
+        """
+        from ._evaluation import _render_agent_dossier  # pyright: ignore[reportPrivateUsage]
+
+        return _render_agent_dossier(
+            self,
+            include_instructions=include_instructions,
+            include_tools=include_tools,
+            include_context_providers=include_context_providers,
+            include_examples=include_examples,
+            examples=examples,
+        )
+
     async def _run_after_providers(
         self,
         *,

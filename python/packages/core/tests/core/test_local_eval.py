@@ -1011,119 +1011,199 @@ class TestAllPassedSubResults:
 
 
 # ---------------------------------------------------------------------------
-# r5 review: _build_overall_item with empty outputs
+# Eval source rendering (string dossiers)
 # ---------------------------------------------------------------------------
 
 
-class TestBuildOverallItemEmpty:
-    """Test _build_overall_item returns None for empty workflow outputs."""
+class TestAgentAsEvalSource:
+    """Tests for BaseAgent.as_eval_source / _render_agent_dossier."""
 
-    def test_returns_none_for_empty_outputs(self):
+    def _make_mock_agent(
+        self,
+        *,
+        name: str = "weather-bot",
+        description: str | None = "Looks up the weather.",
+        instructions: str | None = "Be concise.  Always cite the source.",
+        tools: list[Any] | None = None,
+        context_providers: list[Any] | None = None,
+        mcp_tools: list[Any] | None = None,
+    ) -> Any:
         from unittest.mock import MagicMock
 
-        from agent_framework._evaluation import _build_overall_item
+        from agent_framework._tools import ai_function
 
-        mock_result = MagicMock()
-        mock_result.get_outputs.return_value = []
-        item = _build_overall_item("Hello", mock_result)
-        assert item is None
+        agent = MagicMock()
+        agent.name = name
+        agent.description = description
+        agent.default_options = {"instructions": instructions, "tools": tools or []}
+        agent.context_providers = context_providers or []
+        agent.mcp_tools = mcp_tools or []
+        if tools:
+            normalized: list[Any] = []
+            for t in tools:
+                if callable(t) and not hasattr(t, "parameters"):
+                    normalized.append(ai_function(t))
+                else:
+                    normalized.append(t)
+            agent.default_options["tools"] = normalized
+        return agent
 
+    def _render(self, agent: Any, **overrides: Any) -> str:
+        from agent_framework._evaluation import _render_agent_dossier
 
-class TestRubricAssertions:
-    """Tests for EvalResults rubric assertion helpers."""
+        kwargs: dict[str, Any] = {
+            "include_instructions": True,
+            "include_tools": True,
+            "include_context_providers": False,
+            "include_examples": False,
+            "examples": None,
+        }
+        kwargs.update(overrides)
+        return _render_agent_dossier(agent, **kwargs)
 
-    def _build_results(self, item_scores: list[list[tuple[str, float, list[Any] | None]]]) -> Any:
-        from agent_framework._evaluation import EvalItemResult, EvalResults, EvalScoreResult
+    def test_basic_dossier_includes_name_and_instructions(self):
+        agent = self._make_mock_agent()
+        dossier = self._render(agent)
+        assert isinstance(dossier, str)
+        assert "Agent name: weather-bot" in dossier
+        assert "Description: Looks up the weather." in dossier
+        assert "Instructions:" in dossier
+        assert "Be concise." in dossier
 
-        items: list[EvalItemResult] = []
-        for i, scores in enumerate(item_scores):
-            items.append(
-                EvalItemResult(
-                    item_id=f"oi_{i}",
-                    status="pass",
-                    scores=[EvalScoreResult(name=name, score=score, dimensions=dims) for name, score, dims in scores],
-                )
-            )
-        return EvalResults(
-            provider="Local",
-            status="completed",
-            result_counts={"passed": len(items), "failed": 0, "errored": 0},
-            items=items,
+    def test_tools_section_includes_definitions(self):
+        def get_weather(city: str) -> str:
+            """Return the current weather for *city*."""
+            return f"sunny in {city}"
+
+        agent = self._make_mock_agent(tools=[get_weather])
+        dossier = self._render(agent)
+        assert "Tools:" in dossier
+        assert "- get_weather" in dossier
+        assert '"city"' in dossier
+
+    def test_include_instructions_false_omits_section(self):
+        agent = self._make_mock_agent()
+        dossier = self._render(agent, include_instructions=False)
+        assert "Instructions:" not in dossier
+
+    def test_include_tools_false_omits_section(self):
+        def get_weather(city: str) -> str:
+            return f"sunny in {city}"
+
+        agent = self._make_mock_agent(tools=[get_weather])
+        dossier = self._render(agent, include_tools=False)
+        assert "Tools:" not in dossier
+
+    def test_context_providers_excluded_by_default_but_included_when_opted_in(self):
+        class StubProvider:
+            pass
+
+        agent = self._make_mock_agent(context_providers=[StubProvider()])
+        default_dossier = self._render(agent)
+        assert "Context providers:" not in default_dossier
+
+        opt_in_dossier = self._render(agent, include_context_providers=True)
+        assert "Context providers:" in opt_in_dossier
+        assert "- StubProvider" in opt_in_dossier
+
+    def test_examples_excluded_by_default_but_included_when_opted_in(self):
+        agent = self._make_mock_agent()
+        default_dossier = self._render(agent, examples=["What's the weather in NYC?"])
+        assert "Examples:" not in default_dossier
+
+        opt_in_dossier = self._render(
+            agent,
+            include_examples=True,
+            examples=["What's the weather in NYC?"],
         )
+        assert "Examples:" in opt_in_dossier
+        assert "What's the weather in NYC?" in opt_in_dossier
 
-    def test_assert_score_at_least_passes(self):
-        results = self._build_results([[("relevance", 0.9, None)], [("relevance", 0.85, None)]])
-        results.assert_score_at_least(0.8)
+    def test_base_agent_method_returns_dossier_string(self):
+        from agent_framework._agents import BaseAgent
 
-    def test_assert_score_at_least_raises(self):
-        from agent_framework._evaluation import EvalNotPassedError
+        class _ConcreteAgent(BaseAgent):
+            pass
 
-        results = self._build_results([[("relevance", 0.9, None)], [("relevance", 0.5, None)]])
-        with pytest.raises(EvalNotPassedError, match="below threshold"):
-            results.assert_score_at_least(0.8)
-
-    def test_assert_score_at_least_filtered_by_evaluator(self):
-        from agent_framework._evaluation import EvalNotPassedError
-
-        results = self._build_results([[("relevance", 0.9, None), ("coherence", 0.3, None)]])
-        # Coherence is low — only fails when not filtered out.
-        results.assert_score_at_least(0.8, evaluator="relevance")
-        with pytest.raises(EvalNotPassedError):
-            results.assert_score_at_least(0.8, evaluator="coherence")
-
-    def test_assert_dimension_score_at_least(self):
-        from agent_framework._evaluation import EvalNotPassedError, RubricScore
-
-        dims_pass = [
-            RubricScore(id="policy", score=4, applicable=True, weight=1, reason="ok"),
-            RubricScore(id="safety", score=5, applicable=True, weight=1, reason="ok"),
-        ]
-        dims_fail = [
-            RubricScore(id="policy", score=2, applicable=True, weight=1, reason="bad"),
-        ]
-        results = self._build_results([[("rubric", 0.9, dims_pass)], [("rubric", 0.5, dims_fail)]])
-        # Safety passes everywhere — no raise.
-        results.assert_dimension_score_at_least("safety", 4)
-        # Policy fails on the second item.
-        with pytest.raises(EvalNotPassedError, match="policy"):
-            results.assert_dimension_score_at_least("policy", 3)
-
-    def test_assert_dimension_skips_non_applicable_by_default(self):
-        from agent_framework._evaluation import RubricScore
-
-        dims = [
-            RubricScore(id="optional", score=None, applicable=False, weight=1, reason="n/a"),
-        ]
-        results = self._build_results([[("rubric", 0.9, dims)]])
-        # No applicable scores — should not raise.
-        results.assert_dimension_score_at_least("optional", 3)
-
-    def test_assert_dimension_require_applicable_raises(self):
-        from agent_framework._evaluation import EvalNotPassedError, RubricScore
-
-        dims = [
-            RubricScore(id="optional", score=None, applicable=False, weight=1, reason="n/a"),
-        ]
-        results = self._build_results([[("rubric", 0.9, dims)]])
-        with pytest.raises(EvalNotPassedError, match="not applicable"):
-            results.assert_dimension_score_at_least("optional", 3, require_applicable=True)
-
-    def test_assert_no_failed_items(self):
-        from agent_framework._evaluation import EvalItemResult, EvalNotPassedError, EvalResults
-
-        results = EvalResults(
-            provider="Local",
-            status="completed",
-            result_counts={"passed": 1, "failed": 1, "errored": 0},
-            items=[
-                EvalItemResult(item_id="oi_pass", status="pass"),
-                EvalItemResult(item_id="oi_fail", status="fail"),
-            ],
-        )
-        with pytest.raises(EvalNotPassedError, match="failed"):
-            results.assert_no_failed_items()
+        agent = _ConcreteAgent(name="test-agent", description="A test agent.")
+        dossier = agent.as_eval_source()
+        assert isinstance(dossier, str)
+        assert "Agent name: test-agent" in dossier
 
 
-# ---------------------------------------------------------------------------
-# r5 review: _build_overall_item with empty outputs
-# ---------------------------------------------------------------------------
+class TestWorkflowAsEvalSource:
+    """Tests for Workflow.as_eval_source / _render_workflow_dossier."""
+
+    def _build_workflow(self, *, with_agent: bool = False) -> Any:
+        from unittest.mock import MagicMock
+
+        from agent_framework._workflows._agent_executor import AgentExecutor
+
+        workflow = MagicMock()
+        workflow.name = "demo-workflow"
+        workflow.description = "Routes user questions through a single agent."
+        workflow.to_dict.return_value = {
+            "name": "demo-workflow",
+            "id": "wf_1",
+            "start_executor_id": "agent_1",
+            "edge_groups": [],
+            "executors": {"agent_1": {"type": "AgentExecutor"}},
+        }
+
+        if with_agent:
+            inner_agent = MagicMock()
+            inner_agent.name = "inner-agent"
+            inner_agent.description = "Inner agent."
+            inner_agent.default_options = {"instructions": "Answer politely.", "tools": []}
+            inner_agent.context_providers = []
+            inner_agent.mcp_tools = []
+
+            executor = MagicMock(spec=AgentExecutor)
+            executor.agent = inner_agent
+            workflow.executors = {"agent_1": executor}
+        else:
+            workflow.executors = {}
+        return workflow
+
+    def _render(self, workflow: Any, **overrides: Any) -> str:
+        from agent_framework._evaluation import _render_workflow_dossier
+
+        kwargs: dict[str, Any] = {
+            "include_instructions": True,
+            "include_tools": True,
+            "include_context_providers": False,
+            "include_examples": False,
+            "examples": None,
+            "include_topology": True,
+        }
+        kwargs.update(overrides)
+        return _render_workflow_dossier(workflow, **kwargs)
+
+    def test_emits_dossier_with_topology(self):
+        workflow = self._build_workflow()
+        dossier = self._render(workflow)
+        assert isinstance(dossier, str)
+        assert "Workflow name: demo-workflow" in dossier
+        assert "Topology (JSON):" in dossier
+        assert '"start_executor_id": "agent_1"' in dossier
+
+    def test_topology_can_be_disabled(self):
+        workflow = self._build_workflow()
+        dossier = self._render(workflow, include_topology=False)
+        assert "Topology (JSON):" not in dossier
+
+    def test_per_agent_dossiers_included_when_executor_is_agent_executor(self):
+        workflow = self._build_workflow(with_agent=True)
+        dossier = self._render(workflow)
+        assert "Agents:" in dossier
+        assert "Executor: agent_1" in dossier
+        assert "Agent name: inner-agent" in dossier
+        assert "Answer politely." in dossier
+
+    def test_workflow_examples_excluded_by_default(self):
+        workflow = self._build_workflow()
+        default_dossier = self._render(workflow, examples=["Hi"])
+        assert "Examples:" not in default_dossier
+
+        opt_in_dossier = self._render(workflow, examples=["Hi"], include_examples=True)
+        assert "Examples:" in opt_in_dossier
