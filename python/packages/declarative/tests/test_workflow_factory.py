@@ -122,14 +122,16 @@ actions:
       - cherry
     itemName: fruit
     actions:
-      - kind: AppendValue
-        path: Local.fruits
-        value: processed
+      - kind: SendActivity
+        activity:
+          text: processed
 """)
 
-        _result = await workflow.run({})  # noqa: F841
-        # The foreach should have processed 3 items
-        # We can check this by examining the workflow outputs
+        result = await workflow.run({})
+        outputs = result.get_outputs()
+        # The foreach should have processed 3 items, emitting "processed" each time.
+        processed_outputs = [o for o in outputs if "processed" in str(o)]
+        assert len(processed_outputs) == 3
 
     @pytest.mark.asyncio
     async def test_execute_if_workflow(self):
@@ -561,7 +563,7 @@ class TestWorkflowFactorySwitch:
 
     @pytest.mark.asyncio
     async def test_switch_with_matching_case(self):
-        """Test Switch with a matching case."""
+        """Test ConditionGroup with a matching case."""
         factory = WorkflowFactory()
         workflow = factory.create_workflow_from_yaml("""
 name: switch-test
@@ -569,7 +571,7 @@ actions:
   - kind: SetValue
     path: Local.color
     value: red
-  - kind: Switch
+  - kind: ConditionGroup
     value: =Local.color
     cases:
       - match: red
@@ -591,7 +593,7 @@ actions:
 
     @pytest.mark.asyncio
     async def test_switch_with_default(self):
-        """Test Switch falling through to default."""
+        """Test ConditionGroup falling through to default."""
         factory = WorkflowFactory()
         workflow = factory.create_workflow_from_yaml("""
 name: switch-default-test
@@ -599,7 +601,7 @@ actions:
   - kind: SetValue
     path: Local.color
     value: green
-  - kind: Switch
+  - kind: ConditionGroup
     value: =Local.color
     cases:
       - match: red
@@ -653,54 +655,73 @@ actions:
 
         assert any("Done" in str(o) for o in outputs)
 
+
+class TestRenamedAliasKindsAreUnknown:
+    """Tests that previously-accepted Switch/Goto aliases are now unknown kinds.
+
+    The aliases were removed in favour of the canonical C# names
+    ``ConditionGroup`` and ``GotoAction``. YAML that still uses ``Switch``
+    or ``Goto`` must fall through the existing unknown-kind warning path
+    (the action is silently skipped) instead of being routed to the
+    canonical executor.
+    """
+
     @pytest.mark.asyncio
-    async def test_append_value(self):
-        """Test AppendValue action."""
+    async def test_switch_kind_is_unknown(self, caplog):
+        """A workflow whose YAML uses kind: Switch logs an unknown-kind warning."""
         factory = WorkflowFactory()
-        workflow = factory.create_workflow_from_yaml("""
-name: append-test
+        with caplog.at_level(
+            "WARNING",
+            logger="agent_framework_declarative._workflows._declarative_builder",
+        ):
+            workflow = factory.create_workflow_from_yaml("""
+name: switch-alias-removed
 actions:
-  - kind: SetValue
-    path: Local.list
-    value: []
-  - kind: AppendValue
-    path: Local.list
-    value: first
-  - kind: AppendValue
-    path: Local.list
-    value: second
+  - kind: Switch
+    value: =Local.color
+    cases:
+      - match: red
+        actions:
+          - kind: SendActivity
+            activity:
+              text: Color is red
   - kind: SendActivity
     activity:
       text: Done
 """)
+            result = await workflow.run({})
 
-        result = await workflow.run({})
+        # Switch is no longer a recognised kind -> warning emitted + action skipped.
+        assert any("Unknown action kind 'Switch'" in record.getMessage() for record in caplog.records)
+        # The trailing SendActivity still runs so the workflow completes successfully.
         outputs = result.get_outputs()
-
         assert any("Done" in str(o) for o in outputs)
 
     @pytest.mark.asyncio
-    async def test_emit_event(self):
-        """Test EmitEvent action."""
+    async def test_goto_kind_is_unknown(self, caplog):
+        """A workflow whose YAML uses kind: Goto logs an unknown-kind warning."""
         factory = WorkflowFactory()
-        workflow = factory.create_workflow_from_yaml("""
-name: emit-event-test
+        with caplog.at_level(
+            "WARNING",
+            logger="agent_framework_declarative._workflows._declarative_builder",
+        ):
+            workflow = factory.create_workflow_from_yaml("""
+name: goto-alias-removed
 actions:
-  - kind: EmitEvent
-    event:
-      name: test_event
-      data:
-        message: Hello
-  - kind: SendActivity
+  - id: target
+    kind: SendActivity
     activity:
-      text: Event emitted
+      text: Arrived
+  - kind: Goto
+    target: target
 """)
+            result = await workflow.run({})
 
-        result = await workflow.run({})
+        # Goto is no longer a recognised kind -> warning emitted + action skipped.
+        assert any("Unknown action kind 'Goto'" in record.getMessage() for record in caplog.records)
+        # The first SendActivity still emits its output.
         outputs = result.get_outputs()
-
-        # Workflow should complete
-        assert any("Event emitted" in str(o) for o in outputs)
+        assert any("Arrived" in str(o) for o in outputs)
 
 
 class TestWorkflowFactoryYamlErrors:

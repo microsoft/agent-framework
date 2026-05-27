@@ -64,7 +64,6 @@ ALL_ACTION_EXECUTORS = {
 # Action kinds that terminate control flow (no fall-through to successor)
 # These actions transfer control elsewhere and should not have sequential edges to the next action
 TERMINATOR_ACTIONS = frozenset({
-    "Goto",
     "GotoAction",
     "BreakLoop",
     "ContinueLoop",
@@ -80,18 +79,14 @@ TERMINATOR_ACTIONS = frozenset({
 ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "SetValue": ["path"],
     "SetVariable": ["variable"],
-    "AppendValue": ["path", "value"],
     "SendActivity": ["activity"],
     "InvokeAzureAgent": ["agent"],
-    "Goto": ["target"],
     "GotoAction": ["actionId"],
     "Foreach": ["items", "actions"],
     "If": ["condition"],
-    "Switch": ["value"],  # Switch can use value/cases or conditions (ConditionGroup style)
     "ConditionGroup": ["conditions"],
     "RequestHumanInput": ["variable"],
     "WaitForHumanInput": ["variable"],
-    "EmitEvent": ["event"],
     "InvokeFunctionTool": ["functionName"],
     "HttpRequestAction": ["url"],
     "InvokeMcpTool": ["serverUrl", "toolName"],
@@ -101,11 +96,12 @@ ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
 # Key: "ActionKind.field", Value: list of alternates that satisfy the requirement
 ACTION_ALTERNATE_FIELDS: dict[str, list[str]] = {
     "SetValue.path": ["variable"],
-    "Goto.target": ["actionId"],
     "GotoAction.actionId": ["target"],
     "InvokeAzureAgent.agent": ["agentName"],
     "Foreach.items": ["itemsSource", "source"],  # source is used in some schemas
-    "Switch.value": ["conditions"],  # Switch can be condition-based instead of value-based
+    # ConditionGroup accepts either the canonical "conditions" form or the
+    # legacy "value"/"cases" form (Category 2 schema variant - deferred).
+    "ConditionGroup.conditions": ["value", "cases"],
 }
 
 
@@ -115,9 +111,9 @@ class DeclarativeWorkflowBuilder:
     This builder transforms declarative action definitions into a proper
     workflow graph with executor nodes and edges. It handles:
     - Sequential actions (simple edges)
-    - Conditional branching (If/Switch with condition edges)
+    - Conditional branching (If/ConditionGroup with condition edges)
     - Loops (Foreach with loop edges)
-    - Jumps (Goto with target edges)
+    - Jumps (GotoAction with target edges)
 
     Example usage:
         yaml_def = {
@@ -299,7 +295,7 @@ class DeclarativeWorkflowBuilder:
                     raise ValueError(f"Action '{kind}' is missing required field '{field}'. Action: {action_def}")
 
             # Collect goto targets for circular reference detection
-            if kind in ("Goto", "GotoAction"):
+            if kind == "GotoAction":
                 target = action_def.get("target") or action_def.get("actionId")
                 if target:
                     goto_targets.append((target, explicit_id))
@@ -313,7 +309,7 @@ class DeclarativeWorkflowBuilder:
                 if else_actions:
                     self._validate_actions_recursive(else_actions, seen_ids, goto_targets, defined_ids)
 
-            elif kind in ("Switch", "ConditionGroup"):
+            elif kind == "ConditionGroup":
                 cases = action_def.get("cases", action_def.get("conditions", []))
                 for case in cases:
                     case_actions = case.get("actions", [])
@@ -362,7 +358,7 @@ class DeclarativeWorkflowBuilder:
             # Check for direct self-reference
             if source_id and target_id == source_id:
                 raise ValueError(
-                    f"Action '{source_id}' has a direct self-referencing Goto, which would cause an infinite loop."
+                    f"Action '{source_id}' has a direct self-referencing GotoAction, which would cause an infinite loop."
                 )
 
     def _resolve_pending_gotos(self, builder: WorkflowBuilder) -> None:
@@ -380,7 +376,7 @@ class DeclarativeWorkflowBuilder:
                 builder.add_edge(source=goto_executor, target=target_executor)
             else:
                 available_ids = list(self._executors.keys())
-                raise ValueError(f"Goto target '{target_id}' not found. Available action IDs: {available_ids}")
+                raise ValueError(f"GotoAction target '{target_id}' not found. Available action IDs: {available_ids}")
 
     def _create_executors_for_actions(
         self,
@@ -453,11 +449,11 @@ class DeclarativeWorkflowBuilder:
         # Handle special control flow actions
         if kind == "If":
             return self._create_if_structure(action_def, builder, parent_context)
-        if kind == "Switch" or kind == "ConditionGroup":
+        if kind == "ConditionGroup":
             return self._create_switch_structure(action_def, builder, parent_context)
         if kind == "Foreach":
             return self._create_foreach_structure(action_def, builder, parent_context)
-        if kind == "Goto" or kind == "GotoAction":
+        if kind == "GotoAction":
             return self._create_goto_reference(action_def, builder, parent_context)
         if kind == "BreakLoop":
             return self._create_break_executor(action_def, builder, parent_context)

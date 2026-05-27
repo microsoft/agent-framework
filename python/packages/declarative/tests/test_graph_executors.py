@@ -264,7 +264,6 @@ class TestDeclarativeWorkflowBuilder:
             "SetValue",
             "SetVariable",
             "SendActivity",
-            "EmitEvent",
             "EndWorkflow",
             "InvokeAzureAgent",
             "Question",
@@ -354,12 +353,12 @@ class TestDeclarativeWorkflowBuilder:
         assert "show_item" in builder._executors
 
     def test_build_workflow_with_switch(self):
-        """Test building a workflow with Switch control flow."""
+        """Test building a workflow with ConditionGroup control flow."""
         yaml_def = {
             "name": "switch_workflow",
             "actions": [
                 {
-                    "kind": "Switch",
+                    "kind": "ConditionGroup",
                     "id": "check_status",
                     "conditions": [
                         {
@@ -508,36 +507,6 @@ class TestHumanInputExecutors:
         assert isinstance(request, ExternalInputRequest)
         assert request.request_type == "question"
         assert "What is your name?" in request.message
-
-    @pytest.mark.asyncio
-    async def test_confirmation_executor(self, mock_context, mock_state):
-        """Test ConfirmationExecutor."""
-        from agent_framework_declarative._workflows import (
-            ConfirmationExecutor,
-            ExternalInputRequest,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "Confirmation",
-            "text": "Do you want to continue?",
-            "property": "Local.confirmed",
-            "yesLabel": "Yes, continue",
-            "noLabel": "No, stop",
-        }
-        executor = ConfirmationExecutor(action_def)
-
-        # Execute
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        # Verify request_info was called with ExternalInputRequest
-        mock_context.request_info.assert_called_once()
-        request = mock_context.request_info.call_args[0][0]
-        assert isinstance(request, ExternalInputRequest)
-        assert request.request_type == "confirmation"
-        assert "continue" in request.message.lower()
 
 
 @_requires_powerfx

@@ -152,13 +152,13 @@ class TestGraphBasedWorkflowExecution:
 
     @pytest.mark.asyncio
     async def test_workflow_with_switch(self):
-        """Test workflow with Switch/ConditionGroup."""
+        """Test workflow with ConditionGroup."""
         yaml_def = {
             "name": "switch_workflow",
             "actions": [
                 {"kind": "SetValue", "id": "set_level", "path": "Local.level", "value": 2},
                 {
-                    "kind": "Switch",
+                    "kind": "ConditionGroup",
                     "id": "check_level",
                     "conditions": [
                         {

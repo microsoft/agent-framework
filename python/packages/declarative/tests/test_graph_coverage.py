@@ -515,27 +515,6 @@ class TestBasicExecutorsCoverage:
         assert state.get("Local.b") == 2
         assert state.get("Local.c") == 3
 
-    async def test_append_value_executor(self, mock_context, mock_state):
-        """Test AppendValueExecutor."""
-        from agent_framework_declarative._workflows._executors_basic import (
-            AppendValueExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-        state.set("Local.items", ["a"])
-
-        action_def = {
-            "kind": "AppendValue",
-            "path": "Local.items",
-            "value": "b",
-        }
-        executor = AppendValueExecutor(action_def)
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.items")
-        assert result == ["a", "b"]
-
     async def test_reset_variable_executor(self, mock_context, mock_state):
         """Test ResetVariableExecutor."""
         from agent_framework_declarative._workflows._executors_basic import (
@@ -631,52 +610,6 @@ class TestBasicExecutorsCoverage:
         await executor.handle_action(ActionTrigger(), mock_context)
 
         mock_context.yield_output.assert_called_once_with("Dynamic message")
-
-    async def test_emit_event_executor_graph_mode(self, mock_context, mock_state):
-        """Test EmitEventExecutor with graph-mode schema (eventName/eventValue)."""
-        from agent_framework_declarative._workflows._executors_basic import (
-            EmitEventExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "EmitEvent",
-            "eventName": "myEvent",
-            "eventValue": {"key": "value"},
-        }
-        executor = EmitEventExecutor(action_def)
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        mock_context.yield_output.assert_called_once()
-        event_data = mock_context.yield_output.call_args[0][0]
-        assert event_data["eventName"] == "myEvent"
-        assert event_data["eventValue"] == {"key": "value"}
-
-    async def test_emit_event_executor_interpreter_mode(self, mock_context, mock_state):
-        """Test EmitEventExecutor with interpreter-mode schema (event.name/event.data)."""
-        from agent_framework_declarative._workflows._executors_basic import (
-            EmitEventExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "EmitEvent",
-            "event": {
-                "name": "interpreterEvent",
-                "data": {"payload": "test"},
-            },
-        }
-        executor = EmitEventExecutor(action_def)
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        mock_context.yield_output.assert_called_once()
-        event_data = mock_context.yield_output.call_args[0][0]
-        assert event_data["eventName"] == "interpreterEvent"
-        assert event_data["eventValue"] == {"payload": "test"}
 
 
 # ---------------------------------------------------------------------------
@@ -1229,7 +1162,7 @@ class TestControlFlowCoverage:
         state.set("Local.status", "pending")
 
         action_def = {
-            "kind": "Switch",
+            "kind": "ConditionGroup",
             "value": "=Local.status",
         }
         cases = [
@@ -1257,7 +1190,7 @@ class TestControlFlowCoverage:
         state.set("Local.status", "unknown")
 
         action_def = {
-            "kind": "Switch",
+            "kind": "ConditionGroup",
             "value": "=Local.status",
         }
         cases = [
@@ -1282,7 +1215,7 @@ class TestControlFlowCoverage:
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
-        action_def = {"kind": "Switch"}  # No value
+        action_def = {"kind": "ConditionGroup"}  # No value
         cases = [{"match": "x"}]
         executor = SwitchEvaluatorExecutor(action_def, cases=cases)
 
@@ -1718,60 +1651,6 @@ class TestDeclarativeActionExecutorBase:
 
 class TestHumanInputExecutorsCoverage:
     """Tests for human input executors covering uncovered code paths."""
-
-    async def test_wait_for_input_executor_with_prompt(self, mock_context, mock_state):
-        """Test WaitForInputExecutor with prompt."""
-        from agent_framework_declarative._workflows._executors_external_input import (
-            ExternalInputRequest,
-            WaitForInputExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "WaitForInput",
-            "prompt": "Please enter your name:",
-            "property": "Local.userName",
-            "timeout": 30,
-        }
-        executor = WaitForInputExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        # Should yield prompt first, then call request_info
-        assert mock_context.yield_output.call_count == 1
-        assert mock_context.yield_output.call_args_list[0][0][0] == "Please enter your name:"
-        # request_info call for ExternalInputRequest
-        mock_context.request_info.assert_called_once()
-        request = mock_context.request_info.call_args[0][0]
-        assert isinstance(request, ExternalInputRequest)
-        assert request.request_type == "user_input"
-
-    async def test_wait_for_input_executor_no_prompt(self, mock_context, mock_state):
-        """Test WaitForInputExecutor without prompt."""
-        from agent_framework_declarative._workflows._executors_external_input import (
-            ExternalInputRequest,
-            WaitForInputExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "WaitForInput",
-            "property": "Local.input",
-        }
-        executor = WaitForInputExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        # Should not yield output (no prompt), just call request_info
-        assert mock_context.yield_output.call_count == 0
-        mock_context.request_info.assert_called_once()
-        request = mock_context.request_info.call_args[0][0]
-        assert isinstance(request, ExternalInputRequest)
-        assert request.request_type == "user_input"
 
     async def test_request_external_input_executor(self, mock_context, mock_state):
         """Test RequestExternalInputExecutor."""
@@ -2725,7 +2604,7 @@ class TestBuilderValidation:
 
         yaml_def = {
             "name": "test_workflow",
-            "actions": [{"id": "loop", "kind": "Goto", "target": "loop"}],
+            "actions": [{"id": "loop", "kind": "GotoAction", "actionId": "loop"}],
         }
 
         builder = DeclarativeWorkflowBuilder(yaml_def)
@@ -2758,14 +2637,14 @@ class TestBuilderValidation:
         assert workflow is not None
 
     def test_validation_in_switch_branches(self):
-        """Test validation catches issues in Switch branches."""
+        """Test validation catches issues in ConditionGroup branches."""
         from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
 
         yaml_def = {
             "name": "test_workflow",
             "actions": [
                 {
-                    "kind": "Switch",
+                    "kind": "ConditionGroup",
                     "value": "=Local.choice",
                     "cases": [
                         {

@@ -38,10 +38,8 @@ from ._executors_agents import (
 )
 from ._executors_basic import (
     BASIC_ACTION_EXECUTORS,
-    AppendValueExecutor,
     ClearAllVariablesExecutor,
     CreateConversationExecutor,
-    EmitEventExecutor,
     ResetVariableExecutor,
     SendActivityExecutor,
     SetMultipleVariablesExecutor,
@@ -61,12 +59,10 @@ from ._executors_control_flow import (
 )
 from ._executors_external_input import (
     EXTERNAL_INPUT_EXECUTORS,
-    ConfirmationExecutor,
     ExternalInputRequest,
     ExternalInputResponse,
     QuestionExecutor,
     RequestExternalInputExecutor,
-    WaitForInputExecutor,
 )
 from ._executors_http import (
     HTTP_ACTION_EXECUTORS,
@@ -122,11 +118,9 @@ __all__ = [
     "AgentExternalInputRequest",
     "AgentExternalInputResponse",
     "AgentResult",
-    "AppendValueExecutor",
     "BaseToolExecutor",
     "BreakLoopExecutor",
     "ClearAllVariablesExecutor",
-    "ConfirmationExecutor",
     "ContinueLoopExecutor",
     "ConversationData",
     "CreateConversationExecutor",
@@ -139,7 +133,6 @@ __all__ = [
     "DeclarativeWorkflowState",
     "DefaultHttpRequestHandler",
     "DefaultMCPToolHandler",
-    "EmitEventExecutor",
     "EndConversationExecutor",
     "EndWorkflowExecutor",
     "ExternalInputRequest",
@@ -173,7 +166,6 @@ __all__ = [
     "ToolApprovalResponse",
     "ToolApprovalState",
     "ToolInvocationResult",
-    "WaitForInputExecutor",
     "WorkflowFactory",
     "WorkflowState",
 ]
