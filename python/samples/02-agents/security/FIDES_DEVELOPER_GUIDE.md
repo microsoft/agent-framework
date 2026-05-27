@@ -25,6 +25,7 @@ The defense system consists of eight main components:
 5. **Security Tools** - Specialized tools for safe handling of untrusted content (`quarantined_llm`, `inspect_variable`)
 6. **SecureAgentConfig** - Helper class for easy secure agent configuration
 7. **Message-Level Label Tracking** - Track labels on every message in the conversation (Phase 1)
+8. **MCP Auto-Labeling and Result IFC Parsing** - Auto-label MCP tools from hints and parse server `_meta.ifc` labels
 
 ## Architecture
 
@@ -299,6 +300,48 @@ The middleware now automatically handles variable indirection for UNTRUSTED cont
 - **Full Auditability**: All hiding events are logged
 
 **No manual `store_untrusted_content()` calls needed!**
+
+### 6. MCP Integration: SecureMCPToolProxy + MCP Hints + `_meta.ifc`
+
+FIDES supports remote MCP servers through `SecureMCPToolProxy`, which performs two security-critical tasks automatically:
+
+1. **Tool auto-labeling from MCP hints**
+   - Reads MCP `ToolAnnotations` (`readOnlyHint`, `openWorldHint`, etc.)
+   - Applies `source_integrity`, `accepts_untrusted`, and `max_allowed_confidentiality` to each loaded tool
+   - Treats tools that are not explicitly `readOnlyHint=True` as potential sinks and caps them to `PUBLIC`
+
+2. **Result label parsing from MCP `_meta.ifc`**
+   - MCP transport stamps result `_meta` onto `Content.additional_properties["__mcp_result_meta__"]`
+   - FIDES parses `_meta.ifc` and converts it to `security_label`
+   - Server-provided per-result labels override static fallback labels
+
+This is especially important for GitHub MCP `/insiders`, where tool results include:
+
+```json
+{"ifc": {"integrity": "untrusted", "confidentiality": "public"}}
+```
+
+When `auto_hide_untrusted=True`, these untrusted results are automatically hidden and replaced with variable references.
+
+```python
+from agent_framework import Agent
+from agent_framework.security import SecureAgentConfig, SecureMCPToolProxy
+
+secure_mcp = await stack.enter_async_context(
+    SecureMCPToolProxy(
+        url="https://api.githubcopilot.com/mcp/insiders",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+)
+
+config = SecureAgentConfig(auto_hide_untrusted=True, enable_policy_enforcement=True)
+
+agent = Agent(
+    client=client,
+    tools=secure_mcp.tools,
+    context_providers=[config],
+)
+```
 
 **How It Works:**
 
