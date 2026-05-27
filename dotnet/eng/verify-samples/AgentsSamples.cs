@@ -363,6 +363,25 @@ internal static class AgentsSamples
             ],
         },
 
+        new SampleDefinition
+        {
+            Name = "Agent_Step06_McpBasedSkills",
+            ProjectPath = "samples/02-agents/AgentSkills/Agent_Step06_McpBasedSkills",
+            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
+            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            MustContain =
+            [
+                "Discovering MCP-based skills",
+                "Agent:",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should show the agent converting 26.2 miles to kilometers and 75 kilograms to pounds.",
+                "The response should contain approximate numeric values for both conversions.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
         // ── AgentWithMemory ─────────────────────────────────────────────────
 
         new SampleDefinition

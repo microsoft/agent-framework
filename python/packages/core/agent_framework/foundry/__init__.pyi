@@ -26,6 +26,7 @@ from agent_framework_foundry import (
     RawFoundryEmbeddingClient,
     evaluate_foundry_target,
     evaluate_traces,
+    to_prompt_agent,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -58,4 +59,5 @@ __all__ = [
     "RawFoundryEmbeddingClient",
     "evaluate_foundry_target",
     "evaluate_traces",
+    "to_prompt_agent",
 ]
