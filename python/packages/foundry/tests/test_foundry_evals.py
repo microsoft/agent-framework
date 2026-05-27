@@ -2479,6 +2479,106 @@ class TestFetchOutputItems:
 # ---------------------------------------------------------------------------
 
 
+    async def test_extracts_rubric_scores_from_dict_sample(self) -> None:
+        from agent_framework_foundry._foundry_evals import _fetch_output_items
+
+        mock_result = MagicMock()
+        mock_result.name = "my-rubric"
+        mock_result.score = 0.85
+        mock_result.passed = True
+        mock_result.sample = {
+            "properties": {
+                "rubric_scores": [
+                    {"id": "policy", "score": 4, "applicable": True, "weight": 1, "reason": "ok"},
+                    {"id": "safety", "score": None, "applicable": False, "weight": 1, "reason": "n/a"},
+                ]
+            }
+        }
+
+        mock_oi = MagicMock()
+        mock_oi.id = "oi_1"
+        mock_oi.status = "pass"
+        mock_oi.results = [mock_result]
+        mock_oi.sample = None
+        mock_oi.datasource_item = {}
+
+        mock_client = MagicMock()
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=_AsyncPage([mock_oi]))
+
+        items = await _fetch_output_items(mock_client, "eval_1", "run_1")
+
+        assert len(items) == 1
+        scores = items[0].scores
+        assert len(scores) == 1
+        assert scores[0].dimensions is not None
+        assert len(scores[0].dimensions) == 2
+        policy = next(d for d in scores[0].dimensions if d.id == "policy")
+        assert policy.score == 4
+        assert policy.applicable is True
+        assert policy.weight == 1
+        assert policy.reason == "ok"
+        safety = next(d for d in scores[0].dimensions if d.id == "safety")
+        assert safety.score is None
+        assert safety.applicable is False
+
+class TestExtractRubricScores:
+    def test_handles_attribute_style_properties(self) -> None:
+        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
+
+        rs = MagicMock()
+        rs.id = "policy"
+        rs.score = 5
+        rs.applicable = True
+        rs.weight = 2
+        rs.reason = "ok"
+
+        sample = MagicMock()
+        sample.properties = MagicMock()
+        sample.properties.rubric_scores = [rs]
+
+        result = _extract_rubric_scores(sample)
+        assert result is not None
+        assert result[0].id == "policy"
+        assert result[0].score == 5
+        assert result[0].weight == 2
+
+    def test_top_level_rubric_scores_in_dict(self) -> None:
+        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
+
+        sample = {"rubric_scores": [{"id": "a", "score": 3, "applicable": True, "weight": 1, "reason": "r"}]}
+        result = _extract_rubric_scores(sample)
+        assert result is not None
+        assert result[0].id == "a"
+
+    def test_returns_none_when_missing(self) -> None:
+        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
+
+        assert _extract_rubric_scores(None) is None
+        assert _extract_rubric_scores({}) is None
+        assert _extract_rubric_scores({"properties": {}}) is None
+
+    def test_skips_malformed_entries(self) -> None:
+        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
+
+        sample = {
+            "properties": {
+                "rubric_scores": [
+                    {"id": "good", "score": 3, "applicable": True, "weight": 1, "reason": "ok"},
+                    {"id": "bad-no-weight", "score": 2, "applicable": True, "reason": "x"},
+                ]
+            }
+        }
+        result = _extract_rubric_scores(sample)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].id == "good"
+
+
+# ---------------------------------------------------------------------------
+# _poll_eval_run — timeout / failed / canceled paths
+# ---------------------------------------------------------------------------
+
+
 class TestPollEvalRun:
     async def test_timeout_returns_timeout_status(self) -> None:
         """Poll timeout returns EvalResults with status='timeout'."""

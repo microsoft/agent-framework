@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import pytest
 
@@ -1026,3 +1027,103 @@ class TestBuildOverallItemEmpty:
         mock_result.get_outputs.return_value = []
         item = _build_overall_item("Hello", mock_result)
         assert item is None
+
+
+class TestRubricAssertions:
+    """Tests for EvalResults rubric assertion helpers."""
+
+    def _build_results(self, item_scores: list[list[tuple[str, float, list[Any] | None]]]) -> Any:
+        from agent_framework._evaluation import EvalItemResult, EvalResults, EvalScoreResult
+
+        items: list[EvalItemResult] = []
+        for i, scores in enumerate(item_scores):
+            items.append(
+                EvalItemResult(
+                    item_id=f"oi_{i}",
+                    status="pass",
+                    scores=[EvalScoreResult(name=name, score=score, dimensions=dims) for name, score, dims in scores],
+                )
+            )
+        return EvalResults(
+            provider="Local",
+            status="completed",
+            result_counts={"passed": len(items), "failed": 0, "errored": 0},
+            items=items,
+        )
+
+    def test_assert_score_at_least_passes(self):
+        results = self._build_results([[("relevance", 0.9, None)], [("relevance", 0.85, None)]])
+        results.assert_score_at_least(0.8)
+
+    def test_assert_score_at_least_raises(self):
+        from agent_framework._evaluation import EvalNotPassedError
+
+        results = self._build_results([[("relevance", 0.9, None)], [("relevance", 0.5, None)]])
+        with pytest.raises(EvalNotPassedError, match="below threshold"):
+            results.assert_score_at_least(0.8)
+
+    def test_assert_score_at_least_filtered_by_evaluator(self):
+        from agent_framework._evaluation import EvalNotPassedError
+
+        results = self._build_results([[("relevance", 0.9, None), ("coherence", 0.3, None)]])
+        # Coherence is low — only fails when not filtered out.
+        results.assert_score_at_least(0.8, evaluator="relevance")
+        with pytest.raises(EvalNotPassedError):
+            results.assert_score_at_least(0.8, evaluator="coherence")
+
+    def test_assert_dimension_score_at_least(self):
+        from agent_framework._evaluation import EvalNotPassedError, RubricScore
+
+        dims_pass = [
+            RubricScore(id="policy", score=4, applicable=True, weight=1, reason="ok"),
+            RubricScore(id="safety", score=5, applicable=True, weight=1, reason="ok"),
+        ]
+        dims_fail = [
+            RubricScore(id="policy", score=2, applicable=True, weight=1, reason="bad"),
+        ]
+        results = self._build_results([[("rubric", 0.9, dims_pass)], [("rubric", 0.5, dims_fail)]])
+        # Safety passes everywhere — no raise.
+        results.assert_dimension_score_at_least("safety", 4)
+        # Policy fails on the second item.
+        with pytest.raises(EvalNotPassedError, match="policy"):
+            results.assert_dimension_score_at_least("policy", 3)
+
+    def test_assert_dimension_skips_non_applicable_by_default(self):
+        from agent_framework._evaluation import RubricScore
+
+        dims = [
+            RubricScore(id="optional", score=None, applicable=False, weight=1, reason="n/a"),
+        ]
+        results = self._build_results([[("rubric", 0.9, dims)]])
+        # No applicable scores — should not raise.
+        results.assert_dimension_score_at_least("optional", 3)
+
+    def test_assert_dimension_require_applicable_raises(self):
+        from agent_framework._evaluation import EvalNotPassedError, RubricScore
+
+        dims = [
+            RubricScore(id="optional", score=None, applicable=False, weight=1, reason="n/a"),
+        ]
+        results = self._build_results([[("rubric", 0.9, dims)]])
+        with pytest.raises(EvalNotPassedError, match="not applicable"):
+            results.assert_dimension_score_at_least("optional", 3, require_applicable=True)
+
+    def test_assert_no_failed_items(self):
+        from agent_framework._evaluation import EvalItemResult, EvalNotPassedError, EvalResults
+
+        results = EvalResults(
+            provider="Local",
+            status="completed",
+            result_counts={"passed": 1, "failed": 1, "errored": 0},
+            items=[
+                EvalItemResult(item_id="oi_pass", status="pass"),
+                EvalItemResult(item_id="oi_fail", status="fail"),
+            ],
+        )
+        with pytest.raises(EvalNotPassedError, match="failed"):
+            results.assert_no_failed_items()
+
+
+# ---------------------------------------------------------------------------
+# r5 review: _build_overall_item with empty outputs
+# ---------------------------------------------------------------------------

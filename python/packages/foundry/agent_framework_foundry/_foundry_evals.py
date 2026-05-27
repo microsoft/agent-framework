@@ -30,7 +30,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from agent_framework._evaluation import (
     AgentEvalConverter,
@@ -40,6 +40,7 @@ from agent_framework._evaluation import (
     EvalItemResult,
     EvalResults,
     EvalScoreResult,
+    RubricScore,
 )
 from agent_framework._feature_stage import ExperimentalFeature, experimental
 from openai import AsyncOpenAI
@@ -497,6 +498,80 @@ def _extract_per_evaluator(run: RunRetrieveResponse) -> dict[str, dict[str, int]
     return per_eval
 
 
+
+def _extract_rubric_scores(sample: Any) -> list[RubricScore] | None:
+    """Extract typed ``RubricScore`` instances from an evaluator's raw sample payload.
+
+    Foundry rubric evaluators include a per-dimension breakdown under
+    ``properties.rubric_scores`` on each result.  The exact location may
+    vary across SDK versions, so this helper accepts a few shapes:
+
+    * The SDK ``sample`` object exposes ``properties.rubric_scores``.
+    * The ``sample`` is a dict containing ``properties.rubric_scores``.
+    * The ``sample`` is a dict with ``rubric_scores`` at the top level.
+
+    Returns ``None`` when no rubric scores are present (i.e. the
+    evaluator was not a rubric evaluator).
+    """
+    if sample is None:
+        return None
+
+    raw: Any = None
+    properties: Any = getattr(sample, "properties", None)
+    if properties is not None:
+        raw = getattr(properties, "rubric_scores", None)
+        if raw is None and isinstance(properties, dict):
+            raw = cast("dict[str, Any]", properties).get("rubric_scores")
+    if raw is None and isinstance(sample, dict):
+        sample_any = cast("dict[str, Any]", sample)
+        props_dict: Any = sample_any.get("properties")
+        if isinstance(props_dict, dict):
+            raw = cast("dict[str, Any]", props_dict).get("rubric_scores")
+        if raw is None:
+            raw = sample_any.get("rubric_scores")
+
+    if not raw:
+        return None
+
+    parsed: list[RubricScore] = []
+    raw_iter: Any = raw
+    for raw_entry in raw_iter:
+        entry: Any = raw_entry
+        try:
+            rid: Any
+            score_val: Any
+            applicable: Any
+            weight: Any
+            reason: Any
+            if isinstance(entry, dict):
+                entry_any = cast("dict[str, Any]", entry)
+                rid = entry_any.get("id")
+                score_val = entry_any.get("score")
+                applicable = entry_any.get("applicable")
+                weight = entry_any.get("weight")
+                reason = entry_any.get("reason", "")
+            else:
+                rid = getattr(entry, "id", None)
+                score_val = getattr(entry, "score", None)
+                applicable = getattr(entry, "applicable", None)
+                weight = getattr(entry, "weight", None)
+                reason = getattr(entry, "reason", "") or ""
+            if rid is None or weight is None or applicable is None:
+                continue
+            parsed.append(
+                RubricScore(
+                    id=str(rid),
+                    score=int(score_val) if isinstance(score_val, (int, float)) else None,
+                    applicable=bool(applicable),
+                    weight=int(weight),
+                    reason=str(reason) if reason is not None else "",
+                )
+            )
+        except (TypeError, ValueError):
+            logger.debug("Skipping malformed rubric_scores entry: %s", cast("Any", entry), exc_info=True)
+    return parsed or None
+
+
 async def _fetch_output_items(
     client: AsyncOpenAI,
     eval_id: str,
@@ -520,12 +595,15 @@ async def _fetch_output_items(
             # Extract per-evaluator scores
             scores: list[EvalScoreResult] = []
             for r in oi.results or []:
+                sample = r.sample
+                dimensions = _extract_rubric_scores(sample)
                 scores.append(
                     EvalScoreResult(
                         name=r.name,
                         score=r.score,
                         passed=r.passed,
-                        sample=r.sample,
+                        sample=sample,
+                        dimensions=dimensions,
                     )
                 )
 
