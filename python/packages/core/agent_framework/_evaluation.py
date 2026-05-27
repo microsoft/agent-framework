@@ -311,12 +311,15 @@ class EvalScoreResult:
         score: Numeric score from the evaluator.
         passed: Whether the item passed this evaluator's threshold.
         sample: Optional raw evaluator output (rationale, metadata).
+        dimensions: Per-dimension scores for rubric-based evaluators.
+            ``None`` for non-rubric (e.g. built-in) evaluators.
     """
 
     name: str
     score: float
     passed: bool | None = None
     sample: dict[str, Any] | None = None
+    dimensions: list[RubricScore] | None = None
 
 
 @experimental(feature_id=ExperimentalFeature.EVALS)
@@ -495,6 +498,37 @@ class EvalResults:
                     summaries = [f"{i.item_id}: {i.error_code or 'unknown'}" for i in errored_items]
                     detail += f" Errored items: {', '.join(summaries)}."
             raise EvalNotPassedError(detail)
+
+# endregion
+
+# region Generated rubric evaluators
+
+
+@experimental(feature_id=ExperimentalFeature.EVALS)
+@dataclass(frozen=True)
+class RubricScore:
+    """A single dimension's score from a rubric-based evaluator run.
+
+    Rubric evaluators (e.g. Foundry's generated rubric evaluators) emit
+    one ``RubricScore`` per dimension per item.  Attached to
+    :class:`EvalScoreResult` as a typed view of the raw
+    ``properties.rubric_scores`` payload.
+
+    Attributes:
+        id: Stable identifier for the dimension (e.g.
+            ``"policy_enforcement"``) defined by the rubric.
+        score: Numeric score, or ``None`` when the dimension was marked
+            non-applicable for this item.
+        applicable: Whether the dimension applied to this item.
+        weight: Dimension weight (mirrors the rubric definition).
+        reason: Short rationale produced by the evaluator.
+    """
+
+    id: str
+    score: int | None
+    applicable: bool
+    weight: int
+    reason: str
 
 
 # endregion
