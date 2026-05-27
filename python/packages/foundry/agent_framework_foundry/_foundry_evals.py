@@ -183,6 +183,9 @@ class EvalGenerationSource:
         description: Optional short description shown in Foundry UI.
         prompt: Rendered dossier for ``type="prompt"`` sources.
         agent_name: Hosted Foundry agent name for ``type="agent"`` sources.
+        agent_version: Optional pinned hosted-agent version for
+            ``type="agent"`` sources.  ``None`` resolves to the latest
+            version at generation time; pin for reproducible runs.
         dataset_name: Foundry dataset name for ``type="dataset"`` sources.
         dataset_version: Pinned dataset version (recommended for repro).
         metadata: Free-form metadata.  Used by ``type="traces"`` sources
@@ -194,6 +197,7 @@ class EvalGenerationSource:
     description: str | None = None
     prompt: str | None = None
     agent_name: str | None = None
+    agent_version: str | None = None
     dataset_name: str | None = None
     dataset_version: str | None = None
     metadata: dict[str, Any] | None = None
@@ -209,41 +213,79 @@ def agent_as_eval_source(
     include_examples: bool = False,
     examples: Sequence[str] | None = None,
     hosted_agent_name: str | None = None,
+    hosted_agent_version: str | None = None,
+    force_prompt_source: bool = False,
 ) -> EvalGenerationSource:
     """Render an agent as an :class:`EvalGenerationSource` for rubric generation.
 
-    Wraps :meth:`BaseAgent.as_eval_source` to package the agent's
-    rendered dossier into a typed Foundry generation source.  When
-    ``hosted_agent_name`` is provided, returns a ``type="agent"`` source
-    referencing the hosted Foundry agent so the service fetches
-    server-side metadata directly instead of using a rendered dossier.
+    Picks the best Foundry source variant for the supplied agent:
+
+    * **Hosted Foundry agents** (``FoundryAgent`` connected to a Prompt
+      Agent or Hosted Agent in a Foundry project) are emitted as
+      ``type="agent"`` sources keyed by ``agent_name`` so the service
+      fetches instructions, tools, and metadata directly from the agent
+      registry — independent of whatever the local wrapper happens to
+      hold.  Detected automatically from ``agent.chat_client.agent_name``
+      and ``agent.chat_client.agent_version``.
+    * **Local agents** (any other ``BaseAgent`` whose instructions and
+      tools live client-side, e.g. ``FoundryChatClient``-backed agents or
+      pure OpenAI Responses agents) are emitted as ``type="prompt"``
+      sources with a rendered text dossier.
+
+    Override the heuristic by passing ``hosted_agent_name`` explicitly
+    (forces an ``"agent"`` source) or ``force_prompt_source=True``
+    (forces a ``"prompt"`` source — useful when you want the service to
+    score a hosted agent against the *local* wrapper's overrides).
 
     Args:
         agent: Agent instance (typically a ``BaseAgent`` subclass).
         include_instructions: Whether to include the agent's instructions
-            text.  Defaults to ``True``.
-        include_tools: Whether to include tool definitions.  Defaults to
+            text in the dossier (``"prompt"`` sources only).  Defaults to
             ``True``.
+        include_tools: Whether to include tool definitions in the dossier
+            (``"prompt"`` sources only).  Defaults to ``True``.
         include_context_providers: Whether to include the names of
-            attached context-provider classes.  Defaults to ``False`` to
-            avoid leaking implementation details.
-        include_examples: Whether to include the supplied ``examples``.
-            Defaults to ``False`` to avoid shipping potentially sensitive
-            sample inputs by default.
+            attached context-provider classes in the dossier
+            (``"prompt"`` sources only).  Defaults to ``False`` to avoid
+            leaking implementation details.
+        include_examples: Whether to include the supplied ``examples`` in
+            the dossier (``"prompt"`` sources only).  Defaults to
+            ``False`` to avoid shipping potentially sensitive sample
+            inputs by default.
         examples: Optional sample queries / interactions to include when
             ``include_examples`` is ``True``.
         hosted_agent_name: When set, emit a ``type="agent"`` source
-            referencing the hosted Foundry agent by name instead of a
-            rendered dossier.
+            referencing this hosted Foundry agent name regardless of
+            auto-detection.  Use to override or supplement the
+            heuristic.
+        hosted_agent_version: When set together with a hosted-agent
+            source, pins the source to a specific hosted-agent version.
+            Recommended for reproducible rubric generation against
+            PromptAgents.
+        force_prompt_source: When ``True``, always emit a
+            ``type="prompt"`` source with the rendered dossier even when
+            the agent is a hosted Foundry agent.  Useful when the local
+            wrapper holds overrides the service-side agent doesn't see.
 
     Returns:
         An :class:`EvalGenerationSource` describing the agent.
     """
-    if hosted_agent_name:
-        agent_description = getattr(agent, "description", None)
+    agent_description = getattr(agent, "description", None)
+
+    resolved_name = hosted_agent_name
+    resolved_version = hosted_agent_version
+    if resolved_name is None and not force_prompt_source:
+        detected_name, detected_version = _detect_hosted_foundry_agent(agent)
+        if detected_name is not None:
+            resolved_name = detected_name
+            if resolved_version is None:
+                resolved_version = detected_version
+
+    if resolved_name is not None and not force_prompt_source:
         return EvalGenerationSource(
             type="agent",
-            agent_name=hosted_agent_name,
+            agent_name=resolved_name,
+            agent_version=resolved_version,
             description=agent_description,
         )
 
@@ -254,12 +296,33 @@ def agent_as_eval_source(
         include_examples=include_examples,
         examples=examples,
     )
-    agent_description = getattr(agent, "description", None)
     return EvalGenerationSource(
         type="prompt",
         prompt=prompt,
         description=agent_description,
     )
+
+
+def _detect_hosted_foundry_agent(agent: BaseAgent) -> tuple[str | None, str | None]:
+    """Return ``(agent_name, agent_version)`` for hosted Foundry agents, else ``(None, None)``.
+
+    A hosted Foundry agent is one whose ``chat_client`` exposes a string
+    ``agent_name`` — the convention used by ``RawFoundryAgentChatClient``
+    when ``FoundryAgent`` connects to an existing Prompt Agent or Hosted
+    Agent in a Foundry project.  Only string values are accepted so
+    test doubles using ``MagicMock`` for ``chat_client`` are not
+    mis-detected.
+    """
+    chat_client = getattr(agent, "chat_client", None)
+    if chat_client is None:
+        return None, None
+    name = getattr(chat_client, "agent_name", None)
+    version = getattr(chat_client, "agent_version", None)
+    if not isinstance(name, str) or not name:
+        return None, None
+    if not isinstance(version, str) or not version:
+        version = None
+    return name, version
 
 
 @experimental(feature_id=ExperimentalFeature.EVALS)
@@ -1354,6 +1417,8 @@ def _to_sdk_source(source: EvalGenerationSource, sdk_types: _GenerationSdkTypes)
         if not source.agent_name:
             raise ValueError("EvalGenerationSource(type='agent') requires agent_name.")
         kwargs = {"agent_name": source.agent_name}
+        if source.agent_version is not None:
+            kwargs["agent_version"] = source.agent_version
         if source.description is not None:
             kwargs["description"] = source.description
         return sdk_types.AgentSource(**kwargs)
@@ -1364,9 +1429,10 @@ def _to_sdk_source(source: EvalGenerationSource, sdk_types: _GenerationSdkTypes)
             )
         if not source.dataset_name:
             raise ValueError("EvalGenerationSource(type='dataset') requires dataset_name.")
-        kwargs = {"dataset_name": source.dataset_name}
+        # SDK uses ``name`` / ``version`` (not ``dataset_name`` / ``dataset_version``).
+        kwargs = {"name": source.dataset_name}
         if source.dataset_version is not None:
-            kwargs["dataset_version"] = source.dataset_version
+            kwargs["version"] = source.dataset_version
         if source.description is not None:
             kwargs["description"] = source.description
         return sdk_types.DatasetSource(**kwargs)

@@ -3020,6 +3020,75 @@ class TestFoundryAgentAsEvalSource:
         assert source.prompt is None
         assert source.description == "Looks up the weather."
 
+    def test_explicit_hosted_agent_version_forwarded(self) -> None:
+        from agent_framework_foundry._foundry_evals import agent_as_eval_source
+
+        agent = _make_stub_agent(name="weather-bot")
+        source = agent_as_eval_source(
+            agent,
+            hosted_agent_name="weather-bot-hosted-id",
+            hosted_agent_version="3",
+        )
+        assert source.type == "agent"
+        assert source.agent_name == "weather-bot-hosted-id"
+        assert source.agent_version == "3"
+
+    def test_auto_detects_hosted_foundry_agent(self) -> None:
+        """A chat_client carrying agent_name/agent_version is treated as a hosted agent."""
+        from agent_framework_foundry._foundry_evals import agent_as_eval_source
+
+        agent = _make_stub_agent(name="weather-bot", description="Looks up the weather.")
+        agent.chat_client = MagicMock()
+        agent.chat_client.agent_name = "weather-prompt-agent"
+        agent.chat_client.agent_version = "2"
+
+        source = agent_as_eval_source(agent)
+        assert source.type == "agent"
+        assert source.agent_name == "weather-prompt-agent"
+        assert source.agent_version == "2"
+        assert source.prompt is None
+        assert source.description == "Looks up the weather."
+
+    def test_auto_detection_handles_versionless_hosted_agent(self) -> None:
+        """HostedAgents typically omit agent_version (no None forwarded)."""
+        from agent_framework_foundry._foundry_evals import agent_as_eval_source
+
+        agent = _make_stub_agent(name="weather-bot")
+        agent.chat_client = MagicMock()
+        agent.chat_client.agent_name = "weather-hosted-agent"
+        agent.chat_client.agent_version = None
+
+        source = agent_as_eval_source(agent)
+        assert source.type == "agent"
+        assert source.agent_name == "weather-hosted-agent"
+        assert source.agent_version is None
+
+    def test_force_prompt_source_overrides_auto_detection(self) -> None:
+        """force_prompt_source=True falls back to dossier even for hosted agents."""
+        from agent_framework_foundry._foundry_evals import agent_as_eval_source
+
+        agent = _make_stub_agent(name="weather-bot", description="Looks up the weather.")
+        agent.chat_client = MagicMock()
+        agent.chat_client.agent_name = "weather-prompt-agent"
+        agent.chat_client.agent_version = "2"
+
+        source = agent_as_eval_source(agent, force_prompt_source=True)
+        assert source.type == "prompt"
+        assert source.prompt is not None
+        assert "Agent name: weather-bot" in source.prompt
+
+    def test_auto_detection_ignores_non_string_chat_client_fields(self) -> None:
+        """Bare MagicMock chat_client (untyped attrs) must not trigger detection."""
+        from agent_framework_foundry._foundry_evals import agent_as_eval_source
+
+        agent = _make_stub_agent(name="local-agent")
+        agent.chat_client = MagicMock()  # agent_name attr resolves to a MagicMock, not a str
+
+        source = agent_as_eval_source(agent)
+        assert source.type == "prompt"
+        assert source.prompt is not None
+        assert "Agent name: local-agent" in source.prompt
+
     def test_forwards_keyword_options_to_agent(self) -> None:
         from agent_framework_foundry._foundry_evals import agent_as_eval_source
 
@@ -3192,7 +3261,19 @@ class TestToSdkSource:
             sdk,
         )
         assert out == "dataset-sdk-instance"
-        sdk.DatasetSource.assert_called_once_with(dataset_name="ds", dataset_version="1")
+        sdk.DatasetSource.assert_called_once_with(name="ds", version="1")
+
+    def test_agent_source_forwards_agent_version(self) -> None:
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource, _to_sdk_source
+
+        sdk = self._make_sdk_types()
+        sdk.AgentSource.return_value = "agent-sdk-instance"
+        out = _to_sdk_source(
+            EvalGenerationSource(type="agent", agent_name="prompt-agent", agent_version="2"),
+            sdk,
+        )
+        assert out == "agent-sdk-instance"
+        sdk.AgentSource.assert_called_once_with(agent_name="prompt-agent", agent_version="2")
 
 
 class TestPollGenerationJob:
