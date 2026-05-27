@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal
 
 from agent_framework import (
     ChatMiddlewareLayer,
@@ -269,111 +269,6 @@ class RawFoundryChatClient(  # type: ignore[misc]
         if update is not None:
             return update
         return super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
-
-    def _prepare_prompt_agent_options(
-        self,
-        default_options: Mapping[str, Any],
-        *,
-        has_tools: bool = False,
-    ) -> dict[str, Any]:
-        """Translate ``default_options`` into ``PromptAgentDefinition`` field kwargs.
-
-        Reuses the same helpers as the regular request path
-        (``validate_tool_mode``, ``_prepare_response_and_text_format``,
-        ``type_to_text_format_param``) so a published prompt agent stays
-        consistent with the agent's local execution.
-
-        Only fields with a direct ``PromptAgentDefinition`` counterpart are
-        translated: ``temperature``, ``top_p``, ``reasoning``, ``tool_choice``,
-        ``response_format`` / ``text`` / ``verbosity``. Other
-        ``OpenAIChatOptions`` keys (``include``, ``prompt``, ``store``, etc.)
-        have no prompt-agent equivalent and are intentionally ignored. The
-        input mapping is never mutated.
-
-        Args:
-            default_options: The agent's ``default_options`` mapping.
-
-        Keyword Args:
-            has_tools: When ``False``, ``tool_choice`` is dropped (no point
-                emitting a tool selection policy when the definition has no
-                tools), mirroring the regular request path in
-                ``_prepare_options``.
-
-        Returns:
-            A dict ready to splat into ``PromptAgentDefinition(**...)``.
-            Unset fields are omitted.
-        """
-        from agent_framework._types import validate_tool_mode
-        from azure.ai.projects.models import (
-            PromptAgentDefinitionTextOptions,
-            Reasoning,
-            ToolChoiceAllowed,
-            ToolChoiceFunction,
-        )
-        from openai.lib._parsing._responses import (  # type: ignore[reportPrivateImportUsage]
-            type_to_text_format_param,
-        )
-        from pydantic import BaseModel
-
-        result: dict[str, Any] = {}
-
-        if (temperature := default_options.get("temperature")) is not None:
-            result["temperature"] = temperature
-        if (top_p := default_options.get("top_p")) is not None:
-            result["top_p"] = top_p
-
-        if (reasoning := default_options.get("reasoning")) is not None:
-            if isinstance(reasoning, Reasoning):
-                result["reasoning"] = reasoning
-            elif isinstance(reasoning, Mapping):
-                result["reasoning"] = Reasoning(**dict(cast("Mapping[str, Any]", reasoning)))
-            else:
-                result["reasoning"] = reasoning
-
-        if has_tools and (tool_choice := default_options.get("tool_choice")) is not None:
-            tool_mode = validate_tool_mode(tool_choice)
-            if tool_mode is not None:
-                mode = tool_mode.get("mode")
-                func_name = tool_mode.get("required_function_name")
-                allowed = tool_mode.get("allowed_tools")
-                if mode == "required" and func_name is not None:
-                    result["tool_choice"] = ToolChoiceFunction(name=func_name)
-                elif mode == "auto" and allowed is not None:
-                    result["tool_choice"] = ToolChoiceAllowed(
-                        mode="auto",
-                        tools=[{"type": "function", "name": name} for name in allowed],
-                    )
-                else:
-                    result["tool_choice"] = mode
-
-        existing_text = default_options.get("text")
-        text_config: dict[str, Any] | None = (
-            dict(cast("Mapping[str, Any]", existing_text)) if isinstance(existing_text, Mapping) else None
-        )
-        response_format = default_options.get("response_format")
-        if response_format is not None or text_config is not None:
-            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                format_config = dict(type_to_text_format_param(response_format))
-                text_config = dict(text_config) if text_config else {}
-                if "format" in text_config and text_config["format"] != format_config:
-                    raise ValueError("Conflicting response_format definitions detected.")
-                text_config["format"] = format_config
-            elif response_format is not None:
-                response_format_model, text_config = self._prepare_response_and_text_format(
-                    response_format=response_format, text_config=text_config
-                )
-                if response_format_model is not None:
-                    raise ValueError(
-                        "response_format must be a Pydantic BaseModel subclass or a mapping when "
-                        "converting to a PromptAgentDefinition."
-                    )
-        if (verbosity := default_options.get("verbosity")) is not None:
-            text_config = dict(text_config) if text_config else {}
-            text_config["verbosity"] = verbosity
-        if text_config:
-            result["text"] = PromptAgentDefinitionTextOptions(text_config)
-
-        return result
 
     async def configure_azure_monitor(
         self,

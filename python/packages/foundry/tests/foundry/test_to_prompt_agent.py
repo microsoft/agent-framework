@@ -310,7 +310,7 @@ def test_to_prompt_agent_rejects_dict_tool_without_type() -> None:
 
 # ---------------------------------------------------------------------------
 # Generation parameters sourced from default_options
-# (translated by FoundryChatClient._prepare_prompt_agent_options)
+# (translated by _prepare_prompt_agent_options in _to_prompt_agent)
 # ---------------------------------------------------------------------------
 
 

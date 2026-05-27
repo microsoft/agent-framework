@@ -123,7 +123,9 @@ agent without restating the model deployment name.
 
 Every generation parameter that has an Agent Framework equivalent is sourced
 from `agent.default_options` and translated into the matching Foundry shape by
-`FoundryChatClient._prepare_prompt_agent_options`:
+`_prepare_prompt_agent_options` (a module-private helper in
+`agent_framework_foundry._to_prompt_agent` that reuses the chat client's own
+request-path helpers):
 
 | `default_options` key | `PromptAgentDefinition` field |
 |---|---|
