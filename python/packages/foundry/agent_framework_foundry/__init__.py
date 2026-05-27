@@ -10,6 +10,13 @@ from ._embedding_client import (
     FoundryEmbeddingSettings,
     RawFoundryEmbeddingClient,
 )
+from ._evals_config import (
+    RubricGenerationSpec,
+    RubricSourceSpec,
+    build_sources,
+    load_evals_config,
+    parse_evals_config,
+)
 from ._foundry_evals import (
     EvalGenerationSource,
     FoundryEvals,
@@ -44,9 +51,14 @@ __all__ = [
     "RawFoundryChatClient",
     "RawFoundryEmbeddingClient",
     "RubricDimension",
+    "RubricGenerationSpec",
+    "RubricSourceSpec",
     "__version__",
     "agent_as_eval_source",
+    "build_sources",
     "evaluate_foundry_target",
     "evaluate_traces",
+    "load_evals_config",
+    "parse_evals_config",
     "workflow_as_eval_source",
 ]
