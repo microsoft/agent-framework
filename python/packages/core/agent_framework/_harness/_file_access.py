@@ -89,7 +89,11 @@ async def _run_search_with_timeout(
     """
     try:
         return await asyncio.wait_for(asyncio.to_thread(fn), timeout=_SEARCH_TIMEOUT_SECONDS)
-    except TimeoutError as exc:
+    except asyncio.TimeoutError as exc:
+        # On Python 3.10 ``asyncio.wait_for`` raises ``asyncio.TimeoutError``
+        # which is distinct from the builtin ``TimeoutError`` (the two were
+        # unified in 3.11). Catching the asyncio alias works on every
+        # supported version.
         raise ValueError(
             f"Regex search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. "
             "Use a more specific pattern (avoid nested quantifiers such as '(a+)+')."
@@ -815,15 +819,21 @@ class FileAccessProvider(ContextProvider):
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
         @tool(name="file_access_list_files", approval_mode="never_require")
-        async def file_access_list_files() -> list[str]:
-            """List all file names."""
-            return await self.store.list_files("")
+        async def file_access_list_files(directory: str | None = None) -> list[str]:
+            """List the direct child file names of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate files in a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``."""  # noqa: E501
+            target = directory if directory and directory.strip() else ""
+            return await self.store.list_files(target)
 
         @tool(name="file_access_search_files", approval_mode="never_require")
-        async def file_access_search_files(regex_pattern: str, file_pattern: str | None = None) -> list[dict[str, Any]]:
-            """Search file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Returns matching file names, snippets, and matching lines with line numbers. The regex_pattern must be 256 characters or fewer."""  # noqa: E501
+        async def file_access_search_files(
+            regex_pattern: str,
+            file_pattern: str | None = None,
+            directory: str | None = None,
+        ) -> list[dict[str, Any]]:
+            """Search file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Optionally scope the search to a subdirectory by passing its relative path; omit ``directory`` (or pass an empty string) to search the root. Returns matching file names, snippets, and matching lines with line numbers. The regex_pattern must be 256 characters or fewer."""  # noqa: E501
             pattern = file_pattern if file_pattern and file_pattern.strip() else None
-            results = await self.store.search_files("", regex_pattern, pattern)
+            target = directory if directory and directory.strip() else ""
+            results = await self.store.search_files(target, regex_pattern, pattern)
             return [result.to_dict() for result in results]
 
         context.extend_instructions(self.source_id, [self.instructions])

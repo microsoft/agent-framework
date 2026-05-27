@@ -373,6 +373,15 @@ async def test_file_access_provider_tools_round_trip_files(
     listed = await list_files.invoke()
     assert json.loads(listed[0].text) == ["plan.md"]
 
+    # The list tool should accept an optional directory argument so agents can
+    # enumerate nested folders (not only the root).
+    await save_file.invoke(arguments={"file_name": "reports/2024.md", "content": "annual"})
+    listed_nested = await list_files.invoke(arguments={"directory": "reports"})
+    assert json.loads(listed_nested[0].text) == ["2024.md"]
+    # Blank / whitespace directory should fall back to the root listing.
+    listed_blank = await list_files.invoke(arguments={"directory": "   "})
+    assert sorted(json.loads(listed_blank[0].text)) == ["plan.md"]
+
     missing = await read_file.invoke(arguments={"file_name": "missing.md"})
     assert "not found" in missing[0].text
 
@@ -380,6 +389,15 @@ async def test_file_access_provider_tools_round_trip_files(
     parsed = json.loads(search_payload[0].text)
     assert parsed[0]["file_name"] == "plan.md"
     assert parsed[0]["matching_lines"][0]["line"] == "ERROR replaced"
+
+    # The search tool should likewise accept an optional directory argument so
+    # agents can scope a search to a subfolder.
+    await save_file.invoke(arguments={"file_name": "reports/issues.md", "content": "ERROR nested"})
+    scoped = await search_files.invoke(
+        arguments={"regex_pattern": "error", "file_pattern": "*.md", "directory": "reports"}
+    )
+    scoped_parsed = json.loads(scoped[0].text)
+    assert [entry["file_name"] for entry in scoped_parsed] == ["issues.md"]
 
     deleted = await delete_file.invoke(arguments={"file_name": "plan.md"})
     assert "deleted" in deleted[0].text
