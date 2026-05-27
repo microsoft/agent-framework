@@ -40,6 +40,7 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
     /// <param name="blockedImports">Custom blocked imports (replaces defaults).</param>
     /// <param name="allowedBuiltins">Custom allowed builtins (replaces defaults).</param>
     /// <param name="blockedBuiltins">Custom blocked builtins (replaces defaults).</param>
+    /// <param name="fileMounts">File mounts to expose to generated code.</param>
     public LocalCodeActProvider(
         string pythonExecutablePath,
         IEnumerable<AIFunction>? tools = null,
@@ -49,7 +50,8 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
         string[]? allowedImports = null,
         string[]? blockedImports = null,
         string[]? allowedBuiltins = null,
-        string[]? blockedBuiltins = null)
+        string[]? blockedBuiltins = null,
+        IEnumerable<FileMount>? fileMounts = null)
     {
         ArgumentNullException.ThrowIfNull(pythonExecutablePath);
 
@@ -62,7 +64,8 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
             allowedImports,
             blockedImports,
             allowedBuiltins,
-            blockedBuiltins);
+            blockedBuiltins,
+            fileMounts);
     }
 
     /// <inheritdoc/>

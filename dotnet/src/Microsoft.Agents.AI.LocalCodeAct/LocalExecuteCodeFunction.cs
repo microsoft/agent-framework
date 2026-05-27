@@ -38,6 +38,7 @@ public sealed class LocalExecuteCodeFunction : AIFunction, IDisposable
     private readonly List<AIFunction> _tools;
     private readonly string? _runnerScript;
     private readonly CodeValidator? _validator;
+    private readonly List<FileMount> _fileMounts;
     private bool _disposed;
 
     /// <summary>
@@ -52,6 +53,7 @@ public sealed class LocalExecuteCodeFunction : AIFunction, IDisposable
     /// <param name="blockedImports">Custom blocked imports (replaces defaults).</param>
     /// <param name="allowedBuiltins">Custom allowed builtins (replaces defaults).</param>
     /// <param name="blockedBuiltins">Custom blocked builtins (replaces defaults).</param>
+    /// <param name="fileMounts">File mounts to expose to generated code.</param>
     public LocalExecuteCodeFunction(
         string pythonExecutablePath,
         IEnumerable<AIFunction>? tools = null,
@@ -61,7 +63,8 @@ public sealed class LocalExecuteCodeFunction : AIFunction, IDisposable
         string[]? allowedImports = null,
         string[]? blockedImports = null,
         string[]? allowedBuiltins = null,
-        string[]? blockedBuiltins = null)
+        string[]? blockedBuiltins = null,
+        IEnumerable<FileMount>? fileMounts = null)
     {
         ArgumentNullException.ThrowIfNull(pythonExecutablePath);
 
@@ -70,6 +73,7 @@ public sealed class LocalExecuteCodeFunction : AIFunction, IDisposable
         _environment = environment != null ? new Dictionary<string, string>(environment) : [];
         _tools = tools?.Where(t => t != null && t.Metadata.Name != ExecuteCodeName).ToList() ?? [];
         _runnerScript = runnerScript;
+        _fileMounts = fileMounts?.Select(FileMountHelper.NormalizeFileMount).ToList() ?? [];
 
         // Create validator if validation lists are provided
         if (allowedImports != null || blockedImports != null || allowedBuiltins != null || blockedBuiltins != null)
@@ -109,6 +113,9 @@ public sealed class LocalExecuteCodeFunction : AIFunction, IDisposable
             await _validator.ValidateAsync(code, cancellationToken).ConfigureAwait(false);
         }
 
+        // Snapshot writable mounts before execution
+        var preState = FileMountHelper.SnapshotWritableMounts(_fileMounts);
+
         // Execute code
         var bridge = new ProcessBridge(
             _tools,
@@ -120,8 +127,11 @@ public sealed class LocalExecuteCodeFunction : AIFunction, IDisposable
 
         var result = await bridge.RunAsync(code, cancellationToken).ConfigureAwait(false);
 
+        // Capture written files
+        var capturedFiles = FileMountHelper.CaptureWrittenFiles(_fileMounts, preState, _limits);
+
         // Convert result to content
-        return BuildExecutionContents(result);
+        return BuildExecutionContents(result, capturedFiles);
     }
 
     /// <inheritdoc/>
@@ -151,36 +161,39 @@ public sealed class LocalExecuteCodeFunction : AIFunction, IDisposable
         return sb.ToString();
     }
 
-    private static List<ChatMessage> BuildExecutionContents(Dictionary<string, object?> result)
+    private static List<ChatMessage> BuildExecutionContents(Dictionary<string, object?> result, List<AIContent> capturedFiles)
     {
         var stdout = result.TryGetValue("stdout", out var so) ? so?.ToString() ?? "" : "";
         var stderr = result.TryGetValue("stderr", out var se) ? se?.ToString() ?? "" : "";
         var outputPresent = result.TryGetValue("output_present", out var op) && Convert.ToBoolean(op);
         var output = result.TryGetValue("output", out var o) ? o : null;
 
-        var messages = new List<ChatMessage>();
+        var contents = new List<AIContent>();
 
         if (!string.IsNullOrEmpty(stdout))
         {
-            messages.Add(new ChatMessage(ChatRole.Tool, stdout));
+            contents.Add(new TextContent(stdout));
         }
 
         if (!string.IsNullOrEmpty(stderr))
         {
-            messages.Add(new ChatMessage(ChatRole.Tool, $"stderr: {stderr}"));
+            contents.Add(new TextContent($"stderr: {stderr}"));
         }
 
         if (outputPresent && output != null)
         {
             var serialized = JsonSerializer.Serialize(output);
-            messages.Add(new ChatMessage(ChatRole.Tool, serialized));
+            contents.Add(new TextContent(serialized));
         }
 
-        if (messages.Count == 0)
+        // Add captured files
+        contents.AddRange(capturedFiles);
+
+        if (contents.Count == 0)
         {
-            messages.Add(new ChatMessage(ChatRole.Tool, "Code executed successfully without output."));
+            contents.Add(new TextContent("Code executed successfully without output."));
         }
 
-        return messages;
+        return [new ChatMessage(ChatRole.Tool, contents)];
     }
 }
