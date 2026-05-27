@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.2.0,<2",
     # valkey-glide does not publish Windows wheels; exclude win32.
-    "valkey-glide>=2.1.0,<3; sys_platform != 'win32'",
+    "valkey-glide>=2.4.0,<3; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]
