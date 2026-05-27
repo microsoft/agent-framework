@@ -96,9 +96,11 @@ class GeneratedEvaluatorRef:
     when the evaluator already exists, or obtain one from
     :meth:`FoundryEvals.generate_rubric`.
 
-    By default ``version`` is required and pinned so an evaluation run is
-    reproducible.  Use :meth:`latest` to opt in to versionless references
-    explicitly.
+    Pinning ``version`` is strongly recommended so evaluation runs are
+    reproducible.  The dataclass accepts ``version=None`` for the
+    convenience of :meth:`latest`, but ``FoundryEvals`` emits a warning
+    whenever a versionless reference is used; CI gates should always
+    pass a concrete version.
 
     Attributes:
         name: Evaluator name as stored in the Foundry project (e.g.
@@ -1147,7 +1149,7 @@ class FoundryEvals:
         agent: BaseAgent | None = None,
         workflow: Workflow | None = None,
         sources: Sequence[EvalGenerationSource] | None = None,
-        category: str = "quality",
+        category: Literal["quality", "safety"] = "quality",
         model: str | None = None,
         display_name: str | None = None,
         description: str | None = None,
@@ -1208,6 +1210,9 @@ class FoundryEvals:
                 terminal state.
         """
         resolved_sources = _coalesce_generation_sources(agent=agent, workflow=workflow, sources=sources)
+
+        if category not in ("quality", "safety"):
+            raise ValueError(f"category must be 'quality' or 'safety', got {category!r}.")
 
         try:
             sdk_types = _import_generation_sdk_types()
@@ -1389,7 +1394,8 @@ async def _poll_generation_job(
     if not job_id:
         raise RuntimeError("Rubric generation job did not return an id.")
 
-    deadline = asyncio.get_event_loop().time() + timeout
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
     current = job
     while True:
         status = (getattr(current, "status", "") or "").lower()
@@ -1399,15 +1405,16 @@ async def _poll_generation_job(
                 err_msg = getattr(err, "message", None) or str(err) if err is not None else status
                 raise RuntimeError(f"Rubric generation job {job_id} ended in status {status!r}: {err_msg}")
             return current
-        if asyncio.get_event_loop().time() >= deadline:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
             raise TimeoutError(
                 f"Rubric generation job {job_id} did not complete within {timeout}s (last status: {status!r})."
             )
-        await asyncio.sleep(poll_interval)
+        await asyncio.sleep(min(poll_interval, remaining))
         current = await evaluators_ops.get_generation_job(job_id)
 
 
-def _generation_job_to_ref(job: Any, *, category: str) -> GeneratedEvaluatorRef:
+def _generation_job_to_ref(job: Any, *, category: Literal["quality", "safety"]) -> GeneratedEvaluatorRef:
     """Build a pinned :class:`GeneratedEvaluatorRef` from a completed job."""
     artifacts: Any = getattr(job, "artifacts", None)
     evaluator: Any = getattr(artifacts, "evaluator", None) if artifacts is not None else None
@@ -1447,13 +1454,10 @@ def _generation_job_to_ref(job: Any, *, category: str) -> GeneratedEvaluatorRef:
         if isinstance(raw_threshold, (int, float)):
             pass_threshold = float(raw_threshold)
 
-    valid_category: str
-    valid_category = category if category in ("quality", "safety") else "quality"
-
     return GeneratedEvaluatorRef(
         name=str(ev_name),
         version=str(ev_version),
-        category=cast("Any", valid_category),
+        category=category,
         display_name=getattr(evaluator, "display_name", None),
         description=getattr(evaluator, "description", None),
         dimensions=dimensions,

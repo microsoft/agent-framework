@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -3303,6 +3303,20 @@ class TestGenerateRubricSdkMissing:
                 project_client=project_client,
                 name="my-eval",
                 sources=[EvalGenerationSource(type="prompt", prompt="hi")],
+            )
+
+    async def test_raises_value_error_on_invalid_category(self) -> None:
+        """category outside {quality, safety} should fail fast at the boundary."""
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource
+
+        project_client = MagicMock()
+
+        with pytest.raises(ValueError, match="category"):
+            await FoundryEvals.generate_rubric(
+                project_client=project_client,
+                name="my-eval",
+                sources=[EvalGenerationSource(type="prompt", prompt="hi")],
+                category=cast("Any", "invalid"),
             )
 
 

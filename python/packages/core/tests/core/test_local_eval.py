@@ -12,8 +12,13 @@ import pytest
 from agent_framework._evaluation import (
     CheckResult,
     EvalItem,
+    EvalItemResult,
+    EvalNotPassedError,
+    EvalResults,
+    EvalScoreResult,
     ExpectedToolCall,
     LocalEvaluator,
+    RubricScore,
     _coerce_result,
     evaluator,
     keyword_check,
@@ -1008,6 +1013,107 @@ class TestAllPassedSubResults:
             sub_results={"agent1": sub_pass},
         )
         assert parent.all_passed is False
+
+
+# ---------------------------------------------------------------------------
+# Rubric assertions (EvalResults.assert_*)
+# ---------------------------------------------------------------------------
+
+
+def _rubric_results(*scores_per_item: list[EvalScoreResult]) -> EvalResults:
+    items = [
+        EvalItemResult(item_id=f"item-{i}", status="pass", scores=scores) for i, scores in enumerate(scores_per_item)
+    ]
+    return EvalResults(
+        provider="test",
+        eval_id="ev1",
+        run_id="run1",
+        result_counts={"passed": len(items), "failed": 0, "errored": 0, "total": len(items)},
+        items=items,
+    )
+
+
+class TestRubricAssertions:
+    """Tests for EvalResults.assert_dimension_score_at_least."""
+
+    def test_dimension_at_or_above_threshold_passes(self) -> None:
+        results = _rubric_results(
+            [
+                EvalScoreResult(
+                    name="policy",
+                    score=0.9,
+                    dimensions=[RubricScore(id="clarity", score=4, applicable=True, weight=1, reason="")],
+                )
+            ],
+        )
+        # Should not raise.
+        results.assert_dimension_score_at_least("clarity", 3)
+
+    def test_dimension_below_threshold_raises(self) -> None:
+        results = _rubric_results(
+            [
+                EvalScoreResult(
+                    name="policy",
+                    score=0.5,
+                    dimensions=[RubricScore(id="clarity", score=2, applicable=True, weight=1, reason="")],
+                )
+            ],
+        )
+        with pytest.raises(EvalNotPassedError):
+            results.assert_dimension_score_at_least("clarity", 3)
+
+    def test_non_applicable_skipped_by_default(self) -> None:
+        results = _rubric_results(
+            [
+                EvalScoreResult(
+                    name="policy",
+                    score=1.0,
+                    dimensions=[RubricScore(id="clarity", score=None, applicable=False, weight=1, reason="n/a")],
+                )
+            ],
+        )
+        # No applicable scores; default behaviour is to skip silently.
+        results.assert_dimension_score_at_least("clarity", 3)
+
+    def test_require_applicable_raises_when_dimension_absent(self) -> None:
+        results = _rubric_results(
+            [EvalScoreResult(name="policy", score=1.0, dimensions=[])],
+        )
+        with pytest.raises(EvalNotPassedError, match="not applicable"):
+            results.assert_dimension_score_at_least("clarity", 3, require_applicable=True)
+
+    def test_require_applicable_raises_when_filtered_evaluator_missing(self) -> None:
+        # Regression: previously the (not evaluator or found_any) guard caused
+        # this case to silently pass even with require_applicable=True.
+        results = _rubric_results(
+            [
+                EvalScoreResult(
+                    name="other",
+                    score=0.9,
+                    dimensions=[RubricScore(id="clarity", score=4, applicable=True, weight=1, reason="")],
+                )
+            ],
+        )
+        with pytest.raises(EvalNotPassedError, match="not applicable"):
+            results.assert_dimension_score_at_least("clarity", 3, evaluator="policy", require_applicable=True)
+
+    def test_evaluator_filter_isolates_offenders(self) -> None:
+        results = _rubric_results(
+            [
+                EvalScoreResult(
+                    name="other",
+                    score=0.1,
+                    dimensions=[RubricScore(id="clarity", score=1, applicable=True, weight=1, reason="")],
+                ),
+                EvalScoreResult(
+                    name="policy",
+                    score=0.9,
+                    dimensions=[RubricScore(id="clarity", score=4, applicable=True, weight=1, reason="")],
+                ),
+            ],
+        )
+        # The low-scoring "other" evaluator is filtered out; "policy" passes.
+        results.assert_dimension_score_at_least("clarity", 3, evaluator="policy")
 
 
 # ---------------------------------------------------------------------------

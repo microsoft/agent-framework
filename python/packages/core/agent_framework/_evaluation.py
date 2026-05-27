@@ -577,7 +577,6 @@ class EvalResults:
         def _check(results: EvalResults) -> None:
             for item in results.items:
                 found_applicable = False
-                found_any = False
                 for score in item.scores:
                     if evaluator is not None and score.name != evaluator:
                         continue
@@ -586,7 +585,6 @@ class EvalResults:
                     for rs in score.dimensions:
                         if rs.id != dimension_id:
                             continue
-                        found_any = True
                         if not rs.applicable:
                             continue
                         found_applicable = True
@@ -595,7 +593,7 @@ class EvalResults:
                                 f"{item.item_id}/{score.name}/{dimension_id}="
                                 f"{rs.score if rs.score is not None else 'None'}"
                             )
-                if require_applicable and not found_applicable and (not evaluator or found_any):
+                if require_applicable and not found_applicable:
                     missing_items.append(item.item_id)
             for sub in results.sub_results.values():
                 _check(sub)
