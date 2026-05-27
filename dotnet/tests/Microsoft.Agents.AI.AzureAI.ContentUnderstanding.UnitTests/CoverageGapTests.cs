@@ -11,16 +11,15 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 
 /// <summary>
-/// Phase 11 — provider-level parity gaps not previously covered:
+/// Phase 11 — provider-level coverage gaps:
 /// URL input, multi-file analysis, same-turn duplicate filename, supported-media-types,
 /// session isolation, and multi-file FileSearch upload.
 /// </summary>
-public sealed class ParityGapTests
+public sealed class CoverageGapTests
 {
-    private static readonly Uri TestEndpoint = SharedTestFixtures.TestEndpoint;
+    private static readonly Uri s_testEndpoint = SharedTestFixtures.TestEndpoint;
     private static readonly byte[] s_pdfBytes = SharedTestFixtures.LoadFixturePdf();
 
-    // parity: python tests/cu/test_context_provider.py::TestBeforeRunNewFile::test_url_input_analyzed
     [Fact]
     public async Task InvokingAsync_UrlInput_AnalyzedAndInjected()
     {
@@ -53,7 +52,6 @@ public sealed class ParityGapTests
         Assert.Equal(ChatRole.System, messages[1].Role);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestBeforeRunMultiFile::test_two_files_both_analyzed
     [Fact]
     public async Task InvokingAsync_TwoAttachmentsInSameTurn_BothAnalyzed()
     {
@@ -85,13 +83,8 @@ public sealed class ParityGapTests
         Assert.Equal(DocumentStatus.Ready, state.Documents["chart.png"].Status);
     }
 
-    // Diverges from python tests/cu/test_context_provider.py::TestDuplicateDocumentKey::test_duplicate_in_same_turn_rejected:
-    // because the .NET OpenAI Responses hosting layer does not propagate input_file.filename
-    // to DataContent.Name, AttachmentDetector synthesizes a content-addressed filename. Two
-    // uploads of the same bytes are therefore the same logical file and we reuse rather
-    // than reject. See README "Limitations (Preview)".
     [Fact]
-    public async Task InvokingAsync_DuplicateFilenameInSameTurn_ReusesWithoutReanalyzing()
+    public async Task InvokingAsync_DuplicateFilenameInSameTurn_RejectedWithSystemNote()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
             "invoice.pdf",
@@ -119,17 +112,14 @@ public sealed class ParityGapTests
 
         List<ChatMessage> messages = result.Messages!.ToList();
         Assert.DoesNotContain(messages.SelectMany(m => m.Contents), c => c is DataContent);
-        // No "already uploaded" rejection note is emitted; the duplicate is silently reused.
-        Assert.DoesNotContain(messages, m =>
+        // A System note carrying the rejection text is emitted.
+        Assert.Contains(messages, m =>
             m.Role == ChatRole.System
             && m.Contents.OfType<TextContent>().Any(t =>
-                t.Text.Contains("already uploaded", StringComparison.Ordinal)));
+                t.Text.Contains("already uploaded", StringComparison.Ordinal)
+                && t.Text.Contains("rename", StringComparison.Ordinal)));
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestSupportedMediaTypes::test_pdf_supported
-    // parity: python tests/cu/test_context_provider.py::TestSupportedMediaTypes::test_audio_supported
-    // parity: python tests/cu/test_context_provider.py::TestSupportedMediaTypes::test_video_supported
-    // parity: python tests/cu/test_context_provider.py::TestSupportedMediaTypes::test_zip_not_supported
     [Theory]
     [InlineData("application/pdf", true)]
     [InlineData("image/png", true)]
@@ -140,7 +130,7 @@ public sealed class ParityGapTests
     [InlineData("text/plain", true)]
     [InlineData("application/zip", false)]
     [InlineData("application/json", false)]
-    public void SupportedMediaTypes_MatchesPythonAllowList(string mediaType, bool expectedSupported)
+    public void SupportedMediaTypes_MatchesAllowList(string mediaType, bool expectedSupported)
     {
         DataContent dc = new(new byte[] { 0x00 }, mediaType) { Name = "sample.bin" };
         ChatMessage msg = new(ChatRole.User, [dc]);
@@ -149,7 +139,6 @@ public sealed class ParityGapTests
         Assert.Equal(expectedSupported, detected);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestSessionIsolation::test_background_task_isolated_per_session
     [Fact]
     public async Task InvokingAsync_TwoSessions_HaveIsolatedRegistries()
     {
@@ -184,7 +173,6 @@ public sealed class ParityGapTests
         Assert.False(stateB.Documents.ContainsKey("invoice.pdf"));
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestSessionIsolation::test_completed_task_resolves_in_correct_session
     [Fact]
     public async Task BackgroundCompletion_ResolvesAgainstTheOriginatingSessionOnly()
     {
@@ -220,7 +208,6 @@ public sealed class ParityGapTests
         Assert.False(stateB.Documents.ContainsKey("invoice.pdf"));
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestFileSearchIntegration::test_file_search_multiple_files
     [Fact]
     public async Task InvokingAsync_FileSearch_MultipleAttachments_UploadEach()
     {
@@ -233,7 +220,7 @@ public sealed class ParityGapTests
                 new AnalysisOutcome(true, SharedTestFixtures.MakeInvoiceResult(), "op-2", null, TimeSpan.FromMilliseconds(20)));
 
         await using ContentUnderstandingContextProvider provider = new(
-            TestEndpoint, new FakeTokenCredential(),
+            s_testEndpoint, new FakeTokenCredential(),
             opt =>
             {
                 opt.FileSearchConfig = new FileSearchConfig
@@ -264,7 +251,7 @@ public sealed class ParityGapTests
     }
 
     private static ContentUnderstandingContextProvider CreateProvider(FakeAnalyzer analyzer) =>
-        new(TestEndpoint, new FakeTokenCredential())
+        new(s_testEndpoint, new FakeTokenCredential())
         {
             ClientFactoryOverride = new CountingClientFactory(),
             AnalyzeOverride = analyzer.AnalyzeAsync,

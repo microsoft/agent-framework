@@ -17,14 +17,11 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 /// </summary>
 public sealed class ContextProviderPhase5Tests
 {
-    private static readonly Uri TestEndpoint = SharedTestFixtures.TestEndpoint;
+    private static readonly Uri s_testEndpoint = SharedTestFixtures.TestEndpoint;
 
     private static readonly byte[] s_pdfBytes = SharedTestFixtures.LoadFixturePdf();
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestBeforeRunNewFile::test_single_pdf_analyzed
-    // parity: python tests/cu/test_context_provider.py::TestBinaryStripping::test_supported_files_stripped
-    // parity: python tests/cu/test_context_provider.py::TestFileSearchIntegration::test_no_file_search_injects_content
     public async Task InvokingAsync_StripsAttachment_AndInjectsRenderedDocument()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
@@ -73,12 +70,7 @@ public sealed class ContextProviderPhase5Tests
     }
 
     [Fact]
-    // Diverges from python tests/cu/test_context_provider.py::TestDuplicateDocumentKey::test_duplicate_filename_rejected:
-    // because the .NET OpenAI Responses hosting layer does not propagate input_file.filename
-    // to DataContent.Name, AttachmentDetector synthesizes a content-addressed filename. Two
-    // uploads of the same bytes are therefore the same logical file and we reuse rather
-    // than reject. See README "Limitations (Preview)".
-    public async Task InvokingAsync_DuplicateFilenameInSameSession_ReusesWithoutReanalyzing()
+    public async Task InvokingAsync_DuplicateFilenameInSameSession_RejectedWithSystemNote()
     {
         AnalysisOutcome success = new(true, MakeInvoiceResult(), "op-1", null, TimeSpan.Zero);
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", success);
@@ -94,8 +86,8 @@ public sealed class ContextProviderPhase5Tests
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [first]) } }),
             CancellationToken.None);
 
-        // Second turn → same filename → reuse: analyzer is not invoked again and no
-        // "already uploaded" system note is injected.
+        // Second turn → same filename → rejected: analyzer is NOT invoked again and a
+        // System note is appended instructing the LLM to ask the user to rename.
         DataContent second = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
         AIContext result = await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(
@@ -103,7 +95,7 @@ public sealed class ContextProviderPhase5Tests
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [second]) } }),
             CancellationToken.None);
 
-        // Analyzer was only invoked once: the second call short-circuits on reuse.
+        // Analyzer only ran once: the second call short-circuits on the duplicate-key check.
         Assert.Equal(1, analyzer.CallCount);
 
         List<ChatMessage> messages = result.Messages!.ToList();
@@ -111,23 +103,21 @@ public sealed class ContextProviderPhase5Tests
         // Binary stripped from the LLM view (provider always strips the original DataContent).
         Assert.DoesNotContain(messages.SelectMany(m => m.Contents), c => c is DataContent);
 
-        // No "already uploaded" rejection note is emitted; the reused document was already
-        // injected on the first turn (InjectedKeys prevents re-injection).
-        Assert.DoesNotContain(messages, m =>
+        // A System note carrying the rejection text is emitted.
+        Assert.Contains(messages, m =>
             m.Role == ChatRole.System
             && m.Contents.OfType<TextContent>().Any(t =>
-                t.Text.Contains("already uploaded", StringComparison.Ordinal)));
+                t.Text.Contains("already uploaded", StringComparison.Ordinal)
+                && t.Text.Contains("rename", StringComparison.Ordinal)));
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestBeforeRunNewFile::test_text_only_skipped
-    // parity: python tests/cu/test_context_provider.py::TestBinaryStripping::test_unsupported_files_left_in_place
     public async Task InvokingAsync_UnsupportedMediaType_PassesThroughUntouched()
     {
         FakeAnalyzer analyzer = new();
         await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
 
-        // application/zip is not in SUPPORTED_MEDIA_TYPES — must pass through (Python parity: test_unsupported_files_left_in_place).
+        // application/zip is not in SUPPORTED_MEDIA_TYPES — must pass through.
         DataContent unsupported = new(new byte[] { 0x50, 0x4B, 0x03, 0x04 }, "application/zip") { Name = "archive.zip" };
         ChatMessage userMessage = new(ChatRole.User, [new TextContent("Read this."), unsupported]);
 
@@ -146,11 +136,10 @@ public sealed class ContextProviderPhase5Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestErrorHandling::test_lazy_initialization_on_before_run
     public async Task EnsureClientAsync_LazyInit_IsIdempotentUnderConcurrentLoad()
     {
         CountingClientFactory factory = new();
-        ContentUnderstandingContextProvider provider = new(TestEndpoint, new FakeTokenCredential())
+        ContentUnderstandingContextProvider provider = new(s_testEndpoint, new FakeTokenCredential())
         {
             ClientFactoryOverride = factory,
         };
@@ -171,7 +160,6 @@ public sealed class ContextProviderPhase5Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestCloseCancel::test_close_cleans_up (idempotent close path)
     public async Task DisposeAsync_IsIdempotent_AfterInvokingPath()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
@@ -191,7 +179,6 @@ public sealed class ContextProviderPhase5Tests
     }
 
     [Fact]
-    // parity: N/A — .NET ObjectDisposedException contract; Python relies on duck typing.
     public async Task InvokingAsync_AfterDispose_Throws()
     {
         FakeAnalyzer analyzer = new();
@@ -207,7 +194,6 @@ public sealed class ContextProviderPhase5Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestErrorHandling::test_cu_service_error
     public async Task InvokingAsync_AnalysisFailure_MarksFailed_StillStripsAttachment()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
@@ -237,7 +223,7 @@ public sealed class ContextProviderPhase5Tests
     }
 
     private static ContentUnderstandingContextProvider CreateProvider(FakeAnalyzer analyzer) =>
-        new(TestEndpoint, new FakeTokenCredential())
+        new(s_testEndpoint, new FakeTokenCredential())
         {
             // The lazy-init seam is exercised independently; analysis path here is fully mocked.
             ClientFactoryOverride = new CountingClientFactory(),

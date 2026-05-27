@@ -5,8 +5,7 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 
 /// <summary>
-/// Compact summary surfaced by the <c>list_documents</c> tool. Mirrors the JSON shape
-/// produced by the Python provider's <c>list_documents</c> tool, adapted to .NET conventions.
+/// Compact summary surfaced by the <c>list_documents</c> tool.
 /// </summary>
 internal sealed record DocumentSummary(
     string Filename,
@@ -31,15 +30,14 @@ internal static class ToolFactory
     /// <summary>Tool name advertised to the LLM.</summary>
     internal const string GetAnalyzedDocumentToolName = "get_analyzed_document";
 
-    /// <summary>Verbatim from Python <c>_make_list_documents_tool</c>.</summary>
+    /// <summary>Tool description advertised to the LLM.</summary>
     internal const string ListDocumentsDescription =
         "List all documents that have been uploaded in this session with their analysis status " +
         "(analyzing, uploading, ready, or failed).";
 
     /// <summary>
-    /// .NET-only extension; Python's provider relies on auto-injection. Description deliberately
-    /// instructs the LLM to prefer auto-injected content first and fall back to this tool only
-    /// when content has been evicted or filtered.
+    /// Tool description; deliberately instructs the LLM to prefer auto-injected content first
+    /// and fall back to this tool only when content has been evicted or filtered.
     /// </summary>
     internal const string GetAnalyzedDocumentDescription =
         "Retrieve the rendered text of a previously analyzed document by filename. Prefer the " +

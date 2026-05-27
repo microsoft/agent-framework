@@ -9,9 +9,8 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 /// </summary>
 public sealed class OptionsTests
 {
-    private static readonly Uri TestEndpoint = new("https://contoso.cognitiveservices.azure.com/");
+    private static readonly Uri s_testEndpoint = new("https://contoso.cognitiveservices.azure.com/");
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_missing_endpoint_raises
     [Fact]
     public void Constructor_ThrowsOnNullEndpoint()
     {
@@ -20,31 +19,28 @@ public sealed class OptionsTests
         Assert.Equal("endpoint", ex.ParamName);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_missing_credential_raises
     [Fact]
     public void Constructor_ThrowsOnNullCredential()
     {
         var ex = Assert.Throws<ArgumentNullException>(() =>
-            new ContentUnderstandingContextProviderOptions(endpoint: TestEndpoint, credential: null!));
+            new ContentUnderstandingContextProviderOptions(endpoint: s_testEndpoint, credential: null!));
         Assert.Equal("credential", ex.ParamName);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_custom_values (partial — covers required-field assignment)
     [Fact]
     public void Constructor_AssignsRequiredFields()
     {
         var credential = new FakeTokenCredential();
-        var options = new ContentUnderstandingContextProviderOptions(TestEndpoint, credential);
+        var options = new ContentUnderstandingContextProviderOptions(s_testEndpoint, credential);
 
-        Assert.Same(TestEndpoint, options.Endpoint);
+        Assert.Same(s_testEndpoint, options.Endpoint);
         Assert.Same(credential, options.Credential);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_default_values
     [Fact]
     public void Defaults_MatchDesignDoc()
     {
-        var options = new ContentUnderstandingContextProviderOptions(TestEndpoint, new FakeTokenCredential());
+        var options = new ContentUnderstandingContextProviderOptions(s_testEndpoint, new FakeTokenCredential());
 
         Assert.Null(options.AnalyzerId);
         Assert.Equal(TimeSpan.FromSeconds(5), options.MaxWait);
@@ -53,14 +49,13 @@ public sealed class OptionsTests
         Assert.Null(options.LoggerFactory);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_custom_values
     [Fact]
     public void ObjectInitializer_CanSetAllProperties()
     {
         var credential = new FakeTokenCredential();
         var options = new ContentUnderstandingContextProviderOptions
         {
-            Endpoint = TestEndpoint,
+            Endpoint = s_testEndpoint,
             Credential = credential,
             AnalyzerId = "prebuilt-invoice",
             MaxWait = TimeSpan.FromSeconds(30),
@@ -68,7 +63,7 @@ public sealed class OptionsTests
             FileSearchConfig = new FileSearchConfig(),
         };
 
-        Assert.Same(TestEndpoint, options.Endpoint);
+        Assert.Same(s_testEndpoint, options.Endpoint);
         Assert.Same(credential, options.Credential);
         Assert.Equal("prebuilt-invoice", options.AnalyzerId);
         Assert.Equal(TimeSpan.FromSeconds(30), options.MaxWait);
@@ -76,12 +71,11 @@ public sealed class OptionsTests
         Assert.NotNull(options.FileSearchConfig);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_max_wait_none
-    // (.NET uses TimeSpan.Zero as the "no foreground wait" sentinel where Python passes None.)
+    // (TimeSpan.Zero is the "no foreground wait" sentinel.)
     [Fact]
     public void MaxWait_CanBeSetToZero_ToForceImmediateBackgroundDefer()
     {
-        var options = new ContentUnderstandingContextProviderOptions(TestEndpoint, new FakeTokenCredential())
+        var options = new ContentUnderstandingContextProviderOptions(s_testEndpoint, new FakeTokenCredential())
         {
             MaxWait = TimeSpan.Zero,
         };

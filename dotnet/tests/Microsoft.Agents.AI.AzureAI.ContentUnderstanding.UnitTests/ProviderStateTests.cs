@@ -11,7 +11,6 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 /// </summary>
 public sealed class ProviderStateTests
 {
-    // parity: python tests/cu/test_models.py::TestDocumentEntry::test_construction
     [Fact]
     public void DocumentEntry_RoundTripsAllFields()
     {
@@ -38,7 +37,6 @@ public sealed class ProviderStateTests
         Assert.Equal(entry, clone);
     }
 
-    // parity: python tests/cu/test_models.py::TestDocumentEntry::test_failed_entry (nullable fields shape)
     [Fact]
     public void DocumentEntry_PreservesNullableTimestampsAndOptionalFields()
     {
@@ -72,7 +70,6 @@ public sealed class ProviderStateTests
         Assert.Equal(DocumentStatus.Analyzing, clone.Status);
     }
 
-    // parity: N/A — .NET state JSON serialization; Python state is a plain dict.
     [Fact]
     public void ProviderState_RoundTripsDocumentsDictionary()
     {
@@ -90,7 +87,6 @@ public sealed class ProviderStateTests
         Assert.Equal("boom", clone.Documents["b.mp3"].Error);
     }
 
-    // parity: N/A — .NET InjectedKeys serialization; Python uses an in-state set.
     [Fact]
     public void ProviderState_RoundTripsInjectedKeys()
     {
@@ -107,7 +103,6 @@ public sealed class ProviderStateTests
         Assert.Contains("b.mp3", clone.InjectedKeys);
     }
 
-    // parity: N/A — .NET concurrency invariant (registry must be lock-free for background runner).
     [Fact]
     public void ProviderState_DocumentsIsConcurrentDictionary()
     {

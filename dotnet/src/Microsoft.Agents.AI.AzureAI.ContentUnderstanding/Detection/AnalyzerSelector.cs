@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// analyzer id.
 /// </summary>
 /// <remarks>
-/// Matches the Python provider's auto-selection:
+/// Auto-selection rules:
 /// <c>audio/*</c> → <c>prebuilt-audioSearch</c>, <c>video/*</c> → <c>prebuilt-videoSearch</c>,
 /// everything else → <c>prebuilt-documentSearch</c>. An explicit override always wins.
 /// See <c>features/sdk/dotnet-cu-context-provider/dev-plan-dotnet-cu-context-provider.md</c>

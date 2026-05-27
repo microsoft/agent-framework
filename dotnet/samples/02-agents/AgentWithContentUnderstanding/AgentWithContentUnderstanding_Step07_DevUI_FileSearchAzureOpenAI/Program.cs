@@ -13,9 +13,6 @@
 // inactive sample sessions are cleaned up automatically. The CU provider's
 // DisposeAsync deletes the per-file uploads at app shutdown.
 //
-// Mirrors the Python sample at:
-//   python/packages/azure-contentunderstanding/samples/02-devui/02-file_search_agent/azure_openai_backend/agent.py
-//
 // Environment variables:
 //   AZURE_OPENAI_ENDPOINT                  — Azure OpenAI endpoint URL
 //   AZURE_OPENAI_DEPLOYMENT_NAME           — Chat-model deployment name (e.g. gpt-4.1)
@@ -25,6 +22,8 @@
 //   dotnet run
 // Then open https://localhost:50522/devui in a browser.
 
+using System.Text;
+using System.Text.Json;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -32,6 +31,7 @@ using Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Extensions.AI;
+using OpenAI.Files;
 using OpenAI.VectorStores;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -73,13 +73,22 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
     credential,
     options =>
     {
-        // 10 s combined budget for CU analysis + vector store upload.
-        // Larger files (audio, video) will defer to background and resolve on the next turn.
-        options.MaxWait = TimeSpan.FromSeconds(10);
-        options.FileSearchConfig = FileSearchConfig.FromOpenAI(
-            azureOpenAIClient,
-            vectorStoreId,
-            fileSearchTool);
+        // Foreground budget per turn for CU analysis + vector store upload.
+        // PDFs typically need ~15 s end-to-end; audio/video can take longer and will
+        // still defer to the background runner. Larger values trade UI latency on the
+        // first turn for fewer "still analyzing" round-trips.
+        options.MaxWait = TimeSpan.FromSeconds(60);
+        // NOTE: We cannot use FileSearchConfig.FromOpenAI(...) here because the default
+        // OpenAIFileSearchBackend uploads files with purpose=user_data, which Azure OpenAI
+        // rejects with `Invalid value for "purpose"`. Azure OpenAI's vector-store ingestion
+        // pipeline requires purpose=assistants. We compose the FileSearchConfig manually with
+        // an AzureOpenAIFileSearchBackend (defined below) that overrides Purpose accordingly.
+        options.FileSearchConfig = new FileSearchConfig
+        {
+            Backend = new AzureOpenAIFileSearchBackend(azureOpenAIClient),
+            VectorStoreId = vectorStoreId,
+            FileSearchTool = fileSearchTool,
+        };
     }));
 
 const string AgentName = "FileSearchDocAgent";
@@ -118,6 +127,36 @@ builder.AddDevUI();
 
 var app = builder.Build();
 
+// HACK: Microsoft.Agents.AI.Hosting.OpenAI's ItemContentConverter passes raw base64 from
+// input_file.file_data straight into DataContent(string uri, ...), which requires a
+// "data:" URI and throws ArgumentException otherwise. Until that's fixed upstream,
+// rewrite incoming /v1/responses bodies so raw base64 is wrapped in a data: URI. The
+// Content Understanding provider's MimeSniffer then detects the real media type
+// (PDF / PNG / JPEG / WAV / MP3 / MP4) from the bytes.
+app.Use(static async (ctx, next) =>
+{
+    if (HttpMethods.IsPost(ctx.Request.Method)
+        && ctx.Request.Path.StartsWithSegments("/v1/responses")
+        && (ctx.Request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) ?? false))
+    {
+        ctx.Request.EnableBuffering();
+        string body;
+        using (var reader = new StreamReader(ctx.Request.Body, Encoding.UTF8, leaveOpen: true))
+        {
+            body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        }
+        ctx.Request.Body.Position = 0;
+
+        if (ResponsesRawBase64Workaround.TryRewrite(body, out string rewritten))
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(rewritten);
+            ctx.Request.Body = new MemoryStream(bytes);
+            ctx.Request.ContentLength = bytes.Length;
+        }
+    }
+    await next().ConfigureAwait(false);
+});
+
 app.MapOpenAIResponses();
 app.MapOpenAIConversations();
 
@@ -131,3 +170,139 @@ Console.WriteLine("OpenAI Responses API is available at: https://localhost:50522
 Console.WriteLine("Press Ctrl+C to stop the server.");
 
 app.Run();
+
+/// <summary>
+/// Azure OpenAI–compatible file-search backend: identical to <see cref="OpenAIFileSearchBackend"/>
+/// but uploads files with <see cref="FileUploadPurpose.Assistants"/> instead of
+/// <c>UserData</c>. Azure OpenAI's <c>/files</c> endpoint rejects <c>user_data</c> with
+/// <c>Invalid value for "purpose"</c>, so the stock <c>FileSearchConfig.FromOpenAI</c>
+/// factory cannot be used against Azure OpenAI vector stores.
+/// </summary>
+internal sealed class AzureOpenAIFileSearchBackend : OpenAICompatFileSearchBackendBase
+{
+    public AzureOpenAIFileSearchBackend(AzureOpenAIClient client) : base(client) { }
+
+    protected override FileUploadPurpose Purpose => FileUploadPurpose.Assistants;
+}
+
+/// <summary>
+/// Wraps raw-base64 file_data fields in OpenAI Responses request bodies into data: URIs.
+/// Workaround for Microsoft.Agents.AI.Hosting.OpenAI's ItemContentConverter, which expects
+/// a data: URI form. Drop this once the upstream package handles raw base64 directly.
+/// </summary>
+internal static class ResponsesRawBase64Workaround
+{
+    public static bool TryRewrite(string body, out string rewritten)
+    {
+        rewritten = body;
+        if (string.IsNullOrEmpty(body))
+        {
+            return false;
+        }
+
+        using JsonDocument doc = JsonDocument.Parse(body);
+        if (!ContainsRawFileData(doc.RootElement))
+        {
+            return false;
+        }
+
+        using MemoryStream stream = new();
+        using (Utf8JsonWriter writer = new(stream))
+        {
+            RewriteElement(doc.RootElement, writer);
+        }
+        rewritten = Encoding.UTF8.GetString(stream.ToArray());
+        return true;
+    }
+
+    private static bool ContainsRawFileData(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                if (IsInputFile(element)
+                    && element.TryGetProperty("file_data", out JsonElement fileData)
+                    && fileData.ValueKind == JsonValueKind.String
+                    && fileData.GetString() is { Length: > 0 } s
+                    && !s.StartsWith("data:", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+                foreach (JsonProperty prop in element.EnumerateObject())
+                {
+                    if (ContainsRawFileData(prop.Value))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            case JsonValueKind.Array:
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    if (ContainsRawFileData(item))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsInputFile(JsonElement element)
+        => element.TryGetProperty("type", out JsonElement t)
+            && t.ValueKind == JsonValueKind.String
+            && string.Equals(t.GetString(), "input_file", StringComparison.Ordinal);
+
+    private static void RewriteElement(JsonElement element, Utf8JsonWriter writer)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                writer.WriteStartObject();
+                bool inputFile = IsInputFile(element);
+                foreach (JsonProperty prop in element.EnumerateObject())
+                {
+                    writer.WritePropertyName(prop.Name);
+                    if (inputFile
+                        && prop.Name == "file_data"
+                        && prop.Value.ValueKind == JsonValueKind.String
+                        && prop.Value.GetString() is { Length: > 0 } s
+                        && !s.StartsWith("data:", StringComparison.Ordinal))
+                    {
+                        writer.WriteStringValue("data:application/octet-stream;base64," + s);
+                    }
+                    else
+                    {
+                        RewriteElement(prop.Value, writer);
+                    }
+                }
+                writer.WriteEndObject();
+                break;
+            case JsonValueKind.Array:
+                writer.WriteStartArray();
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    RewriteElement(item, writer);
+                }
+                writer.WriteEndArray();
+                break;
+            case JsonValueKind.String:
+                writer.WriteStringValue(element.GetString());
+                break;
+            case JsonValueKind.Number:
+                writer.WriteRawValue(element.GetRawText(), skipInputValidation: true);
+                break;
+            case JsonValueKind.True:
+                writer.WriteBooleanValue(true);
+                break;
+            case JsonValueKind.False:
+                writer.WriteBooleanValue(false);
+                break;
+            case JsonValueKind.Null:
+                writer.WriteNullValue();
+                break;
+        }
+    }
+}

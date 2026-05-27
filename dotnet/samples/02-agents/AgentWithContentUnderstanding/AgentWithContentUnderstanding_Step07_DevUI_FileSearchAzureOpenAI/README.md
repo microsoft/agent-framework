@@ -2,8 +2,6 @@
 
 Hosts an Azure-OpenAI–backed agent with the Content Understanding context provider behind the DevUI web interface. Wires `FileSearchConfig.FromOpenAI` so each uploaded file is CU-extracted and indexed in an Azure OpenAI vector store, then queried via the `file_search` tool — ideal for large documents or audio/video that exceed the context window.
 
-Mirrors the Python sample at [`samples/02-devui/02-file_search_agent/azure_openai_backend/agent.py`](https://github.com/microsoft/agent-framework/blob/main/python/packages/azure-contentunderstanding/samples/02-devui/02-file_search_agent/azure_openai_backend/agent.py).
-
 ## Prerequisites
 
 | Environment variable | Description |

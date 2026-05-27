@@ -20,7 +20,6 @@ public sealed class ContextProviderPhase9Tests
     private static readonly byte[] s_pdfBytes = SharedTestFixtures.LoadFixturePdf();
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestFileSearchIntegration::test_file_search_uploads_to_vector_store
     public async Task InvokingAsync_WithFileSearchConfig_UploadsAndSurfacesToolAndInstructions()
     {
         FakeFileSearchBackend backend = new();
@@ -71,7 +70,6 @@ public sealed class ContextProviderPhase9Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestFileSearchIntegration::test_file_search_no_content_injection
     public async Task InvokingAsync_WithFileSearchConfig_DoesNotInjectFullDocumentBodyIntoMessages()
     {
         FakeFileSearchBackend backend = new();
@@ -106,7 +104,6 @@ public sealed class ContextProviderPhase9Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_models.py::TestFileSearchConfig::test_include_fields_opt_in (provider-side wiring)
     public async Task InvokingAsync_WithIncludeFieldsTrue_UploadPayloadContainsFieldsBlock()
     {
         FakeFileSearchBackend backend = new();
@@ -132,7 +129,6 @@ public sealed class ContextProviderPhase9Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestFileSearchIntegration::test_file_search_skips_empty_markdown
     public async Task InvokingAsync_EmptyRenderableBody_SkipsUploadAndEmitsNote()
     {
         // Make an AnalysisResult whose rendering has front-matter only (no body content).
@@ -182,7 +178,6 @@ public sealed class ContextProviderPhase9Tests
     }
 
     [Fact]
-    // parity: N/A — .NET defensive: backend errors must surface to LLM; Python relies on natural exception propagation.
     public async Task InvokingAsync_BackendThrows_StatusBecomesFailedAndNoteEmitted()
     {
         FakeFileSearchBackend backend = new()
@@ -221,8 +216,6 @@ public sealed class ContextProviderPhase9Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestFileSearchIntegration::test_cleanup_deletes_uploaded_files
-    // parity: python tests/cu/test_context_provider.py::TestCloseCancel::test_close_cleans_up (cleanup half)
     public async Task DisposeAsync_DeletesEveryUploadedFile()
     {
         FakeFileSearchBackend backend = new();
@@ -258,7 +251,6 @@ public sealed class ContextProviderPhase9Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestFileSearchIntegration::test_pending_resolution_uploads_to_vector_store
     public async Task InvokingAsync_BackgroundPromoted_UploadHappensOnNextTurn()
     {
         AnalysisResult readyResult = SharedTestFixtures.MakeInvoiceResult();

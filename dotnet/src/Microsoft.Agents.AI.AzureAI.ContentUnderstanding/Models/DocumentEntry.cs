@@ -6,9 +6,8 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// One tracked document in the provider's session state.
 /// </summary>
 /// <remarks>
-/// Mirrors the Python provider's per-document state dict exactly. Persisted via
-/// <c>AgentSession.StateBag</c> and serialized with <c>System.Text.Json</c>; all properties
-/// use simple JSON-friendly types (no <c>byte[]</c>, no <c>Stream</c>).
+/// Persisted via <c>AgentSession.StateBag</c> and serialized with <c>System.Text.Json</c>; all
+/// properties use simple JSON-friendly types (no <c>byte[]</c>, no <c>Stream</c>).
 /// See <c>features/sdk/dotnet-cu-context-provider/design-doc-dotnet-cu-context-provider.md</c>
 /// "Data Model".
 /// </remarks>

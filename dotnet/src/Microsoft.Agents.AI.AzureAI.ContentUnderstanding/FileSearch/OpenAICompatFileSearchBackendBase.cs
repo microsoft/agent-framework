@@ -15,10 +15,9 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Mirrors Python <c>_OpenAICompatBackend</c>. The poll loop (after
-/// <c>AddFileToVectorStoreAsync</c>) is hand-written because OpenAI .NET 2.10 does not expose
-/// a <c>create_and_poll</c> equivalent; without polling, <c>file_search</c> queries can race
-/// vector-store ingestion and return no results immediately after upload.
+/// The poll loop (after <c>AddFileToVectorStoreAsync</c>) is hand-written because OpenAI .NET
+/// 2.10 does not expose a <c>create_and_poll</c> equivalent; without polling, <c>file_search</c>
+/// queries can race vector-store ingestion and return no results immediately after upload.
 /// </para>
 /// <para>
 /// This type is <see langword="public"/> only because the two shipped concrete subclasses

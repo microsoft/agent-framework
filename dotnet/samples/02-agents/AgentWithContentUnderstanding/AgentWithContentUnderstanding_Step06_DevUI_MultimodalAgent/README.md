@@ -2,8 +2,6 @@
 
 Hosts a Foundry-backed agent with the [Azure Content Understanding context provider](../../../../src/Microsoft.Agents.AI.AzureAI.ContentUnderstanding) behind the DevUI web interface. Upload a PDF, scanned image, audio, or video in the browser and ask questions about its contents.
 
-Mirrors the Python sample at [`samples/02-devui/01-multimodal_agent/agent.py`](https://github.com/microsoft/agent-framework/blob/main/python/packages/azure-contentunderstanding/samples/02-devui/01-multimodal_agent/agent.py).
-
 ## Prerequisites
 
 | Environment variable | Description |

@@ -10,9 +10,8 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 /// </summary>
 public sealed class ContextProviderTests
 {
-    private static readonly Uri TestEndpoint = new("https://contoso.cognitiveservices.azure.com/");
+    private static readonly Uri s_testEndpoint = new("https://contoso.cognitiveservices.azure.com/");
 
-    // parity: N/A — .NET-only defensive guard against ctor receiving null options bag.
     [Fact]
     public void OptionsConstructor_ThrowsOnNullOptions()
     {
@@ -20,7 +19,6 @@ public sealed class ContextProviderTests
         Assert.Equal("options", ex.ParamName);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_missing_endpoint_raises (object-initializer variant)
     [Fact]
     public void OptionsConstructor_ThrowsWhenEndpointNotSetByObjectInitializer()
     {
@@ -35,13 +33,12 @@ public sealed class ContextProviderTests
         Assert.Contains("Endpoint", ex.Message);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_missing_credential_raises (object-initializer variant)
     [Fact]
     public void OptionsConstructor_ThrowsWhenCredentialNotSetByObjectInitializer()
     {
         var options = new ContentUnderstandingContextProviderOptions
         {
-            Endpoint = TestEndpoint,
+            Endpoint = s_testEndpoint,
             // Credential deliberately omitted
         };
 
@@ -50,7 +47,6 @@ public sealed class ContextProviderTests
         Assert.Contains("Credential", ex.Message);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_missing_endpoint_raises (convenience-ctor variant)
     [Fact]
     public void ConvenienceConstructor_ThrowsOnNullEndpoint()
     {
@@ -59,21 +55,19 @@ public sealed class ContextProviderTests
         Assert.Equal("endpoint", ex.ParamName);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_missing_credential_raises (convenience-ctor variant)
     [Fact]
     public void ConvenienceConstructor_ThrowsOnNullCredential()
     {
         var ex = Assert.Throws<ArgumentNullException>(() =>
-            new ContentUnderstandingContextProvider(endpoint: TestEndpoint, credential: null!));
+            new ContentUnderstandingContextProvider(endpoint: s_testEndpoint, credential: null!));
         Assert.Equal("credential", ex.ParamName);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestInit::test_custom_values (configure-callback variant)
     [Fact]
     public void ConvenienceConstructor_AppliesConfigureCallback()
     {
         var provider = new ContentUnderstandingContextProvider(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeTokenCredential(),
             configure: o =>
             {
@@ -87,32 +81,29 @@ public sealed class ContextProviderTests
         Assert.NotNull(provider);
     }
 
-    // parity: N/A — .NET StateKeys[] contract; Python sessions use a single context-provider key implicitly.
     [Fact]
     public void StateKeys_ReturnsTypeFullName()
     {
-        var provider = new ContentUnderstandingContextProvider(TestEndpoint, new FakeTokenCredential());
+        var provider = new ContentUnderstandingContextProvider(s_testEndpoint, new FakeTokenCredential());
 
         Assert.Single(provider.StateKeys);
         Assert.Equal(typeof(ContentUnderstandingContextProvider).FullName, provider.StateKeys[0]);
     }
 
-    // parity: N/A — .NET phase-2 shell contract; later phases supply behavior.
     [Fact]
     public void ProvideAIContextAsync_PhaseFiveNotImplemented()
     {
         // Phase 5 will implement this; Phase 2 ships only the shell.
         // We don't invoke it here because InvokingContext requires non-trivial setup; ensuring
         // the override exists is enforced by the compiler. This test pins the contract.
-        var provider = new ContentUnderstandingContextProvider(TestEndpoint, new FakeTokenCredential());
+        var provider = new ContentUnderstandingContextProvider(s_testEndpoint, new FakeTokenCredential());
         Assert.NotNull(provider);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestAsyncContextManager::test_aexit_closes_client (idempotent close)
     [Fact]
     public async Task DisposeAsync_IsIdempotentNoOp()
     {
-        var provider = new ContentUnderstandingContextProvider(TestEndpoint, new FakeTokenCredential());
+        var provider = new ContentUnderstandingContextProvider(s_testEndpoint, new FakeTokenCredential());
 
         await provider.DisposeAsync();
         await provider.DisposeAsync(); // second call must not throw

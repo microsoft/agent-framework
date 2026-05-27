@@ -6,13 +6,12 @@ using Azure.AI.ContentUnderstanding;
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 
 /// <summary>
-/// Phase 11 — renderer-level parity gaps not previously covered:
+/// Phase 11 — renderer-level coverage gaps:
 /// classifier-category presence/absence, source-metadata propagation, field-value extraction,
 /// and the "no rai_warnings when none present" negative.
 /// </summary>
-public sealed class RendererParityGapTests
+public sealed class RendererCoverageGapTests
 {
-    // parity: python tests/cu/test_context_provider.py::TestOutputFiltering::test_source_metadata_uses_filename
     [Fact]
     public void Render_UsesProvidedFilename_InSourceFrontMatter()
     {
@@ -23,7 +22,6 @@ public sealed class RendererParityGapTests
         Assert.Contains("source: custom_name.pdf", rendered, StringComparison.Ordinal);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestOutputFiltering::test_field_values_extracted
     [Fact]
     public void Render_WithFields_EmitsFieldValuesIntoLlmInput()
     {
@@ -38,7 +36,6 @@ public sealed class RendererParityGapTests
         Assert.Contains("$610.00", rendered, StringComparison.Ordinal);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestWarningsExtraction::test_warnings_omitted_when_empty
     [Fact]
     public void Render_NoWarnings_OmitsRaiWarningsKey()
     {
@@ -49,7 +46,6 @@ public sealed class RendererParityGapTests
         Assert.DoesNotContain("rai_warnings", rendered, StringComparison.Ordinal);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestCategoryExtraction::test_category_omitted_when_none
     [Fact]
     public void Render_NoCategory_OmitsCategoryFrontMatterKey()
     {
@@ -60,7 +56,6 @@ public sealed class RendererParityGapTests
         Assert.DoesNotContain("category:", rendered, StringComparison.Ordinal);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestCategoryExtraction::test_category_included_single_segment
     [Fact]
     public void Render_DocumentWithCategory_EmitsCategoryFrontMatterKey()
     {
@@ -81,7 +76,6 @@ public sealed class RendererParityGapTests
         Assert.Contains("Legal Contract", rendered, StringComparison.Ordinal);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestCategoryExtraction::test_category_in_multi_segment_video
     // (per-segment category attribution: each block must carry its own category alongside its markdown body.)
     [Fact]
     public void Render_MultiSegmentVideo_AttachesPerSegmentCategoryToCorrectBlock()

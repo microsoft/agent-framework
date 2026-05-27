@@ -7,14 +7,13 @@ using OpenAI;
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 
 /// <summary>
-/// Phase 11 — <see cref="FileSearchConfig"/> static factory parity with Python's
-/// <c>FileSearchConfig.from_openai</c> / <c>from_foundry</c>.
+/// Phase 11 — <see cref="FileSearchConfig"/> static factory helpers
+/// (<c>FromOpenAI</c> and <c>FromFoundry</c>).
 /// </summary>
 public sealed class FileSearchConfigFactoryTests
 {
     private static readonly FakeAITool s_fileSearchTool = new();
 
-    // parity: python tests/cu/test_models.py::TestFileSearchConfig::test_from_openai_factory
     [Fact]
     public void FromOpenAI_BuildsConfigWithOpenAIBackend_AndDefaultIncludeFieldsFalse()
     {
@@ -28,7 +27,6 @@ public sealed class FileSearchConfigFactoryTests
         Assert.False(config.IncludeFields);
     }
 
-    // parity: python tests/cu/test_models.py::TestFileSearchConfig::test_from_openai_factory_with_include_fields
     [Fact]
     public void FromOpenAI_PropagatesIncludeFieldsTrue()
     {
@@ -40,7 +38,6 @@ public sealed class FileSearchConfigFactoryTests
         Assert.True(config.IncludeFields);
     }
 
-    // parity: N/A — .NET-specific Foundry factory; Python only ships from_openai.
     [Fact]
     public void FromFoundry_BuildsConfigWithFoundryBackend_AndDefaultIncludeFieldsFalse()
     {
@@ -56,7 +53,6 @@ public sealed class FileSearchConfigFactoryTests
         Assert.False(config.IncludeFields);
     }
 
-    // parity: N/A — .NET-specific Foundry factory option.
     [Fact]
     public void FromFoundry_PropagatesIncludeFieldsTrue()
     {
@@ -69,7 +65,6 @@ public sealed class FileSearchConfigFactoryTests
         Assert.True(config.IncludeFields);
     }
 
-    // parity: N/A — .NET-only defensive guards on factory parameters.
     [Fact]
     public void FromOpenAI_RejectsNullArguments()
     {
@@ -80,7 +75,6 @@ public sealed class FileSearchConfigFactoryTests
         Assert.Throws<ArgumentNullException>(() => FileSearchConfig.FromOpenAI(client, "vs", null!));
     }
 
-    // parity: N/A — .NET-only defensive guards on factory parameters.
     [Fact]
     public void FromFoundry_RejectsNullArguments()
     {

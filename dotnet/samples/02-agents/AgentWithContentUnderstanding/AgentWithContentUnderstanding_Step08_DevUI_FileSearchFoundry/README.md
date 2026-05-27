@@ -2,8 +2,6 @@
 
 Hosts a Foundry-backed agent with the Content Understanding context provider behind the DevUI web interface. Wires `FileSearchConfig.FromFoundry` so each uploaded file is CU-extracted and indexed in a Foundry vector store, then queried via the `file_search` tool — the same RAG flow as [Step 05](../AgentWithContentUnderstanding_Step05_LargeDocFileSearch/), but driven from an interactive DevUI session instead of a script.
 
-Mirrors the Python sample at [`samples/02-devui/02-file_search_agent/foundry_backend/agent.py`](https://github.com/microsoft/agent-framework/blob/main/python/packages/azure-contentunderstanding/samples/02-devui/02-file_search_agent/foundry_backend/agent.py).
-
 ## Prerequisites
 
 | Environment variable | Description |

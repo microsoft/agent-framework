@@ -1,5 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Concurrent;
+#if NET8_0_OR_GREATER
+using System.Diagnostics.CodeAnalysis;
+#endif
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
@@ -26,21 +31,19 @@ internal sealed record DetectedAttachment(
 /// Extracts <see cref="DetectedAttachment"/> entries from a turn's <see cref="ChatMessage"/> stream.
 /// </summary>
 /// <remarks>
-/// Mirrors Python <c>_detection.detect_and_strip_files</c>. Unsupported content silently
-/// skips (must never block the agent run). Filename resolution order (per dev plan task 3.2):
-/// <see cref="DataContent.Name"/> → <see cref="AIContent.AdditionalProperties"/>["filename"] →
-/// synthesized <c>attachment-{sha256[0..6]}.{ext}</c>. Supported media types match the Python
-/// provider's <c>SUPPORTED_MEDIA_TYPES</c> set (documents, images, text, audio, video) per the
-/// Azure CU input file limits: https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits.
+/// Unsupported content silently skips (must never block the agent run). Filename resolution
+/// order: <see cref="DataContent.Name"/> → <see cref="AIContent.AdditionalProperties"/>["filename"]
+/// → synthesized <c>attachment-{sha256[0..6]}.{ext}</c>. Supported media types cover documents,
+/// images, text, audio, and video per the Azure CU input file limits:
+/// https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits.
 /// </remarks>
 internal static class AttachmentDetector
 {
     private const string OctetStream = "application/octet-stream";
 
-    // Match Python's SUPPORTED_MEDIA_TYPES (agent_framework_azure_contentunderstanding._detection).
-    // Comparisons are case-insensitive (StringComparer.OrdinalIgnoreCase). audio/wave and
-    // audio/x-wav are accepted as WAV aliases — Python normalizes them via MIME_ALIASES during
-    // sniffing; we accept them up front for maximum tolerance of HTTP-server-supplied types.
+    // Allow-list of supported media types. Comparisons are case-insensitive (OrdinalIgnoreCase).
+    // audio/wave and audio/x-wav are accepted as WAV aliases up front for maximum tolerance of
+    // HTTP-server-supplied types.
     private static readonly HashSet<string> SupportedMediaTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         // Documents and images
@@ -141,7 +144,7 @@ internal static class AttachmentDetector
 
         if (!SupportedMediaTypes.Contains(resolved))
         {
-            // Unknown / unsupported → silently skip per parity with Python.
+            // Unknown / unsupported → silently skip; must never block the agent run.
             return null;
         }
 
@@ -165,7 +168,8 @@ internal static class AttachmentDetector
     {
         string? candidate = !string.IsNullOrEmpty(dc.Name)
             ? dc.Name
-            : TryGetFilenameFromProperties(dc.AdditionalProperties);
+            : TryGetFilenameFromProperties(dc.AdditionalProperties)
+                ?? TryGetFilenameFromRawRepresentation(dc.RawRepresentation);
 
         if (!string.IsNullOrEmpty(candidate))
         {
@@ -223,16 +227,55 @@ internal static class AttachmentDetector
         return null;
     }
 
+    // Hosting wrappers (e.g. Microsoft.Agents.AI.Hosting.OpenAI's Responses ItemContentInputFile)
+    // attach the wire payload as DataContent.RawRepresentation but don't always propagate the
+    // "filename" field onto DataContent.Name. Recover it via duck-typed reflection so we don't take
+    // a hard dependency on the hosting package's internal types.
+    private static readonly ConcurrentDictionary<Type, Func<object, string?>?> s_rawFilenameAccessors = new();
+
+    private static string? TryGetFilenameFromRawRepresentation(object? raw)
+    {
+        if (raw is null)
+        {
+            return null;
+        }
+
+        Func<object, string?>? accessor = s_rawFilenameAccessors.GetOrAdd(raw.GetType(), BuildRawFilenameAccessor);
+        return accessor?.Invoke(raw);
+    }
+
+    private static Func<object, string?>? BuildRawFilenameAccessor(Type type)
+        => BuildRawFilenameAccessorCore(type);
+
+#if NET8_0_OR_GREATER
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070:'this' argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method.",
+        Justification = "RawRepresentation types come from upstream hosting/protocol packages (e.g. Microsoft.Agents.AI.Hosting.OpenAI's ItemContentInputFile) whose public Filename property has a stable, well-known name. Failure to resolve via reflection (e.g. under aggressive trimming) is non-fatal — caller falls back to Synthesize.")]
+#endif
+    private static Func<object, string?>? BuildRawFilenameAccessorCore(Type type)
+    {
+        foreach (string name in new[] { "Filename", "FileName" })
+        {
+            PropertyInfo? prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            if (prop is not null && prop.PropertyType == typeof(string) && prop.CanRead)
+            {
+                return instance => prop.GetValue(instance) as string;
+            }
+        }
+        return null;
+    }
+
     private const int MaxFilenameLength = 255;
 
     private static readonly char[] SpaceSplit = [' '];
 
     // Removes control chars, path separators, and ".." segments from a caller-supplied filename;
-    // collapses whitespace runs; caps length. Mirrors Python's sanitize_doc_key (_detection.py) with
-    // added path-traversal hardening — the resolved filename is interpolated into LLM-visible markdown
-    // (AnalysisRenderer YAML front-matter "source:" and per-document vector-store notes), so raw control
-    // chars / newlines / backticks would let an attacker-controlled filename break those framings and
-    // inject pseudo-instructions. Returns empty when nothing usable remains; caller falls back to Synthesize.
+    // collapses whitespace runs; caps length. The resolved filename is interpolated into LLM-visible
+    // markdown (AnalysisRenderer YAML front-matter "source:" and per-document vector-store notes),
+    // so raw control chars / newlines / backticks would let an attacker-controlled filename break
+    // those framings and inject pseudo-instructions. Returns empty when nothing usable remains;
+    // caller falls back to Synthesize.
     private static string SanitizeFilename(string raw)
     {
         if (string.IsNullOrEmpty(raw))
@@ -275,7 +318,7 @@ internal static class AttachmentDetector
         byte[] hash = sha.ComputeHash(bytes);
 #pragma warning restore CA1850
 
-        // First 3 bytes → 6 hex chars, lower-cased to match Python's behavior.
+        // First 3 bytes → 6 hex chars, lower-cased.
         string prefix = ToLowerHex(hash, 3);
         return $"attachment-{prefix}.{ExtensionFor(mediaType)}";
     }

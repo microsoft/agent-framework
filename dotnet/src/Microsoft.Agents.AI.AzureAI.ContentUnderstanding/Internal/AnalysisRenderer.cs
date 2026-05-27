@@ -8,18 +8,18 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// <summary>
 /// Converts a Content Understanding <see cref="AnalysisResult"/> into the LLM-ready Markdown block
 /// injected into the agent context, plus the alternate payload uploaded to a file-search vector
-/// store. Mirrors Python <c>_render_for_llm</c> / <c>_render_search_payload</c>.
+/// store.
 /// </summary>
 /// <remarks>
 /// Delegates to <see cref="LlmInputHelper.ToLlmInput(AnalysisResult, IDictionary{string, object}, LlmInputOptions)"/>
 /// for the actual rendering. After rendering, strips spurious telemetry lines of the form
 /// <c>- LLMStats: ...</c> that the SDK occasionally leaks into the <c>rai_warnings:</c> YAML list
-/// (decision C1 / Python <c>_RAI_TELEMETRY_LINE_RE</c>).
+/// (decision C1).
 /// </remarks>
 internal static class AnalysisRenderer
 {
-    // Multi-line regex matching "- LLMStats: ..." entries inside the rai_warnings YAML list.
-    // Mirrors Python _RAI_TELEMETRY_LINE_RE exactly: ^[ \t]*-[ \t]+LLMStats:.*(?:\r?\n|$)
+    // Multi-line regex matching "- LLMStats: ..." entries inside the rai_warnings YAML list:
+    // ^[ \t]*-[ \t]+LLMStats:.*(?:\r?\n|$)
     private static readonly Regex s_telemetryLineRegex = new(
         @"^[ \t]*-[ \t]+LLMStats:.*(?:\r?\n|$)",
         RegexOptions.Multiline | RegexOptions.CultureInvariant);

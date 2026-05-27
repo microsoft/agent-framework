@@ -7,9 +7,6 @@
 // with table preservation — superior to LLM-only vision for scanned PDFs,
 // handwritten content, and complex layouts.
 //
-// Mirrors the Python sample at:
-//   python/packages/azure-contentunderstanding/samples/01-get-started/01_document_qa.py
-//
 // Environment variables:
 //   AZURE_AI_PROJECT_ENDPOINT              — Azure AI Foundry project endpoint
 //   AZURE_AI_MODEL_DEPLOYMENT_NAME         — Model deployment name (e.g. gpt-4.1)

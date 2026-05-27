@@ -34,8 +34,8 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         "content. Use `list_documents()` for status queries. Do NOT call `file_search` for " +
         "status queries — it wastes tokens.";
 
-    // Mirrors Python `_FRONT_MATTER_RE`: matches a leading YAML front-matter block delimited by
-    // '---' lines, allowing CR/LF line endings and tolerating end-of-string after the closer.
+    // Matches a leading YAML front-matter block delimited by '---' lines, allowing CR/LF line
+    // endings and tolerating end-of-string after the closer.
     private static readonly Regex s_frontMatterRegex =
         new(@"\A---\r?\n.*?\r?\n---(?:\r?\n|\z)", RegexOptions.Singleline | RegexOptions.Compiled);
 
@@ -178,20 +178,24 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         // payload must NOT reach the LLM.
         HashSet<AIContent> toStrip = new(AIContentReferenceEqualityComparer.Instance);
         List<DocumentEntry> newlyReady = new();
+        List<string> duplicateRejectionNotes = new();
 
         foreach (DetectedAttachment att in detected)
         {
             toStrip.Add(att.OriginalContent);
 
-            // Same filename -> reuse the existing analysis. Because the OpenAI Responses
-            // hosting layer does not propagate input_file.filename to DataContent.Name,
-            // AttachmentDetector synthesizes a content-addressed filename
-            // (attachment-{sha256[..3]}.{ext}). Two uploads of the same bytes therefore
-            // collide and should be treated as one logical file, not as a duplicate to
-            // reject. Failed prior attempts are allowed to retry.
+            // Same filename → reject. A second upload under an already-tracked name would
+            // orphan vector store entries and confuse retrieval. We surface an LLM-visible
+            // note instructing the model to ask the user to rename; the original binary is
+            // still stripped (see toStrip above). Failed prior attempts are allowed to retry.
             if (providerState.Documents.TryGetValue(att.Filename, out DocumentEntry? existingEntry)
                 && existingEntry.Status != DocumentStatus.Failed)
             {
+                duplicateRejectionNotes.Add(
+                    $"The user tried to upload '{att.Filename}', but a file with that name was " +
+                    "already uploaded earlier in this session. The new upload was rejected and " +
+                    "was not analyzed. Tell the user that a file with the same name already " +
+                    "exists and they need to rename the file before uploading again.");
                 continue;
             }
 
@@ -374,6 +378,19 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
 
             // InjectedKeys mutated → re-save state.
             this._state.SaveState(context.Session, providerState);
+        }
+
+        // Surface duplicate-filename rejections as a separate System message so the LLM can
+        // tell the user to rename. Kept distinct from the analysis-results note above to avoid
+        // mixing "here's the document content" with "this upload was refused".
+        if (duplicateRejectionNotes.Count > 0)
+        {
+            List<AIContent> rejectionContents = new(duplicateRejectionNotes.Count);
+            foreach (string note in duplicateRejectionNotes)
+            {
+                rejectionContents.Add(new TextContent(note));
+            }
+            sanitized.Add(new ChatMessage(ChatRole.System, rejectionContents));
         }
 
         IEnumerable<AITool>? outTools = providerState.Documents.IsEmpty

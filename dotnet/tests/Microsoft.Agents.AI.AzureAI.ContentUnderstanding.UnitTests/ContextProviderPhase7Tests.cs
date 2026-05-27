@@ -20,7 +20,6 @@ public sealed class ContextProviderPhase7Tests
     private static readonly byte[] s_pdfBytes = SharedTestFixtures.LoadFixturePdf();
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestListDocumentsTool::test_returns_all_docs_with_status (empty-state half)
     public async Task InvokingAsync_NoDocuments_DoesNotSurfaceTools()
     {
         FakeAnalyzer analyzer = new();
@@ -37,7 +36,6 @@ public sealed class ContextProviderPhase7Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestListDocumentsTool::test_returns_all_docs_with_status (populated-state half)
     public async Task InvokingAsync_WithReadyDocument_SurfacesBothTools()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
@@ -60,7 +58,6 @@ public sealed class ContextProviderPhase7Tests
     }
 
     [Fact]
-    // parity: N/A — .NET AIFunction-identity invariant; Python re-binds tools every turn.
     public async Task InvokingAsync_SameToolInstances_AcrossTurns()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
@@ -87,7 +84,6 @@ public sealed class ContextProviderPhase7Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestListDocumentsTool::test_returns_all_docs_with_status (post-promotion variant)
     public async Task ListDocumentsTool_ReflectsPostPromotionState()
     {
         AnalysisResult readyResult = SharedTestFixtures.MakeInvoiceResult();
@@ -124,8 +120,6 @@ public sealed class ContextProviderPhase7Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestOutputFiltering::test_default_markdown_and_fields (tool-side)
-    // parity: python tests/cu/test_context_provider.py::TestOutputFiltering::test_markdown_only (tool-side)
     public async Task GetAnalyzedDocumentTool_Default_ReturnsFullRender_Markdown_StripsFields()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
@@ -157,7 +151,6 @@ public sealed class ContextProviderPhase7Tests
     }
 
     [Fact]
-    // parity: N/A — .NET tool error-string contract; Python tool returns dict.
     public async Task GetAnalyzedDocumentTool_UnknownDocument_ReturnsErrorString()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
@@ -178,7 +171,6 @@ public sealed class ContextProviderPhase7Tests
     }
 
     [Fact]
-    // parity: N/A — .NET tool error-string contract; Python tool returns dict.
     public async Task GetAnalyzedDocumentTool_StillAnalyzing_ReturnsStatusErrorString()
     {
         // Continuation never completes during the test → entry stays Analyzing forever.

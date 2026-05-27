@@ -7,9 +7,6 @@
 // turns so the agent can answer follow-up questions about previously
 // uploaded documents without re-analyzing them.
 //
-// Mirrors the Python sample at:
-//   python/packages/azure-contentunderstanding/samples/01-get-started/02_multi_turn_session.py
-//
 // Environment variables:
 //   AZURE_AI_PROJECT_ENDPOINT              — Azure AI Foundry project endpoint
 //   AZURE_AI_MODEL_DEPLOYMENT_NAME         — Model deployment name (e.g. gpt-4.1)

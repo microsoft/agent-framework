@@ -22,8 +22,6 @@ public sealed class ContextProviderPhase6Tests
     private static readonly byte[] s_pdfBytes = SharedTestFixtures.LoadFixturePdf();
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestBeforeRunTimeout::test_exceeds_max_wait_defers_to_background
-    // parity: python tests/cu/test_context_provider.py::TestBeforeRunPendingResolution::test_pending_completes_on_next_turn
     public async Task InvokingAsync_TimeoutThenResume_PromotesOnNextTurn()
     {
         AnalysisResult readyResult = SharedTestFixtures.MakeInvoiceResult();
@@ -98,7 +96,6 @@ public sealed class ContextProviderPhase6Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestSessionState::test_documents_persist_across_turns
     public async Task InvokingAsync_PromotedDocument_NotReinjectedOnSubsequentTurn()
     {
         AnalysisResult readyResult = SharedTestFixtures.MakeInvoiceResult();
@@ -141,7 +138,6 @@ public sealed class ContextProviderPhase6Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestBeforeRunPendingFailure::test_pending_task_failure_updates_state
     public async Task InvokingAsync_BackgroundRunner_HandlesFailure_StoresError()
     {
         InvalidOperationException expected = new("simulated server failure");
@@ -180,7 +176,6 @@ public sealed class ContextProviderPhase6Tests
     }
 
     [Fact]
-    // parity: N/A — .NET CancellationToken propagation invariant; Python uses asyncio.Task.cancel().
     public async Task DisposeAsync_CancelsInflightRunner_LeavesStatusAnalyzing()
     {
         // Continuation that never completes on its own, but honors the cancellation token from

@@ -11,9 +11,6 @@
 //   Audio       → prebuilt-audioSearch
 //   Video       → prebuilt-videoSearch
 //
-// Mirrors the Python sample at:
-//   python/packages/azure-contentunderstanding/samples/01-get-started/03_multimodal_chat.py
-//
 // Environment variables:
 //   AZURE_AI_PROJECT_ENDPOINT              — Azure AI Foundry project endpoint
 //   AZURE_AI_MODEL_DEPLOYMENT_NAME         — Model deployment name (e.g. gpt-4.1)

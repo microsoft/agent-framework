@@ -33,7 +33,6 @@ public sealed class ContentUnderstandingLiveTests
         "..", "..", "..", "..", "..",
         "samples", "02-agents", "AgentWithContentUnderstanding", "SampleAssets");
 
-    // parity: python tests/cu/test_live.py::test_pdf_qa_invoice
     [Fact]
     public async Task PdfQa_InvoiceDocument_ReturnsVendorAndTotal()
     {
@@ -81,7 +80,6 @@ public sealed class ContentUnderstandingLiveTests
         Assert.False(string.IsNullOrWhiteSpace(text), "Agent returned an empty response.");
     }
 
-    // parity: python tests/cu/test_live.py::test_invoice_field_extraction
     [Fact]
     public async Task InvoiceFieldExtraction_PrebuiltInvoiceAnalyzer_FieldsFlowIntoContext()
     {
@@ -127,7 +125,6 @@ public sealed class ContentUnderstandingLiveTests
         Assert.False(string.IsNullOrWhiteSpace(response.ToString()));
     }
 
-    // parity: python tests/cu/test_live.py::test_multi_turn_session_reuses_analysis
     [Fact]
     public async Task MultiTurnSession_SecondTurn_ReusesPreviousAnalysisWithoutReanalyzing()
     {
@@ -173,7 +170,6 @@ public sealed class ContentUnderstandingLiveTests
         Assert.False(string.IsNullOrWhiteSpace(response2.ToString()));
     }
 
-    // parity: python tests/cu/test_live.py::test_disposal_releases_resources
     [Fact]
     public async Task Dispose_CompletesWithoutHangingBackgroundTasks()
     {

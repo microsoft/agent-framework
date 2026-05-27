@@ -19,8 +19,6 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 public sealed class AnalysisRendererSegmentsTests
 {
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestCategoryExtraction::test_category_in_multi_segment_video
-    // parity: python tests/cu/test_context_provider.py::TestOutputFiltering::test_page_markers_passed_through_to_llm_input
     public void Render_MultiSegmentVideo_EmitsTimeRangePerSegment_WithSeparators()
     {
         AnalysisResult result = SharedTestFixtures.MakeMultiSegmentVideoResult(segmentCount: 3, segmentDurationSec: 30);
@@ -46,7 +44,6 @@ public sealed class AnalysisRendererSegmentsTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestCategoryExtraction::test_category_included_single_segment (rendering-shape half)
     public void Render_SingleSegmentVideo_OmitsTimeRangeAndSeparators()
     {
         AnalysisResult result = SharedTestFixtures.MakeMultiSegmentVideoResult(segmentCount: 1, segmentDurationSec: 30);
@@ -61,7 +58,6 @@ public sealed class AnalysisRendererSegmentsTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestAnalyzerAutoDetectionE2E::test_video_file_uses_video_analyzer (end-to-end injection)
     public async Task InvokingAsync_MultiSegmentVideo_InjectsAllSegmentsIntoMessages()
     {
         AnalysisResult videoResult = SharedTestFixtures.MakeMultiSegmentVideoResult(segmentCount: 3, segmentDurationSec: 30);

@@ -16,7 +16,6 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// project). Vector store creation and the <c>file_search</c> tool itself remain
 /// caller-managed; this backend only handles file upload / indexing-poll / delete.
 /// </para>
-/// <para>Mirrors Python <c>FoundryFileSearchBackend</c>.</para>
 /// </remarks>
 public sealed class FoundryFileSearchBackend : OpenAICompatFileSearchBackendBase
 {

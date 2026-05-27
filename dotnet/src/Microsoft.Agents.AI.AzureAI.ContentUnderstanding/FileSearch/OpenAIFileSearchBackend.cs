@@ -17,7 +17,6 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// itself remain caller-managed; this backend only handles file upload / indexing-poll /
 /// delete.
 /// </para>
-/// <para>Mirrors Python <c>OpenAIFileSearchBackend</c>.</para>
 /// </remarks>
 public sealed class OpenAIFileSearchBackend : OpenAICompatFileSearchBackendBase
 {

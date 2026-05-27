@@ -31,7 +31,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestOutputFiltering::test_default_markdown_and_fields
     public void Render_WithMarkdownAndFields_ContainsBothSections()
     {
         AnalysisResult result = MakeInvoiceResult();
@@ -46,7 +45,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestOutputFiltering::test_markdown_only
     public void Render_MarkdownOnly_OmitsFieldsBlock()
     {
         AnalysisResult result = MakeInvoiceResult();
@@ -59,7 +57,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestOutputFiltering::test_fields_only
     public void Render_FieldsOnly_OmitsMarkdownBody()
     {
         AnalysisResult result = MakeInvoiceResult();
@@ -72,7 +69,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_models.py::TestFileSearchConfig::test_include_fields_opt_in (renderer-half override semantics)
     public void Render_IncludeFieldsOverride_WinsOverSectionsFlag()
     {
         AnalysisResult result = MakeInvoiceResult();
@@ -89,7 +85,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestFileSearchIntegration::test_file_search_skips_empty_markdown (renderer-half: empty input → empty output)
     public void Render_EmptyContents_ReturnsEmptyString()
     {
         AnalysisResult empty = ContentUnderstandingModelFactory.AnalysisResult(contents: []);
@@ -100,12 +95,10 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: N/A — .NET-only defensive null-arg guard.
     public void Render_NullResult_Throws()
         => Assert.Throws<ArgumentNullException>(() => AnalysisRenderer.Render(null!, "x.pdf", AnalysisSection.Default));
 
     [Fact]
-    // parity: N/A — .NET-only defensive empty-arg guard.
     public void Render_EmptyFilename_Throws()
     {
         AnalysisResult result = MakeInvoiceResult();
@@ -113,7 +106,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestWarningsExtraction::test_llm_stats_telemetry_filtered (in-block strip)
     public void StripTelemetry_RemovesLlmStatsLines_InsideRaiWarnings()
     {
         const string Input =
@@ -134,7 +126,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestWarningsExtraction::test_llm_stats_telemetry_filtered (trailing-EOF edge)
     public void StripTelemetry_RemovesIndentedLlmStatsAtFileEnd_NoTrailingNewline()
     {
         const string Input = "  - LLMStats: trailing without newline";
@@ -143,7 +134,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestWarningsExtraction::test_warnings_included_when_present (non-LLMStats survive)
     public void StripTelemetry_LeavesUnrelatedListItemsAlone()
     {
         const string Input =
@@ -158,14 +148,12 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: N/A — .NET-only empty-input guard.
     public void StripTelemetry_PreservesEmptyInput()
     {
         Assert.Equal(string.Empty, AnalysisRenderer.StripTelemetry(string.Empty));
     }
 
     [Fact]
-    // parity: N/A — .NET-only API contract; Python wires backend via FileSearchConfig presence.
     public void RenderSearchPayload_NullConfig_ReturnsNull()
     {
         AnalysisResult result = MakeInvoiceResult();
@@ -177,7 +165,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_models.py::TestFileSearchConfig::test_required_fields (include_fields defaults to False)
     public void RenderSearchPayload_ConfigDefault_OmitsFieldsRegardlessOfSections()
     {
         AnalysisResult result = MakeInvoiceResult();
@@ -192,7 +179,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: python tests/cu/test_models.py::TestFileSearchConfig::test_include_fields_opt_in
     public void RenderSearchPayload_ConfigIncludeFieldsTrue_OverridesSections()
     {
         AnalysisResult result = MakeInvoiceResult();
@@ -207,7 +193,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    // parity: N/A — .NET-only assembly-version pin; guards LlmInputHelper upstream contract.
     public void LlmInputHelper_AssemblyVersionMajorMinor_Matches1Dot2()
     {
         Version? v = typeof(LlmInputHelper).Assembly.GetName().Version;

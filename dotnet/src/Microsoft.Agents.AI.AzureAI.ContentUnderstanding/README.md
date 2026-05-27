@@ -15,10 +15,11 @@ This package provides `ContentUnderstandingContextProvider` — an `AIContextPro
 When this provider is used behind the OpenAI Responses hosting layer
 (`Microsoft.Agents.AI.Hosting.OpenAI` / `Microsoft.Agents.AI.DevUI`):
 
-- **Filenames are content-addressed.** Uploads from these hosts arrive without their
-  original filename, so the provider derives a stable name from the file's bytes
-  (e.g. `attachment-a1b2c3.pdf`). Re-uploading the same bytes reuses the prior analysis;
-  two genuinely different files always get distinct names.
+- **Filenames are content-addressed when the host strips them.** Uploads that arrive
+  without their original filename fall back to a stable name derived from the file's
+  bytes (e.g. `attachment-a1b2c3.pdf`). Re-uploading the same filename — synthesized or
+  user-supplied — within a session is rejected, and the LLM is asked to tell the user
+  to rename the file before retrying.
 - **Detected formats are limited to byte-sniffable types:** PDF, PNG, JPEG, WAV, MP3, and
   MP4 (`ftyp` box). Office formats (`.docx`, `.xlsx`, `.pptx`), plain text, CSV, and JSON
   are not auto-detected from `application/octet-stream` uploads.
@@ -99,7 +100,3 @@ End-to-end runnable samples live under [`dotnet/samples/02-agents/AgentWithConte
 - **Logging hygiene.** Analyzed bytes are not logged at any level. CU operation IDs and analyzer IDs are logged at `Information`. If you wire your own `ILogger` and dump request payloads, sensitive document content can leak — review log sinks before deploying.
 - **`OPENAI001` suppression.** When `FileSearchConfig` is used, the package consumes the experimental `OpenAI.VectorStores.VectorStoreClient` and `Microsoft.Extensions.AI`'s `FileSearchTool`, both gated behind `OPENAI001`. Suppression is scoped to the file-search backends only; the rest of the public surface is fully supported.
 - **Credentials.** All Azure access uses `Azure.Core.TokenCredential`. Prefer `ManagedIdentityCredential` or `WorkloadIdentityCredential` in production over `DefaultAzureCredential`, which probes multiple sources and can add latency or expose unintended principals.
-
-## Python parity
-
-This package is a 1:1 port of the Python `agent-framework-azure-contentunderstanding` package introduced in microsoft/agent-framework#4829. Behavioral parity is asserted by 130 unit tests carrying `// parity: python tests/cu/<file>::<class>::<test>` annotations; integration tests under `dotnet/tests/AzureAIContentUnderstanding.IntegrationTests` mirror the Python end-to-end samples. Intentional deviations (no env-var endpoint resolution, no `audio/x-flac` alias normalization, no per-attachment analyzer override) are documented in the dev plan: [`features/sdk/dotnet-cu-context-provider/dev-plan-dotnet-cu-context-provider.md`](https://github.com/coreai-microsoft/content-understanding/blob/feature/dotnet-cu-context-provider/features/sdk/dotnet-cu-context-provider/dev-plan-dotnet-cu-context-provider.md).

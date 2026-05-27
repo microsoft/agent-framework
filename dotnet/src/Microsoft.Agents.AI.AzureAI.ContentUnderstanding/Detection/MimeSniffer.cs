@@ -6,8 +6,8 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// Detects a media type from the leading bytes of an attachment payload.
 /// </summary>
 /// <remarks>
-/// Byte-signature only — never parses payloads. Mirrors the supported file types listed in
-/// the Python provider's <c>MEDIA_TYPE_ANALYZER_MAP</c>: PDF, PNG, JPEG, MP3, MP4, WAV.
+/// Byte-signature only — never parses payloads. Covers the supported file types: PDF, PNG,
+/// JPEG, MP3, MP4, WAV.
 /// See <c>features/sdk/dotnet-cu-context-provider/dev-plan-dotnet-cu-context-provider.md</c>
 /// "Phase 3".
 /// </remarks>

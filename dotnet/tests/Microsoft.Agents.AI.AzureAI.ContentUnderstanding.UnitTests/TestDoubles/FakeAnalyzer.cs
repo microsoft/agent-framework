@@ -15,7 +15,8 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 /// <remarks>
 /// Each per-filename setup is a factory of <see cref="AnalysisAttempt"/>, which lets a test
 /// freshly construct continuation tasks if the same filename is configured for multiple
-/// invocations (rare in practice since same-name uploads are reused rather than re-analyzed).
+/// invocations (rare in practice since duplicate filename uploads in a session are rejected
+/// rather than re-analyzed).
 /// </remarks>
 internal sealed class FakeAnalyzer
 {

@@ -19,7 +19,6 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// <see cref="OpenAIFileSearchBackend"/> (purpose = <c>user_data</c>). Custom subclasses are
 /// supported for advanced scenarios (e.g. proxying through a different upload service).
 /// </para>
-/// <para>Mirrors the Python <c>FileSearchBackend</c> abstract base class.</para>
 /// </remarks>
 public abstract class FileSearchBackend
 {
@@ -28,7 +27,7 @@ public abstract class FileSearchBackend
     /// terminal-successful state.
     /// </summary>
     /// <param name="vectorStoreId">Caller-owned vector store id; must already exist.</param>
-    /// <param name="filename">Logical filename used when registering the upload; should end in <c>.md</c> for chunking parity with Python.</param>
+    /// <param name="filename">Logical filename used when registering the upload; should end in <c>.md</c> so vector-store chunking treats it as markdown.</param>
     /// <param name="payload">UTF-8 markdown content to upload.</param>
     /// <param name="cancellationToken">Token to honor for cancellation and timeout. Implementations <b>must</b> poll until <see langword="cancelled"/> if the index has not reached <c>Completed</c>.</param>
     /// <returns>The file id of the newly uploaded file (caller must hand this back to <see cref="DeleteAsync"/> for cleanup).</returns>

@@ -8,13 +8,10 @@
 // OutputSections=Fields (no markdown) since we want the LLM to produce a
 // structured response from the extracted fields, not summarize document text.
 //
-// Mirrors the Python sample at:
-//   python/packages/azure-contentunderstanding/samples/01-get-started/04_invoice_processing.py
-//
-// .NET parity deviation: the Python sample sets analyzer_id per-attachment
-// via Content additional_properties. The .NET provider currently only
-// supports a global ContentUnderstandingContextProviderOptions.AnalyzerId.
-// For this single-attachment sample, that is equivalent. See README.md.
+// The provider currently exposes only a global
+// ContentUnderstandingContextProviderOptions.AnalyzerId; per-attachment
+// analyzer overrides are not yet supported. For this single-attachment
+// sample, the global setting is equivalent. See README.md.
 //
 // Environment variables:
 //   AZURE_AI_PROJECT_ENDPOINT              — Azure AI Foundry project endpoint

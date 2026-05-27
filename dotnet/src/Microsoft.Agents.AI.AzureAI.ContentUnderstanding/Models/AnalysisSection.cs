@@ -8,8 +8,7 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// </summary>
 /// <remarks>
 /// See <c>features/sdk/dotnet-cu-context-provider/design-doc-dotnet-cu-context-provider.md</c>
-/// "Data Model" / "API Surface". <see cref="Default"/> mirrors the Python provider's default
-/// (markdown plus structured fields).
+/// "Data Model" / "API Surface". <see cref="Default"/> renders markdown plus structured fields.
 /// </remarks>
 [Flags]
 public enum AnalysisSection
