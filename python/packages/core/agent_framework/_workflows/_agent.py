@@ -294,7 +294,7 @@ class WorkflowAgent(BaseAgent):
             )
         # combine the messages
         session_messages: list[Message] = session_context.get_messages(include_input=True)
-        workflow_input_messages = input_messages if self.pending_requests else session_messages
+        workflow_input_messages = input_messages if bool(self.pending_requests) else session_messages
 
         output_events: list[WorkflowEvent[Any]] = []
         async for event in self._run_core(
@@ -378,7 +378,7 @@ class WorkflowAgent(BaseAgent):
         # combine the messages
 
         session_messages: list[Message] = session_context.get_messages(include_input=True)
-        workflow_input_messages = input_messages if self.pending_requests else session_messages
+        workflow_input_messages = input_messages if bool(self.pending_requests) else session_messages
         all_updates: list[AgentResponseUpdate] = []
         async for event in self._run_core(
             workflow_input_messages,
