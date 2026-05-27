@@ -812,6 +812,79 @@ class TestBuildTestingCriteria:
 # ---------------------------------------------------------------------------
 
 
+    def test_generated_evaluator_ref_pinned_version(self) -> None:
+        from agent_framework_foundry import GeneratedEvaluatorRef
+
+        ref = GeneratedEvaluatorRef(name="my-rubric", version="1")
+        criteria = _build_testing_criteria([ref], "gpt-4o", include_data_mapping=True)
+
+        assert len(criteria) == 1
+        c = criteria[0]
+        assert c["type"] == "azure_ai_evaluator"
+        assert c["evaluator_name"] == "my-rubric"
+        assert c["evaluator_version"] == "1"
+        assert c["name"] == "my-rubric"
+        assert c["initialization_parameters"] == {"deployment_name": "gpt-4o"}
+        assert c["data_mapping"] == {
+            "query": "{{item.query_messages}}",
+            "response": "{{item.response_messages}}",
+        }
+
+    def test_generated_evaluator_ref_display_name_used_as_short(self) -> None:
+        from agent_framework_foundry import GeneratedEvaluatorRef
+
+        ref = GeneratedEvaluatorRef(name="my-rubric", version="2", display_name="My Rubric")
+        criteria = _build_testing_criteria([ref], "gpt-4o")
+
+        assert criteria[0]["name"] == "My Rubric"
+        assert criteria[0]["evaluator_name"] == "my-rubric"
+
+    def test_generated_evaluator_ref_tool_definitions_added(self) -> None:
+        from agent_framework_foundry import GeneratedEvaluatorRef
+
+        ref = GeneratedEvaluatorRef(name="my-rubric", version="1")
+        criteria = _build_testing_criteria(
+            [ref],
+            "gpt-4o",
+            include_data_mapping=True,
+            include_tool_definitions=True,
+        )
+
+        assert criteria[0]["data_mapping"]["tool_definitions"] == "{{item.tool_definitions}}"
+
+    def test_generated_evaluator_ref_unpinned_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        from agent_framework_foundry import GeneratedEvaluatorRef
+
+        ref = GeneratedEvaluatorRef.latest("my-rubric")
+        with caplog.at_level(logging.WARNING, logger="agent_framework_foundry._foundry_evals"):
+            criteria = _build_testing_criteria([ref], "gpt-4o")
+
+        assert "evaluator_version" not in criteria[0]
+        assert any("no pinned version" in r.message for r in caplog.records)
+
+    def test_generated_evaluator_ref_mixed_with_builtins(self) -> None:
+        from agent_framework_foundry import GeneratedEvaluatorRef
+
+        ref = GeneratedEvaluatorRef(name="my-rubric", version="1")
+        criteria = _build_testing_criteria(
+            ["relevance", ref, "task_adherence"],
+            "gpt-4o",
+            include_data_mapping=True,
+        )
+
+        assert [c["name"] for c in criteria] == ["relevance", "my-rubric", "task_adherence"]
+        assert criteria[0]["evaluator_name"] == "builtin.relevance"
+        assert criteria[1]["evaluator_name"] == "my-rubric"
+        assert criteria[2]["evaluator_name"] == "builtin.task_adherence"
+
+
+# ---------------------------------------------------------------------------
+# _build_item_schema
+# ---------------------------------------------------------------------------
+
+
 class TestBuildItemSchema:
     def test_without_context(self) -> None:
         schema = _build_item_schema(has_context=False)
@@ -1262,6 +1335,37 @@ class TestFilterToolEvaluators:
                 ["tool_call_accuracy", "tool_selection"],
                 items,
             )
+
+
+# ---------------------------------------------------------------------------
+# EvalResults
+# ---------------------------------------------------------------------------
+
+
+    def test_preserves_generated_ref_when_no_tools(self) -> None:
+        from agent_framework_foundry import GeneratedEvaluatorRef
+
+        ref = GeneratedEvaluatorRef(name="rubric", version="1")
+        items = [
+            EvalItem(conversation=[Message("user", ["q"]), Message("assistant", ["r"])]),
+        ]
+        result = _filter_tool_evaluators(
+            ["relevance", ref, "tool_call_accuracy"],
+            items,
+        )
+        assert "relevance" in result
+        assert ref in result
+        assert "tool_call_accuracy" not in result
+
+    def test_generated_ref_alone_does_not_raise(self) -> None:
+        from agent_framework_foundry import GeneratedEvaluatorRef
+
+        ref = GeneratedEvaluatorRef(name="rubric", version="1")
+        items = [
+            EvalItem(conversation=[Message("user", ["q"]), Message("assistant", ["r"])]),
+        ]
+        result = _filter_tool_evaluators([ref], items)
+        assert result == [ref]
 
 
 # ---------------------------------------------------------------------------

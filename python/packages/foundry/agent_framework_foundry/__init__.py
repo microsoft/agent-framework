@@ -12,6 +12,8 @@ from ._embedding_client import (
 )
 from ._foundry_evals import (
     FoundryEvals,
+    GeneratedEvaluatorRef,
+    RubricDimension,
     evaluate_foundry_target,
     evaluate_traces,
 )
@@ -32,10 +34,12 @@ __all__ = [
     "FoundryEmbeddingSettings",
     "FoundryEvals",
     "FoundryMemoryProvider",
+    "GeneratedEvaluatorRef",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",
     "RawFoundryEmbeddingClient",
+    "RubricDimension",
     "__version__",
     "evaluate_foundry_target",
     "evaluate_traces",
