@@ -5518,6 +5518,63 @@ def test_prepare_messages_for_openai_serializes_mcp_server_tool_call_as_mcp_call
     assert "output" not in item or item["output"] is None
 
 
+def test_prepare_messages_for_openai_keeps_reasoning_with_hosted_mcp_call_storage_off() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_abc123",
+                    text="Checking the hosted MCP tool",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_def456",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                ),
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    types = [item.get("type") for item in result if isinstance(item, dict)]
+    assert types == ["reasoning", "mcp_call"]
+    assert result[0]["id"] == "rs_abc123"
+    assert result[1]["id"] == "mcp_def456"
+
+
+def test_prepare_messages_for_openai_drops_reasoning_and_hosted_mcp_call_with_storage() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_abc123",
+                    text="Checking the hosted MCP tool",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_def456",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                ),
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=True)
+
+    assert result == []
+
+
 def test_prepare_messages_for_openai_coalesces_mcp_call_and_result_into_single_item() -> None:
     """An mcp_server_tool_call followed by an mcp_server_tool_result with the
     same call_id (in same or separate Messages) must produce ONE mcp_call
@@ -5561,6 +5618,45 @@ def test_prepare_messages_for_openai_coalesces_mcp_call_and_result_into_single_i
     # And no orphaned function_call_output should appear anywhere in the input.
     fco_items = [item for item in result if isinstance(item, dict) and item.get("type") == "function_call_output"]
     assert fco_items == [], f"unexpected orphan function_call_output items: {fco_items}"
+
+
+def test_prepare_messages_for_openai_keeps_reasoning_with_coalesced_hosted_mcp_result() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_abc123",
+                    text="Need the MCP result",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_def456",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_def456",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    assert [item.get("type") for item in result if isinstance(item, dict)] == ["reasoning", "mcp_call"]
+    assert result[0]["id"] == "rs_abc123"
+    assert result[1]["id"] == "mcp_def456"
+    assert result[1]["output"] == "found 10 cats"
 
 
 def test_prepare_messages_for_openai_drops_orphan_mcp_server_tool_result() -> None:

@@ -1484,10 +1484,22 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # (replays_local_storage) still need stripping when the request also carries a continuation
         # marker, since the server-stored items would otherwise duplicate the inline ones. Without
         # storage, standalone reasoning items are invalid per the API ("reasoning was provided
-        # without its required following item"), so the reasoning branch always drops.
+        # without its required following item"), so only keep reasoning inline when it is paired
+        # with a hosted MCP call in the same assistant message.
+        has_hosted_mcp_call = any(
+            item.type == "mcp_server_tool_call" and getattr(item, "call_id", None) for item in message.contents
+        )
         for content in message.contents:
             match content.type:
                 case "text_reasoning":
+                    if not request_uses_service_side_storage and has_hosted_mcp_call:
+                        prepared_reasoning = self._prepare_content_for_openai(
+                            message.role,
+                            content,
+                            replays_local_storage=replays_local_storage,
+                        )
+                        if prepared_reasoning:
+                            all_messages.append(prepared_reasoning)
                     continue
                 case "function_result":
                     if request_uses_service_side_storage:
