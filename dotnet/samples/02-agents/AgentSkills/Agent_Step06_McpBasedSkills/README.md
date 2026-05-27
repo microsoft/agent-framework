@@ -4,7 +4,9 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 
 ## What it demonstrates
 
-- Connecting an `McpClient` to an external MCP server via Streamable HTTP transport.
+- Hosting a small MCP server (in this same executable, launched with `--server`) that
+  exposes skill resources following the SEP-2640 convention.
+- Connecting an `McpClient` to the embedded server via stdio transport.
 - Building an `AgentSkillsProvider` via `UseMcpSkills(client)`, which reads
   `skill://index.json` (SEP-2640 canonical discovery) and constructs skills from the
   index entries.
@@ -17,15 +19,12 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 
 - .NET 10.0 SDK
 - Azure OpenAI endpoint with a deployed model
-- An MCP server that exposes Agent Skills resources following the
-  [SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) convention
 
 ### Setup
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/"
 $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
-$env:MCP_SKILLS_ENDPOINT="https://your-mcp-server/mcp"
 ```
 
 ### Run
