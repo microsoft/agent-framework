@@ -96,7 +96,7 @@ async def main() -> None:
             FoundryChatClient.get_web_search_tool(),
             book_hotel,
         ],
-        default_options={"temperature": 0.3},
+        default_options={"reasoning": {"effort": "medium"}},
     )
 
     query = "Book me a hotel in Seattle for 3 nights."
@@ -109,15 +109,15 @@ async def main() -> None:
 
     # 3) Convert and publish. The version returned by Foundry includes the version label
     # we need when connecting back to that specific deployment.
-    definition = to_prompt_agent(agent)
     created = await project_client.agents.create_version(
         agent_name=agent.name,
-        definition=definition,
+        # note this line:
+        definition=to_prompt_agent(agent),
         description=agent.description,
     )
     print(f"Published prompt agent: {created.name} v{created.version}\n")
 
-    # 4) Connect to the deployed prompt agent with FoundryAgent and pass the *same* callable.
+    # 4) Connect to the deployed prompt agent with FoundryAgent and pass the *same* callable tool.
     # FoundryAgent runs the local function when the server-side agent invokes the tool,
     # matching by name. Compared to step 2, instructions/tools/generation parameters now
     # come from the stored PromptAgentDefinition rather than this process.

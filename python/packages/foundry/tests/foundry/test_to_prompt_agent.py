@@ -523,6 +523,25 @@ def test_to_prompt_agent_merges_verbosity_into_text() -> None:
     assert dict(definition.text).get("verbosity") == "low"
 
 
+def test_to_prompt_agent_raises_on_conflicting_response_format_and_text_format() -> None:
+    """Pydantic ``response_format`` + a different ``text.format`` mapping must fail loudly."""
+
+    class WeatherReply(BaseModel):
+        location: str
+
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={
+            "response_format": WeatherReply,
+            "text": {"format": {"type": "json_object"}},
+        },
+    )
+
+    with pytest.raises(ValueError, match="Conflicting response_format"):
+        to_prompt_agent(agent)
+
+
 def test_to_prompt_agent_passes_through_text_dict_from_default_options() -> None:
     """A ``text`` dict in default_options flows through to the definition."""
     agent = _make_agent(
