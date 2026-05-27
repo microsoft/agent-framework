@@ -23,12 +23,14 @@ This sample demonstrates how a single Agent definition can be both:
 2. Converted to a ``PromptAgentDefinition`` with ``to_prompt_agent(agent)`` and
    published via ``AIProjectClient.agents.create_version(...)``.
 
-The model is lifted from the bound ``FoundryChatClient`` and generation
-parameters (``temperature``, ``top_p``, ``tool_choice``) are sourced from the
-agent's ``default_options`` so the ``model``/``instructions``/``tools`` stay as
-the single source of truth. Foundry-specific knobs such as ``reasoning``,
-``rai_config``, ``text``, and ``structured_inputs`` are exposed as explicit
-keyword arguments on ``to_prompt_agent``.
+The model is lifted from the bound ``FoundryChatClient`` and every generation
+parameter that has an Agent Framework equivalent (``temperature``, ``top_p``,
+``tool_choice``, ``reasoning``, ``response_format`` / ``text`` / ``verbosity``)
+is sourced from the agent's ``default_options``, so the ``Agent`` is the
+single source of truth for them.
+
+Only Foundry-only fields (``structured_inputs``, ``rai_config``) are exposed
+as keyword arguments on ``to_prompt_agent``.
 
 ``to_prompt_agent`` is experimental
 (``ExperimentalFeature.TO_PROMPT_AGENT``) and may change before reaching GA.
@@ -71,7 +73,11 @@ async def main() -> None:
             book_hotel,
         ],
         # Generation parameters set on the Agent flow through to the published prompt agent.
-        default_options={"temperature": 0.3, "top_p": 0.95},
+        default_options={
+            "temperature": 0.3,
+            "top_p": 0.95,
+            "reasoning": {"effort": "medium"},
+        },
     )
 
     # 1) Run locally via the Foundry Responses API
@@ -80,9 +86,9 @@ async def main() -> None:
     response = await agent.run(local_query)
     print(f"Agent: {response}\n")
 
-    # 2) Convert and publish. `to_prompt_agent` lifts `model`, `instructions`, `tools`, and the
-    # generation parameters from `default_options`. Use kwargs to set Foundry-specific fields
-    # (e.g. `reasoning`, `rai_config`) or to override a value from `default_options`.
+    # 2) Convert and publish. `to_prompt_agent` lifts `model`, `instructions`, `tools`, and every
+    # generation parameter from `default_options`. Use kwargs only for Foundry-only fields
+    # (`structured_inputs`, `rai_config`) that have no Agent Framework equivalent.
     definition = to_prompt_agent(agent)
     created = await project_client.agents.create_version(
         agent_name=agent.name,

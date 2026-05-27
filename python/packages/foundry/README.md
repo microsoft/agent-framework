@@ -121,21 +121,26 @@ from `default_options["model"]` first and falls back to the bound
 the same agent definition you run locally can be published as a hosted prompt
 agent without restating the model deployment name.
 
-Generation parameters with an Agent Framework equivalent are sourced from
-`agent.default_options` when not passed explicitly to `to_prompt_agent`:
+Every generation parameter that has an Agent Framework equivalent is sourced
+from `agent.default_options` and translated into the matching Foundry shape by
+`FoundryChatClient._prepare_prompt_agent_options`:
 
-- `temperature` — from `default_options["temperature"]`
-- `top_p` — from `default_options["top_p"]`
-- `tool_choice` — from `default_options["tool_choice"]` *when it is a string*
-  (e.g. `"auto"`, `"required"`, `"none"`). Non-string Agent Framework
-  tool-choice values are ignored — pass an explicit `ToolChoiceParam` via the
-  keyword argument when you need one.
+| `default_options` key | `PromptAgentDefinition` field |
+|---|---|
+| `temperature` | `temperature` |
+| `top_p` | `top_p` |
+| `tool_choice` (dropped when no tools) | `tool_choice` (`str` / `ToolChoiceFunction` / `ToolChoiceAllowed`) |
+| `reasoning` (dict or `Reasoning`) | `reasoning` |
+| `response_format` (dict or `BaseModel`) | `text.format` |
+| `verbosity` | `text.verbosity` |
+| `text` | merged into `text` |
 
-Foundry-specific knobs are keyword-only on `to_prompt_agent`: `reasoning`,
-`text`, `structured_inputs`, and `rai_config`.
+This keeps the `Agent` as the single source of truth for everything it can
+already express. Only Foundry-specific fields with no Agent Framework
+equivalent are accepted as keyword arguments on `to_prompt_agent`:
 
-Precedence is always: **explicit keyword argument > `default_options` entry >
-unset on the resulting definition.**
+- `structured_inputs` — `dict[str, StructuredInputDefinition]`
+- `rai_config` — `RaiConfig`
 
 ```python
 import asyncio
@@ -144,7 +149,6 @@ import os
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient, to_prompt_agent
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import Reasoning
 from azure.identity.aio import AzureCliCredential
 
 
@@ -166,11 +170,14 @@ async def main() -> None:
             FoundryChatClient.get_code_interpreter_tool(),
         ],
         # Generation parameters set on the Agent flow through automatically.
-        default_options={"temperature": 0.3, "top_p": 0.95},
+        default_options={
+            "temperature": 0.3,
+            "top_p": 0.95,
+            "reasoning": {"effort": "medium"},
+        },
     )
 
-    # `reasoning` has no AF equivalent; pass it as a keyword argument.
-    definition = to_prompt_agent(agent, reasoning=Reasoning(effort="medium"))
+    definition = to_prompt_agent(agent)
 
     project_client = AIProjectClient(endpoint=project_endpoint, credential=credential)
     created = await project_client.agents.create_version(

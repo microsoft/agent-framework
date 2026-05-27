@@ -3,19 +3,20 @@
 """Convert an Agent Framework agent into a Foundry ``PromptAgentDefinition``.
 
 The converter accepts an :class:`agent_framework.Agent` whose chat client is a
-:class:`agent_framework_foundry.FoundryChatClient` (or a subclass) and returns a
-``PromptAgentDefinition`` ready to publish via
+:class:`agent_framework_foundry.FoundryChatClient` (or a subclass) and returns
+a ``PromptAgentDefinition`` ready to publish via
 ``AIProjectClient.agents.create_version(...)``.
 
 The model is lifted from the bound ``FoundryChatClient`` so the same ``Agent``
 definition used for local execution can be published as a hosted prompt agent
-without restating the model deployment name.
+without restating the model deployment name. Generation parameters
+(``temperature``, ``top_p``, ``tool_choice``, ``reasoning``,
+``response_format`` / ``text`` / ``verbosity``) are translated from
+``agent.default_options`` by ``FoundryChatClient._prepare_prompt_agent_options``
+so they stay consistent with the agent's local request path.
 
-Generation parameters (``temperature``, ``top_p``, ``tool_choice``) are sourced
-from ``agent.default_options`` when not overridden by an explicit keyword
-argument. Foundry-specific parameters that have no Agent Framework equivalent
-(``reasoning``, ``text``, ``structured_inputs``, ``rai_config``) are accepted
-as keyword arguments only.
+Parameters with no Agent Framework equivalent (``structured_inputs``,
+``rai_config``) are accepted as keyword arguments only.
 
 Function tools derived from local Python callables are translated to Foundry
 ``FunctionTool`` *declarations* only. Prompt agents are server-side, so the
@@ -38,12 +39,9 @@ if TYPE_CHECKING:
     from agent_framework import Agent
     from azure.ai.projects.models import (
         PromptAgentDefinition,
-        PromptAgentDefinitionTextOptions,
         RaiConfig,
-        Reasoning,
         StructuredInputDefinition,
         Tool,
-        ToolChoiceParam,
     )
 
 
@@ -51,11 +49,6 @@ if TYPE_CHECKING:
 def to_prompt_agent(
     agent: Agent,
     *,
-    temperature: float | None = None,
-    top_p: float | None = None,
-    tool_choice: str | ToolChoiceParam | None = None,
-    reasoning: Reasoning | None = None,
-    text: PromptAgentDefinitionTextOptions | None = None,
     structured_inputs: Mapping[str, StructuredInputDefinition] | None = None,
     rai_config: RaiConfig | None = None,
 ) -> PromptAgentDefinition:
@@ -64,29 +57,23 @@ def to_prompt_agent(
     The agent's chat client must be a :class:`FoundryChatClient` (or any
     subclass). The model deployment name is lifted from the bound client.
 
-    Generation parameters that have an Agent Framework ``ChatOptions``
-    equivalent are sourced from ``agent.default_options`` when not supplied as
-    a keyword argument here. Precedence is: explicit keyword > default_options
-    entry > unset on the resulting definition. Parameters specific to Foundry
-    prompt agents are accepted as keyword arguments only.
+    All generation parameters that have an Agent Framework equivalent
+    (``temperature``, ``top_p``, ``tool_choice``, ``reasoning``,
+    ``response_format`` / ``text`` / ``verbosity``) are sourced from
+    ``agent.default_options`` and translated by
+    ``FoundryChatClient._prepare_prompt_agent_options``. The agent is the
+    single source of truth for these; configure them on the ``Agent`` (or
+    pass ``default_options={...}`` to its constructor) rather than here.
 
     Args:
         agent: An Agent Framework agent whose client is a ``FoundryChatClient``.
 
     Keyword Args:
-        temperature: Sampling temperature. Falls back to
-            ``agent.default_options['temperature']`` if unset.
-        top_p: Nucleus sampling parameter. Falls back to
-            ``agent.default_options['top_p']`` if unset.
-        tool_choice: How the model should pick tools. When unset, a *string*
-            ``agent.default_options['tool_choice']`` (e.g. ``"auto"``,
-            ``"required"``, ``"none"``) is propagated; non-string Agent
-            Framework tool-choice values are ignored.
-        reasoning: Foundry ``Reasoning`` configuration.
-        text: Foundry ``PromptAgentDefinitionTextOptions`` configuration.
         structured_inputs: Mapping of structured input names to
-            ``StructuredInputDefinition`` entries.
+            ``StructuredInputDefinition`` entries. Foundry-only; no
+            ``ChatOptions`` equivalent.
         rai_config: Foundry ``RaiConfig`` to attach to the definition.
+            Foundry-only; no ``ChatOptions`` equivalent.
 
     Returns:
         A ``PromptAgentDefinition`` carrying the agent's model, instructions,
@@ -115,48 +102,25 @@ def to_prompt_agent(
         getattr(agent, "mcp_tools", []),
     )
 
-    resolved_temperature = temperature if temperature is not None else agent.default_options.get("temperature")
-    resolved_top_p = top_p if top_p is not None else agent.default_options.get("top_p")
-    resolved_tool_choice = tool_choice if tool_choice is not None else _default_options_tool_choice(agent)
+    translated = agent.client._prepare_prompt_agent_options(  # pyright: ignore[reportPrivateUsage]
+        agent.default_options,
+        has_tools=bool(tools),
+    )
 
     from azure.ai.projects.models import PromptAgentDefinition
 
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "instructions": instructions,
-        "tools": tools or None,
-    }
-    if resolved_temperature is not None:
-        kwargs["temperature"] = resolved_temperature
-    if resolved_top_p is not None:
-        kwargs["top_p"] = resolved_top_p
-    if resolved_tool_choice is not None:
-        kwargs["tool_choice"] = resolved_tool_choice
-    if reasoning is not None:
-        kwargs["reasoning"] = reasoning
-    if text is not None:
-        kwargs["text"] = text
+    kwargs: dict[str, Any] = {"model": model}
+    if instructions is not None:
+        kwargs["instructions"] = instructions
+    if tools:
+        kwargs["tools"] = tools
+    kwargs.update(translated)
     if structured_inputs is not None:
         kwargs["structured_inputs"] = dict(structured_inputs)
     if rai_config is not None:
         kwargs["rai_config"] = rai_config
 
     return PromptAgentDefinition(**kwargs)
-
-
-def _default_options_tool_choice(agent: Agent) -> str | None:
-    """Return ``agent.default_options['tool_choice']`` only when it is a string.
-
-    Agent Framework's ``tool_choice`` is ``ToolMode | Literal["auto", "required", "none"]``.
-    Foundry's prompt-agent ``tool_choice`` accepts either a string or a
-    ``ToolChoiceParam`` model; the simple string values overlap cleanly, while
-    AF ``ToolMode`` instances have no canonical Foundry mapping. Anything that
-    is not already a string is left to the explicit keyword argument.
-    """
-    value = agent.default_options.get("tool_choice")
-    if isinstance(value, str):
-        return value
-    return None
 
 
 def _convert_tools(

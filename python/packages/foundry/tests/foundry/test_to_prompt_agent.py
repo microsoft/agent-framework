@@ -15,6 +15,7 @@ from azure.ai.projects.models import (
     RaiConfig,
     Reasoning,
     StructuredInputDefinition,
+    ToolChoiceAllowed,
     ToolChoiceFunction,
     WebSearchTool,
 )
@@ -27,6 +28,7 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import (
     Tool as ProjectsTool,
 )
+from pydantic import BaseModel
 
 from agent_framework_foundry import (
     FoundryChatClient,
@@ -96,20 +98,16 @@ def test_to_prompt_agent_rejects_non_foundry_client() -> None:
 def test_to_prompt_agent_rejects_missing_model() -> None:
     """When neither default_options nor the client has a model, ValueError is raised."""
     client = _make_foundry_chat_client()
-    client.model = ""  # simulate unset model on the client
+    client.model = ""
     agent = _make_agent(client)
-    agent.default_options.pop("model", None)  # and on the agent
+    agent.default_options.pop("model", None)
 
     with pytest.raises(ValueError, match="Agent has no model"):
         to_prompt_agent(agent)
 
 
 def test_to_prompt_agent_no_instructions() -> None:
-    """A tool-only agent (no instructions) produces a definition with instructions=None.
-
-    Agent.__init__ strips None values from default_options, so reading
-    default_options.get("instructions") returns None as expected.
-    """
+    """A tool-only agent (no instructions) produces a definition with instructions=None."""
     agent = _make_agent(
         _make_foundry_chat_client(),
         tools=[WebSearchTool()],
@@ -120,16 +118,11 @@ def test_to_prompt_agent_no_instructions() -> None:
     assert definition.model == "gpt-4o-mini"
     assert definition.instructions is None
     payload = definition.as_dict()
-    # The optional ``instructions`` field is omitted from the serialized output when unset.
     assert "instructions" not in payload
 
 
 def test_to_prompt_agent_prefers_default_options_model() -> None:
-    """default_options['model'] wins over the bound client's model.
-
-    Matches Agent.__init__'s resolution order (_agents.py:740), so the value
-    the agent actually runs with is the same value the converter publishes.
-    """
+    """default_options['model'] wins over the bound client's model."""
     client = _make_foundry_chat_client(model="client-model")
     agent = _make_agent(client, instructions="x", default_options={"model": "agent-override"})
 
@@ -165,6 +158,32 @@ def test_to_prompt_agent_is_marked_experimental() -> None:
     assert getattr(to_prompt_agent, "__feature_id__", None) == ExperimentalFeature.TO_PROMPT_AGENT.value
 
 
+def test_to_prompt_agent_does_not_mutate_default_options() -> None:
+    """Conversion never mutates the translatable option values in ``agent.default_options``."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={
+            "temperature": 0.3,
+            "top_p": 0.5,
+            "reasoning": {"effort": "low"},
+            "response_format": {"type": "json_object"},
+            "verbosity": "low",
+        },
+        tools=[get_weather],
+    )
+    reasoning_before = dict(agent.default_options["reasoning"])  # type: ignore[index]
+    response_format_before = dict(agent.default_options["response_format"])  # type: ignore[index]
+    tool_choice_before = agent.default_options.get("tool_choice")
+
+    to_prompt_agent(agent)
+
+    assert dict(agent.default_options["reasoning"]) == reasoning_before  # type: ignore[index]
+    assert dict(agent.default_options["response_format"]) == response_format_before  # type: ignore[index]
+    assert agent.default_options.get("tool_choice") == tool_choice_before
+    assert "text" not in agent.default_options
+
+
 # ---------------------------------------------------------------------------
 # Tool conversion
 # ---------------------------------------------------------------------------
@@ -180,7 +199,6 @@ def test_to_prompt_agent_passes_through_sdk_tool_instances() -> None:
 
     assert definition.tools is not None
     assert len(definition.tools) == 2
-    # Pass-through: same object identity
     assert definition.tools[0] is ws
     assert definition.tools[1] is ci
 
@@ -291,12 +309,13 @@ def test_to_prompt_agent_rejects_dict_tool_without_type() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Generation parameters sourced from default_options (with kwarg overrides)
+# Generation parameters sourced from default_options
+# (translated by FoundryChatClient._prepare_prompt_agent_options)
 # ---------------------------------------------------------------------------
 
 
 def test_to_prompt_agent_temperature_top_p_unset_by_default() -> None:
-    """Without default_options or kwargs, temperature/top_p are unset on the definition."""
+    """Without default_options entries, temperature/top_p are unset on the definition."""
     agent = _make_agent(_make_foundry_chat_client(), instructions="x")
 
     definition = to_prompt_agent(agent)
@@ -322,51 +341,50 @@ def test_to_prompt_agent_lifts_temperature_top_p_from_default_options() -> None:
     assert definition.top_p == 0.8
 
 
-def test_to_prompt_agent_temperature_top_p_kwargs_win_over_default_options() -> None:
-    """Explicit kwargs override values present in default_options."""
+def test_to_prompt_agent_temperature_zero_is_honored() -> None:
+    """A literal ``0.0`` in default_options is treated as explicit, not as unset."""
     agent = _make_agent(
         _make_foundry_chat_client(),
         instructions="x",
-        default_options={"temperature": 0.42, "top_p": 0.8},
+        default_options={"temperature": 0.0, "top_p": 0.0},
     )
 
-    definition = to_prompt_agent(agent, temperature=0.1, top_p=0.2)
-
-    assert definition.temperature == 0.1
-    assert definition.top_p == 0.2
-
-
-def test_to_prompt_agent_temperature_zero_kwarg_is_honored() -> None:
-    """A literal ``0.0`` kwarg is treated as explicit, not as "fall back to default_options".
-
-    Guards against an ``if temperature:`` truthiness check that would silently drop the value.
-    """
-    agent = _make_agent(
-        _make_foundry_chat_client(),
-        instructions="x",
-        default_options={"temperature": 0.7},
-    )
-
-    definition = to_prompt_agent(agent, temperature=0.0, top_p=0.0)
+    definition = to_prompt_agent(agent)
 
     assert definition.temperature == 0.0
     assert definition.top_p == 0.0
 
 
-def test_to_prompt_agent_defaults_tool_choice_to_auto() -> None:
-    """Agent.__init__ inserts tool_choice='auto' by default; the converter propagates it."""
+def test_to_prompt_agent_tool_choice_omitted_when_no_tools() -> None:
+    """``tool_choice`` is dropped when the definition has no tools.
+
+    Mirrors RawOpenAIChatClient._prepare_options behavior. This also keeps
+    Agent.__init__'s default ``tool_choice="auto"`` from polluting tool-less
+    prompt agents.
+    """
     agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.tool_choice is None
+    assert "tool_choice" not in definition.as_dict()
+
+
+def test_to_prompt_agent_tool_choice_auto_with_tools() -> None:
+    """When tools are present, the default ``tool_choice="auto"`` flows through."""
+    agent = _make_agent(_make_foundry_chat_client(), instructions="x", tools=[get_weather])
 
     definition = to_prompt_agent(agent)
 
     assert definition.tool_choice == "auto"
 
 
-def test_to_prompt_agent_lifts_string_tool_choice_from_default_options() -> None:
-    """A string ``tool_choice`` in default_options propagates to the definition."""
+def test_to_prompt_agent_tool_choice_required_string_with_tools() -> None:
+    """A string ``tool_choice="required"`` flows through when tools are present."""
     agent = _make_agent(
         _make_foundry_chat_client(),
         instructions="x",
+        tools=[get_weather],
         default_options={"tool_choice": "required"},
     )
 
@@ -375,38 +393,149 @@ def test_to_prompt_agent_lifts_string_tool_choice_from_default_options() -> None
     assert definition.tool_choice == "required"
 
 
-def test_to_prompt_agent_ignores_non_string_tool_choice_from_default_options() -> None:
-    """Non-string ``tool_choice`` values (e.g. AF ToolMode) are not auto-propagated."""
-    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
-    # Replace the str default with a non-str sentinel to mimic an AF ToolMode value.
-    agent.default_options["tool_choice"] = object()  # type: ignore[typeddict-item]
-
-    definition = to_prompt_agent(agent)
-
-    assert definition.tool_choice is None
-
-
-def test_to_prompt_agent_tool_choice_kwarg_wins_over_default_options() -> None:
-    """An explicit ``tool_choice`` kwarg wins over a default_options entry."""
+def test_to_prompt_agent_tool_choice_required_function_dict() -> None:
+    """tool_choice mode=required with a function name → ToolChoiceFunction."""
     agent = _make_agent(
         _make_foundry_chat_client(),
         instructions="x",
-        default_options={"tool_choice": "auto"},
+        tools=[get_weather],
+        default_options={
+            "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
+        },
     )
 
-    definition = to_prompt_agent(agent, tool_choice="none")
+    definition = to_prompt_agent(agent)
 
-    assert definition.tool_choice == "none"
+    assert isinstance(definition.tool_choice, ToolChoiceFunction)
+    assert definition.tool_choice.name == "get_weather"
 
 
-def test_to_prompt_agent_tool_choice_accepts_param_model() -> None:
-    """A ``ToolChoiceParam`` instance passed as kwarg is forwarded to the definition."""
-    choice = ToolChoiceFunction(name="get_weather")
-    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
+def test_to_prompt_agent_tool_choice_auto_allowed_tools() -> None:
+    """tool_choice mode=auto with allowed_tools → ToolChoiceAllowed."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        tools=[get_weather],
+        default_options={
+            "tool_choice": {"mode": "auto", "allowed_tools": ["get_weather"]},
+        },
+    )
 
-    definition = to_prompt_agent(agent, tool_choice=choice)
+    definition = to_prompt_agent(agent)
 
-    assert definition.tool_choice is choice
+    assert isinstance(definition.tool_choice, ToolChoiceAllowed)
+    assert definition.tool_choice.mode == "auto"
+    assert definition.tool_choice.tools == [{"type": "function", "name": "get_weather"}]
+
+
+def test_to_prompt_agent_lifts_reasoning_dict_from_default_options() -> None:
+    """A reasoning dict in default_options becomes a Foundry ``Reasoning`` model."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"reasoning": {"effort": "high", "summary": "concise"}},
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert isinstance(definition.reasoning, Reasoning)
+    assert definition.reasoning.effort == "high"
+    assert definition.reasoning.summary == "concise"
+
+
+def test_to_prompt_agent_lifts_reasoning_model_from_default_options() -> None:
+    """A pre-built ``Reasoning`` model in default_options is passed through."""
+    reasoning = Reasoning(effort="medium")
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"reasoning": reasoning},
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.reasoning is reasoning
+
+
+def test_to_prompt_agent_lifts_response_format_dict_to_text() -> None:
+    """A ``response_format`` dict in default_options becomes ``text.format``."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "weather",
+                    "schema": {"type": "object", "properties": {"temp": {"type": "number"}}},
+                },
+            },
+        },
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert isinstance(definition.text, PromptAgentDefinitionTextOptions)
+    format_dict = definition.text["format"]
+    assert format_dict is not None
+    assert format_dict["type"] == "json_schema"
+    assert format_dict["name"] == "weather"
+    assert format_dict["schema"] == {"type": "object", "properties": {"temp": {"type": "number"}}}
+
+
+def test_to_prompt_agent_lifts_response_format_pydantic_to_text() -> None:
+    """A Pydantic ``BaseModel`` response_format becomes ``text.format`` json_schema."""
+
+    class WeatherReply(BaseModel):
+        location: str
+        condition: str
+
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"response_format": WeatherReply},
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert isinstance(definition.text, PromptAgentDefinitionTextOptions)
+    format_dict = definition.text["format"]
+    assert format_dict is not None
+    assert format_dict["type"] == "json_schema"
+    assert format_dict["name"] == "WeatherReply"
+    assert "schema" in format_dict
+    assert "location" in format_dict["schema"]["properties"]
+
+
+def test_to_prompt_agent_merges_verbosity_into_text() -> None:
+    """A ``verbosity`` entry merges into the ``text`` config."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"verbosity": "low"},
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert isinstance(definition.text, PromptAgentDefinitionTextOptions)
+    # PromptAgentDefinitionTextOptions only declares ``format``, but its
+    # mapping-init preserves extra keys for server-side use.
+    assert dict(definition.text).get("verbosity") == "low"
+
+
+def test_to_prompt_agent_passes_through_text_dict_from_default_options() -> None:
+    """A ``text`` dict in default_options flows through to the definition."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        default_options={"text": {"format": {"type": "text"}, "verbosity": "high"}},
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert isinstance(definition.text, PromptAgentDefinitionTextOptions)
+    assert definition.text["format"] == {"type": "text"}
+    assert dict(definition.text).get("verbosity") == "high"
 
 
 # ---------------------------------------------------------------------------
@@ -415,35 +544,13 @@ def test_to_prompt_agent_tool_choice_accepts_param_model() -> None:
 
 
 def test_to_prompt_agent_kwarg_only_fields_unset_by_default() -> None:
-    """reasoning, text, structured_inputs, rai_config are absent from the payload when unset."""
+    """structured_inputs and rai_config are absent from the payload when unset."""
     agent = _make_agent(_make_foundry_chat_client(), instructions="x")
 
     payload = to_prompt_agent(agent).as_dict()
 
-    assert "reasoning" not in payload
-    assert "text" not in payload
     assert "structured_inputs" not in payload
     assert "rai_config" not in payload
-
-
-def test_to_prompt_agent_forwards_reasoning_kwarg() -> None:
-    """A ``Reasoning`` kwarg is forwarded to the definition."""
-    reasoning = Reasoning(effort="high")
-    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
-
-    definition = to_prompt_agent(agent, reasoning=reasoning)
-
-    assert definition.reasoning is reasoning
-
-
-def test_to_prompt_agent_forwards_text_kwarg() -> None:
-    """A ``PromptAgentDefinitionTextOptions`` kwarg is forwarded to the definition."""
-    text = PromptAgentDefinitionTextOptions()
-    agent = _make_agent(_make_foundry_chat_client(), instructions="x")
-
-    definition = to_prompt_agent(agent, text=text)
-
-    assert definition.text is text
 
 
 def test_to_prompt_agent_forwards_structured_inputs_kwarg() -> None:
@@ -456,7 +563,6 @@ def test_to_prompt_agent_forwards_structured_inputs_kwarg() -> None:
     assert definition.structured_inputs is not None
     assert set(definition.structured_inputs) == {"city"}
     assert definition.structured_inputs["city"] is inputs["city"]
-    # Defensive copy: mutating the caller's mapping after the call does not leak in.
     inputs["other"] = StructuredInputDefinition(description="x")
     assert "other" not in definition.structured_inputs
 
@@ -471,34 +577,41 @@ def test_to_prompt_agent_forwards_rai_config_kwarg() -> None:
     assert definition.rai_config is rai_config
 
 
-def test_to_prompt_agent_combines_all_parameters() -> None:
-    """Every parameter routes through to a single definition simultaneously."""
-    reasoning = Reasoning(effort="medium")
-    text = PromptAgentDefinitionTextOptions()
+# ---------------------------------------------------------------------------
+# Combined integration
+# ---------------------------------------------------------------------------
+
+
+def test_to_prompt_agent_combines_all_sources() -> None:
+    """Generation params from default_options + Foundry-only kwargs combine cleanly."""
     rai_config = RaiConfig()
     structured = {"q": StructuredInputDefinition(description="query")}
     agent = _make_agent(
         _make_foundry_chat_client(),
         instructions="x",
-        default_options={"temperature": 0.3, "top_p": 0.95, "tool_choice": "auto"},
+        default_options={
+            "temperature": 0.3,
+            "top_p": 0.95,
+            "tool_choice": "auto",
+            "reasoning": {"effort": "medium"},
+            "verbosity": "low",
+        },
         tools=[get_weather],
     )
 
     definition = to_prompt_agent(
         agent,
-        temperature=0.5,
-        reasoning=reasoning,
-        text=text,
         structured_inputs=structured,
         rai_config=rai_config,
     )
 
-    # Kwargs overrode default_options for temperature; top_p and tool_choice came from default_options.
-    assert definition.temperature == 0.5
+    assert definition.temperature == 0.3
     assert definition.top_p == 0.95
     assert definition.tool_choice == "auto"
-    assert definition.reasoning is reasoning
-    assert definition.text is text
+    assert isinstance(definition.reasoning, Reasoning)
+    assert definition.reasoning.effort == "medium"
+    assert isinstance(definition.text, PromptAgentDefinitionTextOptions)
+    assert dict(definition.text).get("verbosity") == "low"
     assert definition.rai_config is rai_config
     assert definition.structured_inputs is not None and "q" in definition.structured_inputs
     assert definition.tools is not None and len(definition.tools) == 1
