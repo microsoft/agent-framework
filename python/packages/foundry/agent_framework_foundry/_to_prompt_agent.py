@@ -299,7 +299,7 @@ def _function_tool_to_foundry(tool_item: FunctionTool) -> Tool:
         name=tool_item.name,
         description=tool_item.description or "",
         parameters=tool_item.parameters(),
-        strict=False,
+        strict=True,
     )
 
 
@@ -308,10 +308,16 @@ def _validate_mapping_tool(tool_item: Mapping[str, Any]) -> Tool:
 
     The Foundry SDK can rehydrate a tool model from its raw JSON mapping via
     the discriminator on ``type``. We require the ``type`` field so the
-    failure mode is obvious; everything else is left to the SDK.
+    failure mode is obvious; everything else is dispatched through the SDK's
+    ``Tool._deserialize`` entry point so the concrete subclass
+    (e.g. ``FunctionTool``, ``WebSearchTool``) is materialized rather than a
+    generic ``Tool`` instance.
     """
     from azure.ai.projects.models import Tool as ProjectsTool
 
     if "type" not in tool_item:
         raise ValueError("Dict-shaped tools must include a 'type' field matching a Foundry tool discriminator.")
-    return ProjectsTool(**tool_item)
+    # ``_deserialize`` is the SDK's discriminator-aware entry point. It is marked
+    # protected by convention but is the standard way to rehydrate polymorphic
+    # azure-sdk-for-python models from a raw mapping.
+    return cast("Tool", ProjectsTool._deserialize(dict(tool_item), []))  # type: ignore[no-untyped-call]  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]

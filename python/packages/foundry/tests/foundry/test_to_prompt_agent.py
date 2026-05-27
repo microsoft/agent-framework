@@ -215,7 +215,7 @@ def test_to_prompt_agent_converts_function_tool() -> None:
     assert isinstance(fn, ProjectsFunctionTool)
     assert fn.name == "get_weather"
     assert fn.description == "Get the weather for a location."
-    assert fn.strict is False
+    assert fn.strict is True
     parameters = fn.parameters
     assert parameters["type"] == "object"
     assert "location" in parameters["properties"]
@@ -292,8 +292,36 @@ def test_to_prompt_agent_accepts_dict_tool() -> None:
     assert definition.tools is not None
     assert len(definition.tools) == 1
     tool_obj = definition.tools[0]
+    # The SDK discriminator on ``type`` should materialize the concrete subclass
+    # (here ``WebSearchTool``), not a generic ``Tool``.
+    assert isinstance(tool_obj, WebSearchTool)
     assert isinstance(tool_obj, ProjectsTool)
     assert tool_obj.type == "web_search"
+
+
+def test_to_prompt_agent_accepts_dict_function_tool() -> None:
+    """A dict with ``type='function'`` rehydrates to a Foundry ``FunctionTool``."""
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        instructions="x",
+        tools=[
+            {
+                "type": "function",
+                "name": "lookup",
+                "description": "Look up a value.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ],
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.tools is not None
+    assert len(definition.tools) == 1
+    tool_obj = definition.tools[0]
+    assert isinstance(tool_obj, ProjectsFunctionTool)
+    assert tool_obj.name == "lookup"
+    assert tool_obj.description == "Look up a value."
 
 
 def test_to_prompt_agent_rejects_dict_tool_without_type() -> None:
