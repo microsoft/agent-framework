@@ -336,49 +336,77 @@ class MCPTool:
         self,
         mcp_type: types.CallToolResult,
     ) -> list[Content]:
-        """Parse an MCP CallToolResult into a list of Content items."""
+        """Parse an MCP CallToolResult into a list of Content items.
+
+        If the server attached a ``_meta`` payload to the tool result (e.g. for
+        Information Flow Control labels under the ``ifc`` key), a copy of that
+        payload is stamped onto each produced :class:`Content` instance under
+        ``additional_properties["__mcp_result_meta__"]``.  Downstream layers
+        (such as :class:`agent_framework.security.SecureMCPToolProxy`) consume
+        this sentinel to derive per-item security labels and then remove it.
+        The sentinel is intentionally generic so any MCP server's ``_meta``
+        keys (current or future) can be interpreted by higher-level code.
+        """
         from mcp import types
+
+        raw_meta = getattr(mcp_type, "meta", None)
+        meta: dict[str, Any] | None = dict(raw_meta) if raw_meta else None
+
+        def _stamp(content: Content) -> Content:
+            if meta is None:
+                return content
+            content.additional_properties = {
+                **(content.additional_properties or {}),
+                "__mcp_result_meta__": dict(meta),
+            }
+            return content
 
         result: list[Content] = []
         for item in mcp_type.content:
             match item:
                 case types.TextContent():
-                    result.append(Content.from_text(item.text))
+                    result.append(_stamp(Content.from_text(item.text)))
                 case types.ImageContent() | types.AudioContent():
                     decoded = base64.b64decode(item.data)
                     result.append(
-                        Content.from_data(
-                            data=decoded,
-                            media_type=item.mimeType,
+                        _stamp(
+                            Content.from_data(
+                                data=decoded,
+                                media_type=item.mimeType,
+                            )
                         )
                     )
                 case types.ResourceLink():
                     result.append(
-                        Content.from_uri(
-                            uri=str(item.uri),
-                            media_type=item.mimeType,
+                        _stamp(
+                            Content.from_uri(
+                                uri=str(item.uri),
+                                media_type=item.mimeType,
+                            )
                         )
                     )
                 case types.EmbeddedResource():
                     match item.resource:
                         case types.TextResourceContents():
-                            result.append(Content.from_text(item.resource.text))
+                            result.append(_stamp(Content.from_text(item.resource.text)))
                         case types.BlobResourceContents():
                             blob = item.resource.blob
                             mime = item.resource.mimeType or "application/octet-stream"
                             if not blob.startswith("data:"):
                                 blob = f"data:{mime};base64,{blob}"
                             result.append(
-                                Content.from_uri(
-                                    uri=blob,
-                                    media_type=mime,
+                                _stamp(
+                                    Content.from_uri(
+                                        uri=blob,
+                                        media_type=mime,
+                                    )
                                 )
                             )
                 case _:
-                    result.append(Content.from_text(str(item)))
+                    result.append(_stamp(Content.from_text(str(item))))
 
         if not result:
-            result.append(Content.from_text("null"))
+            result.append(_stamp(Content.from_text("null")))
         return result
 
     def _parse_content_from_mcp(
