@@ -11,7 +11,7 @@ import io
 import json
 import keyword
 import os
-import subprocess  # noqa: S404 - subprocess mode is the default execution strategy for this package.
+import subprocess  # noqa: S404  # nosec B404 - subprocess mode is the default execution strategy for this package.
 import traceback
 from collections.abc import Mapping, Sequence
 from copy import copy
@@ -256,7 +256,7 @@ class UnsafeInProcessCodeBridge:
         compiled, output_present = self._compile_main(code)
         try:
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                exec(compiled, globals_dict, globals_dict)  # noqa: S102 - explicit unsafe in-process mode.
+                exec(compiled, globals_dict, globals_dict)  # noqa: S102  # nosec B102 - explicit unsafe in-process mode.
                 output = await globals_dict["__local_codeact_main__"]()
         except Exception:
             raise RuntimeError(traceback.format_exc(limit=20)) from None

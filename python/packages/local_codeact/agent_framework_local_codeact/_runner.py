@@ -167,7 +167,7 @@ async def _execute(request: Mapping[str, Any], control: TextIO) -> dict[str, Any
 
     compiled, output_present = _compile_main(code)
     with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-        exec(compiled, globals_dict, globals_dict)  # noqa: S102 - this runner exists to execute generated code.
+        exec(compiled, globals_dict, globals_dict)  # noqa: S102  # nosec B102 - this runner exists to execute generated code.
         output = await globals_dict["__local_codeact_main__"]()
 
     return {

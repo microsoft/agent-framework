@@ -89,6 +89,40 @@ joined = os.path.join('/base', 'file.txt')"""
     validate_code(code)  # Should not raise
 
 
+def test_validate_blocks_unknown_python_builtin() -> None:
+    """A real Python builtin not in the allow-list should be rejected."""
+    # `vars` is a real builtin but not in ALLOWED_BUILTINS (it's in BLOCKED_BUILTINS).
+    # Even without explicit blocking, a real builtin missing from the allow-list must fail.
+    code = "result = aiter([])"
+    with pytest.raises(CodeValidationError) as exc_info:
+        validate_code(code)
+    assert "aiter" in str(exc_info.value)
+
+
+def test_validate_allows_user_defined_function_call() -> None:
+    """Names that are not Python builtins are treated as user code/tools and allowed."""
+    code = """def my_helper(x):
+    return x + 1
+result = my_helper(5)"""
+    validate_code(code)  # Should not raise
+
+
+def test_validate_custom_allowed_builtins_permits_extra() -> None:
+    """Custom allow-list can permit extra builtins like `vars`."""
+    code = "result = vars()"
+    # Default: blocked
+    with pytest.raises(CodeValidationError):
+        validate_code(code)
+    # With custom allow-list including `vars` and removed from blocked list: allowed
+    from agent_framework_local_codeact._validator import ALLOWED_BUILTINS, BLOCKED_BUILTINS
+
+    validate_code(
+        code,
+        allowed_builtins=ALLOWED_BUILTINS | {"vars"},
+        blocked_builtins=BLOCKED_BUILTINS - {"vars"},
+    )
+
+
 def test_validate_blocks_eval() -> None:
     """eval() should be blocked."""
     code = "result = eval('1 + 1')"
