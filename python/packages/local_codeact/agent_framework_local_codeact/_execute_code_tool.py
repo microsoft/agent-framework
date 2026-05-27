@@ -437,7 +437,10 @@ class LocalExecuteCodeTool(FunctionTool):
         if self._workspace_root is not None:
             cwd = str(self._workspace_root)
         elif self._execution_mode == "subprocess":
-            temp_dir = tempfile.TemporaryDirectory(prefix="local-codeact-")
+            # ignore_cleanup_errors handles the Windows race where a freshly-killed
+            # subprocess may still hold a file handle in the workspace; without it
+            # tempfile's recursive retry can hit RecursionError on Windows.
+            temp_dir = tempfile.TemporaryDirectory(prefix="local-codeact-", ignore_cleanup_errors=True)
             cwd = temp_dir.name
 
         try:
@@ -463,10 +466,11 @@ class LocalExecuteCodeTool(FunctionTool):
             ]
         finally:
             if temp_dir is not None:
-                # Windows: a freshly-killed subprocess can briefly hold the workspace
-                # directory open. Swallow rmtree failures so callers still get a clean
-                # error Content for the run.
-                with contextlib.suppress(OSError):
+                # Best-effort cleanup; TemporaryDirectory(ignore_cleanup_errors=True)
+                # absorbs Windows file-lock errors. Swallow anything else (e.g. the
+                # RecursionError some Python versions raise inside their cleanup retry)
+                # so the caller still receives the proper error Content.
+                with contextlib.suppress(Exception):
                     temp_dir.cleanup()
 
         contents = _build_execution_contents(result=result)
