@@ -552,6 +552,64 @@ async def test_endpoint_without_dependencies_is_accessible(build_chat_client):
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
 
+async def test_endpoint_warn_on_missing_auth_emits_warning(build_chat_client):
+    """Opt-in guardrail: emit a warning when no auth dependencies are configured."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.warns(RuntimeWarning, match="do not enforce authentication"):
+        add_agent_framework_fastapi_endpoint(
+            app,
+            agent,
+            path="/warn",
+            warn_on_missing_auth=True,
+        )
+
+    client = TestClient(app)
+    response = client.post("/warn", json={"messages": [{"role": "user", "content": "Hello"}]})
+    assert response.status_code == 200
+
+
+async def test_endpoint_auth_required_rejects_missing_dependencies(build_chat_client):
+    """Opt-in guardrail: fail fast when auth_required=True but no deps are set."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.raises(ValueError, match="requires authentication/authorization"):
+        add_agent_framework_fastapi_endpoint(
+            app,
+            agent,
+            path="/auth-required",
+            auth_required=True,
+        )
+
+
+async def test_endpoint_auth_required_allows_with_dependencies(build_chat_client):
+    """auth_required=True is allowed when dependencies are configured."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    async def require_api_key(x_api_key: str | None = Header(None)):
+        if x_api_key != "secret-key":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/auth-required",
+        dependencies=[Depends(require_api_key)],
+        auth_required=True,
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/auth-required",
+        json={"messages": [{"role": "user", "content": "Hello"}]},
+        headers={"x-api-key": "secret-key"},
+    )
+    assert response.status_code == 200
+
+
 async def test_endpoint_invalid_agent_type_raises_typeerror():
     """Passing an invalid agent type raises TypeError."""
     app = FastAPI()

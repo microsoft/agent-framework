@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import warnings
 from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
@@ -33,6 +34,8 @@ def add_agent_framework_fastapi_endpoint(
     default_state: dict[str, Any] | None = None,
     tags: list[str] | None = None,
     dependencies: Sequence[Depends] | None = None,
+    auth_required: bool = False,
+    warn_on_missing_auth: bool = False,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -50,7 +53,27 @@ def add_agent_framework_fastapi_endpoint(
             These dependencies run before the endpoint handler. Use this to add
             authentication checks, rate limiting, or other middleware-like behavior.
             Example: `dependencies=[Depends(verify_api_key)]`
+        auth_required: When True, raise ValueError if dependencies is empty.
+            Use this for approval-capable or resume-capable workflows exposed
+            outside a trusted local development boundary.
+        warn_on_missing_auth: Emit a RuntimeWarning when no dependencies are
+            configured. Useful as an opt-in guardrail to surface accidental
+            unauthenticated deployments.
     """
+    if auth_required and not dependencies:
+        raise ValueError(
+            "add_agent_framework_fastapi_endpoint(auth_required=True) requires "
+            "authentication/authorization dependencies."
+        )
+    if warn_on_missing_auth and not dependencies:
+        warnings.warn(
+            "AG-UI endpoints do not enforce authentication unless FastAPI "
+            "dependencies are provided. Exposing approval-capable or resume-capable "
+            "workflows without dependencies can allow unauthorized resume payloads.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
     protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow
     if isinstance(agent, AgentFrameworkWorkflow):
         protocol_runner = agent
