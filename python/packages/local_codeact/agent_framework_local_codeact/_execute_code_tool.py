@@ -348,6 +348,10 @@ class LocalExecuteCodeTool(FunctionTool):
             execution_mode=self._execution_mode,
             python_executable=self._python_executable,
             runner_script=self._runner_script,
+            allowed_imports=self._allowed_imports,
+            blocked_imports=self._blocked_imports,
+            allowed_builtins=self._allowed_builtins,
+            blocked_builtins=self._blocked_builtins,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:

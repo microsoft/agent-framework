@@ -1,5 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""This sample demonstrates configuring and invoking Local CodeAct without Foundry hosting.
+
+Local CodeAct executes LLM-generated Python in the local agent environment. This
+sample is meant for a disposable sandbox, container, or VM. It shows the
+configuration surface directly on `LocalExecuteCodeTool`: host tools, explicit
+environment variables, workspace/file mounts, execution limits, and subprocess
+execution mode.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,15 +19,6 @@ from pathlib import Path
 from agent_framework import Content
 
 from agent_framework_local_codeact import FileMount, LocalExecuteCodeTool, ProcessExecutionLimits
-
-"""This sample demonstrates configuring and invoking Local CodeAct without Foundry hosting.
-
-Local CodeAct executes LLM-generated Python in the local agent environment. This
-sample is meant for a disposable sandbox, container, or VM. It shows the
-configuration surface directly on `LocalExecuteCodeTool`: host tools, explicit
-environment variables, workspace/file mounts, execution limits, and subprocess
-execution mode.
-"""
 
 
 def convert_usd_to_eur(amount: float) -> dict[str, float]:
@@ -105,11 +105,3 @@ converted
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-"""
-Sample output:
-Text: Local CodeAct sample report
-
-Text: {"usd": 20.0, "eur": 18.4}
-Data: /output/report.txt
-"""

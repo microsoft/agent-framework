@@ -52,6 +52,9 @@ BLOCKED_IMPORTS: set[str] = {
 }
 
 # Allowed builtin function names that generated code may call.
+# Note: getattr/setattr/hasattr/delattr are NOT included because they can bypass
+# AST attribute restrictions (e.g., getattr(os, 'system')('...') avoids os.system check).
+# User-defined functions and registered tools are allowed at runtime.
 ALLOWED_BUILTINS: set[str] = {
     "print",
     "len",
@@ -93,9 +96,6 @@ ALLOWED_BUILTINS: set[str] = {
     "memoryview",
     "isinstance",
     "issubclass",
-    "hasattr",
-    "getattr",
-    "setattr",
     "callable",
     "type",
     "id",
@@ -115,7 +115,7 @@ BLOCKED_BUILTINS: set[str] = {
     "locals",
     "vars",
     "dir",
-    "open",
+    "open",  # File I/O must go through pathlib with explicit mounts
     "input",
     "help",
     "breakpoint",
@@ -124,6 +124,10 @@ BLOCKED_BUILTINS: set[str] = {
     "copyright",
     "credits",
     "license",
+    "delattr",
+    "getattr",  # Can bypass AST attribute checks: getattr(os, 'system')
+    "setattr",  # Can bypass AST attribute checks
+    "hasattr",  # Can probe for dangerous attributes
 }
 
 # Allowed AST node types for code structure and operations.
@@ -304,16 +308,20 @@ class _CodeValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
-        """Validate function calls."""
+        """Validate function calls.
+
+        Note: We only validate calls to known builtins against the block-list.
+        Calls to user-defined functions and registered tools are allowed (validated at runtime).
+        The allowed_builtins parameter exists for customization but does not enforce
+        an allow-list by default to permit user code and tools.
+        """
         # Check for blocked builtins
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name in self._blocked_builtins:
                 self._errors.append(f"Call to builtin '{func_name}' is not allowed")
-            elif func_name not in self._allowed_builtins and func_name != "call_tool":
-                # Allow user-defined functions and registered tools (validated at runtime)
-                # We only block known dangerous builtins here
-                pass
+            # Note: We don't enforce allowed_builtins for Names to allow user-defined
+            # functions and registered tools. Custom blocked_builtins can restrict specific names.
 
         # Check for attribute access to dangerous methods
         if isinstance(node.func, ast.Attribute):

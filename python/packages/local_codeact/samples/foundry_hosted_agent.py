@@ -39,8 +39,3 @@ def create_server() -> ResponsesHostServer:
 
 if __name__ == "__main__":
     create_server()
-
-"""
-Sample output:
-Configure and return your model client here.
-"""

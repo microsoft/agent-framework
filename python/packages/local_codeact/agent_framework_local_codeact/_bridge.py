@@ -167,6 +167,7 @@ class SubprocessCodeBridge:
                 return dict(result_dict)
             if message_type == "error":
                 details = str(message.get("traceback") or message.get("message") or "Unknown execution error.")
+                await self._stop_process(process)
                 raise RuntimeError(details)
 
     async def _handle_tool_call(self, process: asyncio.subprocess.Process, message: Mapping[str, Any]) -> None:
