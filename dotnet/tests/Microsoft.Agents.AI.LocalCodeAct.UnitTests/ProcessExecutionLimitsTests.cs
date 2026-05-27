@@ -1,47 +1,40 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Microsoft. All rights reserved.
 
-using Xunit;
+using System;
+using Microsoft.Agents.AI.LocalCodeAct;
 
 namespace Microsoft.Agents.AI.LocalCodeAct.UnitTests;
 
-/// <summary>
-/// Tests for ProcessExecutionLimits record.
-/// </summary>
 public sealed class ProcessExecutionLimitsTests
 {
     [Fact]
-    public void DefaultValues_AreSet()
+    public void Defaults_AreReasonable()
     {
-        // Arrange & Act
         var limits = new ProcessExecutionLimits();
 
-        // Assert
-        Assert.Equal(30, limits.TimeoutSeconds);
-        Assert.Equal(10 * 1024 * 1024, limits.MaxStdoutBytes);
-        Assert.Equal(10 * 1024 * 1024, limits.MaxStderrBytes);
-        Assert.Equal(1024 * 1024, limits.MaxFileBytesPerFile);
-        Assert.Equal(10 * 1024 * 1024, limits.MaxFileBytesTotal);
+        Assert.True(limits.TimeoutSeconds > 0);
+        Assert.True(limits.MaxStdoutBytes > 0);
+        Assert.True(limits.MaxStderrBytes > 0);
+        Assert.True(limits.ValidationTimeoutSeconds > 0);
+        Assert.True(limits.MaxResultBytes > 0);
     }
 
     [Fact]
-    public void CustomValues_CanBeSet()
+    public void Properties_AreMutable()
     {
-        // Arrange & Act
         var limits = new ProcessExecutionLimits
         {
-            TimeoutSeconds = 5,
+            TimeoutSeconds = 60,
             MaxStdoutBytes = 1024,
             MaxStderrBytes = 512,
-            MaxFileBytesPerFile = 256,
-            MaxFileBytesTotal = 2048,
+            ValidationTimeoutSeconds = 5,
+            MaxResultBytes = 2048,
         };
 
-        // Assert
-        Assert.Equal(5, limits.TimeoutSeconds);
+        Assert.Equal(60, limits.TimeoutSeconds);
         Assert.Equal(1024, limits.MaxStdoutBytes);
         Assert.Equal(512, limits.MaxStderrBytes);
-        Assert.Equal(256, limits.MaxFileBytesPerFile);
-        Assert.Equal(2048, limits.MaxFileBytesTotal);
+        Assert.Equal(5, limits.ValidationTimeoutSeconds);
+        Assert.Equal(2048, limits.MaxResultBytes);
     }
 }

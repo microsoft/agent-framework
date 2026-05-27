@@ -1,53 +1,74 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI.LocalCodeAct;
-
-/// <summary>
-/// Defines a file or directory mounted into the code execution environment.
-/// </summary>
-/// <remarks>
-/// Mounts expose host paths directly to code running in a subprocess. The MountPath
-/// parameter is metadata only; code accesses the HostPath directly. Real isolation
-/// must come from external container/VM sandboxing.
-/// </remarks>
-public sealed record FileMount
-{
-    /// <summary>
-    /// Gets or sets the path on the host filesystem to expose to the subprocess.
-    /// </summary>
-    public required string HostPath { get; init; }
-
-    /// <summary>
-    /// Gets or sets the logical path name for documentation. Not enforced at runtime.
-    /// </summary>
-    public required string MountPath { get; init; }
-
-    /// <summary>
-    /// Gets or sets the access mode for the mount. Default is ReadWrite.
-    /// </summary>
-    public FileMountMode Mode { get; init; } = FileMountMode.ReadWrite;
-
-    /// <summary>
-    /// Gets or sets the maximum bytes that can be written to a single file in this mount (read-write only).
-    /// If null, uses the tool's MaxFileBytesPerFile limit.
-    /// </summary>
-    public int? WriteBytesLimit { get; init; }
-}
 
 /// <summary>
 /// File mount access mode.
 /// </summary>
 public enum FileMountMode
 {
-    /// <summary>
-    /// Read-only access. Files cannot be created or modified.
-    /// </summary>
+    /// <summary>Read-only access. Files are not scanned for capture after execution.</summary>
     ReadOnly,
 
-    /// <summary>
-    /// Read-write access. Files can be created and modified.
-    /// Output files are captured and returned as data content.
-    /// </summary>
+    /// <summary>Read-write access. New or modified files are captured after execution.</summary>
     ReadWrite,
+}
+
+/// <summary>
+/// Represents a host directory exposed to locally executed code.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Unlike a true sandbox, mounts in this package expose <see cref="HostPath"/>
+/// directly to the subprocess. The <see cref="MountPath"/> is metadata used to
+/// describe the mount to the model in the function description and to label
+/// captured files. Real isolation must come from the surrounding sandbox
+/// (container, VM, Foundry hosted agent, etc.).
+/// </para>
+/// </remarks>
+public sealed class FileMount
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FileMount"/> class.
+    /// </summary>
+    /// <param name="hostPath">Path on the host filesystem to expose to the subprocess. Must exist.</param>
+    /// <param name="mountPath">
+    /// Logical path used to describe the mount to the model (for example <c>"/input/data.csv"</c>).
+    /// </param>
+    /// <param name="mode">Access mode for the mount. Defaults to <see cref="FileMountMode.ReadWrite"/>.</param>
+    /// <param name="writeBytesLimit">
+    /// Optional per-mount write capture limit (in bytes). When <see langword="null"/>, the global
+    /// <see cref="ProcessExecutionLimits.MaxCapturedFileBytes"/> applies.
+    /// </param>
+    public FileMount(string hostPath, string mountPath, FileMountMode mode = FileMountMode.ReadWrite, long? writeBytesLimit = null)
+    {
+        Microsoft.Shared.Diagnostics.Throw.IfNull(hostPath);
+        Microsoft.Shared.Diagnostics.Throw.IfNull(mountPath);
+        if (string.IsNullOrWhiteSpace(hostPath))
+        {
+            throw new System.ArgumentException("Host path must not be empty.", nameof(hostPath));
+        }
+
+        if (string.IsNullOrWhiteSpace(mountPath))
+        {
+            throw new System.ArgumentException("Mount path must not be empty.", nameof(mountPath));
+        }
+
+        this.HostPath = hostPath;
+        this.MountPath = mountPath;
+        this.Mode = mode;
+        this.WriteBytesLimit = writeBytesLimit;
+    }
+
+    /// <summary>Gets the host filesystem path exposed to the subprocess.</summary>
+    public string HostPath { get; }
+
+    /// <summary>Gets the logical mount path used to describe the mount to the model.</summary>
+    public string MountPath { get; }
+
+    /// <summary>Gets the access mode for the mount.</summary>
+    public FileMountMode Mode { get; }
+
+    /// <summary>Gets the optional per-mount write capture limit (in bytes).</summary>
+    public long? WriteBytesLimit { get; }
 }

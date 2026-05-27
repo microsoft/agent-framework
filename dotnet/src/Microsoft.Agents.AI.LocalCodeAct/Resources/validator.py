@@ -221,20 +221,16 @@ ALLOWED_AST_NODES: set[type[ast.AST]] = {
     ast.arg,
     # Lambda expressions
     ast.Lambda,
-    # Match statements (Python 3.10+)
-    ast.Match,
-    ast.match_case,
-    ast.MatchValue,
-    ast.MatchSingleton,
-    ast.MatchSequence,
-    ast.MatchMapping,
-    ast.MatchClass,
-    ast.MatchStar,
-    ast.MatchAs,
-    ast.MatchOr,
     # Starred expressions
     ast.Starred,
 }
+
+# Match statements (Python 3.10+) - added conditionally for older Python compatibility.
+for _name in ("Match", "match_case", "MatchValue", "MatchSingleton", "MatchSequence",
+              "MatchMapping", "MatchClass", "MatchStar", "MatchAs", "MatchOr"):
+    _node = getattr(ast, _name, None)
+    if _node is not None:
+        ALLOWED_AST_NODES.add(_node)
 
 
 class CodeValidationError(ValueError):
@@ -454,3 +450,69 @@ def validate_code(
         blocked_builtins=blocked_builtins,
     )
     validator.validate(code)
+
+
+def _main() -> int:
+    """Script entrypoint: read a JSON request from stdin and validate it.
+
+    Request shape:
+        {
+            "code": "...",
+            "allowed_imports": [...]?,
+            "blocked_imports": [...]?,
+            "allowed_builtins": [...]?,
+            "blocked_builtins": [...]?
+        }
+
+    On success: exit code 0, no output required.
+    On validation failure: exit code 1, JSON {"errors": ["..."]} on stdout.
+    On request error: exit code 2, JSON {"message": "..."} on stdout.
+    """
+    import json
+    import sys
+
+    raw = sys.stdin.read()
+    try:
+        request = json.loads(raw) if raw.strip() else {}
+        if not isinstance(request, dict):
+            raise ValueError("Validator request must be a JSON object.")
+        code = request.get("code")
+        if not isinstance(code, str):
+            raise ValueError("Validator request must include a 'code' string field.")
+    except Exception as exc:  # noqa: BLE001 - report any parse error to caller
+        json.dump({"message": f"Invalid validator request: {exc}"}, sys.stdout)
+        return 2
+
+    def _as_set(value: Any) -> set[str] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise ValueError("Validator allow/block lists must be arrays of strings.")
+        return {str(item) for item in value}
+
+    try:
+        validate_code(
+            code,
+            allowed_imports=_as_set(request.get("allowed_imports")),
+            blocked_imports=_as_set(request.get("blocked_imports")),
+            allowed_builtins=_as_set(request.get("allowed_builtins")),
+            blocked_builtins=_as_set(request.get("blocked_builtins")),
+        )
+    except CodeValidationError as exc:
+        message = str(exc)
+        lines = [line.lstrip("- ").rstrip() for line in message.splitlines() if line.strip()]
+        if lines and lines[0].startswith("Generated code violates"):
+            lines = lines[1:]
+        if not lines:
+            lines = [message]
+        json.dump({"errors": lines}, sys.stdout)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - convert unexpected errors to a structured response
+        json.dump({"errors": [f"{type(exc).__name__}: {exc}"]}, sys.stdout)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

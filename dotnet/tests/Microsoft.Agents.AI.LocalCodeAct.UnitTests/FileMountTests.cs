@@ -1,48 +1,53 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Microsoft. All rights reserved.
 
-using Xunit;
+using System;
+using Microsoft.Agents.AI.LocalCodeAct;
 
 namespace Microsoft.Agents.AI.LocalCodeAct.UnitTests;
 
-/// <summary>
-/// Tests for FileMount record.
-/// </summary>
 public sealed class FileMountTests
 {
     [Fact]
-    public void Constructor_WithRequiredProperties_Succeeds()
+    public void Constructor_AssignsProperties()
     {
-        // Arrange & Act
-        var mount = new FileMount
+        var tempDir = System.IO.Directory.CreateTempSubdirectory("filemount-test-").FullName;
+        try
         {
-            HostPath = "/tmp/data",
-            MountPath = "/input",
-        };
+            var mount = new FileMount(tempDir, "/app/data", FileMountMode.ReadWrite, writeBytesLimit: 1024);
 
-        // Assert
-        Assert.Equal("/tmp/data", mount.HostPath);
-        Assert.Equal("/input", mount.MountPath);
-        Assert.Equal(FileMountMode.ReadWrite, mount.Mode);
-        Assert.Null(mount.WriteBytesLimit);
+            Assert.Equal(tempDir, mount.HostPath);
+            Assert.Equal("/app/data", mount.MountPath);
+            Assert.Equal(FileMountMode.ReadWrite, mount.Mode);
+            Assert.Equal(1024L, mount.WriteBytesLimit);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]
-    public void CustomValues_CanBeSet()
+    public void Constructor_DefaultsAreReadWriteWithNoLimit()
     {
-        // Arrange & Act
-        var mount = new FileMount
+        var tempDir = System.IO.Directory.CreateTempSubdirectory("filemount-test-").FullName;
+        try
         {
-            HostPath = "/data",
-            MountPath = "/readonly",
-            Mode = FileMountMode.ReadOnly,
-            WriteBytesLimit = 1024,
-        };
+            var mount = new FileMount(tempDir, "/app/data");
+            Assert.Equal(FileMountMode.ReadWrite, mount.Mode);
+            Assert.Null(mount.WriteBytesLimit);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, recursive: true);
+        }
+    }
 
-        // Assert
-        Assert.Equal("/data", mount.HostPath);
-        Assert.Equal("/readonly", mount.MountPath);
-        Assert.Equal(FileMountMode.ReadOnly, mount.Mode);
-        Assert.Equal(1024, mount.WriteBytesLimit);
+    [Fact]
+    public void Constructor_RequiresPaths()
+    {
+        Assert.Throws<ArgumentException>(() => new FileMount("", "/app/data"));
+        Assert.Throws<ArgumentException>(() => new FileMount("/host/data", ""));
+        _ = Assert.Throws<ArgumentNullException>(() => new FileMount(null!, "/app/data"));
+        _ = Assert.Throws<ArgumentNullException>(() => new FileMount("/host/data", null!));
     }
 }

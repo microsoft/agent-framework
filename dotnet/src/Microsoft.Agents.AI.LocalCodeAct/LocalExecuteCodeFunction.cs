@@ -1,20 +1,26 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.LocalCodeAct.Internal;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.LocalCodeAct;
 
 /// <summary>
-/// Standalone <c>execute_code</c> <see cref="AIFunction"/> that runs Python code locally.
+/// Standalone <c>execute_code</c> <see cref="AIFunction"/> that runs Python locally in a subprocess.
 /// </summary>
 /// <remarks>
-/// This function executes LLM-generated Python code in a subprocess. It is intended for
-/// environments that already provide process, filesystem, and network isolation (e.g.,
-/// Azure Container Instances, VMs, Foundry hosted agents). It is NOT a security sandbox.
+/// Use this when you want to expose code execution directly as a model-facing function without
+/// the <see cref="LocalCodeActProvider"/> indirection. Tools and file mounts are captured at
+/// construction time and immutable for the lifetime of the function.
 /// </remarks>
-public sealed class LocalExecuteCodeFunction : AIFunction, IDisposable
+public sealed class LocalExecuteCodeFunction : AIFunction
 {
     private const string ExecuteCodeName = "execute_code";
 
@@ -25,175 +31,89 @@ public sealed class LocalExecuteCodeFunction : AIFunction, IDisposable
           "properties": {
             "code": {
               "type": "string",
-              "description": "Python code to execute locally in the agent environment."
+              "description": "Python source code to execute locally in the agent environment."
             }
           },
           "required": ["code"]
         }
         """).RootElement;
 
-    private readonly string _pythonExecutable;
-    private readonly ProcessExecutionLimits _limits;
-    private readonly Dictionary<string, string> _environment;
-    private readonly List<AIFunction> _tools;
-    private readonly string? _runnerScript;
-    private readonly CodeValidator? _validator;
-    private readonly List<FileMount> _fileMounts;
-    private bool _disposed;
+    private readonly CodeExecutor _executor;
+    private readonly CodeExecutor.RunSnapshot _snapshot;
+    private readonly string _description;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="LocalExecuteCodeFunction"/> class.
-    /// </summary>
-    /// <param name="pythonExecutablePath">Path to the Python executable (required).</param>
-    /// <param name="tools">Host tools available to generated code.</param>
-    /// <param name="executionLimits">Resource limits for code execution.</param>
-    /// <param name="environment">Environment variables to pass to subprocess.</param>
-    /// <param name="runnerScript">Optional path to bundled Python runner script.</param>
-    /// <param name="allowedImports">Custom allowed imports (replaces defaults).</param>
-    /// <param name="blockedImports">Custom blocked imports (replaces defaults).</param>
-    /// <param name="allowedBuiltins">Custom allowed builtins (replaces defaults).</param>
-    /// <param name="blockedBuiltins">Custom blocked builtins (replaces defaults).</param>
-    /// <param name="fileMounts">File mounts to expose to generated code.</param>
-    public LocalExecuteCodeFunction(
-        string pythonExecutablePath,
-        IEnumerable<AIFunction>? tools = null,
-        ProcessExecutionLimits? executionLimits = null,
-        IReadOnlyDictionary<string, string>? environment = null,
-        string? runnerScript = null,
-        string[]? allowedImports = null,
-        string[]? blockedImports = null,
-        string[]? allowedBuiltins = null,
-        string[]? blockedBuiltins = null,
-        IEnumerable<FileMount>? fileMounts = null)
+    /// <summary>Initializes a new instance of the <see cref="LocalExecuteCodeFunction"/> class.</summary>
+    /// <param name="options">Configuration including the Python executable path.</param>
+    public LocalExecuteCodeFunction(LocalCodeActProviderOptions options)
     {
-        ArgumentNullException.ThrowIfNull(pythonExecutablePath);
-
-        _pythonExecutable = pythonExecutablePath;
-        _limits = executionLimits ?? new ProcessExecutionLimits();
-        _environment = environment != null ? new Dictionary<string, string>(environment) : [];
-        _tools = tools?.Where(t => t != null && t.Metadata.Name != ExecuteCodeName).ToList() ?? [];
-        _runnerScript = runnerScript;
-        _fileMounts = fileMounts?.Select(FileMountHelper.NormalizeFileMount).ToList() ?? [];
-
-        // Create validator if validation lists are provided
-        if (allowedImports != null || blockedImports != null || allowedBuiltins != null || blockedBuiltins != null)
+        _ = Throw.IfNull(options);
+        if (string.IsNullOrWhiteSpace(options.PythonExecutablePath))
         {
-            _validator = new CodeValidator(
-                _pythonExecutable,
-                runnerScript,
-                allowedImports,
-                blockedImports,
-                allowedBuiltins,
-                blockedBuiltins);
+            throw new ArgumentException("PythonExecutablePath must not be empty.", nameof(options));
         }
 
-        Metadata = new AIFunctionMetadata(ExecuteCodeName)
+        var limits = options.ExecutionLimits ?? new ProcessExecutionLimits();
+        var runnerScript = options.RunnerScriptPath ?? EmbeddedScripts.GetRunnerScriptPath();
+
+        CodeValidator? validator = null;
+        if (options.ValidationEnabled)
         {
-            Description = BuildDescription(),
-            Parameters = [new AIFunctionParameterMetadata("code") { ParameterType = typeof(string), IsRequired = true, Schema = s_schema }],
+            var validatorScript = options.ValidatorScriptPath ?? EmbeddedScripts.GetValidatorScriptPath();
+            validator = new CodeValidator(
+                options.PythonExecutablePath,
+                validatorScript,
+                TimeSpan.FromSeconds(limits.ValidationTimeoutSeconds),
+                options.AllowedImports?.ToList(),
+                options.BlockedImports?.ToList(),
+                options.AllowedBuiltins?.ToList(),
+                options.BlockedBuiltins?.ToList());
+        }
+
+        var tools = options.Tools?.Where(t => t is not null).ToList() ?? new List<AIFunction>();
+        var fileMounts = options.FileMounts?.Where(m => m is not null).Select(FileMountHelper.Normalize).ToList() ?? new List<FileMount>();
+
+        this._executor = new CodeExecutor(
+            options.PythonExecutablePath,
+            runnerScript,
+            validator,
+            limits,
+            options.Environment,
+            options.WorkingDirectory);
+
+        this._snapshot = new CodeExecutor.RunSnapshot(tools, fileMounts);
+        this._description = InstructionBuilder.BuildExecuteCodeDescription(tools, fileMounts);
+    }
+
+    /// <inheritdoc/>
+    public override string Name => ExecuteCodeName;
+
+    /// <inheritdoc/>
+    public override string Description => this._description;
+
+    /// <inheritdoc/>
+    public override JsonElement JsonSchema => s_schema;
+
+    /// <inheritdoc/>
+    protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
+    {
+        if (arguments is null || !arguments.TryGetValue("code", out var codeObj) || codeObj is null)
+        {
+            throw new ArgumentException("Missing required parameter 'code'.", nameof(arguments));
+        }
+
+        var code = codeObj switch
+        {
+            string s => s,
+            JsonElement { ValueKind: JsonValueKind.String } el => el.GetString() ?? string.Empty,
+            System.Text.Json.Nodes.JsonValue jv when jv.TryGetValue<string>(out var s2) => s2,
+            _ => codeObj.ToString() ?? string.Empty,
         };
-    }
 
-    /// <inheritdoc/>
-    public override AIFunctionMetadata Metadata { get; }
-
-    /// <inheritdoc/>
-    protected override async Task<object?> InvokeCoreAsync(
-        IEnumerable<KeyValuePair<string, object?>> arguments,
-        CancellationToken cancellationToken)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        var code = arguments.FirstOrDefault(a => a.Key == "code").Value as string
-            ?? throw new ArgumentException("Missing required 'code' parameter.");
-
-        // Validate code if validator is configured
-        if (_validator != null)
+        if (string.IsNullOrWhiteSpace(code))
         {
-            await _validator.ValidateAsync(code, cancellationToken).ConfigureAwait(false);
+            throw new ArgumentException("Parameter 'code' must not be empty.", nameof(arguments));
         }
 
-        // Snapshot writable mounts before execution
-        var preState = FileMountHelper.SnapshotWritableMounts(_fileMounts);
-
-        // Execute code
-        var bridge = new ProcessBridge(
-            _tools,
-            _limits,
-            _environment,
-            workingDirectory: null,
-            _pythonExecutable,
-            _runnerScript);
-
-        var result = await bridge.RunAsync(code, cancellationToken).ConfigureAwait(false);
-
-        // Capture written files
-        var capturedFiles = FileMountHelper.CaptureWrittenFiles(_fileMounts, preState, _limits);
-
-        // Convert result to content
-        return BuildExecutionContents(result, capturedFiles);
-    }
-
-    /// <inheritdoc/>
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            _disposed = true;
-        }
-    }
-
-    private string BuildDescription()
-    {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine("Execute Python code locally in the agent environment.");
-
-        if (_tools.Count > 0)
-        {
-            sb.AppendLine();
-            sb.AppendLine("Available host tools (call with `await tool_name(...)`):");
-            foreach (var tool in _tools)
-            {
-                sb.AppendLine($"- {tool.Metadata.Name}: {tool.Metadata.Description ?? "No description"}");
-            }
-        }
-
-        return sb.ToString();
-    }
-
-    private static List<ChatMessage> BuildExecutionContents(Dictionary<string, object?> result, List<AIContent> capturedFiles)
-    {
-        var stdout = result.TryGetValue("stdout", out var so) ? so?.ToString() ?? "" : "";
-        var stderr = result.TryGetValue("stderr", out var se) ? se?.ToString() ?? "" : "";
-        var outputPresent = result.TryGetValue("output_present", out var op) && Convert.ToBoolean(op);
-        var output = result.TryGetValue("output", out var o) ? o : null;
-
-        var contents = new List<AIContent>();
-
-        if (!string.IsNullOrEmpty(stdout))
-        {
-            contents.Add(new TextContent(stdout));
-        }
-
-        if (!string.IsNullOrEmpty(stderr))
-        {
-            contents.Add(new TextContent($"stderr: {stderr}"));
-        }
-
-        if (outputPresent && output != null)
-        {
-            var serialized = JsonSerializer.Serialize(output);
-            contents.Add(new TextContent(serialized));
-        }
-
-        // Add captured files
-        contents.AddRange(capturedFiles);
-
-        if (contents.Count == 0)
-        {
-            contents.Add(new TextContent("Code executed successfully without output."));
-        }
-
-        return [new ChatMessage(ChatRole.Tool, contents)];
+        return await this._executor.ExecuteAsync(this._snapshot, code, cancellationToken).ConfigureAwait(false);
     }
 }
