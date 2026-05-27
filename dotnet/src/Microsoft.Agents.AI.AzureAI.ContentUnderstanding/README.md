@@ -10,6 +10,26 @@ This package provides `ContentUnderstandingContextProvider` — an `AIContextPro
 
 > **Preview.** This package targets `Azure.AI.ContentUnderstanding` 1.2.0-beta.* and is in active development. The public API may change before GA.
 
+## Limitations (Preview)
+
+When this provider is used behind the OpenAI Responses hosting layer
+(`Microsoft.Agents.AI.Hosting.OpenAI` / `Microsoft.Agents.AI.DevUI`):
+
+- **Filenames are content-addressed.** Uploads from these hosts arrive without their
+  original filename, so the provider derives a stable name from the file's bytes
+  (e.g. `attachment-a1b2c3.pdf`). Re-uploading the same bytes reuses the prior analysis;
+  two genuinely different files always get distinct names.
+- **Detected formats are limited to byte-sniffable types:** PDF, PNG, JPEG, WAV, MP3, and
+  MP4 (`ftyp` box). Office formats (`.docx`, `.xlsx`, `.pptx`), plain text, CSV, and JSON
+  are not auto-detected from `application/octet-stream` uploads.
+- **State falls back to a process-local cache** keyed by `AIAgent.Id` when the hosting
+  layer does not provide a stable `AgentSession`. State in that cache lives for the
+  lifetime of the provider instance.
+
+When constructing `DataContent` yourself (not via a hosted endpoint), set `Name` and
+`MediaType` explicitly — none of the above applies and the provider treats every
+filename as authoritative.
+
 ## Quick start
 
 ```csharp

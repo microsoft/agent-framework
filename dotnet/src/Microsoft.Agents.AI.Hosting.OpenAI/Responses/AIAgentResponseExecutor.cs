@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -18,12 +17,6 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 internal sealed class AIAgentResponseExecutor : IResponseExecutor
 {
     private readonly AIAgent _agent;
-
-    // Cache AgentSession per conversation_id. Without this, every HTTP request would create a
-    // fresh session via RunStreamingAsync's internal session = await CreateSessionAsync(), and
-    // any AIContextProvider state stored on the session (e.g., document analysis caches,
-    // background long-running operations) would be orphaned across turns.
-    private readonly ConcurrentDictionary<string, AgentSession> _sessions = new(StringComparer.Ordinal);
 
     public AIAgentResponseExecutor(AIAgent agent)
     {
@@ -62,34 +55,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         // Convert input to chat messages, prepending conversation history if available
         var messages = new List<ChatMessage>();
 
-        // Resolve a stable session per conversation_id so AIContextProviders and the agent's
-        // ChatHistoryProvider can accumulate state across turns. When no conversation_id is
-        // supplied, fall back to the previous behavior of letting the agent create a per-call
-        // session (no cross-turn state).
-        AgentSession? session = null;
-        bool isNewSession = false;
-        if (!string.IsNullOrEmpty(request.Conversation?.Id))
-        {
-            string sessionKey = request.Conversation!.Id!;
-            if (!this._sessions.TryGetValue(sessionKey, out session))
-            {
-                var newSession = await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
-                if (this._sessions.TryAdd(sessionKey, newSession))
-                {
-                    session = newSession;
-                    isNewSession = true;
-                }
-                else
-                {
-                    session = this._sessions[sessionKey];
-                }
-            }
-        }
-
-        // Only prepend external conversation history when there is no cached session (i.e., a
-        // fresh session was just created or none is being used). A cached session already retains
-        // history via its ChatHistoryProvider; re-prepending would duplicate every prior turn.
-        if (conversationHistory is not null && (session is null || isNewSession))
+        if (conversationHistory is not null)
         {
             messages.AddRange(conversationHistory);
         }
@@ -100,7 +66,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         }
 
         // Use the extension method to convert streaming updates to streaming response events
-        await foreach (var streamingEvent in this._agent.RunStreamingAsync(messages, session, options: options, cancellationToken: cancellationToken)
+        await foreach (var streamingEvent in this._agent.RunStreamingAsync(messages, options: options, cancellationToken: cancellationToken)
             .ToStreamingResponseAsync(request, context, cancellationToken)
             .ConfigureAwait(false))
         {

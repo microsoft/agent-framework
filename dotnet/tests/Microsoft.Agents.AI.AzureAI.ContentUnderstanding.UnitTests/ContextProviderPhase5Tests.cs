@@ -73,8 +73,12 @@ public sealed class ContextProviderPhase5Tests
     }
 
     [Fact]
-    // parity: python tests/cu/test_context_provider.py::TestDuplicateDocumentKey::test_duplicate_filename_rejected
-    public async Task InvokingAsync_DuplicateFilenameInSameSession_RejectsWithoutThrowing()
+    // Diverges from python tests/cu/test_context_provider.py::TestDuplicateDocumentKey::test_duplicate_filename_rejected:
+    // because the .NET OpenAI Responses hosting layer does not propagate input_file.filename
+    // to DataContent.Name, AttachmentDetector synthesizes a content-addressed filename. Two
+    // uploads of the same bytes are therefore the same logical file and we reuse rather
+    // than reject. See README "Limitations (Preview)".
+    public async Task InvokingAsync_DuplicateFilenameInSameSession_ReusesWithoutReanalyzing()
     {
         AnalysisOutcome success = new(true, MakeInvoiceResult(), "op-1", null, TimeSpan.Zero);
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", success);
@@ -90,8 +94,8 @@ public sealed class ContextProviderPhase5Tests
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [first]) } }),
             CancellationToken.None);
 
-        // Second turn → same filename → must NOT throw. Python parity: analyzer is not
-        // invoked again and a system hint is injected so the LLM tells the user to rename.
+        // Second turn → same filename → reuse: analyzer is not invoked again and no
+        // "already uploaded" system note is injected.
         DataContent second = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
         AIContext result = await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(
@@ -99,20 +103,20 @@ public sealed class ContextProviderPhase5Tests
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [second]) } }),
             CancellationToken.None);
 
-        // Analyzer was only invoked once (the second call must short-circuit before analysis).
+        // Analyzer was only invoked once: the second call short-circuits on reuse.
         Assert.Equal(1, analyzer.CallCount);
 
         List<ChatMessage> messages = result.Messages!.ToList();
 
-        // Duplicate binary still stripped from the LLM view.
+        // Binary stripped from the LLM view (provider always strips the original DataContent).
         Assert.DoesNotContain(messages.SelectMany(m => m.Contents), c => c is DataContent);
 
-        // A system message names the rejected file and instructs the LLM to ask for a rename.
-        Assert.Contains(messages, m =>
+        // No "already uploaded" rejection note is emitted; the reused document was already
+        // injected on the first turn (InjectedKeys prevents re-injection).
+        Assert.DoesNotContain(messages, m =>
             m.Role == ChatRole.System
             && m.Contents.OfType<TextContent>().Any(t =>
-                t.Text.Contains("invoice.pdf", StringComparison.Ordinal)
-                && t.Text.Contains("already uploaded", StringComparison.Ordinal)));
+                t.Text.Contains("already uploaded", StringComparison.Ordinal)));
     }
 
     [Fact]

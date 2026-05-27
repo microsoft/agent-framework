@@ -85,9 +85,13 @@ public sealed class ParityGapTests
         Assert.Equal(DocumentStatus.Ready, state.Documents["chart.png"].Status);
     }
 
-    // parity: python tests/cu/test_context_provider.py::TestDuplicateDocumentKey::test_duplicate_in_same_turn_rejected
+    // Diverges from python tests/cu/test_context_provider.py::TestDuplicateDocumentKey::test_duplicate_in_same_turn_rejected:
+    // because the .NET OpenAI Responses hosting layer does not propagate input_file.filename
+    // to DataContent.Name, AttachmentDetector synthesizes a content-addressed filename. Two
+    // uploads of the same bytes are therefore the same logical file and we reuse rather
+    // than reject. See README "Limitations (Preview)".
     [Fact]
-    public async Task InvokingAsync_DuplicateFilenameInSameTurn_RejectsWithoutThrowing()
+    public async Task InvokingAsync_DuplicateFilenameInSameTurn_ReusesWithoutReanalyzing()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
             "invoice.pdf",
@@ -115,11 +119,11 @@ public sealed class ParityGapTests
 
         List<ChatMessage> messages = result.Messages!.ToList();
         Assert.DoesNotContain(messages.SelectMany(m => m.Contents), c => c is DataContent);
-        Assert.Contains(messages, m =>
+        // No "already uploaded" rejection note is emitted; the duplicate is silently reused.
+        Assert.DoesNotContain(messages, m =>
             m.Role == ChatRole.System
             && m.Contents.OfType<TextContent>().Any(t =>
-                t.Text.Contains("invoice.pdf", StringComparison.Ordinal)
-                && t.Text.Contains("already uploaded", StringComparison.Ordinal)));
+                t.Text.Contains("already uploaded", StringComparison.Ordinal)));
     }
 
     // parity: python tests/cu/test_context_provider.py::TestSupportedMediaTypes::test_pdf_supported

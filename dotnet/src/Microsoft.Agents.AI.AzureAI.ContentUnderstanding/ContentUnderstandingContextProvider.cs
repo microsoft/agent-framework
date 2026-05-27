@@ -29,16 +29,6 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         "Markdown. Treat each block as authoritative source material and cite documents by " +
         "their filename.";
 
-    // Python parity: when a user re-uploads a file with a name already present in this
-    // session, we skip re-analysis and inject a hint so the LLM tells the user to rename
-    // the file. See python/packages/azure-contentunderstanding/.../before_run.
-    private const string DuplicateFilenameNoticePrefix = "The user tried to upload '";
-    private const string DuplicateFilenameNoticeSuffix =
-        "', but a file with that name was already uploaded earlier in this session. " +
-        "The new upload was rejected and was not analyzed. " +
-        "Tell the user that a file with the same name already exists and they need to " +
-        "rename the file before uploading again.";
-
     private const string FileSearchInstructions =
         "Tool usage guidelines: Use `file_search` ONLY when answering questions about document " +
         "content. Use `list_documents()` for status queries. Do NOT call `file_search` for " +
@@ -51,6 +41,16 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
 
     private readonly ContentUnderstandingContextProviderOptions _options;
     private readonly ProviderSessionState<ContentUnderstandingProviderState> _state;
+
+    // Fallback document cache for when context.Session is null. Hosting layers that
+    // construct a fresh AgentSession per HTTP call (e.g. OpenAI Responses without
+    // server-side conversations) would otherwise lose all analysis state across turns.
+    // Keyed by Agent.Id ?? Name so multiple agents sharing one provider instance still
+    // get isolated state. When a stable session IS provided, _state above takes
+    // precedence and persists via AgentSession.StateBag.
+    private readonly ConcurrentDictionary<string, ContentUnderstandingProviderState> _instanceStates =
+        new(StringComparer.Ordinal);
+
     private readonly IContentUnderstandingClientFactory _clientFactory;
     private readonly SemaphoreSlim _clientInitLock = new(1, 1);
     private readonly BackgroundAnalysisRunner _runner = new();
@@ -132,7 +132,19 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         this.ThrowIfDisposed();
 
         AIContext input = context.AIContext;
-        ContentUnderstandingProviderState providerState = this._state.GetOrInitializeState(context.Session);
+        ContentUnderstandingProviderState providerState;
+        if (context.Session is not null)
+        {
+            providerState = this._state.GetOrInitializeState(context.Session);
+        }
+        else
+        {
+            // No session in context -> fall back to provider-instance state so attachment
+            // caches survive across turns even when the hosting layer doesn't supply a
+            // stable session. See README "Limitations (Preview)".
+            string instanceKey = context.Agent.Id ?? context.Agent.Name ?? "__default__";
+            providerState = this._instanceStates.GetOrAdd(instanceKey, static _ => new ContentUnderstandingProviderState());
+        }
         // Refresh the tool's view of the live state. Tools constructed in the ctor close over
         // this field via Func<...> so they see whichever session most recently invoked us.
         this._activeState = providerState;
@@ -166,19 +178,20 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         // payload must NOT reach the LLM.
         HashSet<AIContent> toStrip = new(AIContentReferenceEqualityComparer.Instance);
         List<DocumentEntry> newlyReady = new();
-        List<string> rejectedDuplicates = new();
 
         foreach (DetectedAttachment att in detected)
         {
             toStrip.Add(att.OriginalContent);
 
-            // Python parity: same-session duplicate filenames are rejected without throwing.
-            // The first file with a given filename wins; subsequent uploads (this turn or a
-            // later turn) are skipped and a hint is injected so the LLM asks the user to
-            // rename the file. The existing entry stays untouched.
-            if (providerState.Documents.ContainsKey(att.Filename))
+            // Same filename -> reuse the existing analysis. Because the OpenAI Responses
+            // hosting layer does not propagate input_file.filename to DataContent.Name,
+            // AttachmentDetector synthesizes a content-addressed filename
+            // (attachment-{sha256[..3]}.{ext}). Two uploads of the same bytes therefore
+            // collide and should be treated as one logical file, not as a duplicate to
+            // reject. Failed prior attempts are allowed to retry.
+            if (providerState.Documents.TryGetValue(att.Filename, out DocumentEntry? existingEntry)
+                && existingEntry.Status != DocumentStatus.Failed)
             {
-                rejectedDuplicates.Add(att.Filename);
                 continue;
             }
 
@@ -361,17 +374,6 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
 
             // InjectedKeys mutated → re-save state.
             this._state.SaveState(context.Session, providerState);
-        }
-
-        if (rejectedDuplicates.Count > 0)
-        {
-            List<AIContent> rejectionContents = new(rejectedDuplicates.Count);
-            foreach (string filename in rejectedDuplicates)
-            {
-                rejectionContents.Add(new TextContent(
-                    DuplicateFilenameNoticePrefix + filename + DuplicateFilenameNoticeSuffix));
-            }
-            sanitized.Add(new ChatMessage(ChatRole.System, rejectionContents));
         }
 
         IEnumerable<AITool>? outTools = providerState.Documents.IsEmpty
