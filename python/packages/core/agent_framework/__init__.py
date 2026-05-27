@@ -79,6 +79,12 @@ from ._evaluation import (
     tool_calls_present,
 )
 from ._feature_stage import ExperimentalFeature, ReleaseCandidateFeature
+from ._harness._background_agents import (
+    DEFAULT_BACKGROUND_AGENTS_SOURCE_ID,
+    BackgroundAgentsProvider,
+    BackgroundTaskInfo,
+    BackgroundTaskStatus,
+)
 from ._harness._memory import (
     DEFAULT_MEMORY_SOURCE_ID,
     MemoryContextProvider,
@@ -297,6 +303,7 @@ __all__ = [
     "AGENT_FRAMEWORK_USER_AGENT",
     "APP_INFO",
     "COMPACTION_STATE_KEY",
+    "DEFAULT_BACKGROUND_AGENTS_SOURCE_ID",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_MEMORY_SOURCE_ID",
     "DEFAULT_MODE_SOURCE_ID",
@@ -332,6 +339,9 @@ __all__ = [
     "AgentSession",
     "AggregatingSkillsSource",
     "Annotation",
+    "BackgroundAgentsProvider",
+    "BackgroundTaskInfo",
+    "BackgroundTaskStatus",
     "BaseAgent",
     "BaseChatClient",
     "BaseEmbeddingClient",
