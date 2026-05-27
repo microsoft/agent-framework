@@ -11,6 +11,7 @@
 // connects via StdioClientTransport, and uses AgentSkillsProviderBuilder
 // to discover and inject the skill into a ChatClientAgent.
 
+using System.ComponentModel;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -20,7 +21,6 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Server;
 using OpenAI.Responses;
-using System.ComponentModel;
 
 if (args.Length > 0 && args[0] == "--server")
 {
