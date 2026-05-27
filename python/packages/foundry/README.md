@@ -224,12 +224,9 @@ Behaviour:
   the converter raises `ValueError` and points at
   `FoundryChatClient.get_mcp_tool(...)` for hosted MCP servers.
 
-See the runnable examples under `samples/02-agents/providers/foundry/`:
+See the runnable example under `samples/02-agents/providers/foundry/`:
 
-- [`creating_prompt_agents.py`](../../samples/02-agents/providers/foundry/creating_prompt_agents.py)
-  \u2014 build an Agent, run it locally, and publish it via `to_prompt_agent` +
-  `AIProjectClient`.
-- [`using_prompt_agents.py`](../../samples/02-agents/providers/foundry/using_prompt_agents.py)
-  \u2014 publish with `to_prompt_agent`, then connect back with `FoundryAgent`
-  and execute the same local `@tool` callable that the deployed prompt agent
+- [`foundry_prompt_agents.py`](../../samples/02-agents/providers/foundry/foundry_prompt_agents.py)
+  — publish with `to_prompt_agent`, then connect back with `FoundryAgent` and
+  execute the same local `@tool` callable that the deployed prompt agent
   invokes by name.
