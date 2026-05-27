@@ -64,6 +64,32 @@ def _make_tool(name: str) -> MagicMock:
     return t
 
 
+def _make_stub_agent(
+    *,
+    name: str = "alpha",
+    description: str = "An agent.",
+    instructions: str = "Be brief.",
+) -> MagicMock:
+    """Mock agent whose as_eval_source returns a real dossier string."""
+    from agent_framework._evaluation import _render_agent_dossier
+
+    agent = MagicMock()
+    agent.name = name
+    agent.description = description
+    agent.default_options = {"instructions": instructions, "tools": []}
+    agent.context_providers = []
+    agent.mcp_tools = []
+    agent.as_eval_source.side_effect = lambda **kw: _render_agent_dossier(
+        agent,
+        include_instructions=kw.get("include_instructions", True),
+        include_tools=kw.get("include_tools", True),
+        include_context_providers=kw.get("include_context_providers", False),
+        include_examples=kw.get("include_examples", False),
+        examples=kw.get("examples"),
+    )
+    return agent
+
+
 @dataclass
 class _MockResultCounts:
     """Mock matching the OpenAI SDK ResultCounts Pydantic model shape."""
@@ -806,12 +832,6 @@ class TestBuildTestingCriteria:
         for c in criteria:
             assert "tool_definitions" in c["data_mapping"], f"{c['name']} missing tool_definitions"
 
-
-# ---------------------------------------------------------------------------
-# _build_item_schema
-# ---------------------------------------------------------------------------
-
-
     def test_generated_evaluator_ref_pinned_version(self) -> None:
         from agent_framework_foundry import GeneratedEvaluatorRef
 
@@ -1335,12 +1355,6 @@ class TestFilterToolEvaluators:
                 ["tool_call_accuracy", "tool_selection"],
                 items,
             )
-
-
-# ---------------------------------------------------------------------------
-# EvalResults
-# ---------------------------------------------------------------------------
-
 
     def test_preserves_generated_ref_when_no_tools(self) -> None:
         from agent_framework_foundry import GeneratedEvaluatorRef
@@ -2473,12 +2487,6 @@ class TestFetchOutputItems:
         items = await _fetch_output_items(mock_client, "eval_1", "run_1")
         assert items == []
 
-
-# ---------------------------------------------------------------------------
-# _poll_eval_run — timeout / failed / canceled paths
-# ---------------------------------------------------------------------------
-
-
     async def test_extracts_rubric_scores_from_dict_sample(self) -> None:
         from agent_framework_foundry._foundry_evals import _fetch_output_items
 
@@ -2520,6 +2528,30 @@ class TestFetchOutputItems:
         safety = next(d for d in scores[0].dimensions if d.id == "safety")
         assert safety.score is None
         assert safety.applicable is False
+
+    async def test_no_rubric_scores_when_absent(self) -> None:
+        from agent_framework_foundry._foundry_evals import _fetch_output_items
+
+        mock_result = MagicMock()
+        mock_result.name = "relevance"
+        mock_result.score = 0.85
+        mock_result.passed = True
+        mock_result.sample = None
+
+        mock_oi = MagicMock()
+        mock_oi.id = "oi_2"
+        mock_oi.status = "pass"
+        mock_oi.results = [mock_result]
+        mock_oi.sample = None
+        mock_oi.datasource_item = {}
+
+        mock_client = MagicMock()
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=_AsyncPage([mock_oi]))
+
+        items = await _fetch_output_items(mock_client, "eval_1", "run_1")
+
+        assert items[0].scores[0].dimensions is None
+
 
 class TestExtractRubricScores:
     def test_handles_attribute_style_properties(self) -> None:
@@ -2962,3 +2994,394 @@ class TestEvaluateFoundryTargetValidation:
                 client=mock_client,
                 model="gpt-4o",
             )
+
+
+class TestFoundryAgentAsEvalSource:
+    """Tests for foundry's agent_as_eval_source helper (wraps BaseAgent.as_eval_source)."""
+
+    def test_returns_prompt_source_with_dossier(self) -> None:
+        from agent_framework_foundry._foundry_evals import agent_as_eval_source
+
+        agent = _make_stub_agent(name="weather-bot", description="Looks up the weather.")
+        source = agent_as_eval_source(agent)
+        assert source.type == "prompt"
+        assert source.description == "Looks up the weather."
+        assert source.prompt is not None
+        assert "Agent name: weather-bot" in source.prompt
+        assert "Be brief." in source.prompt
+
+    def test_hosted_agent_name_emits_agent_source(self) -> None:
+        from agent_framework_foundry._foundry_evals import agent_as_eval_source
+
+        agent = _make_stub_agent(name="weather-bot", description="Looks up the weather.")
+        source = agent_as_eval_source(agent, hosted_agent_name="weather-bot-hosted-id")
+        assert source.type == "agent"
+        assert source.agent_name == "weather-bot-hosted-id"
+        assert source.prompt is None
+        assert source.description == "Looks up the weather."
+
+    def test_forwards_keyword_options_to_agent(self) -> None:
+        from agent_framework_foundry._foundry_evals import agent_as_eval_source
+
+        agent = _make_stub_agent()
+        source = agent_as_eval_source(agent, include_instructions=False)
+        assert source.prompt is not None
+        assert "Instructions:" not in source.prompt
+
+
+class TestFoundryWorkflowAsEvalSource:
+    """Tests for foundry's workflow_as_eval_source helper (wraps Workflow.as_eval_source)."""
+
+    def _make_workflow(self) -> MagicMock:
+        from agent_framework._evaluation import _render_workflow_dossier
+
+        workflow = MagicMock()
+        workflow.name = "demo-workflow"
+        workflow.description = "Routes user questions."
+        workflow.to_dict.return_value = {
+            "name": "demo-workflow",
+            "id": "wf_1",
+            "executors": {},
+            "edge_groups": [],
+        }
+        workflow.executors = {}
+        workflow.as_eval_source.side_effect = lambda **kw: _render_workflow_dossier(
+            workflow,
+            include_instructions=kw.get("include_instructions", True),
+            include_tools=kw.get("include_tools", True),
+            include_context_providers=kw.get("include_context_providers", False),
+            include_examples=kw.get("include_examples", False),
+            examples=kw.get("examples"),
+            include_topology=kw.get("include_topology", True),
+        )
+        return workflow
+
+    def test_returns_prompt_source_with_topology(self) -> None:
+        from agent_framework_foundry._foundry_evals import workflow_as_eval_source
+
+        workflow = self._make_workflow()
+        source = workflow_as_eval_source(workflow)
+        assert source.type == "prompt"
+        assert source.description == "Routes user questions."
+        assert source.prompt is not None
+        assert "Workflow name: demo-workflow" in source.prompt
+        assert "Topology (JSON):" in source.prompt
+
+    def test_topology_can_be_disabled(self) -> None:
+        from agent_framework_foundry._foundry_evals import workflow_as_eval_source
+
+        workflow = self._make_workflow()
+        source = workflow_as_eval_source(workflow, include_topology=False)
+        assert source.prompt is not None
+        assert "Topology (JSON):" not in source.prompt
+
+
+class TestCoalesceGenerationSources:
+    """Validation for the source-resolution helper used by FoundryEvals.generate_rubric."""
+
+    def test_requires_exactly_one_source(self) -> None:
+        from agent_framework_foundry._foundry_evals import _coalesce_generation_sources
+
+        with pytest.raises(ValueError, match="Provide one of"):
+            _coalesce_generation_sources(agent=None, workflow=None, sources=None)
+
+    def test_rejects_multiple_sources(self) -> None:
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource, _coalesce_generation_sources
+
+        agent = MagicMock()
+        agent.name = "a"
+        agent.description = None
+        agent.default_options = {"instructions": "x", "tools": []}
+        agent.context_providers = []
+        agent.mcp_tools = []
+        with pytest.raises(ValueError, match="only one of"):
+            _coalesce_generation_sources(
+                agent=agent,
+                workflow=None,
+                sources=[EvalGenerationSource(type="prompt", prompt="hi")],
+            )
+
+    def test_uses_agent_helper_when_only_agent_supplied(self) -> None:
+        from agent_framework_foundry._foundry_evals import _coalesce_generation_sources
+
+        agent = _make_stub_agent(name="alpha", description="An agent.")
+
+        sources = _coalesce_generation_sources(agent=agent, workflow=None, sources=None)
+        assert len(sources) == 1
+        assert sources[0].type == "prompt"
+        assert sources[0].prompt is not None
+        assert "Agent name: alpha" in sources[0].prompt
+
+    def test_rejects_empty_sources_list(self) -> None:
+        from agent_framework_foundry._foundry_evals import _coalesce_generation_sources
+
+        with pytest.raises(ValueError, match="at least one"):
+            _coalesce_generation_sources(agent=None, workflow=None, sources=[])
+
+
+class TestToSdkSource:
+    """Translation between EvalGenerationSource and SDK *JobSource types."""
+
+    def _make_sdk_types(self, *, with_agent: bool = True, with_dataset: bool = True, with_traces: bool = True) -> Any:
+        from agent_framework_foundry._foundry_evals import _GenerationSdkTypes
+
+        return _GenerationSdkTypes(
+            EvaluatorGenerationInputs=MagicMock(),
+            EvaluatorGenerationJob=MagicMock(),
+            PromptSource=MagicMock(name="PromptSource"),
+            AgentSource=MagicMock(name="AgentSource") if with_agent else None,
+            DatasetSource=MagicMock(name="DatasetSource") if with_dataset else None,
+            TracesSource=MagicMock(name="TracesSource") if with_traces else None,
+        )
+
+    def test_prompt_source_is_translated(self) -> None:
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource, _to_sdk_source
+
+        sdk = self._make_sdk_types()
+        sdk.PromptSource.return_value = "prompt-sdk-instance"
+        out = _to_sdk_source(
+            EvalGenerationSource(type="prompt", prompt="hello", description="d"),
+            sdk,
+        )
+        assert out == "prompt-sdk-instance"
+        sdk.PromptSource.assert_called_once_with(prompt="hello", description="d")
+
+    def test_prompt_without_text_raises(self) -> None:
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource, _to_sdk_source
+
+        sdk = self._make_sdk_types()
+        with pytest.raises(ValueError, match="non-empty prompt"):
+            _to_sdk_source(EvalGenerationSource(type="prompt"), sdk)
+
+    def test_agent_source_is_translated(self) -> None:
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource, _to_sdk_source
+
+        sdk = self._make_sdk_types()
+        sdk.AgentSource.return_value = "agent-sdk-instance"
+        out = _to_sdk_source(
+            EvalGenerationSource(type="agent", agent_name="my-hosted-agent"),
+            sdk,
+        )
+        assert out == "agent-sdk-instance"
+        sdk.AgentSource.assert_called_once_with(agent_name="my-hosted-agent")
+
+    def test_agent_source_requires_name(self) -> None:
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource, _to_sdk_source
+
+        sdk = self._make_sdk_types()
+        with pytest.raises(ValueError, match="agent_name"):
+            _to_sdk_source(EvalGenerationSource(type="agent"), sdk)
+
+    def test_agent_source_raises_when_sdk_missing(self) -> None:
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource, _to_sdk_source
+
+        sdk = self._make_sdk_types(with_agent=False)
+        with pytest.raises(NotImplementedError, match="AgentEvaluatorGenerationJobSource"):
+            _to_sdk_source(
+                EvalGenerationSource(type="agent", agent_name="x"),
+                sdk,
+            )
+
+    def test_dataset_source_is_translated(self) -> None:
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource, _to_sdk_source
+
+        sdk = self._make_sdk_types()
+        sdk.DatasetSource.return_value = "dataset-sdk-instance"
+        out = _to_sdk_source(
+            EvalGenerationSource(type="dataset", dataset_name="ds", dataset_version="1"),
+            sdk,
+        )
+        assert out == "dataset-sdk-instance"
+        sdk.DatasetSource.assert_called_once_with(dataset_name="ds", dataset_version="1")
+
+
+class TestPollGenerationJob:
+    """Behavior of the rubric-generation polling loop."""
+
+    async def test_returns_immediately_on_succeeded(self) -> None:
+        from agent_framework_foundry._foundry_evals import _poll_generation_job
+
+        evaluators_ops = MagicMock()
+        evaluators_ops.get_generation_job = AsyncMock()
+        job = MagicMock(id="job_1", status="succeeded")
+        out = await _poll_generation_job(evaluators_ops, job, poll_interval=0.01, timeout=1.0)
+        assert out is job
+        evaluators_ops.get_generation_job.assert_not_called()
+
+    async def test_polls_until_terminal(self) -> None:
+        from agent_framework_foundry._foundry_evals import _poll_generation_job
+
+        running = MagicMock(id="job_1", status="running")
+        succeeded = MagicMock(id="job_1", status="succeeded")
+        evaluators_ops = MagicMock()
+        evaluators_ops.get_generation_job = AsyncMock(side_effect=[running, succeeded])
+
+        initial = MagicMock(id="job_1", status="running")
+        out = await _poll_generation_job(evaluators_ops, initial, poll_interval=0.001, timeout=1.0)
+        assert out is succeeded
+        assert evaluators_ops.get_generation_job.await_count == 2
+
+    async def test_failed_status_raises(self) -> None:
+        from agent_framework_foundry._foundry_evals import _poll_generation_job
+
+        err = MagicMock(message="boom")
+        terminal = MagicMock(id="job_1", status="failed", error=err)
+        evaluators_ops = MagicMock()
+        evaluators_ops.get_generation_job = AsyncMock(return_value=terminal)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await _poll_generation_job(
+                evaluators_ops,
+                MagicMock(id="job_1", status="running"),
+                poll_interval=0.001,
+                timeout=1.0,
+            )
+
+    async def test_timeout_raises(self) -> None:
+        from agent_framework_foundry._foundry_evals import _poll_generation_job
+
+        running = MagicMock(id="job_1", status="running")
+        evaluators_ops = MagicMock()
+        evaluators_ops.get_generation_job = AsyncMock(return_value=running)
+
+        with pytest.raises(TimeoutError):
+            await _poll_generation_job(evaluators_ops, running, poll_interval=0.001, timeout=0.005)
+
+
+class TestGenerationJobToRef:
+    """Translation of a completed generation job to a GeneratedEvaluatorRef."""
+
+    def test_builds_pinned_ref_with_dimensions(self) -> None:
+        from agent_framework_foundry._foundry_evals import RubricDimension, _generation_job_to_ref
+
+        dim = MagicMock(id="d1", description="dim", weight=2, always_applicable=True)
+        definition = MagicMock(dimensions=[dim], pass_threshold=0.75)
+        evaluator = MagicMock(
+            name="my-eval",
+            version=3,
+            display_name="My Eval",
+            description="A custom rubric.",
+            definition=definition,
+        )
+        evaluator.name = "my-eval"
+        job = MagicMock(artifacts=MagicMock(evaluator=evaluator))
+
+        ref = _generation_job_to_ref(job, category="quality")
+        assert ref.name == "my-eval"
+        assert ref.version == "3"
+        assert ref.display_name == "My Eval"
+        assert ref.description == "A custom rubric."
+        assert ref.category == "quality"
+        assert ref.pass_threshold == 0.75
+        assert ref.dimensions is not None
+        assert ref.dimensions[0] == RubricDimension(id="d1", description="dim", weight=2, always_applicable=True)
+
+    def test_missing_artifacts_raises(self) -> None:
+        from agent_framework_foundry._foundry_evals import _generation_job_to_ref
+
+        job = MagicMock(artifacts=None)
+        with pytest.raises(RuntimeError, match="evaluator artifact"):
+            _generation_job_to_ref(job, category="quality")
+
+
+class TestGenerateRubricSdkMissing:
+    """generate_rubric raises NotImplementedError when SDK lacks the rubric APIs."""
+
+    async def test_raises_when_sdk_types_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework_foundry import _foundry_evals as fm
+        from agent_framework_foundry._foundry_evals import EvalGenerationSource
+
+        def _raise() -> Any:
+            raise fm._RubricSdkUnavailableError(fm._RUBRIC_SDK_MISSING_MSG)
+
+        monkeypatch.setattr(fm, "_import_generation_sdk_types", _raise)
+
+        project_client = MagicMock()
+
+        with pytest.raises(NotImplementedError, match="rubric"):
+            await FoundryEvals.generate_rubric(
+                project_client=project_client,
+                name="my-eval",
+                sources=[EvalGenerationSource(type="prompt", prompt="hi")],
+            )
+
+
+class TestGenerateRubricE2E:
+    """End-to-end happy path for generate_rubric with mocked SDK."""
+
+    async def test_generate_rubric_from_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework_foundry import _foundry_evals as fm
+
+        # Stub SDK type handles
+        prompt_cls = MagicMock(name="PromptSource")
+        prompt_cls.return_value = "sdk-prompt"
+        inputs_cls = MagicMock(name="EvaluatorGenerationInputs")
+        inputs_cls.return_value = "sdk-inputs"
+        job_cls = MagicMock(name="EvaluatorGenerationJob")
+        job_cls.return_value = "sdk-job"
+
+        sdk_types = fm._GenerationSdkTypes(
+            EvaluatorGenerationInputs=inputs_cls,
+            EvaluatorGenerationJob=job_cls,
+            PromptSource=prompt_cls,
+            AgentSource=None,
+            DatasetSource=None,
+            TracesSource=None,
+        )
+        monkeypatch.setattr(fm, "_import_generation_sdk_types", lambda: sdk_types)
+
+        # Mock the SDK operations and completed job
+        completed_evaluator = MagicMock(version="7", display_name=None, description=None)
+        completed_evaluator.name = "agent-rubric"
+        completed_evaluator.definition = MagicMock(dimensions=[], pass_threshold=None)
+        completed = MagicMock(
+            id="job_42",
+            status="succeeded",
+            artifacts=MagicMock(evaluator=completed_evaluator),
+        )
+
+        evaluators_ops = MagicMock()
+        evaluators_ops.create_generation_job = AsyncMock(return_value=completed)
+        evaluators_ops.get_generation_job = AsyncMock(return_value=completed)
+        project_client = MagicMock()
+        project_client.beta = MagicMock(evaluators=evaluators_ops)
+
+        # Build a stub agent
+        agent = _make_stub_agent(
+            name="weather-bot",
+            description="Looks up weather.",
+            instructions="Be brief.",
+        )
+
+        ref = await FoundryEvals.generate_rubric(
+            project_client=project_client,
+            name="agent-rubric",
+            agent=agent,
+            category="quality",
+            model="gpt-4o",
+            display_name="Display",
+            description="Desc",
+            operation_id="op-123",
+        )
+
+        assert ref.name == "agent-rubric"
+        assert ref.version == "7"
+        assert ref.category == "quality"
+
+        # Verify inputs/job/source assembly
+        prompt_cls.assert_called_once()
+        prompt_kwargs = prompt_cls.call_args.kwargs
+        assert "Agent name: weather-bot" in prompt_kwargs["prompt"]
+        assert prompt_kwargs["description"] == "Looks up weather."
+
+        inputs_cls.assert_called_once()
+        inputs_kwargs = inputs_cls.call_args.kwargs
+        assert inputs_kwargs["name"] == "agent-rubric"
+        assert inputs_kwargs["category"] == "quality"
+        assert inputs_kwargs["model"] == "gpt-4o"
+        assert inputs_kwargs["display_name"] == "Display"
+        assert inputs_kwargs["description"] == "Desc"
+        assert inputs_kwargs["sources"] == ["sdk-prompt"]
+
+        job_cls.assert_called_once_with(inputs="sdk-inputs")
+        evaluators_ops.create_generation_job.assert_awaited_once_with(job="sdk-job", operation_id="op-123")

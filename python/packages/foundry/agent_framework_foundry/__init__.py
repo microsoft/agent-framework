@@ -11,11 +11,14 @@ from ._embedding_client import (
     RawFoundryEmbeddingClient,
 )
 from ._foundry_evals import (
+    EvalGenerationSource,
     FoundryEvals,
     GeneratedEvaluatorRef,
     RubricDimension,
+    agent_as_eval_source,
     evaluate_foundry_target,
     evaluate_traces,
+    workflow_as_eval_source,
 )
 from ._memory_provider import FoundryMemoryProvider
 
@@ -25,6 +28,7 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "EvalGenerationSource",
     "FoundryAgent",
     "FoundryAgentOptions",
     "FoundryChatClient",
@@ -41,6 +45,8 @@ __all__ = [
     "RawFoundryEmbeddingClient",
     "RubricDimension",
     "__version__",
+    "agent_as_eval_source",
     "evaluate_foundry_target",
     "evaluate_traces",
+    "workflow_as_eval_source",
 ]

@@ -48,6 +48,8 @@ from openai import AsyncOpenAI
 from ._chat_client import FoundryChatClient
 
 if TYPE_CHECKING:
+    from agent_framework._agents import BaseAgent
+    from agent_framework._workflows._workflow import Workflow
     from azure.ai.projects.aio import AIProjectClient
     from openai.types.evals import RunRetrieveResponse
 
@@ -60,12 +62,12 @@ logger = logging.getLogger(__name__)
 @experimental(feature_id=ExperimentalFeature.EVALS)
 @dataclass(frozen=True)
 class RubricDimension:
-    """A single dimension of a Foundry generated rubric evaluator.
+    """A single dimension of a generated rubric evaluator.
 
     Rubric evaluators score each item along one or more named dimensions,
     each with its own description and weight.  Foundry's evaluator
     generation pipeline produces these dimensions from agent/workflow
-    metadata; agent-framework surfaces them so callers can inspect a
+    metadata; ``RubricDimension`` surfaces them so callers can inspect a
     generated evaluator's structure without round-tripping through the
     portal.
 
@@ -152,8 +154,164 @@ class GeneratedEvaluatorRef:
         )
 
 
-# endregion
+@experimental(feature_id=ExperimentalFeature.EVALS)
+@dataclass(frozen=True)
+class EvalGenerationSource:
+    """A source description passed to Foundry's evaluator generation pipeline.
 
+    Rubric evaluator generation consumes one or more sources that describe
+    the agent or workflow under evaluation.  ``FoundryEvals`` translates
+    instances into the underlying ``*EvaluatorGenerationJobSource`` SDK
+    types.
+
+    Discriminated by :attr:`type`:
+
+    * ``"prompt"`` - a free-form textual dossier (typical for local agents
+      and workflows whose tools cannot be fetched server-side).
+    * ``"agent"`` - a hosted Foundry agent referenced by name so the
+      service fetches tool definitions and metadata directly.
+    * ``"dataset"`` - a Foundry dataset of recorded interactions.
+    * ``"traces"`` - tracing data scoped by metadata.
+
+    Only the fields relevant to :attr:`type` are populated; the remaining
+    fields stay ``None``.
+
+    Attributes:
+        type: Source kind.  See discriminator above.
+        description: Optional short description shown in Foundry UI.
+        prompt: Rendered dossier for ``type="prompt"`` sources.
+        agent_name: Hosted Foundry agent name for ``type="agent"`` sources.
+        dataset_name: Foundry dataset name for ``type="dataset"`` sources.
+        dataset_version: Pinned dataset version (recommended for repro).
+        metadata: Free-form metadata.  Used by ``type="traces"`` sources
+            for tracing-attribute filters and as a generic escape hatch
+            for additional fields not yet modeled.
+    """
+
+    type: Literal["prompt", "dataset", "agent", "traces"]
+    description: str | None = None
+    prompt: str | None = None
+    agent_name: str | None = None
+    dataset_name: str | None = None
+    dataset_version: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@experimental(feature_id=ExperimentalFeature.EVALS)
+def agent_as_eval_source(
+    agent: BaseAgent,
+    *,
+    include_instructions: bool = True,
+    include_tools: bool = True,
+    include_context_providers: bool = False,
+    include_examples: bool = False,
+    examples: Sequence[str] | None = None,
+    hosted_agent_name: str | None = None,
+) -> EvalGenerationSource:
+    """Render an agent as an :class:`EvalGenerationSource` for rubric generation.
+
+    Wraps :meth:`BaseAgent.as_eval_source` to package the agent's
+    rendered dossier into a typed Foundry generation source.  When
+    ``hosted_agent_name`` is provided, returns a ``type="agent"`` source
+    referencing the hosted Foundry agent so the service fetches
+    server-side metadata directly instead of using a rendered dossier.
+
+    Args:
+        agent: Agent instance (typically a ``BaseAgent`` subclass).
+        include_instructions: Whether to include the agent's instructions
+            text.  Defaults to ``True``.
+        include_tools: Whether to include tool definitions.  Defaults to
+            ``True``.
+        include_context_providers: Whether to include the names of
+            attached context-provider classes.  Defaults to ``False`` to
+            avoid leaking implementation details.
+        include_examples: Whether to include the supplied ``examples``.
+            Defaults to ``False`` to avoid shipping potentially sensitive
+            sample inputs by default.
+        examples: Optional sample queries / interactions to include when
+            ``include_examples`` is ``True``.
+        hosted_agent_name: When set, emit a ``type="agent"`` source
+            referencing the hosted Foundry agent by name instead of a
+            rendered dossier.
+
+    Returns:
+        An :class:`EvalGenerationSource` describing the agent.
+    """
+    if hosted_agent_name:
+        agent_description = getattr(agent, "description", None)
+        return EvalGenerationSource(
+            type="agent",
+            agent_name=hosted_agent_name,
+            description=agent_description,
+        )
+
+    prompt = agent.as_eval_source(
+        include_instructions=include_instructions,
+        include_tools=include_tools,
+        include_context_providers=include_context_providers,
+        include_examples=include_examples,
+        examples=examples,
+    )
+    agent_description = getattr(agent, "description", None)
+    return EvalGenerationSource(
+        type="prompt",
+        prompt=prompt,
+        description=agent_description,
+    )
+
+
+@experimental(feature_id=ExperimentalFeature.EVALS)
+def workflow_as_eval_source(
+    workflow: Workflow,
+    *,
+    include_instructions: bool = True,
+    include_tools: bool = True,
+    include_context_providers: bool = False,
+    include_examples: bool = False,
+    examples: Sequence[str] | None = None,
+    include_topology: bool = True,
+) -> EvalGenerationSource:
+    """Render a workflow as an :class:`EvalGenerationSource` for rubric generation.
+
+    Wraps :meth:`Workflow.as_eval_source` to package the workflow's
+    rendered dossier (workflow name, description, topology, per-agent
+    dossiers) into a typed ``type="prompt"`` Foundry generation source.
+
+    Args:
+        workflow: Workflow instance to render.
+        include_instructions: Per-agent instructions inclusion.
+        include_tools: Per-agent tools inclusion.
+        include_context_providers: Per-agent context-provider inclusion.
+            Defaults to ``False``.
+        include_examples: Per-agent examples inclusion.  Defaults to
+            ``False``.
+        examples: Optional workflow-level sample queries.  Rendered into
+            a top-level ``Examples:`` section when ``include_examples`` is
+            ``True``.
+        include_topology: Whether to embed the JSON-encoded workflow
+            topology produced by :meth:`Workflow.to_dict`.  Defaults to
+            ``True``.
+
+    Returns:
+        A ``type="prompt"`` :class:`EvalGenerationSource` describing the
+        workflow.
+    """
+    prompt = workflow.as_eval_source(
+        include_instructions=include_instructions,
+        include_tools=include_tools,
+        include_context_providers=include_context_providers,
+        include_examples=include_examples,
+        examples=examples,
+        include_topology=include_topology,
+    )
+    return EvalGenerationSource(
+        type="prompt",
+        prompt=prompt,
+        description=workflow.description,
+    )
+
+
+# endregion
 # Agent evaluators that accept query/response as conversation arrays.
 # Maintained manually — check https://learn.microsoft.com/en-us/azure/ai-studio/how-to/develop/evaluate-sdk
 # for the latest evaluator list. These are the evaluators that need conversation-format input.
@@ -307,6 +465,8 @@ def _build_testing_criteria(
                     entry_spec.name,
                 )
             if include_data_mapping:
+                # Rubric evaluators accept conversation arrays like agent
+                # evaluators, plus tool_definitions when items are tool-aware.
                 ref_mapping: dict[str, str] = {
                     "query": "{{item.query_messages}}",
                     "response": "{{item.response_messages}}",
@@ -496,7 +656,6 @@ def _extract_per_evaluator(run: RunRetrieveResponse) -> dict[str, dict[str, int]
         if name:
             per_eval[name] = {"passed": item.passed, "failed": item.failed}
     return per_eval
-
 
 
 def _extract_rubric_scores(sample: Any) -> list[RubricScore] | None:
@@ -978,6 +1137,329 @@ class FoundryEvals:
             provider=self.name,
         )
 
+    @classmethod
+    @experimental(feature_id=ExperimentalFeature.EVALS)
+    async def generate_rubric(
+        cls,
+        *,
+        project_client: AIProjectClient,
+        name: str,
+        agent: BaseAgent | None = None,
+        workflow: Workflow | None = None,
+        sources: Sequence[EvalGenerationSource] | None = None,
+        category: str = "quality",
+        model: str | None = None,
+        display_name: str | None = None,
+        description: str | None = None,
+        operation_id: str | None = None,
+        poll_interval: float = 5.0,
+        timeout: float = 600.0,
+    ) -> GeneratedEvaluatorRef:
+        """Generate a Foundry rubric evaluator from an agent or workflow.
+
+        Drives the Foundry evaluator-generation long-running operation
+        (``client.beta.evaluators.create_generation_job``) end-to-end and
+        returns a pinned :class:`GeneratedEvaluatorRef` for use with
+        :class:`FoundryEvals` ``evaluators=`` lists.
+
+        Exactly one of ``agent``, ``workflow``, or ``sources`` must be
+        supplied.  When ``agent`` or ``workflow`` is given,
+        :func:`agent_as_eval_source` / :func:`workflow_as_eval_source` is
+        used to build a single conservative source (instructions and
+        tools included; examples and context providers excluded).  Pass
+        ``sources=`` directly to control inclusion explicitly or to
+        provide multiple sources.
+
+        Requires ``azure-ai-projects`` with the rubric-generation APIs
+        (currently ``2.3.0a*`` on the Azure SDK dev feed; tracked for an
+        upcoming PyPI release).  Raises :class:`NotImplementedError` with
+        a clear message when the dependency is unavailable.
+
+        Keyword Args:
+            project_client: Async ``AIProjectClient`` for the target
+                Foundry project.
+            name: Evaluator name to register in the project.  Must be a
+                stable identifier (e.g. ``"policy-enforcement-v1"``).
+            agent: Optional ``BaseAgent`` to derive a source from.
+            workflow: Optional ``Workflow`` to derive a source from.
+            sources: Explicit list of :class:`EvalGenerationSource`
+                instances.  Mutually exclusive with ``agent`` / ``workflow``.
+            category: ``"quality"`` or ``"safety"``.  Defaults to
+                ``"quality"``.
+            model: Optional model deployment to drive generation.  When
+                omitted the service picks a default.
+            display_name: Optional human-readable name for the evaluator.
+            description: Optional description for the evaluator.
+            operation_id: Optional caller-supplied operation id to make
+                the create call idempotent.
+            poll_interval: Seconds between job-status polls.
+            timeout: Maximum seconds to wait for the job to complete.
+
+        Returns:
+            A pinned :class:`GeneratedEvaluatorRef` referring to the
+            newly created evaluator.
+
+        Raises:
+            ValueError: If the source arguments are inconsistent.
+            NotImplementedError: If the installed ``azure-ai-projects``
+                version does not expose the rubric APIs.
+            TimeoutError: If the job does not complete within ``timeout``.
+            RuntimeError: If the generation job ends in a non-succeeded
+                terminal state.
+        """
+        resolved_sources = _coalesce_generation_sources(agent=agent, workflow=workflow, sources=sources)
+
+        try:
+            sdk_types = _import_generation_sdk_types()
+        except _RubricSdkUnavailableError as exc:
+            raise NotImplementedError(str(exc)) from exc
+
+        sdk_sources = [_to_sdk_source(s, sdk_types) for s in resolved_sources]
+
+        inputs_kwargs: dict[str, Any] = {
+            "name": name,
+            "category": category,
+            "sources": sdk_sources,
+        }
+        if model is not None:
+            inputs_kwargs["model"] = model
+        if display_name is not None:
+            inputs_kwargs["display_name"] = display_name
+        if description is not None:
+            inputs_kwargs["description"] = description
+
+        inputs = sdk_types.EvaluatorGenerationInputs(**inputs_kwargs)
+        job = sdk_types.EvaluatorGenerationJob(inputs=inputs)
+
+        create_kwargs: dict[str, Any] = {"job": job}
+        if operation_id is not None:
+            create_kwargs["operation_id"] = operation_id
+
+        evaluators_ops = _get_beta_evaluators(project_client)
+        created = await evaluators_ops.create_generation_job(**create_kwargs)
+        completed = await _poll_generation_job(
+            evaluators_ops,
+            created,
+            poll_interval=poll_interval,
+            timeout=timeout,
+        )
+
+        return _generation_job_to_ref(completed, category=category)
+
+
+_TERMINAL_GENERATION_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled", "canceled"})
+
+
+class _RubricSdkUnavailableError(Exception):
+    """Raised when azure-ai-projects lacks the rubric-generation APIs."""
+
+
+@dataclass(frozen=True)
+class _GenerationSdkTypes:
+    """Resolved SDK type handles for rubric-evaluator generation."""
+
+    EvaluatorGenerationInputs: Any
+    EvaluatorGenerationJob: Any
+    PromptSource: Any
+    AgentSource: Any | None
+    DatasetSource: Any | None
+    TracesSource: Any | None
+
+
+_RUBRIC_SDK_MISSING_MSG = (
+    "FoundryEvals.generate_rubric requires the rubric-evaluator generation APIs "
+    "from azure-ai-projects (currently 2.3.0a* on the Azure SDK Python dev feed). "
+    "Install a build that exposes "
+    "`azure.ai.projects.models.EvaluatorGenerationInputs` and "
+    "`AIProjectClient.beta.evaluators.create_generation_job`."
+)
+
+
+def _import_generation_sdk_types() -> _GenerationSdkTypes:
+    """Lazily resolve the rubric-generation SDK types from azure-ai-projects."""
+    try:
+        from azure.ai.projects import models as _models  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise _RubricSdkUnavailableError(_RUBRIC_SDK_MISSING_MSG) from exc
+
+    models_mod: Any = _models
+    inputs_cls: Any = getattr(models_mod, "EvaluatorGenerationInputs", None)
+    job_cls: Any = getattr(models_mod, "EvaluatorGenerationJob", None)
+    prompt_cls: Any = getattr(models_mod, "PromptEvaluatorGenerationJobSource", None)
+    if inputs_cls is None or job_cls is None or prompt_cls is None:
+        raise _RubricSdkUnavailableError(_RUBRIC_SDK_MISSING_MSG)
+
+    agent_cls: Any = getattr(models_mod, "AgentEvaluatorGenerationJobSource", None)
+    dataset_cls: Any = getattr(models_mod, "DatasetEvaluatorGenerationJobSource", None)
+    traces_cls: Any = getattr(models_mod, "TracesEvaluatorGenerationJobSource", None)
+
+    return _GenerationSdkTypes(
+        EvaluatorGenerationInputs=inputs_cls,
+        EvaluatorGenerationJob=job_cls,
+        PromptSource=prompt_cls,
+        AgentSource=agent_cls,
+        DatasetSource=dataset_cls,
+        TracesSource=traces_cls,
+    )
+
+
+def _get_beta_evaluators(project_client: AIProjectClient) -> Any:
+    """Return the ``project_client.beta.evaluators`` operations group, or raise."""
+    beta = getattr(project_client, "beta", None)
+    evaluators_ops = getattr(beta, "evaluators", None) if beta is not None else None
+    if evaluators_ops is None:
+        raise NotImplementedError(_RUBRIC_SDK_MISSING_MSG)
+    return evaluators_ops
+
+
+def _coalesce_generation_sources(
+    *,
+    agent: BaseAgent | None,
+    workflow: Workflow | None,
+    sources: Sequence[EvalGenerationSource] | None,
+) -> list[EvalGenerationSource]:
+    if sources is not None and not sources:
+        raise ValueError("sources= must contain at least one EvalGenerationSource.")
+    supplied = [bool(agent), bool(workflow), bool(sources)]
+    if sum(supplied) == 0:
+        raise ValueError("Provide one of agent=, workflow=, or sources=.")
+    if sum(supplied) > 1:
+        raise ValueError("Provide only one of agent=, workflow=, or sources=.")
+    if sources is not None:
+        return list(sources)
+    if agent is not None:
+        return [agent_as_eval_source(agent)]
+    if workflow is None:
+        raise ValueError("workflow= must be provided when agent= and sources= are not set.")
+    return [workflow_as_eval_source(workflow)]
+
+
+def _to_sdk_source(source: EvalGenerationSource, sdk_types: _GenerationSdkTypes) -> Any:
+    """Translate an :class:`EvalGenerationSource` to its SDK counterpart."""
+    if source.type == "prompt":
+        if not source.prompt:
+            raise ValueError("EvalGenerationSource(type='prompt') requires a non-empty prompt.")
+        kwargs: dict[str, Any] = {"prompt": source.prompt}
+        if source.description is not None:
+            kwargs["description"] = source.description
+        return sdk_types.PromptSource(**kwargs)
+    if source.type == "agent":
+        if sdk_types.AgentSource is None:
+            raise NotImplementedError("Installed azure-ai-projects does not expose AgentEvaluatorGenerationJobSource.")
+        if not source.agent_name:
+            raise ValueError("EvalGenerationSource(type='agent') requires agent_name.")
+        kwargs = {"agent_name": source.agent_name}
+        if source.description is not None:
+            kwargs["description"] = source.description
+        return sdk_types.AgentSource(**kwargs)
+    if source.type == "dataset":
+        if sdk_types.DatasetSource is None:
+            raise NotImplementedError(
+                "Installed azure-ai-projects does not expose DatasetEvaluatorGenerationJobSource."
+            )
+        if not source.dataset_name:
+            raise ValueError("EvalGenerationSource(type='dataset') requires dataset_name.")
+        kwargs = {"dataset_name": source.dataset_name}
+        if source.dataset_version is not None:
+            kwargs["dataset_version"] = source.dataset_version
+        if source.description is not None:
+            kwargs["description"] = source.description
+        return sdk_types.DatasetSource(**kwargs)
+    if source.type == "traces":
+        if sdk_types.TracesSource is None:
+            raise NotImplementedError("Installed azure-ai-projects does not expose TracesEvaluatorGenerationJobSource.")
+        kwargs = {}
+        if source.metadata is not None:
+            kwargs["metadata"] = source.metadata
+        if source.description is not None:
+            kwargs["description"] = source.description
+        return sdk_types.TracesSource(**kwargs)
+    raise ValueError(f"Unknown EvalGenerationSource type: {source.type!r}")
+
+
+async def _poll_generation_job(
+    evaluators_ops: Any,
+    job: Any,
+    *,
+    poll_interval: float,
+    timeout: float,
+) -> Any:
+    """Poll a rubric-generation job until it reaches a terminal state."""
+    job_id = getattr(job, "id", None)
+    if not job_id:
+        raise RuntimeError("Rubric generation job did not return an id.")
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    current = job
+    while True:
+        status = (getattr(current, "status", "") or "").lower()
+        if status in _TERMINAL_GENERATION_STATUSES:
+            if status != "succeeded":
+                err = getattr(current, "error", None)
+                err_msg = getattr(err, "message", None) or str(err) if err is not None else status
+                raise RuntimeError(f"Rubric generation job {job_id} ended in status {status!r}: {err_msg}")
+            return current
+        if asyncio.get_event_loop().time() >= deadline:
+            raise TimeoutError(
+                f"Rubric generation job {job_id} did not complete within {timeout}s (last status: {status!r})."
+            )
+        await asyncio.sleep(poll_interval)
+        current = await evaluators_ops.get_generation_job(job_id)
+
+
+def _generation_job_to_ref(job: Any, *, category: str) -> GeneratedEvaluatorRef:
+    """Build a pinned :class:`GeneratedEvaluatorRef` from a completed job."""
+    artifacts: Any = getattr(job, "artifacts", None)
+    evaluator: Any = getattr(artifacts, "evaluator", None) if artifacts is not None else None
+    if evaluator is None:
+        raise RuntimeError("Rubric generation job completed without an evaluator artifact.")
+
+    ev_name = getattr(evaluator, "name", None)
+    ev_version = getattr(evaluator, "version", None)
+    if not ev_name:
+        raise RuntimeError("Generated evaluator artifact is missing a name.")
+    if ev_version is None:
+        raise RuntimeError("Generated evaluator artifact is missing a version.")
+
+    definition: Any = getattr(evaluator, "definition", None)
+    dimensions_raw: Any = getattr(definition, "dimensions", None) if definition is not None else None
+    dimensions: tuple[RubricDimension, ...] | None = None
+    if dimensions_raw:
+        parsed: list[RubricDimension] = []
+        for entry in dimensions_raw:
+            try:
+                parsed.append(
+                    RubricDimension(
+                        id=str(getattr(entry, "id", "") or ""),
+                        description=str(getattr(entry, "description", "") or ""),
+                        weight=int(getattr(entry, "weight", 0) or 0),
+                        always_applicable=bool(getattr(entry, "always_applicable", False)),
+                    )
+                )
+            except (TypeError, ValueError):
+                logger.debug("Skipping malformed dimension on generated evaluator", exc_info=True)
+        if parsed:
+            dimensions = tuple(parsed)
+
+    pass_threshold: float | None = None
+    if definition is not None:
+        raw_threshold = getattr(definition, "pass_threshold", None)
+        if isinstance(raw_threshold, (int, float)):
+            pass_threshold = float(raw_threshold)
+
+    valid_category: str
+    valid_category = category if category in ("quality", "safety") else "quality"
+
+    return GeneratedEvaluatorRef(
+        name=str(ev_name),
+        version=str(ev_version),
+        category=cast("Any", valid_category),
+        display_name=getattr(evaluator, "display_name", None),
+        description=getattr(evaluator, "description", None),
+        dimensions=dimensions,
+        pass_threshold=pass_threshold,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Foundry-specific functions (not part of the Evaluator protocol)
@@ -987,7 +1469,7 @@ class FoundryEvals:
 @experimental(feature_id=ExperimentalFeature.EVALS)
 async def evaluate_traces(
     *,
-    evaluators: Sequence[str | GeneratedEvaluatorRef] | None = None,
+    evaluators: Sequence[str] | None = None,
     client: FoundryChatClient | None = None,
     project_client: AIProjectClient | None = None,
     model: str,
@@ -1080,7 +1562,7 @@ async def evaluate_foundry_target(
     *,
     target: dict[str, Any],
     test_queries: Sequence[str],
-    evaluators: Sequence[str | GeneratedEvaluatorRef] | None = None,
+    evaluators: Sequence[str] | None = None,
     client: FoundryChatClient | None = None,
     project_client: AIProjectClient | None = None,
     model: str,
@@ -1096,9 +1578,7 @@ async def evaluate_foundry_target(
     Args:
         target: Target configuration dict.
         test_queries: Queries for Foundry to send to the target.
-        evaluators: Evaluator names (built-in shorts / fully-qualified
-            ``builtin.*`` names) or :class:`GeneratedEvaluatorRef`
-            instances for generated rubric evaluators.
+        evaluators: Evaluator names.
         client: A ``FoundryChatClient`` instance. Provide this or *project_client*.
         project_client: An ``AIProjectClient`` instance.
         model: Model deployment name for the evaluator LLM judge.
