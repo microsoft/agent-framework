@@ -45,6 +45,7 @@ from ._compaction import (
     CharacterEstimatorTokenizer,
     CompactionProvider,
     CompactionStrategy,
+    ContextWindowCompactionStrategy,
     SelectiveToolCallCompactionStrategy,
     SlidingWindowStrategy,
     SummarizationStrategy,
@@ -79,6 +80,10 @@ from ._evaluation import (
     tool_calls_present,
 )
 from ._feature_stage import ExperimentalFeature, ReleaseCandidateFeature
+from ._harness._agent import (
+    DEFAULT_HARNESS_INSTRUCTIONS,
+    create_harness_agent,
+)
 from ._harness._background_agents import (
     DEFAULT_BACKGROUND_AGENTS_SOURCE_ID,
     BackgroundAgentsProvider,
@@ -304,6 +309,7 @@ __all__ = [
     "APP_INFO",
     "COMPACTION_STATE_KEY",
     "DEFAULT_BACKGROUND_AGENTS_SOURCE_ID",
+    "DEFAULT_HARNESS_INSTRUCTIONS",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_MEMORY_SOURCE_ID",
     "DEFAULT_MODE_SOURCE_ID",
@@ -362,6 +368,7 @@ __all__ = [
     "CompactionStrategy",
     "Content",
     "ContextProvider",
+    "ContextWindowCompactionStrategy",
     "ContinuationToken",
     "ConversationSplit",
     "ConversationSplitter",
@@ -509,6 +516,7 @@ __all__ = [
     "apply_compaction",
     "chat_middleware",
     "create_edge_runner",
+    "create_harness_agent",
     "detect_media_type_from_base64",
     "evaluate_agent",
     "evaluate_workflow",
