@@ -21,16 +21,43 @@ This sample shows the end-to-end loop:
 
 1. Build an ``Agent`` backed by ``FoundryChatClient`` with a local ``@tool``
    function and Foundry-hosted tools.
-2. Convert it with ``to_prompt_agent(agent)`` and publish via
+2. Run the local ``Agent`` directly against the Foundry Responses API.
+3. Convert it with ``to_prompt_agent(agent)`` and publish via
    ``AIProjectClient.agents.create_version(...)``.
-3. Connect to the deployed prompt agent with ``FoundryAgent`` and pass the
+4. Connect to the deployed prompt agent with ``FoundryAgent`` and pass the
    *same* ``book_hotel`` callable through ``tools=`` so the server-side prompt
    agent and the client share a single tool definition.
 
 The Foundry prompt agent only receives the ``book_hotel`` *declaration* (its
 JSON schema). When the deployed agent decides to call the tool, ``FoundryAgent``
-executes the local Python implementation by matching tool names \u2014 keeping the
+executes the local Python implementation by matching tool names — keeping the
 schema on the server and the implementation on the client in sync.
+
+Local ``Agent`` vs deployed prompt agent — compare & contrast when calling
+``run`` on each:
+
+* **Runtime / latency.** ``Agent.run`` issues a single ``responses.create``
+  call against the Foundry Responses API. ``FoundryAgent.run`` against a
+  published prompt agent goes through the Foundry Agents service, which
+  resolves the stored ``PromptAgentDefinition`` (instructions, tools,
+  generation parameters, RAI config) on every call before forwarding to the
+  model. Expect a small per-call overhead on the deployed path in exchange
+  for centrally managed configuration.
+* **Configurability.** With the local ``Agent``, model, instructions, tools,
+  ``default_options``, etc. live in your process — change them, restart, and
+  the next ``run`` picks them up. With the deployed prompt agent, those same
+  fields are versioned server-side: publishing a new version updates every
+  consumer at once and you keep an audit trail of previous versions, but you
+  must call ``create_version`` (or pin ``agent_version``) to roll changes
+  out or back.
+* **Persistence / sharing.** A local ``Agent`` instance only exists for the
+  lifetime of the process that created it; tools and instructions are not
+  discoverable by anything else. A published prompt agent is a first-class
+  Foundry resource — other services, other languages, and the Foundry portal
+  can all bind to it by ``agent_name`` (+ optional ``agent_version``) and get
+  the same behaviour. Local ``@tool`` callables stay on the client; only
+  their JSON schema is persisted, so the implementation must be supplied
+  again at connection time via ``FoundryAgent(tools=[...])``.
 
 ``to_prompt_agent`` is experimental
 (``ExperimentalFeature.TO_PROMPT_AGENT``) and may change before reaching GA.
@@ -72,7 +99,15 @@ async def main() -> None:
         default_options={"temperature": 0.3},
     )
 
-    # 2) Convert and publish. The version returned by Foundry includes the version label
+    query = "Book me a hotel in Seattle for 3 nights."
+
+    # 2) Run the local Agent. This calls the Foundry Responses API directly — instructions,
+    # tools, and generation parameters live in this process only.
+    print(f"User (local Agent):     {query}")
+    local_result = await agent.run(query)
+    print(f"Local Agent:            {local_result}\n")
+
+    # 3) Convert and publish. The version returned by Foundry includes the version label
     # we need when connecting back to that specific deployment.
     definition = to_prompt_agent(agent)
     created = await project_client.agents.create_version(
@@ -82,9 +117,10 @@ async def main() -> None:
     )
     print(f"Published prompt agent: {created.name} v{created.version}\n")
 
-    # 3) Connect to the deployed prompt agent with FoundryAgent and pass the *same* callable.
+    # 4) Connect to the deployed prompt agent with FoundryAgent and pass the *same* callable.
     # FoundryAgent runs the local function when the server-side agent invokes the tool,
-    # matching by name.
+    # matching by name. Compared to step 2, instructions/tools/generation parameters now
+    # come from the stored PromptAgentDefinition rather than this process.
     deployed = FoundryAgent(
         project_endpoint=project_endpoint,
         agent_name=created.name,
@@ -93,12 +129,11 @@ async def main() -> None:
         tools=[book_hotel],
     )
 
-    query = "Book me a hotel in Seattle for 3 nights."
-    print(f"User: {query}")
-    result = await deployed.run(query)
-    print(f"Agent: {result}")
+    print(f"User (deployed agent):  {query}")
+    deployed_result = await deployed.run(query)
+    print(f"Deployed Agent:         {deployed_result}")
 
-    # 4) Cleanup: delete the deployed prompt agent (and all its versions) so re-running the
+    # 5) Cleanup: delete the deployed prompt agent (and all its versions) so re-running the
     # sample stays idempotent.
     await project_client.agents.delete(agent_name=created.name)
     print(f"\nDeleted prompt agent {created.name!r} and all its versions.")
