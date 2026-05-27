@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import tempfile
@@ -465,10 +466,8 @@ class LocalExecuteCodeTool(FunctionTool):
                 # Windows: a freshly-killed subprocess can briefly hold the workspace
                 # directory open. Swallow rmtree failures so callers still get a clean
                 # error Content for the run.
-                try:
+                with contextlib.suppress(OSError):
                     temp_dir.cleanup()
-                except OSError:
-                    pass
 
         contents = _build_execution_contents(result=result)
         contents.extend(capture_written_files(mounts, pre_state, limits=self._execution_limits))
