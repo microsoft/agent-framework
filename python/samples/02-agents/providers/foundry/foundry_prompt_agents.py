@@ -60,7 +60,7 @@ Local ``Agent`` vs deployed prompt agent — compare & contrast when calling
   again at connection time via ``FoundryAgent(tools=[...])``.
 
 ``to_prompt_agent`` is experimental
-(``ExperimentalFeature.TO_PROMPT_AGENT``) and may change before reaching GA.
+(``ExperimentalFeature.TO_PROMPT_AGENT``) and may change before being released.
 """
 
 
