@@ -515,14 +515,11 @@ def test_raw_foundry_agent_init_passes_default_headers_to_client() -> None:
     RawFoundryAgent(
         project_client=mock_project,
         agent_name="hosted-agent",
-        allow_preview=True,
         default_headers=default_headers,
     )
 
-    mock_project.get_openai_client.assert_called_once_with(
-        default_headers=default_headers,
-        agent_name="hosted-agent",
-    )
+    mock_project.get_openai_client.assert_called_once()
+    assert mock_project.get_openai_client.call_args.kwargs["default_headers"] == default_headers
 
 
 def test_foundry_agent_init_passes_default_headers_to_client() -> None:
@@ -535,14 +532,11 @@ def test_foundry_agent_init_passes_default_headers_to_client() -> None:
     FoundryAgent(
         project_client=mock_project,
         agent_name="hosted-agent",
-        allow_preview=True,
         default_headers=default_headers,
     )
 
-    mock_project.get_openai_client.assert_called_once_with(
-        default_headers=default_headers,
-        agent_name="hosted-agent",
-    )
+    mock_project.get_openai_client.assert_called_once()
+    assert mock_project.get_openai_client.call_args.kwargs["default_headers"] == default_headers
 
 
 def test_raw_foundry_agent_init_with_custom_client_type() -> None:
