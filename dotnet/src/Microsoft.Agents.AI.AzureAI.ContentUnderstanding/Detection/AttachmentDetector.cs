@@ -44,7 +44,7 @@ internal static class AttachmentDetector
     // Allow-list of supported media types. Comparisons are case-insensitive (OrdinalIgnoreCase).
     // audio/wave and audio/x-wav are accepted as WAV aliases up front for maximum tolerance of
     // HTTP-server-supplied types.
-    private static readonly HashSet<string> SupportedMediaTypes = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> s_supportedMediaTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         // Documents and images
         "application/pdf",
@@ -142,7 +142,7 @@ internal static class AttachmentDetector
             ? (sniffed ?? string.Empty)
             : (!string.IsNullOrEmpty(supplied) ? supplied : sniffed ?? string.Empty);
 
-        if (!SupportedMediaTypes.Contains(resolved))
+        if (!s_supportedMediaTypes.Contains(resolved))
         {
             // Unknown / unsupported → silently skip; must never block the agent run.
             return null;
@@ -155,7 +155,7 @@ internal static class AttachmentDetector
     private static DetectedAttachment? TryDetectUri(UriContent uc)
     {
         string resolved = uc.MediaType ?? string.Empty;
-        if (!SupportedMediaTypes.Contains(resolved))
+        if (!s_supportedMediaTypes.Contains(resolved))
         {
             return null;
         }
@@ -268,7 +268,7 @@ internal static class AttachmentDetector
 
     private const int MaxFilenameLength = 255;
 
-    private static readonly char[] SpaceSplit = [' '];
+    private static readonly char[] s_spaceSplit = [' '];
 
     // Removes control chars, path separators, and ".." segments from a caller-supplied filename;
     // collapses whitespace runs; caps length. The resolved filename is interpolated into LLM-visible
@@ -295,7 +295,7 @@ internal static class AttachmentDetector
             sb.Append(ch);
         }
 
-        string[] tokens = sb.ToString().Split(SpaceSplit, StringSplitOptions.RemoveEmptyEntries);
+        string[] tokens = sb.ToString().Split(s_spaceSplit, StringSplitOptions.RemoveEmptyEntries);
         List<string> keep = new(tokens.Length);
         foreach (string token in tokens)
         {
