@@ -12,10 +12,11 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 from ._checkpoint_encoding import decode_checkpoint_value
-from ._const import WORKFLOW_RUN_KWARGS_KEY
+from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     WorkflowEvent,
     WorkflowRunState,
+    _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
 from ._executor import Executor, handler
 from ._request_info_mixin import response_handler
@@ -361,7 +362,7 @@ class WorkflowExecutor(Executor):
         return any(is_instance_of(message.data, input_type) for input_type in self.workflow.input_types)
 
     @handler
-    async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:
+    async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any, Any]) -> None:
         """Execute the sub-workflow with raw input data.
 
         This handler starts a new sub-workflow execution. When the sub-workflow
@@ -387,8 +388,28 @@ class WorkflowExecutor(Executor):
             # Get kwargs from parent workflow's State to propagate to subworkflow
             parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
 
+            # Extract invocation kwargs recognised by Workflow.run()
+            # The state stores resolved format (with __global__ wrapper for global kwargs).
+            # Unwrap __global__ before passing to the subworkflow so it gets re-resolved
+            # against the subworkflow's own executor IDs.
+            fi_kwargs: dict[str, Any] | None = None
+            ci_kwargs: dict[str, Any] | None = None
+            for key in ("function_invocation_kwargs", "client_kwargs"):
+                resolved = parent_kwargs.get(key)
+                if isinstance(resolved, dict):
+                    # Unwrap global sentinel; pass per-executor dicts as-is
+                    unwrapped: dict[str, Any] = resolved.get(GLOBAL_KWARGS_KEY, resolved)  # type: ignore
+                    if key == "function_invocation_kwargs":
+                        fi_kwargs = unwrapped  # type: ignore
+                    else:
+                        ci_kwargs = unwrapped  # type: ignore
+
             # Run the sub-workflow and collect all events, passing parent kwargs
-            result = await self.workflow.run(input_data, **parent_kwargs)
+            result = await self.workflow.run(
+                input_data,
+                function_invocation_kwargs=fi_kwargs,  # type: ignore
+                client_kwargs=ci_kwargs,  # type: ignore
+            )
 
             logger.debug(
                 f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} "
@@ -408,7 +429,7 @@ class WorkflowExecutor(Executor):
     async def handle_message_wrapped_request_response(
         self,
         response: SubWorkflowResponseMessage,
-        ctx: WorkflowContext[Any],
+        ctx: WorkflowContext[Any, Any],
     ) -> None:
         """Handle response from parent for a forwarded request.
 
@@ -532,10 +553,12 @@ class WorkflowExecutor(Executor):
         # Collect all events from the workflow
         request_info_events = result.get_request_info_events()
         outputs = result.get_outputs()
+        intermediate_outputs = result.get_intermediate_outputs()
         workflow_run_state = result.get_final_state()
         logger.debug(
             f"WorkflowExecutor {self.id} processing workflow result with "
-            f"{len(outputs)} outputs and {len(request_info_events)} request info events. "
+            f"{len(outputs)} outputs, {len(intermediate_outputs)} intermediate outputs, "
+            f"and {len(request_info_events)} request info events. "
             f"Workflow run state: {workflow_run_state}"
         )
 
@@ -545,6 +568,19 @@ class WorkflowExecutor(Executor):
             await asyncio.gather(*[ctx.yield_output(output) for output in outputs])
         else:
             await asyncio.gather(*[ctx.send_message(output) for output in outputs])
+
+        # Pipe sub-workflow intermediate emissions up through the parent's event stream.
+        # Bypasses the parent's yield-output classifier so the 'intermediate' label is preserved
+        # across the encapsulation boundary; uses this WorkflowExecutor's id as the source
+        # so outer callers don't need to know the sub-workflow's internal executor layout.
+        if intermediate_outputs:
+
+            async def _forward_intermediate_output(output: Any) -> None:
+                with _framework_event_origin():
+                    event = WorkflowEvent("intermediate", executor_id=self.id, data=output)
+                await ctx.add_event(event)
+
+            await asyncio.gather(*[_forward_intermediate_output(output) for output in intermediate_outputs])
 
         # Process request info events
         for event in request_info_events:

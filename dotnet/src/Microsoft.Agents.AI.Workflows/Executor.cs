@@ -3,6 +3,7 @@
 #pragma warning disable CS0618 // Type or member is obsolete - Internal use of obsolete types for backward compatibility
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -133,7 +134,25 @@ internal sealed class ExecutorProtocol(MessageRouter router, ISet<Type> sendType
 
     public bool CanHandle(Type type) => router.CanHandle(type);
 
-    public bool CanOutput(Type type) => this._yieldTypes.Contains(new(type));
+    private readonly ConcurrentDictionary<Type, bool> _canOutputCache = new();
+
+    public bool CanOutput(Type type)
+    {
+        return this._canOutputCache.GetOrAdd(type, this.CanOutputCore);
+    }
+
+    private bool CanOutputCore(Type type)
+    {
+        foreach (TypeId yieldType in this._yieldTypes)
+        {
+            if (yieldType.IsMatchPolymorphic(type))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     public ProtocolDescriptor Describe() => new(this.Router.IncomingTypes, yieldTypes, sendTypes, this.Router.HasCatchAll);
 }
@@ -292,21 +311,39 @@ public abstract class Executor : IIdentified
     }
 
     /// <summary>
+    /// Invoked once per superstep before any messages are delivered to the Executor.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    protected internal virtual ValueTask OnMessageDeliveryStartingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
+
+    /// <summary>
+    /// Invoked once per superstep after all messages have been delivered to the Executor.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
+    protected internal virtual ValueTask OnMessageDeliveryFinishedAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
+
+    /// <summary>
     /// Invoked before a checkpoint is saved, allowing custom pre-save logic in derived classes.
     /// </summary>
     /// <param name="context">The workflow context.</param>
-    /// <returns>A ValueTask representing the asynchronous operation.</returns>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
     protected internal virtual ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
 
     /// <summary>
     /// Invoked after a checkpoint is loaded, allowing custom post-load logic in derived classes.
     /// </summary>
     /// <param name="context">The workflow context.</param>
-    /// <returns>A ValueTask representing the asynchronous operation.</returns>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A ValueTask representing the asynchronous operation.</returns>
     protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
 
     /// <summary>

@@ -1,24 +1,16 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/orchestrations/02_selector_group_chat.py
-
 # Copyright (c) Microsoft. All rights reserved.
+
+
+import asyncio
+
+from agent_framework import Agent, Message
+from dotenv import load_dotenv
+
 """AutoGen SelectorGroupChat vs Agent Framework GroupChatBuilder.
 
 Demonstrates LLM-based speaker selection where an orchestrator decides
 which agent should speak next based on the conversation context.
 """
-
-import asyncio
-
-from agent_framework import Message
-from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
@@ -79,22 +71,22 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
     from agent_framework.orchestrations import GroupChatBuilder
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create specialized agents
-    python_expert = client.as_agent(
+    python_expert = Agent(client=client,
         name="python_expert",
         instructions="You are a Python programming expert. Answer Python-related questions.",
         description="Expert in Python programming",
     )
 
-    javascript_expert = client.as_agent(
+    javascript_expert = Agent(client=client,
         name="javascript_expert",
         instructions="You are a JavaScript programming expert. Answer JavaScript-related questions.",
         description="Expert in JavaScript programming",
     )
 
-    database_expert = client.as_agent(
+    database_expert = Agent(client=client,
         name="database_expert",
         instructions="You are a database expert. Answer SQL and database-related questions.",
         description="Expert in databases and SQL",
@@ -103,7 +95,7 @@ async def run_agent_framework() -> None:
     workflow = GroupChatBuilder(
         participants=[python_expert, javascript_expert, database_expert],
         max_rounds=1,
-        orchestrator_agent=client.as_agent(
+        orchestrator_agent=Agent(client=client,
             name="selector_manager",
             instructions="Based on the conversation, select the most appropriate expert to respond next.",
         ),
@@ -113,7 +105,7 @@ async def run_agent_framework() -> None:
     print("[Agent Framework] Group chat conversation:")
     async for event in workflow.run("How do I connect to a PostgreSQL database using Python?", stream=True):
         if event.type == "output" and isinstance(event.data, list):
-            for message in event.data:
+            for message in event.data:  # type: ignore
                 if isinstance(message, Message) and message.role == "assistant" and message.text:
                     print(f"---------- {message.author_name} ----------")
                     print(message.text)

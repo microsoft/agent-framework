@@ -1,6 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Shared utilities for running poe tasks across workspace packages in parallel."""
+"""Shared utilities for running Poe tasks across workspace packages.
+
+These helpers centralize workspace discovery, selector matching, and execution
+mode so the root task dispatcher and dependency tooling interpret package
+filters the same way.
+"""
 
 import concurrent.futures
 import glob
@@ -8,6 +13,8 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
+from fnmatch import fnmatch
 from pathlib import Path
 
 import tomli
@@ -70,12 +77,67 @@ def build_work_items(projects: list[Path], task_names: list[str]) -> list[tuple[
     return work_items
 
 
-def _run_task_subprocess(project: Path, task: str, workspace_root: Path) -> tuple[Path, str, int, str, str, float]:
+def normalize_project_filter(value: str) -> str:
+    """Normalize a user-supplied workspace selector.
+
+    Strip presentation differences so short names, relative paths, and globs can
+    be compared with one matcher.
+    """
+    normalized = value.strip().strip("/").replace("\\", "/")
+    return normalized or "."
+
+
+def build_project_filter_candidates(project: Path | str, aliases: Sequence[str] = ()) -> set[str]:
+    """Return accepted selector values for one workspace project.
+
+    We accept the workspace path, short package name, and any supplied aliases
+    so user-facing ``--package core`` stays stable even when underlying tools
+    still need paths or distribution names.
+    """
+    normalized_path = normalize_project_filter(str(project))
+    candidates = {normalized_path}
+    if normalized_path == ".":
+        candidates.update({"./", "root"})
+    else:
+        # Accept bare short names like ``core`` alongside ``packages/core`` and
+        # ``./packages/core`` so callers do not have to care which form a
+        # downstream script prefers.
+        path = Path(normalized_path)
+        candidates.add(path.name)
+        candidates.add(f"./{normalized_path}")
+
+    for alias in aliases:
+        normalized_alias = normalize_project_filter(alias)
+        if normalized_alias and normalized_alias != ".":
+            candidates.add(normalized_alias)
+
+    return {candidate.lower() for candidate in candidates}
+
+
+def project_filter_matches(project: Path | str, pattern: str, aliases: Sequence[str] = ()) -> bool:
+    """Return whether a project matches a user-supplied selector or glob.
+
+    Matching happens against the normalized candidate set so CLI callers can use
+    the same selector vocabulary everywhere.
+    """
+    normalized_pattern = normalize_project_filter(pattern).lower()
+    return any(
+        fnmatch(candidate, normalized_pattern)
+        for candidate in build_project_filter_candidates(project, aliases)
+    )
+
+
+def _run_task_subprocess(
+    project: Path,
+    task: str,
+    workspace_root: Path,
+    task_args: Sequence[str] = (),
+) -> tuple[Path, str, int, str, str, float]:
     """Run a single poe task in a project directory via subprocess."""
     start = time.monotonic()
     cwd = workspace_root / project
     result = subprocess.run(
-        ["uv", "run", "poe", task],
+        ["uv", "run", "poe", task, *task_args],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -84,20 +146,20 @@ def _run_task_subprocess(project: Path, task: str, workspace_root: Path) -> tupl
     return (project, task, result.returncode, result.stdout, result.stderr, elapsed)
 
 
-def _run_sequential(work_items: list[tuple[Path, str]]) -> None:
+def _run_sequential(work_items: list[tuple[Path, str]], task_args: Sequence[str] = ()) -> None:
     """Run tasks sequentially using in-process PoeThePoet (streaming output)."""
     from poethepoet.app import PoeThePoet
 
     for project, task in work_items:
         print(f"Running task {task} in {project}")
         app = PoeThePoet(cwd=project)
-        result = app(cli_args=[task])
+        result = app(cli_args=[task, *task_args])
         if result:
             sys.exit(result)
 
 
-def _run_parallel(work_items: list[tuple[Path, str]], workspace_root: Path) -> None:
-    """Run all (package × task) combinations in parallel via subprocesses."""
+def _run_parallel(work_items: list[tuple[Path, str]], workspace_root: Path, task_args: Sequence[str] = ()) -> None:
+    """Run all (package x task) combinations in parallel via subprocesses."""
     max_workers = min(len(work_items), os.cpu_count() or 4)
     failures: list[tuple[Path, str, str, str]] = []
     completed = 0
@@ -107,7 +169,7 @@ def _run_parallel(work_items: list[tuple[Path, str]], workspace_root: Path) -> N
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_run_task_subprocess, project, task, workspace_root): (project, task)
+            executor.submit(_run_task_subprocess, project, task, workspace_root, task_args): (project, task)
             for project, task in work_items
         }
         for future in concurrent.futures.as_completed(futures):
@@ -123,7 +185,7 @@ def _run_parallel(work_items: list[tuple[Path, str]], workspace_root: Path) -> N
     if failures:
         print(f"\n[red]{len(failures)} task(s) failed:[/red]")
         for project, task, stdout, stderr in failures:
-            print(f"\n[red]{'='*60}[/red]")
+            print(f"\n[red]{'=' * 60}[/red]")
             print(f"[red]FAILED: {task} in {project}[/red]")
             if stdout.strip():
                 print(stdout)
@@ -134,7 +196,13 @@ def _run_parallel(work_items: list[tuple[Path, str]], workspace_root: Path) -> N
     print(f"\n[green]All {total} task(s) passed ✓[/green]")
 
 
-def run_tasks(work_items: list[tuple[Path, str]], workspace_root: Path, *, sequential: bool = False) -> None:
+def run_tasks(
+    work_items: list[tuple[Path, str]],
+    workspace_root: Path,
+    *,
+    sequential: bool = False,
+    task_args: Sequence[str] = (),
+) -> None:
     """Run work items either in parallel or sequentially.
 
     Single items use in-process PoeThePoet for streaming output.
@@ -145,6 +213,6 @@ def run_tasks(work_items: list[tuple[Path, str]], workspace_root: Path, *, seque
         return
 
     if sequential or len(work_items) == 1:
-        _run_sequential(work_items)
+        _run_sequential(work_items, task_args)
     else:
-        _run_parallel(work_items, workspace_root)
+        _run_parallel(work_items, workspace_root, task_args)

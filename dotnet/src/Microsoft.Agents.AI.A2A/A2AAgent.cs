@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -28,10 +27,8 @@ public sealed class A2AAgent : AIAgent
 {
     private static readonly AIAgentMetadata s_agentMetadata = new("a2a");
 
-    private readonly A2AClient _a2aClient;
-    private readonly string? _id;
-    private readonly string? _name;
-    private readonly string? _description;
+    private readonly IA2AClient _a2aClient;
+    private readonly A2AAgentOptions _agentOptions;
     private readonly ILogger _logger;
 
     /// <summary>
@@ -39,17 +36,37 @@ public sealed class A2AAgent : AIAgent
     /// </summary>
     /// <param name="a2aClient">The A2A client to use for interacting with A2A agents.</param>
     /// <param name="id">The unique identifier for the agent.</param>
-    /// <param name="name">The the name of the agent.</param>
+    /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public A2AAgent(A2AClient a2aClient, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
+    public A2AAgent(IA2AClient a2aClient, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
+        : this(
+              a2aClient,
+              new A2AAgentOptions
+              {
+                  Id = id,
+                  Name = name,
+                  Description = description
+              },
+              loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="A2AAgent"/> class.
+    /// </summary>
+    /// <param name="a2aClient">The A2A client to use for interacting with A2A agents.</param>
+    /// <param name="options">
+    /// Configuration options that control the agent's identity, including its identifier, name, and description.
+    /// </param>
+    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
+    public A2AAgent(IA2AClient a2aClient, A2AAgentOptions options, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(a2aClient);
+        _ = Throw.IfNull(options);
 
         this._a2aClient = a2aClient;
-        this._id = id;
-        this._name = name;
-        this._description = description;
+        this._agentOptions = options.Clone();
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
     }
 
@@ -94,151 +111,141 @@ public sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         A2AAgentSession typedSession = await this.GetA2ASessionAsync(session, options, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
-        A2AResponse? a2aResponse = null;
-
-        if (GetContinuationToken(messages, options) is { } token)
+        if (GetContinuationToken(inputMessages, options) is { } token)
         {
-            a2aResponse = await this._a2aClient.GetTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            MessageSendParams sendParams = new()
-            {
-                Message = CreateA2AMessage(typedSession, messages),
-                Metadata = options?.AdditionalProperties?.ToA2AMetadata()
-            };
+            AgentTask agentTask = await this._a2aClient.GetTaskAsync(new GetTaskRequest { Id = token.TaskId }, cancellationToken).ConfigureAwait(false);
 
-            a2aResponse = await this._a2aClient.SendMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
+            this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
+
+            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id, agentTask.Status.State);
+
+            return this.ConvertToAgentResponse(agentTask);
         }
+
+        SendMessageRequest sendParams = new()
+        {
+            Message = CreateA2AMessage(typedSession, inputMessages),
+            Metadata = options?.AdditionalProperties?.ToA2AMetadata(),
+            Configuration = new SendMessageConfiguration { ReturnImmediately = options?.AllowBackgroundResponses is true }
+        };
+
+        SendMessageResponse a2aResponse = await this._a2aClient.SendMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (a2aResponse is AgentMessage message)
+        if (a2aResponse.PayloadCase == SendMessageResponseCase.Message)
         {
+            var message = a2aResponse.Message!;
+
             UpdateSession(typedSession, message.ContextId);
 
-            return new AgentResponse
-            {
-                AgentId = this.Id,
-                ResponseId = message.MessageId,
-                RawRepresentation = message,
-                Messages = [message.ToChatMessage()],
-                AdditionalProperties = message.Metadata?.ToAdditionalProperties(),
-            };
+            return this.ConvertToAgentResponse(message);
         }
 
-        if (a2aResponse is AgentTask agentTask)
+        if (a2aResponse.PayloadCase == SendMessageResponseCase.Task)
         {
-            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id);
+            var agentTask = a2aResponse.Task!;
 
-            var response = new AgentResponse
-            {
-                AgentId = this.Id,
-                ResponseId = agentTask.Id,
-                RawRepresentation = agentTask,
-                Messages = agentTask.ToChatMessages() ?? [],
-                ContinuationToken = CreateContinuationToken(agentTask.Id, agentTask.Status.State),
-                AdditionalProperties = agentTask.Metadata?.ToAdditionalProperties(),
-            };
+            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id, agentTask.Status.State);
 
-            if (agentTask.ToChatMessages() is { Count: > 0 } taskMessages)
-            {
-                response.Messages = taskMessages;
-            }
-
-            return response;
+            return this.ConvertToAgentResponse(agentTask);
         }
 
-        throw new NotSupportedException($"Only Message and AgentTask responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
+        throw new NotSupportedException($"Only Message and AgentTask responses are supported from A2A agents. Received: {a2aResponse.PayloadCase}");
     }
 
     /// <inheritdoc/>
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         A2AAgentSession typedSession = await this.GetA2ASessionAsync(session, options, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
-        ConfiguredCancelableAsyncEnumerable<SseItem<A2AEvent>> a2aSseEvents;
+        ConfiguredCancelableAsyncEnumerable<StreamResponse> streamEvents;
 
-        if (options?.ContinuationToken is not null)
+        if (GetContinuationToken(inputMessages, options) is { } token)
         {
-            // Task stream resumption is not well defined in the A2A v2.* specification, leaving it to the agent implementations.  
-            // The v3.0 specification improves this by defining task stream reconnection that allows obtaining the same stream  
-            // from the beginning, but it does not define stream resumption from a specific point in the stream.  
-            // Therefore, the code should be updated once the A2A .NET library supports the A2A v3.0 specification,  
-            // and AF has the necessary model to allow consumers to know whether they need to resume the stream and add new updates to  
-            // the existing ones or reconnect the stream and obtain all updates again.  
-            // For more details, see the following issue: https://github.com/microsoft/agent-framework/issues/1764  
-            throw new InvalidOperationException("Reconnecting to task streams using continuation tokens is not supported yet.");
-            // a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);  
+            streamEvents = this.SubscribeToTaskWithFallbackAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
         }
-
-        MessageSendParams sendParams = new()
+        else
         {
-            Message = CreateA2AMessage(typedSession, messages),
-            Metadata = options?.AdditionalProperties?.ToA2AMetadata()
-        };
+            SendMessageRequest sendParams = new()
+            {
+                Message = CreateA2AMessage(typedSession, inputMessages),
+                Metadata = options?.AdditionalProperties?.ToA2AMetadata()
+            };
 
-        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(sendParams, cancellationToken).ConfigureAwait(false);
+            streamEvents = this._a2aClient.SendStreamingMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
+        }
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
         string? contextId = null;
         string? taskId = null;
+        TaskState? taskState = null;
 
-        await foreach (var sseEvent in a2aSseEvents)
+        await foreach (var streamResponse in streamEvents)
         {
-            if (sseEvent.Data is AgentMessage message)
+            switch (streamResponse.PayloadCase)
             {
-                contextId = message.ContextId;
+                case StreamResponseCase.Message:
+                    var message = streamResponse.Message!;
+                    contextId = message.ContextId;
+                    yield return this.ConvertToAgentResponseUpdate(message);
+                    break;
 
-                yield return this.ConvertToAgentResponseUpdate(message);
-            }
-            else if (sseEvent.Data is AgentTask task)
-            {
-                contextId = task.ContextId;
-                taskId = task.Id;
+                case StreamResponseCase.Task:
+                    var task = streamResponse.Task!;
+                    contextId = task.ContextId;
+                    taskId = task.Id;
+                    taskState = task.Status.State;
+                    yield return this.ConvertToAgentResponseUpdate(task);
+                    break;
 
-                yield return this.ConvertToAgentResponseUpdate(task);
-            }
-            else if (sseEvent.Data is TaskUpdateEvent taskUpdateEvent)
-            {
-                contextId = taskUpdateEvent.ContextId;
-                taskId = taskUpdateEvent.TaskId;
+                case StreamResponseCase.StatusUpdate:
+                    var statusUpdate = streamResponse.StatusUpdate!;
+                    contextId = statusUpdate.ContextId;
+                    taskId = statusUpdate.TaskId;
+                    taskState = statusUpdate.Status.State;
+                    yield return this.ConvertToAgentResponseUpdate(statusUpdate);
+                    break;
 
-                yield return this.ConvertToAgentResponseUpdate(taskUpdateEvent);
-            }
-            else
-            {
-                throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {sseEvent.Data.GetType().FullName ?? "null"}");
+                case StreamResponseCase.ArtifactUpdate:
+                    var artifactUpdate = streamResponse.ArtifactUpdate!;
+                    contextId = artifactUpdate.ContextId;
+                    taskId = artifactUpdate.TaskId;
+                    yield return this.ConvertToAgentResponseUpdate(artifactUpdate);
+                    break;
+
+                default:
+                    throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {streamResponse.PayloadCase}");
             }
         }
 
-        UpdateSession(typedSession, contextId, taskId);
+        UpdateSession(typedSession, contextId, taskId, taskState);
     }
 
     /// <inheritdoc/>
-    protected override string? IdCore => this._id;
+    protected override string? IdCore => this._agentOptions.Id;
 
     /// <inheritdoc/>
-    public override string? Name => this._name;
+    public override string? Name => this._agentOptions.Name;
 
     /// <inheritdoc/>
-    public override string? Description => this._description;
+    public override string? Description => this._agentOptions.Description;
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
         => base.GetService(serviceType, serviceKey)
-           ?? (serviceType == typeof(A2AClient) ? this._a2aClient
+           ?? (serviceType == typeof(IA2AClient) ? this._a2aClient
             : serviceType == typeof(AIAgentMetadata) ? s_agentMetadata
             : null);
 
@@ -262,7 +269,76 @@ public sealed class A2AAgent : AIAgent
         return typedSession;
     }
 
-    private static void UpdateSession(A2AAgentSession? session, string? contextId, string? taskId = null)
+    /// <summary>
+    /// Subscribes to task updates, falling back to <see cref="A2AClient.GetTaskAsync"/>
+    /// when the task has already reached a terminal state and the server responds with
+    /// <see cref="A2AErrorCode.UnsupportedOperation"/>.
+    /// </summary>
+    /// <remarks>
+    /// Per A2A spec §3.1.6, subscribing to a task in a terminal state (completed, failed,
+    /// canceled, or rejected) results in an <c>UnsupportedOperationError</c>.
+    /// See: <see href="https://a2a-protocol.org/latest/specification/#332-error-handling"/>.
+    /// </remarks>
+    private async IAsyncEnumerable<StreamResponse> SubscribeToTaskWithFallbackAsync(
+        string taskId,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var subscribeStream = this._a2aClient.SubscribeToTaskAsync(new SubscribeToTaskRequest { Id = taskId }, cancellationToken);
+
+        var enumerator = subscribeStream.GetAsyncEnumerator(cancellationToken);
+
+        // yield return cannot appear inside a try block that has catch clauses,
+        // so we manually advance the enumerator within try/catch and yield outside it.
+        // The outer try/finally (no catch) is allowed to contain yield return in C#.
+        StreamResponse? fallbackResponse = null;
+        bool disposed = false;
+
+        try
+        {
+            while (true)
+            {
+                bool hasNext;
+                try
+                {
+                    hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (A2AException ex) when (ex.ErrorCode == A2AErrorCode.UnsupportedOperation)
+                {
+                    this._logger.LogA2ASubscribeToTaskFallback(this.Id, this.Name, taskId, ex.Message);
+
+                    // Dispose the enumerator before the fallback call to release the HTTP/SSE connection.
+                    await enumerator.DisposeAsync().ConfigureAwait(false);
+                    disposed = true;
+
+                    AgentTask agentTask = await this._a2aClient.GetTaskAsync(new GetTaskRequest { Id = taskId }, cancellationToken).ConfigureAwait(false);
+
+                    fallbackResponse = new StreamResponse { Task = agentTask };
+                    break;
+                }
+
+                if (!hasNext)
+                {
+                    break;
+                }
+
+                yield return enumerator.Current;
+            }
+
+            if (fallbackResponse is not null)
+            {
+                yield return fallbackResponse;
+            }
+        }
+        finally
+        {
+            if (!disposed)
+            {
+                await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static void UpdateSession(A2AAgentSession? session, string? contextId, string? taskId = null, TaskState? taskState = null)
     {
         if (session is null)
         {
@@ -280,9 +356,10 @@ public sealed class A2AAgent : AIAgent
         // Assign a server-generated context Id to the session if it's not already set.
         session.ContextId ??= contextId;
         session.TaskId = taskId;
+        session.TaskState = taskState;
     }
 
-    private static AgentMessage CreateA2AMessage(A2AAgentSession typedSession, IEnumerable<ChatMessage> messages)
+    private static Message CreateA2AMessage(A2AAgentSession typedSession, IReadOnlyCollection<ChatMessage> messages)
     {
         var a2aMessage = messages.ToA2AMessage();
 
@@ -290,9 +367,19 @@ public sealed class A2AAgent : AIAgent
         // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#group-related-interactions
         a2aMessage.ContextId = typedSession.ContextId;
 
-        // Link the message as a follow-up to an existing task, if any.
-        // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#task-refinements
-        a2aMessage.ReferenceTaskIds = typedSession.TaskId is null ? null : [typedSession.TaskId];
+        if (typedSession.TaskState == TaskState.InputRequired)
+        {
+            // If the session indicates the task is waiting for user input,
+            // link the response to the existing task so it is treated as input
+            // for that task.
+            a2aMessage.TaskId = typedSession.TaskId;
+        }
+        else
+        {
+            // Link the message as a follow-up to an existing task, if any.
+            // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#task-refinements
+            a2aMessage.ReferenceTaskIds = typedSession.TaskId is not null ? [typedSession.TaskId] : null;
+        }
 
         return a2aMessage;
     }
@@ -322,12 +409,40 @@ public sealed class A2AAgent : AIAgent
         return null;
     }
 
-    private AgentResponseUpdate ConvertToAgentResponseUpdate(AgentMessage message)
+    private AgentResponse ConvertToAgentResponse(Message message)
+    {
+        return new AgentResponse
+        {
+            AgentId = this.Id,
+            ResponseId = message.MessageId,
+            FinishReason = ChatFinishReason.Stop,
+            RawRepresentation = message,
+            Messages = [message.ToChatMessage()],
+            AdditionalProperties = message.Metadata?.ToAdditionalProperties(),
+        };
+    }
+
+    private AgentResponse ConvertToAgentResponse(AgentTask task)
+    {
+        return new AgentResponse
+        {
+            AgentId = this.Id,
+            ResponseId = task.Id,
+            FinishReason = MapTaskStateToFinishReason(task.Status.State),
+            RawRepresentation = task,
+            Messages = task.ToChatMessages() ?? [],
+            ContinuationToken = CreateContinuationToken(task.Id, task.Status.State),
+            AdditionalProperties = task.Metadata?.ToAdditionalProperties(),
+        };
+    }
+
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(Message message)
     {
         return new AgentResponseUpdate
         {
             AgentId = this.Id,
             ResponseId = message.MessageId,
+            FinishReason = ChatFinishReason.Stop,
             RawRepresentation = message,
             Role = ChatRole.Assistant,
             MessageId = message.MessageId,
@@ -342,30 +457,45 @@ public sealed class A2AAgent : AIAgent
         {
             AgentId = this.Id,
             ResponseId = task.Id,
+            FinishReason = MapTaskStateToFinishReason(task.Status.State),
             RawRepresentation = task,
             Role = ChatRole.Assistant,
             Contents = task.ToAIContents(),
+            ContinuationToken = CreateContinuationToken(task.Id, task.Status.State),
             AdditionalProperties = task.Metadata?.ToAdditionalProperties(),
         };
     }
 
-    private AgentResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(TaskStatusUpdateEvent statusUpdateEvent)
     {
-        AgentResponseUpdate responseUpdate = new()
+        return new AgentResponseUpdate
         {
             AgentId = this.Id,
-            ResponseId = taskUpdateEvent.TaskId,
-            RawRepresentation = taskUpdateEvent,
+            ResponseId = statusUpdateEvent.TaskId,
+            RawRepresentation = statusUpdateEvent,
             Role = ChatRole.Assistant,
-            AdditionalProperties = taskUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
+            MessageId = statusUpdateEvent.Status.Message?.MessageId,
+            FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
+            AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
+            Contents = statusUpdateEvent.Status.GetUserInputRequests(),
         };
+    }
 
-        if (taskUpdateEvent is TaskArtifactUpdateEvent artifactUpdateEvent)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(TaskArtifactUpdateEvent artifactUpdateEvent)
+    {
+        return new AgentResponseUpdate
         {
-            responseUpdate.Contents = artifactUpdateEvent.Artifact.ToAIContents();
-            responseUpdate.RawRepresentation = artifactUpdateEvent;
-        }
+            AgentId = this.Id,
+            ResponseId = artifactUpdateEvent.TaskId,
+            RawRepresentation = artifactUpdateEvent,
+            Role = ChatRole.Assistant,
+            Contents = artifactUpdateEvent.Artifact.ToAIContents(),
+            AdditionalProperties = artifactUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
+        };
+    }
 
-        return responseUpdate;
+    private static ChatFinishReason? MapTaskStateToFinishReason(TaskState state)
+    {
+        return state == TaskState.Completed ? ChatFinishReason.Stop : null;
     }
 }

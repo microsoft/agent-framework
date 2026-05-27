@@ -27,7 +27,7 @@ def foundry_local_unit_test_env(monkeypatch: Any, exclude_list: list[str], overr
         override_env_param_dict = {}
 
     env_vars = {
-        "FOUNDRY_LOCAL_MODEL_ID": "test-model-id",
+        "FOUNDRY_LOCAL_MODEL": "test-model-id",
     }
 
     env_vars.update(override_env_param_dict)

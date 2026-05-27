@@ -41,7 +41,7 @@ public static class WorkflowHostingExtensions
     {
         Dictionary<string, object?> parameters = new()
         {
-            { "data", request.Data}
+            { "data", request.Data }
         };
 
         return new FunctionCallContent(request.RequestId, request.PortInfo.PortId, parameters);

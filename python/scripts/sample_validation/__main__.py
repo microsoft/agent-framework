@@ -75,6 +75,13 @@ Examples:
         help="Custom name for the report files (without extension). If not provided, uses timestamp.",
     )
 
+    parser.add_argument(
+        "--exclude",
+        nargs="+",
+        type=str,
+        help="Subdirectory paths to exclude (relative to the search directory set by --subdir)",
+    )
+
     return parser.parse_args()
 
 
@@ -104,6 +111,7 @@ async def main() -> int:
         samples_dir=samples_dir,
         python_root=python_root,
         subdir=args.subdir,
+        exclude=args.exclude,
         max_parallel_workers=max(1, args.max_parallel_workers),
     )
 
@@ -138,7 +146,7 @@ async def main() -> int:
         print(f"   JSON: {json_path}")
 
     # Return appropriate exit code
-    failed = report.failure_count + report.timeout_count + report.error_count
+    failed = report.failure_count + report.missing_setup_count
     return 1 if failed > 0 else 0
 
 

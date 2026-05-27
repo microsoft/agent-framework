@@ -19,6 +19,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
+    [Obsolete("Please use the latest Foundry Agents service via the Microsoft.Agents.AI.AzureAI package.")]
     public static ChatClientAgent AsAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         Response<PersistentAgent> persistentAgentResponse,
@@ -43,6 +44,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
+    [Obsolete("Please use the latest Foundry Agents service via the Microsoft.Agents.AI.AzureAI package.")]
     public static ChatClientAgent AsAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         PersistentAgent persistentAgentMetadata,
@@ -93,6 +95,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
+    [Obsolete("Please use the latest Foundry Agents service via the Microsoft.Agents.AI.AzureAI package.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this PersistentAgentsClient persistentAgentsClient,
         string agentId,
@@ -125,6 +128,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="persistentAgentResponse"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
+    [Obsolete("Please use the latest Foundry Agents service via the Microsoft.Agents.AI.AzureAI package.")]
     public static ChatClientAgent AsAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         Response<PersistentAgent> persistentAgentResponse,
@@ -150,6 +154,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="persistentAgentMetadata"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
+    [Obsolete("Please use the latest Foundry Agents service via the Microsoft.Agents.AI.AzureAI package.")]
     public static ChatClientAgent AsAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         PersistentAgent persistentAgentMetadata,
@@ -211,6 +216,7 @@ public static class PersistentAgentsClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="persistentAgentsClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="agentId"/> is empty or whitespace.</exception>
+    [Obsolete("Please use the latest Foundry Agents service via the Microsoft.Agents.AI.AzureAI package.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this PersistentAgentsClient persistentAgentsClient,
         string agentId,
@@ -256,6 +262,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
+    [Obsolete("Please use the latest Foundry Agents service via the Microsoft.Agents.AI.AzureAI package.")]
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
         this PersistentAgentsClient persistentAgentsClient,
         string model,
@@ -306,6 +313,7 @@ public static class PersistentAgentsClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="persistentAgentsClient"/> or <paramref name="model"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    [Obsolete("Please use the latest Foundry Agents service via the Microsoft.Agents.AI.AzureAI package.")]
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
         this PersistentAgentsClient persistentAgentsClient,
         string model,

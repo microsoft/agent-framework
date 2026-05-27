@@ -11,21 +11,21 @@ Usage::
 
     class MySettings(TypedDict, total=False):
         api_key: str | None  # optional — resolves to None if not set
-        model_id: str | None  # optional by default
+        model: str | None  # optional by default
         source_a: str | None
         source_b: str | None
 
 
-    # Make model_id required; require exactly one of source_a / source_b:
+    # Make model required; require exactly one of source_a / source_b:
     settings = load_settings(
         MySettings,
         env_prefix="MY_APP_",
-        required_fields=["model_id", ("source_a", "source_b")],
-        model_id="gpt-4",
+        required_fields=["model", ("source_a", "source_b")],
+        model="gpt-4",
         source_a="value",
     )
     settings["api_key"]  # type-checked dict access
-    settings["model_id"]  # str | None per type, but guaranteed not None at runtime
+    settings["model"]  # str | None per type, but guaranteed not None at runtime
 """
 
 from __future__ import annotations

@@ -45,7 +45,7 @@ The sample demonstrates continuous event-driven execution with inline approval h
 
 - Azure OpenAI or OpenAI configured with the required environment variables
 - `AZURE_OPENAI_ENDPOINT` environment variable set
-- `AZURE_OPENAI_DEPLOYMENT_NAME` environment variable (defaults to "gpt-4o-mini")
+- `AZURE_OPENAI_DEPLOYMENT_NAME` environment variable (defaults to "gpt-5.4-mini")
 
 ## Running the Sample
 

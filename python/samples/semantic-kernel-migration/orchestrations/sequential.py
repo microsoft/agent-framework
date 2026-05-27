@@ -15,12 +15,13 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent, Message
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from semantic_kernel.agents import Agent, ChatCompletionAgent, SequentialOrchestration
+from semantic_kernel.agents import Agent as SKAgent
+from semantic_kernel.agents import ChatCompletionAgent, SequentialOrchestration
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import ChatMessageContent
@@ -36,7 +37,7 @@ PROMPT = "Write a tagline for a budget-friendly eBike."
 ######################################################################
 
 
-def build_semantic_kernel_agents() -> list[Agent]:
+def build_semantic_kernel_agents() -> list[SKAgent]:
     credential = AzureCliCredential()
 
     writer_agent = ChatCompletionAgent(
@@ -75,14 +76,14 @@ async def sk_agent_response_callback(
 
 
 async def run_agent_framework_example(prompt: str) -> list[Message]:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = OpenAIChatCompletionClient(credential=AzureCliCredential())
 
-    writer = client.as_agent(
+    writer = Agent(client=client,
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 
-    reviewer = client.as_agent(
+    reviewer = Agent(client=client,
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
     )

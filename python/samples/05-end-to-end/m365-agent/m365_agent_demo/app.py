@@ -19,7 +19,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from aiohttp import web
 from aiohttp.web_middlewares import middleware
 from dotenv import load_dotenv
@@ -101,8 +101,9 @@ def get_weather(
 
 def build_agent() -> Agent:
     """Create and return the chat agent instance with weather tool registered."""
-    return OpenAIChatClient().as_agent(
-        name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather
+    _client = FoundryChatClient()
+    return Agent(
+        client=_client, name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather
     )
 
 

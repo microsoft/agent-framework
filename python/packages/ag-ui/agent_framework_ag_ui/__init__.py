@@ -9,6 +9,7 @@ from ._client import AGUIChatClient
 from ._endpoint import add_agent_framework_fastapi_endpoint
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
+from ._state import state_update
 from ._types import AgentState, AGUIChatOptions, AGUIRequest, PredictStateConfig, RunMetadata
 from ._workflow import AgentFrameworkWorkflow, WorkflowFactory
 
@@ -34,5 +35,6 @@ __all__ = [
     "PredictStateConfig",
     "RunMetadata",
     "DEFAULT_TAGS",
+    "state_update",
     "__version__",
 ]

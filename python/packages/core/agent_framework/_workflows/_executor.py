@@ -728,8 +728,21 @@ def _validate_handler_signature(
     # AttributeError, or RecursionError), so registration failures are easier to diagnose.
     try:
         type_hints = typing.get_type_hints(func)
-    except Exception:
+    except (NameError, AttributeError, RecursionError):
         type_hints = {p.name: p.annotation for p in params}
+
+    message_type = type_hints.get(message_param.name, message_param.annotation)
+    if message_type == inspect.Parameter.empty:
+        message_type = None
+
+    # Reject unresolved TypeVar in message annotation -- these are not supported
+    # for workflow type validation and must be replaced with concrete types.
+    if not skip_message_annotation and isinstance(message_type, TypeVar):
+        raise ValueError(
+            f"Handler {func.__name__} has an unresolved TypeVar '{message_type}' as its message type annotation. "
+            "Generic TypeVar annotations are not supported for workflow type validation. "
+            "Use @handler(input=<concrete_type>, output=<concrete_type>) to specify explicit types."
+        )
 
     # Validate ctx parameter is WorkflowContext and extract type args
     ctx_param = params[2]
@@ -743,10 +756,6 @@ def _validate_handler_signature(
         output_types, workflow_output_types = validate_workflow_context_annotation(
             ctx_annotation, f"parameter '{ctx_param.name}'", "Handler"
         )
-
-    message_type = type_hints.get(message_param.name, message_param.annotation)
-    if message_type == inspect.Parameter.empty:
-        message_type = None
 
     return message_type, ctx_annotation, output_types, workflow_output_types
 

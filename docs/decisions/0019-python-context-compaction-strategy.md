@@ -1240,3 +1240,10 @@ class AttributionAwareStrategy(CompactionStrategy):
 
 - [ADR-0016: Unifying Context Management with ContextPlugin](0016-python-context-middleware.md) — Parent ADR that established `ContextProvider`, `HistoryProvider`, and `AgentSession` architecture.
 - [Context Compaction Limitations Analysis](https://gist.github.com/victordibia/ec3f3baf97345f7e47da025cf55b999f) — Detailed analysis of why current architecture cannot support in-run compaction, with attempted solutions and their failure modes. Option 4 in this ADR corresponds to "Option A: Middleware Access to Mutable Message Source" from that analysis; Options 1-3 correspond to "Option B: Tool Loop Hook", adapted here to a `BaseChatClient` hook instead of `FunctionInvocationConfiguration`.
+
+### Implementation Rollout Note
+
+Implementation is split into two phases:
+
+1. **Phase 1 (PR 1):** runtime compaction foundation in `agent_framework/_compaction.py`, in-run integration, and extensive core tests, plus in-run compaction samples (`basics`, `advanced`, `custom`).
+2. **Phase 2 (PR 2):** history/storage compaction (`upsert`-based full replacement), provider support, storage tests, and storage-focused sample (`storage`).

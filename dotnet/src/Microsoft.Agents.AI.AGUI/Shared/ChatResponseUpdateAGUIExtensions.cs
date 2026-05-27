@@ -31,6 +31,7 @@ internal static class ChatResponseUpdateAGUIExtensions
         string? responseId = null;
         var textMessageBuilder = new TextMessageBuilder();
         var toolCallAccumulator = new ToolCallBuilder();
+        var reasoningBuilder = new ReasoningMessageBuilder();
         await foreach (var evt in events.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             switch (evt)
@@ -41,6 +42,7 @@ internal static class ChatResponseUpdateAGUIExtensions
                     responseId = runStarted.RunId;
                     toolCallAccumulator.SetConversationAndResponseIds(conversationId, responseId);
                     textMessageBuilder.SetConversationAndResponseIds(conversationId, responseId);
+                    reasoningBuilder.SetConversationAndResponseIds(conversationId, responseId);
                     yield return ValidateAndEmitRunStart(runStarted);
                     break;
                 case RunFinishedEvent runFinished:
@@ -87,6 +89,36 @@ internal static class ChatResponseUpdateAGUIExtensions
                     {
                         yield return CreateStateDeltaUpdate(stateDelta, conversationId, responseId, jsonSerializerOptions);
                     }
+                    break;
+
+                // Reasoning events (explicit lifecycle form)
+                case ReasoningMessageStartEvent reasoningStart:
+                    reasoningBuilder.AddReasoningStart(reasoningStart);
+                    break;
+                case ReasoningMessageContentEvent reasoningContent:
+                    yield return reasoningBuilder.EmitReasoningContent(reasoningContent);
+                    break;
+                case ReasoningMessageEndEvent reasoningEnd:
+                    reasoningBuilder.EndCurrentMessage(reasoningEnd);
+                    break;
+
+                // Reasoning events (chunk shorthand form)
+                case ReasoningMessageChunkEvent reasoningChunk:
+                    var chunkUpdate = reasoningBuilder.EmitReasoningChunk(reasoningChunk);
+                    if (chunkUpdate is not null)
+                    {
+                        yield return chunkUpdate;
+                    }
+                    break;
+
+                // Encrypted reasoning value (emitted by either form)
+                case ReasoningEncryptedValueEvent encryptedValue:
+                    yield return reasoningBuilder.EmitEncryptedValue(encryptedValue);
+                    break;
+
+                // ReasoningStartEvent and ReasoningEndEvent are bracket markers only — no content to emit
+                case ReasoningStartEvent:
+                case ReasoningEndEvent:
                     break;
             }
         }
@@ -305,6 +337,81 @@ internal static class ChatResponseUpdateAGUIExtensions
         }
     }
 
+    private sealed class ReasoningMessageBuilder()
+    {
+        private string? _currentMessageId;
+        private string? _conversationId;
+        private string? _responseId;
+
+        public void SetConversationAndResponseIds(string? conversationId, string? responseId)
+        {
+            this._conversationId = conversationId;
+            this._responseId = responseId;
+        }
+
+        public void AddReasoningStart(ReasoningMessageStartEvent reasoningStart)
+        {
+            if (this._currentMessageId != null)
+            {
+                throw new InvalidOperationException(
+                    "Received ReasoningMessageStartEvent while another message is being processed.");
+            }
+
+            this._currentMessageId = reasoningStart.MessageId;
+        }
+
+        public ChatResponseUpdate EmitReasoningContent(ReasoningMessageContentEvent contentEvent)
+        {
+            return new ChatResponseUpdate(ChatRole.Assistant, [new TextReasoningContent(contentEvent.Delta)])
+            {
+                ConversationId = this._conversationId,
+                ResponseId = this._responseId,
+                MessageId = contentEvent.MessageId,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        public ChatResponseUpdate? EmitReasoningChunk(ReasoningMessageChunkEvent chunkEvent)
+        {
+            if (string.IsNullOrEmpty(chunkEvent.Delta))
+            {
+                // Empty delta is the implicit close signal for chunk-based streaming
+                this._currentMessageId = null;
+                return null;
+            }
+
+            this._currentMessageId ??= chunkEvent.MessageId;
+            return new ChatResponseUpdate(ChatRole.Assistant, [new TextReasoningContent(chunkEvent.Delta)])
+            {
+                ConversationId = this._conversationId,
+                ResponseId = this._responseId,
+                MessageId = chunkEvent.MessageId,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        public ChatResponseUpdate EmitEncryptedValue(ReasoningEncryptedValueEvent encryptedEvent)
+        {
+            return new ChatResponseUpdate(ChatRole.Assistant, [new TextReasoningContent("") { ProtectedData = encryptedEvent.EncryptedValue }])
+            {
+                ConversationId = this._conversationId,
+                ResponseId = this._responseId,
+                MessageId = encryptedEvent.EntityId,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        public void EndCurrentMessage(ReasoningMessageEndEvent reasoningEnd)
+        {
+            if (!string.Equals(this._currentMessageId, reasoningEnd.MessageId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Received ReasoningMessageEndEvent for a different message than the current one.");
+            }
+            this._currentMessageId = null;
+        }
+    }
+
     private static IDictionary<string, object?>? DeserializeArgumentsIfAvailable(string argsJson, JsonSerializerOptions options)
     {
         if (!string.IsNullOrEmpty(argsJson))
@@ -341,12 +448,56 @@ internal static class ChatResponseUpdateAGUIExtensions
         };
 
         string? currentMessageId = null;
+        string? textStreamingFallback = null;
+        bool textInFallback = false;
+        string? currentReasoningBaseId = null;
+        string? currentReasoningId = null;
+        string? currentReasoningMessageId = null;
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
+            // The text-event surface (TextMessageStart/Content/End) requires a non-empty
+            // MessageId to be valid AGUI. Generate a fallback scoped to a contiguous run of
+            // null/empty-MessageId chunks (one logical text message). Leave the raw
+            // chatResponse.MessageId untouched so the tool-call surface below uses the raw
+            // provider value — collapsing parallel tool calls under a synthetic shared parent
+            // would make the FE render them as one assistant-message bubble instead of
+            // distinct rows.
+            string? textMessageId = chatResponse.MessageId;
+            if (string.IsNullOrWhiteSpace(textMessageId))
+            {
+                textStreamingFallback ??= Guid.NewGuid().ToString("N");
+                textMessageId = textStreamingFallback;
+                textInFallback = true;
+            }
+            else if (textInFallback)
+            {
+                textStreamingFallback = null;
+                textInFallback = false;
+            }
+
             if (chatResponse is { Contents.Count: > 0 } &&
                 chatResponse.Contents[0] is TextContent &&
-                !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
+                !string.Equals(currentMessageId, textMessageId, StringComparison.Ordinal))
             {
+                // Close any open reasoning block before opening a text message, so AG-UI
+                // events are properly bracketed. MEAI providers share one MessageId across
+                // reasoning and text content, so the reasoning-block state alone wouldn't
+                // detect the transition.
+                if (currentReasoningMessageId is not null)
+                {
+                    yield return new ReasoningMessageEndEvent
+                    {
+                        MessageId = currentReasoningMessageId
+                    };
+                    yield return new ReasoningEndEvent
+                    {
+                        MessageId = currentReasoningId!
+                    };
+                    currentReasoningBaseId = null;
+                    currentReasoningId = null;
+                    currentReasoningMessageId = null;
+                }
+
                 // End the previous message if there was one
                 if (currentMessageId is not null)
                 {
@@ -359,11 +510,11 @@ internal static class ChatResponseUpdateAGUIExtensions
                 // Start the new message
                 yield return new TextMessageStartEvent
                 {
-                    MessageId = chatResponse.MessageId!,
+                    MessageId = textMessageId!,
                     Role = chatResponse.Role!.Value.Value
                 };
 
-                currentMessageId = chatResponse.MessageId;
+                currentMessageId = textMessageId;
             }
 
             // Emit text content if present
@@ -372,7 +523,7 @@ internal static class ChatResponseUpdateAGUIExtensions
             {
                 yield return new TextMessageContentEvent
                 {
-                    MessageId = chatResponse.MessageId!,
+                    MessageId = currentMessageId!,
                     Delta = textContent.Text
                 };
             }
@@ -384,6 +535,22 @@ internal static class ChatResponseUpdateAGUIExtensions
                 {
                     if (content is FunctionCallContent functionCallContent)
                     {
+                        // Close any open reasoning block before emitting tool events.
+                        if (currentReasoningMessageId is not null)
+                        {
+                            yield return new ReasoningMessageEndEvent
+                            {
+                                MessageId = currentReasoningMessageId
+                            };
+                            yield return new ReasoningEndEvent
+                            {
+                                MessageId = currentReasoningId!
+                            };
+                            currentReasoningBaseId = null;
+                            currentReasoningId = null;
+                            currentReasoningMessageId = null;
+                        }
+
                         yield return new ToolCallStartEvent
                         {
                             ToolCallId = functionCallContent.CallId,
@@ -406,13 +573,84 @@ internal static class ChatResponseUpdateAGUIExtensions
                     }
                     else if (content is FunctionResultContent functionResultContent)
                     {
+                        // Close any open reasoning block before emitting tool result events.
+                        if (currentReasoningMessageId is not null)
+                        {
+                            yield return new ReasoningMessageEndEvent
+                            {
+                                MessageId = currentReasoningMessageId
+                            };
+                            yield return new ReasoningEndEvent
+                            {
+                                MessageId = currentReasoningId!
+                            };
+                            currentReasoningBaseId = null;
+                            currentReasoningId = null;
+                            currentReasoningMessageId = null;
+                        }
+
+                        // Each tool result is a distinct tool-role message on the AGUI wire.
+                        // MEAI's FunctionInvokingChatClient shares one synthetic MessageId
+                        // across all FunctionResultContent items, but the FE keys messages
+                        // by id, so emitting them with the same id collapses them in React
+                        // reconciliation. Derive a unique, deterministic per-result id from
+                        // the (LLM-assigned) call id.
                         yield return new ToolCallResultEvent
                         {
-                            MessageId = chatResponse.MessageId,
+                            MessageId = $"result-{functionResultContent.CallId}",
                             ToolCallId = functionResultContent.CallId,
                             Content = SerializeResultContent(functionResultContent, jsonSerializerOptions) ?? "",
                             Role = AGUIRoles.Tool
                         };
+                    }
+                    else if (content is TextReasoningContent reasoningContent
+                        && (!string.IsNullOrEmpty(reasoningContent.Text) || !string.IsNullOrEmpty(reasoningContent.ProtectedData)))
+                    {
+                        if (!string.Equals(currentReasoningBaseId, chatResponse.MessageId, StringComparison.Ordinal))
+                        {
+                            if (currentReasoningMessageId is not null)
+                            {
+                                yield return new ReasoningMessageEndEvent
+                                {
+                                    MessageId = currentReasoningMessageId
+                                };
+                                yield return new ReasoningEndEvent
+                                {
+                                    MessageId = currentReasoningId!
+                                };
+                            }
+
+                            currentReasoningBaseId = chatResponse.MessageId;
+                            currentReasoningId = Guid.NewGuid().ToString("N");
+                            currentReasoningMessageId = Guid.NewGuid().ToString("N");
+
+                            yield return new ReasoningStartEvent
+                            {
+                                MessageId = currentReasoningId
+                            };
+                            yield return new ReasoningMessageStartEvent
+                            {
+                                MessageId = currentReasoningMessageId
+                            };
+                        }
+
+                        if (!string.IsNullOrEmpty(reasoningContent.Text))
+                        {
+                            yield return new ReasoningMessageContentEvent
+                            {
+                                MessageId = currentReasoningMessageId!,
+                                Delta = reasoningContent.Text
+                            };
+                        }
+
+                        if (!string.IsNullOrEmpty(reasoningContent.ProtectedData))
+                        {
+                            yield return new ReasoningEncryptedValueEvent
+                            {
+                                EntityId = currentReasoningMessageId!,
+                                EncryptedValue = reasoningContent.ProtectedData
+                            };
+                        }
                     }
                     else if (content is DataContent dataContent)
                     {
@@ -454,7 +692,7 @@ internal static class ChatResponseUpdateAGUIExtensions
                             // Text content event
                             yield return new TextMessageContentEvent
                             {
-                                MessageId = chatResponse.MessageId!,
+                                MessageId = textMessageId!,
 #if !NET
                                 Delta = Encoding.UTF8.GetString(dataContent.Data.ToArray())
 #else
@@ -465,6 +703,19 @@ internal static class ChatResponseUpdateAGUIExtensions
                     }
                 }
             }
+        }
+
+        // End the last reasoning block if there was one
+        if (currentReasoningMessageId is not null)
+        {
+            yield return new ReasoningMessageEndEvent
+            {
+                MessageId = currentReasoningMessageId
+            };
+            yield return new ReasoningEndEvent
+            {
+                MessageId = currentReasoningId!
+            };
         }
 
         // End the last message if there was one

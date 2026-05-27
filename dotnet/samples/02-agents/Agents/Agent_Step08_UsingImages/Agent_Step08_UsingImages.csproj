@@ -16,5 +16,11 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Assets\walkway.jpg">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
   
 </Project>

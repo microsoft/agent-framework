@@ -78,16 +78,16 @@ async def main():
         #    Updates arrive as Server-Sent Events, letting you observe
         #    progress in real time as the remote agent works.
         print("\n--- Streaming response ---")
-        async with agent.run("Tell me about yourself", stream=True) as stream:
-            async for update in stream:
-                for content in update.contents:
-                    if content.text:
-                        print(f"  {content.text}")
+        stream = agent.run("Tell me about yourself", stream=True)
+        async for update in stream:
+            for content in update.contents:
+                if content.text:
+                    print(f"  {content.text}")
 
-            response = await stream.get_final_response()
-            print(f"\nFinal response ({len(response.messages)} message(s)):")
-            for message in response.messages:
-                print(f"  {message.text}")
+        response = await stream.get_final_response()
+        print(f"\nFinal response ({len(response.messages)} message(s)):")
+        for message in response.messages:
+            print(f"  {message.text}")
 
 
 if __name__ == "__main__":

@@ -3,9 +3,9 @@
 namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
-/// Provides extensions methods for creating <see cref="Configured{TSubject}"/> objects
+/// Provides extension methods for creating <see cref="Configured{TSubject}"/> objects
 /// </summary>
-public static class ConfigurationExtensions
+internal static class ConfigurationExtensions
 {
     /// <summary>
     /// Creates a new configuration that treats the subject as its base type, allowing configuration to be applied at

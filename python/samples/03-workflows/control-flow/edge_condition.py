@@ -14,7 +14,7 @@ from agent_framework import (  # Core chat primitives used to build requests
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
 )
-from agent_framework.azure import AzureOpenAIResponsesClient  # Thin client wrapper for Azure OpenAI chat models
+from agent_framework.foundry import FoundryChatClient  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from pydantic import BaseModel  # Structured outputs for safer parsing
@@ -36,10 +36,10 @@ Purpose:
 - Illustrate how to transform one agent's structured result into a new AgentExecutorRequest for a downstream agent.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - You understand the basics of WorkflowBuilder, executors, and events in this framework.
 - You know the concept of edge conditions and how they gate routes using a predicate function.
-- Azure OpenAI access is configured for AzureOpenAIResponsesClient. You should be logged in with Azure CLI (AzureCliCredential)
+- Azure OpenAI access is configured for FoundryChatClient. You should be logged in with Azure CLI (AzureCliCredential)
 and have the Foundry V2 Project environment variables set as documented in the getting started chat client README.
 - The sample email resource file exists at workflow/resources/email.txt.
 
@@ -129,18 +129,19 @@ async def to_email_assistant_request(
     """
     # Bridge executor. Converts a structured DetectionResult into a Message and forwards it as a new request.
     detection = DetectionResult.model_validate_json(response.agent_response.text)
-    user_msg = Message("user", text=detection.email_content)
+    user_msg = Message("user", contents=[detection.email_content])
     await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
 def create_spam_detector_agent() -> Agent:
     """Helper to create a spam detection agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool), reason (string), and email_content (string). "
@@ -154,11 +155,12 @@ def create_spam_detector_agent() -> Agent:
 def create_email_assistant_agent() -> Agent:
     """Helper to create an email assistant agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         instructions=(
             "You are an email assistant that helps users draft professional responses to emails. "
             "Your input may be a JSON object that includes 'email_content'; base your reply on that content. "
@@ -198,7 +200,7 @@ async def main() -> None:
 
     # Execute the workflow. Since the start is an AgentExecutor, pass an AgentExecutorRequest.
     # The workflow completes when it becomes idle (no more work to do).
-    request = AgentExecutorRequest(messages=[Message("user", text=email)], should_respond=True)
+    request = AgentExecutorRequest(messages=[Message("user", contents=[email])], should_respond=True)
     events = await workflow.run(request)
     outputs = events.get_outputs()
     if outputs:

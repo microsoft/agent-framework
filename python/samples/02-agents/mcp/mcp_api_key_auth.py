@@ -1,20 +1,31 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
+import sys
 
 from agent_framework import Agent, MCPStreamableHTTPTool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
-from httpx import AsyncClient
 
 # Load environment variables from .env file
 load_dotenv()
 
 """
-MCP Authentication Example
+MCP API Key Authentication Example
 
-This example demonstrates how to authenticate with MCP servers using API key headers.
+This sample demonstrates the runtime ``header_provider`` pattern for
+``MCPStreamableHTTPTool``. The MCP tool derives authentication headers from
+``function_invocation_kwargs`` passed to ``Agent.run(...)`` so the API key stays
+in runtime context instead of being baked into a shared ``httpx.AsyncClient``.
+
+Replace the ``url`` parameter in the ``MCPStreamableHTTPTool`` with your authenticated server URL and
+run the sample with your API key as a command-line argument:
+    python mcp_api_key_auth.py <your_api_key>
+
+The ``header_provider`` here is just a simple lambda, but it can be a more complex function that retrieves and
+formats headers as needed, allowing for flexible authentication schemes.
+For more complex scenarios, you could implement token refresh logic or support multiple authentication methods
+within the header provider function.
 
 For more authentication examples including OAuth 2.0 flows, see:
 - https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/clients/simple-auth-client
@@ -22,44 +33,28 @@ For more authentication examples including OAuth 2.0 flows, see:
 """
 
 
-async def api_key_auth_example() -> None:
-    """Example of using API key authentication with MCP server."""
-    # Configuration
-    mcp_server_url = os.getenv("MCP_SERVER_URL", "your-mcp-server-url")
-    api_key = os.getenv("MCP_API_KEY")
+async def api_key_auth_example(api_key: str) -> None:
+    """Run an agent against an MCP server using runtime-provided API key headers."""
 
-    # Create authentication headers
-    # Common patterns:
-    # - Bearer token: "Authorization": f"Bearer {api_key}"
-    # - API key header: "X-API-Key": api_key
-    # - Custom header: "Authorization": f"ApiKey {api_key}"
-    auth_headers = {
-        "Authorization": f"Bearer {api_key}",
-    }
-
-    # Create HTTP client with authentication headers
-    http_client = AsyncClient(headers=auth_headers)
-
-    # Create MCP tool with the configured HTTP client
-    async with (
-        MCPStreamableHTTPTool(
+    async with Agent(
+        client=OpenAIChatClient(),
+        name="Agent",
+        instructions="You are a helpful assistant. Use your MCP tool when answering the user's question.",
+        tools=MCPStreamableHTTPTool(
             name="MCP tool",
-            description="MCP tool description",
-            url=mcp_server_url,
-            http_client=http_client,  # Pass HTTP client with authentication headers
-        ) as mcp_tool,
-        Agent(
-            client=OpenAIResponsesClient(),
-            name="Agent",
-            instructions="You are a helpful assistant.",
-            tools=mcp_tool,
-        ) as agent,
-    ):
-        query = "What tools are available to you?"
+            description="MCP tool description.",
+            url="<your authenticated server url>",
+            header_provider=lambda kwargs: {"Authorization": f"Bearer {kwargs['mcp_api_key']}"},
+        ),
+    ) as agent:
+        query = "Use your MCP tool to tell me what tools are available to you."
         print(f"User: {query}")
-        result = await agent.run(query)
+        result = await agent.run(
+            query,
+            function_invocation_kwargs={"mcp_api_key": api_key},
+        )
         print(f"Agent: {result.text}")
 
 
 if __name__ == "__main__":
-    asyncio.run(api_key_auth_example())
+    asyncio.run(api_key_auth_example(sys.argv[1]))

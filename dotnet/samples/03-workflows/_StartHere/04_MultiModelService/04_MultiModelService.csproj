@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="Anthropic" />
-    <PackageReference Include="AWSSDK.Extensions.Bedrock.MEAI" />
+    <PackageReference Include="Google.GenAI" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
   </ItemGroup>
 

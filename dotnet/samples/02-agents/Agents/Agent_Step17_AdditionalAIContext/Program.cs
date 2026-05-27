@@ -18,18 +18,18 @@ using SampleApp;
 using MEAI = Microsoft.Extensions.AI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // A sample function to load the next three calendar events for the user.
 Func<Task<string[]>> loadNextThreeCalendarEvents = async () =>
 {
     // In a real implementation, this method would connect to a calendar service
-    return new string[]
-    {
+    return
+    [
         "Doctor's appointment today at 15:00",
         "Team meeting today at 17:00",
         "Birthday party today at 20:00"
-    };
+    ];
 };
 
 // Create an agent with an AI context provider attached that aggregates two other providers:
@@ -87,7 +87,7 @@ namespace SampleApp
     internal sealed class TodoListAIContextProvider : AIContextProvider
     {
         private static List<string> GetTodoItems(AgentSession? session)
-            => session?.StateBag.GetValue<List<string>>(nameof(TodoListAIContextProvider)) ?? new List<string>();
+            => session?.StateBag.GetValue<List<string>>(nameof(TodoListAIContextProvider)) ?? [];
 
         private static void SetTodoItems(AgentSession? session, List<string> items)
             => session?.StateBag.SetValue(nameof(TodoListAIContextProvider), items);

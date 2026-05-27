@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Remove="Microsoft.CodeAnalysis.NetAnalyzers" />
+    <PackageReference Remove="Microsoft.VisualStudio.Threading.Analyzers" />
+    <PackageReference Remove="xunit.analyzers" />
+    <PackageReference Remove="Moq.Analyzers" />
+    <PackageReference Remove="Roslynator.Analyzers" />
+    <PackageReference Remove="Roslynator.CodeAnalysis.Analyzers" />
+    <PackageReference Remove="Roslynator.Formatting.Analyzers" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
+    <PackageReference Include="Azure.Identity" Version="1.19.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc4" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.4.0" />
+    <PackageReference Include="Neo4j.AgentFramework.GraphRAG" Version="0.1.0-preview.2" />
+    <PackageReference Include="Neo4j.Driver" Version="5.28.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="10.0.100">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="17.14.15">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Roslynator.Analyzers" Version="4.14.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Roslynator.CodeAnalysis.Analyzers" Version="4.14.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Roslynator.Formatting.Analyzers" Version="4.14.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

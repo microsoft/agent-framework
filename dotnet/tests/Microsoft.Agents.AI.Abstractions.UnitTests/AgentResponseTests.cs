@@ -53,6 +53,7 @@ public class AgentResponseTests
         {
             AdditionalProperties = [],
             CreatedAt = new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            FinishReason = ChatFinishReason.ContentFilter,
             Messages = [new(ChatRole.Assistant, "This is a test message.")],
             RawRepresentation = new object(),
             ResponseId = "responseId",
@@ -63,6 +64,7 @@ public class AgentResponseTests
         AgentResponse response = new(chatResponse);
         Assert.Same(chatResponse.AdditionalProperties, response.AdditionalProperties);
         Assert.Equal(chatResponse.CreatedAt, response.CreatedAt);
+        Assert.Equal(chatResponse.FinishReason, response.FinishReason);
         Assert.Same(chatResponse.Messages, response.Messages);
         Assert.Equal(chatResponse.ResponseId, response.ResponseId);
         Assert.Same(chatResponse, response.RawRepresentation as ChatResponse);
@@ -105,6 +107,10 @@ public class AgentResponseTests
         Assert.Null(response.ContinuationToken);
         response.ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
         Assert.Equivalent(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }), response.ContinuationToken);
+
+        Assert.Null(response.FinishReason);
+        response.FinishReason = ChatFinishReason.Length;
+        Assert.Equal(ChatFinishReason.Length, response.FinishReason);
     }
 
     [Fact]
@@ -188,6 +194,7 @@ public class AgentResponseTests
             ResponseId = "12345",
             CreatedAt = new DateTimeOffset(2024, 11, 10, 9, 20, 0, TimeSpan.Zero),
             AdditionalProperties = new() { ["key1"] = "value1", ["key2"] = 42 },
+            FinishReason = ChatFinishReason.ContentFilter,
             Usage = new UsageDetails
             {
                 TotalTokenCount = 100
@@ -205,6 +212,7 @@ public class AgentResponseTests
         Assert.Equal(new DateTimeOffset(2024, 11, 10, 9, 20, 0, TimeSpan.Zero), update0.CreatedAt);
         Assert.Equal("customRole", update0.Role?.Value);
         Assert.Equal("Text", update0.Text);
+        Assert.Equal(ChatFinishReason.ContentFilter, update0.FinishReason);
 
         AgentResponseUpdate update1 = updates[1];
         Assert.Equal("value1", update1.AdditionalProperties?["key1"]);

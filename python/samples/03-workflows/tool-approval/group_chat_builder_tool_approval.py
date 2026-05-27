@@ -6,12 +6,13 @@ from collections.abc import AsyncIterable
 from typing import Annotated, cast
 
 from agent_framework import (
+    Agent,
     Content,
     Message,
     WorkflowEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -43,8 +44,8 @@ Demonstrate:
 - Multi-round group chat with tool approval interruption and resumption.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI or Azure OpenAI configured with the required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Basic familiarity with GroupChatBuilder and streaming workflow events.
 """
 
@@ -120,11 +121,11 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
     responses: dict[str, Content] = {}
     if requests:
         for request_id, request in requests.items():
-            if request.type == "function_approval_request":
+            if request.type == "function_approval_request" and request.function_call is not None:
                 print("\n[APPROVAL REQUIRED]")
-                print(f"  Tool: {request.function_call.name}")  # type: ignore
-                print(f"  Arguments: {request.function_call.arguments}")  # type: ignore
-                print(f"Simulating human approval for: {request.function_call.name}")  # type: ignore
+                print(f"  Tool: {request.function_call.name}")
+                print(f"  Arguments: {request.function_call.arguments}")
+                print(f"Simulating human approval for: {request.function_call.name}")
                 # Create approval response
                 responses[request_id] = request.to_function_approval_response(approved=True)
 
@@ -133,13 +134,14 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 3. Create specialized agents
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    qa_engineer = client.as_agent(
+    qa_engineer = Agent(
+        client=client,
         name="QAEngineer",
         instructions=(
             "You are a QA engineer responsible for running tests before deployment. "
@@ -148,7 +150,8 @@ async def main() -> None:
         tools=[run_tests],
     )
 
-    devops_engineer = client.as_agent(
+    devops_engineer = Agent(
+        client=client,
         name="DevOpsEngineer",
         instructions=(
             "You are a DevOps engineer responsible for deployments. First check staging "

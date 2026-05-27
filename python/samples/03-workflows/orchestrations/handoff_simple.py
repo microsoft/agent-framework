@@ -12,7 +12,7 @@ from agent_framework import (
     WorkflowRunState,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -26,8 +26,8 @@ A handoff workflow defines a pattern that assembles agents in a mesh topology, a
 them to transfer control to each other based on the conversation context.
 
 Prerequisites:
-    - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-    - Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+    - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+    - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
     - Authentication via azure-identity. Use AzureCliCredential and run `az login` before executing the sample.
 
 Key Concepts:
@@ -60,46 +60,54 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Agent, Agent]:
+def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent]:
     """Create and configure the triage and specialist agents.
 
     Args:
-        client: The AzureOpenAIResponsesClient to use for creating agents.
+        client: The FoundryChatClient to use for creating agents.
 
     Returns:
         Tuple of (triage_agent, refund_agent, order_agent, return_agent)
     """
     # Triage agent: Acts as the frontline dispatcher
-    triage_agent = client.as_agent(
+    triage_agent = Agent(
+        client=client,
         instructions=(
             "You are frontline support triage. Route customer issues to the appropriate specialist agents "
             "based on the problem described."
         ),
         name="triage_agent",
+        require_per_service_call_history_persistence=True,
     )
 
     # Refund specialist: Handles refund requests
-    refund_agent = client.as_agent(
+    refund_agent = Agent(
+        client=client,
         instructions="You process refund requests.",
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_refund],
+        require_per_service_call_history_persistence=True,
     )
 
     # Order/shipping specialist: Resolves delivery issues
-    order_agent = client.as_agent(
+    order_agent = Agent(
+        client=client,
         instructions="You handle order and shipping inquiries.",
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[check_order_status],
+        require_per_service_call_history_persistence=True,
     )
 
     # Return specialist: Handles return requests
-    return_agent = client.as_agent(
+    return_agent = Agent(
+        client=client,
         instructions="You manage product return requests.",
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_return],
+        require_per_service_call_history_persistence=True,
     )
 
     return triage_agent, refund_agent, order_agent, return_agent
@@ -195,9 +203,9 @@ async def main() -> None:
     replace the scripted_responses with actual user input collection.
     """
     # Initialize the Azure OpenAI Responses client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+import pytest
 from typing_extensions import Never
 
 from agent_framework import (
@@ -70,6 +71,31 @@ async def test_executor_cannot_emit_framework_lifecycle_event(caplog: "LogCaptur
         assert isinstance(data, str)
         assert "reserved for framework lifecycle notifications" in data
         assert any("attempted to emit" in message and "'status'" in message for message in list(caplog.messages))
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        WorkflowEvent("output", executor_id="exec", data="output-payload"),
+        WorkflowEvent("intermediate", executor_id="exec", data="intermediate-payload"),
+    ],
+)
+async def test_executor_cannot_emit_output_selection_events(
+    event: WorkflowEvent[Any],
+    caplog: "LogCaptureFixture",
+) -> None:
+    async with make_context() as (ctx, runner_ctx):
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            await ctx.add_event(event)
+
+        events: list[WorkflowEvent] = await runner_ctx.drain_events()
+        assert len(events) == 1
+        assert events[0].type == "warning"
+        data = events[0].data
+        assert isinstance(data, str)
+        assert "reserved for ctx.yield_output()" in data
+        assert event.data not in [emitted.data for emitted in events]
 
 
 async def test_executor_emits_normal_event() -> None:

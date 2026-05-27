@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Specialized;
+using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -71,6 +72,7 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(PortableValue))]
     [JsonSerializable(typeof(PortableMessageEnvelope))]
     [JsonSerializable(typeof(InMemoryCheckpointManager))]
+    [JsonSerializable(typeof(CheckpointFileIndexEntry))]
 
     // Runtime State Types
     [JsonSerializable(typeof(ScopeKey))]
@@ -94,6 +96,12 @@ internal static partial class WorkflowsJsonUtilities
 
     // Built-in Executor State Types
     [JsonSerializable(typeof(AIAgentHostState))]
+    [JsonSerializable(typeof(HandoffSharedState))]
+    [JsonSerializable(typeof(HandoffAgentHostState))]
+    [JsonSerializable(typeof(MagenticPlanReviewRequest))]
+    [JsonSerializable(typeof(MagenticPlanReviewResponse))]
+    [JsonSerializable(typeof(MagenticTaskState))]
+    [JsonSerializable(typeof(ResetChatSignal))]
 
     // Event Types
     //[JsonSerializable(typeof(WorkflowEvent))]

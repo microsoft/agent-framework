@@ -1048,7 +1048,10 @@ async def test_file_checkpoint_storage_roundtrip_datetime():
 async def test_file_checkpoint_storage_roundtrip_dataclass():
     """Test that dataclass objects roundtrip correctly via pickle encoding."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        storage = FileCheckpointStorage(temp_dir)
+        storage = FileCheckpointStorage(
+            temp_dir,
+            allowed_checkpoint_types=["tests.workflow.test_checkpoint:_TestCustomData"],
+        )
 
         custom_obj = _TestCustomData(name="test", value=42, tags=["a", "b", "c"])
 
@@ -1238,7 +1241,10 @@ async def test_file_checkpoint_storage_roundtrip_messages_with_complex_data():
 async def test_file_checkpoint_storage_roundtrip_pending_request_info_events():
     """Test that pending_request_info_events with WorkflowEvent objects roundtrip correctly."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        storage = FileCheckpointStorage(temp_dir)
+        storage = FileCheckpointStorage(
+            temp_dir,
+            allowed_checkpoint_types=["tests.workflow.test_checkpoint:_TestToolApprovalRequest"],
+        )
 
         # Create request_info events using the proper WorkflowEvent factory
         event1 = WorkflowEvent.request_info(
@@ -1300,7 +1306,13 @@ async def test_file_checkpoint_storage_roundtrip_pending_request_info_events():
 async def test_file_checkpoint_storage_roundtrip_full_checkpoint():
     """Test complete WorkflowCheckpoint roundtrip with all fields populated using proper types."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        storage = FileCheckpointStorage(temp_dir)
+        storage = FileCheckpointStorage(
+            temp_dir,
+            allowed_checkpoint_types=[
+                "tests.workflow.test_checkpoint:_TestApprovalRequest",
+                "tests.workflow.test_checkpoint:_TestExecutorState",
+            ],
+        )
 
         # Create proper WorkflowMessage objects
         msg1 = WorkflowMessage(data="msg1", source_id="s", target_id="t")

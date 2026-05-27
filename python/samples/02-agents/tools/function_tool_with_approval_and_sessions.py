@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import Agent, Message, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -32,7 +32,7 @@ async def approval_example() -> None:
     print("=== Tool Approval with Session ===\n")
 
     agent = Agent(
-        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=FoundryChatClient(credential=AzureCliCredential()),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],
@@ -68,7 +68,7 @@ async def rejection_example() -> None:
     print("=== Tool Rejection with Session ===\n")
 
     agent = Agent(
-        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=FoundryChatClient(credential=AzureCliCredential()),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],

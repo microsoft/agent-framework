@@ -2,6 +2,8 @@
 
 """Unit tests for AgentSessionId and DurableAgentSession."""
 
+from typing import Any
+
 import pytest
 from agent_framework import AgentSession
 
@@ -153,7 +155,7 @@ class TestDurableAgentSession:
     def test_from_session_id(self) -> None:
         """Test creating DurableAgentSession from session ID."""
         session_id = AgentSessionId(name="TestAgent", key="test-key")
-        session = DurableAgentSession.from_session_id(session_id)
+        session = DurableAgentSession(durable_session_id=session_id)
 
         assert isinstance(session, DurableAgentSession)
         assert session.durable_session_id is not None
@@ -161,10 +163,10 @@ class TestDurableAgentSession:
         assert session.durable_session_id.name == "TestAgent"
         assert session.durable_session_id.key == "test-key"
 
-    def test_from_session_id_with_service_session_id(self) -> None:
-        """Test creating DurableAgentSession with service session ID."""
+    def test_init_with_service_session_id(self) -> None:
+        """Test creating DurableAgentSession with explicit service session ID."""
         session_id = AgentSessionId(name="TestAgent", key="test-key")
-        session = DurableAgentSession.from_session_id(session_id, service_session_id="service-123")
+        session = DurableAgentSession(durable_session_id=session_id, service_session_id="service-123")
 
         assert session.durable_session_id is not None
         assert session.durable_session_id == session_id
@@ -192,7 +194,7 @@ class TestDurableAgentSession:
 
     def test_from_dict_with_durable_session_id(self) -> None:
         """Test deserialization restores durable session ID."""
-        serialized = {
+        serialized: dict[str, Any] = {
             "type": "session",
             "session_id": "session-123",
             "service_session_id": "service-123",
@@ -210,7 +212,7 @@ class TestDurableAgentSession:
 
     def test_from_dict_without_durable_session_id(self) -> None:
         """Test deserialization without durable session ID."""
-        serialized = {
+        serialized: dict[str, Any] = {
             "type": "session",
             "session_id": "session-456",
             "service_session_id": "service-456",

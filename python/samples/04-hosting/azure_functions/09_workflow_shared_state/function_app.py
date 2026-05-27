@@ -13,8 +13,8 @@ Show how to:
 - Compose agent backed executors with function style executors and yield the final output when the workflow completes.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
-- Authentication via azure-identity. Use DefaultAzureCredential and run az login before executing the sample.
+- Configure `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` for FoundryChatClient.
+- Authentication uses `AzureCliCredential`; run `az login` before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
 
@@ -25,6 +25,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
     Message,
@@ -33,18 +34,17 @@ from agent_framework import (
     WorkflowContext,
     executor,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
 
 # Environment variable names
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
+FOUNDRY_PROJECT_ENDPOINT_ENV = "FOUNDRY_PROJECT_ENDPOINT"
+AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
 
 EMAIL_STATE_PREFIX = "email:"
 CURRENT_EMAIL_ID_KEY = "current_email_id"
@@ -110,7 +110,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message(role="user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message(role="user", contents=[new_email.email_content])], should_respond=True)
     )
 
 
@@ -146,7 +146,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content by id from shared state and forward it to the assistant.
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message(role="user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message(role="user", contents=[email.email_content])], should_respond=True)
     )
 
 
@@ -172,35 +172,29 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
 
 
 def _build_client_kwargs() -> dict[str, Any]:
-    """Build Azure OpenAI client configuration from environment variables."""
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
-    if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
+    """Build Foundry chat client configuration from environment variables."""
+    project_endpoint = os.getenv(FOUNDRY_PROJECT_ENDPOINT_ENV)
+    if not project_endpoint:
+        raise RuntimeError(f"{FOUNDRY_PROJECT_ENDPOINT_ENV} environment variable is required.")
 
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
+    model = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
+    if not model:
         raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
 
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
+    return {
+        "project_endpoint": project_endpoint,
+        "model": model,
+        "credential": AzureCliCredential(),
     }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
 
 
 def _create_workflow() -> Workflow:
     """Create the email classification workflow with conditional routing."""
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = FoundryChatClient(**client_kwargs)
 
-    spam_detection_agent = chat_client.as_agent(
+    spam_detection_agent = Agent(
+        client=chat_client,
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
@@ -209,7 +203,8 @@ def _create_workflow() -> Workflow:
         name="spam_detection_agent",
     )
 
-    email_assistant_agent = chat_client.as_agent(
+    email_assistant_agent = Agent(
+        client=chat_client,
         instructions=(
             "You are an email assistant that helps users draft responses to emails with professionalism. "
             "Return JSON with a single field 'response' containing the drafted reply."

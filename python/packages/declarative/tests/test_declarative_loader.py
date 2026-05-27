@@ -439,10 +439,10 @@ properties:
 
 
 def _get_agent_sample_yaml_files() -> list[tuple[Path, Path]]:
-    """Helper function to collect all YAML files from agent-samples directory."""
+    """Helper function to collect all YAML files from declarative-agents/agent-samples directory."""
     current_file = Path(__file__)
     repo_root = current_file.parent.parent.parent.parent  # tests -> declarative -> packages -> python
-    agent_samples_dir = repo_root.parent / "agent-samples"
+    agent_samples_dir = repo_root.parent / "declarative-agents" / "agent-samples"
 
     if not agent_samples_dir.exists():
         return []
@@ -457,7 +457,7 @@ def _get_agent_sample_yaml_files() -> list[tuple[Path, Path]]:
     ids=lambda x: x[0].name if isinstance(x, tuple) else str(x),
 )
 def test_agent_schema_dispatch_agent_samples(yaml_file: Path, agent_samples_dir: Path):
-    """Test that agent_schema_dispatch successfully loads a YAML file from agent-samples directory."""
+    """Test that agent_schema_dispatch loads a YAML file from declarative-agents/agent-samples directory."""
     with open(yaml_file) as f:
         content = f.read()
     result = agent_schema_dispatch(yaml.safe_load(content))
@@ -632,7 +632,7 @@ class TestAgentFactorySafeMode:
 
         from agent_framework_declarative._loader import AgentFactory
 
-        monkeypatch.setenv("TEST_MODEL_ID", "gpt-4-from-env")
+        monkeypatch.setenv("TEST_MODEL", "gpt-4-from-env")
 
         # Create a mock chat client to avoid needing real provider
         mock_client = MagicMock()
@@ -1131,7 +1131,7 @@ model:
             "CustomProvider.Chat": {
                 "package": "agent_framework.openai",
                 "name": "OpenAIChatClient",
-                "model_id_field": "model_id",
+                "model_field": "model",
             },
         }
 

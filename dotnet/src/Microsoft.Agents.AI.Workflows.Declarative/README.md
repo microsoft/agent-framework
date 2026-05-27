@@ -4,9 +4,9 @@ Declarative Workflows is a no-code platform for orchestrating AI agents to accom
 It allows users to design, execute, and monitor workflows using simple declarative configurations—no coding required.
 By connecting multiple AI agents and services, it enables automation of sophisticated processes that traditionally require custom engineering.
 
-We've provided a set of [Sample Workflows](../../../workflow-samples/) within the `agent-framework` repository.
+We've provided a set of [Sample Workflows](../../../declarative-agents/workflow-samples/) within the `agent-framework` repository.
 
-Please refer to the [README](../../../workflow-samples/README.md) for setup instructions to run the sample workflows in your environment.
+Please refer to the [README](../../../declarative-agents/workflow-samples/README.md) for setup instructions to run the sample workflows in your environment.
 
 As part of our [Getting Started with Declarative Workflows](../../samples/03-workflows/Declarative/README.md),
 we've provided a console application that is able to execute any declarative workflow.

@@ -10,10 +10,11 @@ import re
 import string
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from opentelemetry.trace import NoOpTracer, SpanKind, get_tracer
 from tqdm import tqdm
@@ -21,6 +22,33 @@ from tqdm import tqdm
 from ._types import Evaluation, Evaluator, Prediction, Task, TaskResult, TaskRunner
 
 __all__ = ["GAIA", "GAIATelemetryConfig", "gaia_scorer"]
+
+
+class _OrjsonModule(Protocol):
+    def dumps(self, obj: object, /, default: Callable[[Any], object] | None = None) -> bytes: ...
+
+    def loads(self, obj: str | bytes | bytearray, /) -> object: ...
+
+
+@lru_cache(maxsize=1)
+def _get_orjson() -> _OrjsonModule | None:
+    try:
+        import orjson as runtime_orjson  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        return None
+    return cast(_OrjsonModule, runtime_orjson)
+
+
+def _dump_json_line(value: object) -> str:
+    if (runtime_orjson := _get_orjson()) is not None:
+        return runtime_orjson.dumps(value, default=str).decode("utf-8")
+    return json.dumps(value, default=str)
+
+
+def _load_json_value(value: str | bytes) -> object:
+    if (runtime_orjson := _get_orjson()) is not None:
+        return runtime_orjson.loads(value)
+    return json.loads(value)
 
 
 class GAIATelemetryConfig:
@@ -43,7 +71,7 @@ class GAIATelemetryConfig:
 
         Note:
             For Azure Monitor integration, configure using environment variables
-            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or use AzureAIClient.configure_azure_monitor()
+            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or call ``configure_azure_monitor()``
             before creating the GAIA instance.
         """
         self.enable_tracing = enable_tracing
@@ -226,13 +254,7 @@ def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
         for line in f:
             if not line.strip():
                 continue
-            parsed: object
-            try:
-                import orjson
-
-                parsed = orjson.loads(line)
-            except Exception:
-                parsed = json.loads(line)
+            parsed = _load_json_value(line)
 
             record = _coerce_record(parsed)
             if record is not None:
@@ -251,7 +273,7 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
 
     for p in parquet_files:
         try:
-            import pyarrow.parquet as pq
+            import pyarrow.parquet as pq  # type: ignore[reportMissingImports]
 
             pq_any = cast(Any, pq)
             table: Any = pq_any.read_table(p)
@@ -620,12 +642,7 @@ class GAIA:
                     "prediction_metadata": result.prediction.metadata,
                     "evaluation_details": result.evaluation.details,
                 }
-                try:
-                    import orjson
-
-                    f.write(orjson.dumps(record, default=str).decode("utf-8") + "\n")
-                except ImportError:
-                    f.write(json.dumps(record, default=str) + "\n")
+                f.write(_dump_json_line(record) + "\n")
 
 
 def viewer_main() -> None:
@@ -646,13 +663,7 @@ def viewer_main() -> None:
     with open(args.results_file, encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                try:
-                    import orjson
-
-                    parsed: object = orjson.loads(line)
-                except ImportError:
-                    parsed = json.loads(line)
-
+                parsed = _load_json_value(line)
                 record = _coerce_record(parsed)
                 if record is not None:
                     results.append(record)

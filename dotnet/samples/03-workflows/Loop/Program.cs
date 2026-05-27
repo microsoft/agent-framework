@@ -39,6 +39,18 @@ public static class Program
             {
                 Console.WriteLine($"Result: {outputEvent}");
             }
+            else if (evt is WorkflowErrorEvent workflowError)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                Console.ResetColor();
+            }
+            else if (evt is ExecutorFailedEvent executorFailed)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                Console.ResetColor();
+            }
         }
     }
 }
@@ -56,6 +68,7 @@ internal enum NumberSignal
 /// <summary>
 /// Executor that makes a guess based on the current bounds.
 /// </summary>
+[SendsMessage(typeof(int))]
 internal sealed class GuessNumberExecutor : Executor<NumberSignal>
 {
     /// <summary>
@@ -104,6 +117,8 @@ internal sealed class GuessNumberExecutor : Executor<NumberSignal>
 /// <summary>
 /// Executor that judges the guess and provides feedback.
 /// </summary>
+[SendsMessage(typeof(NumberSignal))]
+[YieldsOutput(typeof(string))]
 internal sealed class JudgeExecutor : Executor<int>
 {
     private readonly int _targetNumber;
@@ -124,8 +139,7 @@ internal sealed class JudgeExecutor : Executor<int>
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken)
-                         ;
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken);
         }
         else if (message < this._targetNumber)
         {

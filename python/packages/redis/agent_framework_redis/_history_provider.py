@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""New-pattern Redis history provider using BaseHistoryProvider.
+"""New-pattern Redis history provider using HistoryProvider.
 
 This module provides ``RedisHistoryProvider``, built on the new
-:class:`BaseHistoryProvider` hooks pattern.
+:class:`HistoryProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ from typing import Any, ClassVar
 
 import redis.asyncio as redis
 from agent_framework import Message
-from agent_framework._sessions import BaseHistoryProvider
+from agent_framework._sessions import HistoryProvider
 from redis.credentials import CredentialProvider
 
 
-class RedisHistoryProvider(BaseHistoryProvider):
-    """Redis-backed history provider using the new BaseHistoryProvider hooks pattern.
+class RedisHistoryProvider(HistoryProvider):
+    """Redis-backed history provider using the new HistoryProvider hooks pattern.
 
     Stores conversation history in Redis Lists, with each session isolated by a
     unique Redis key.
@@ -107,11 +107,18 @@ class RedisHistoryProvider(BaseHistoryProvider):
         """Get the Redis key for a given session's messages."""
         return f"{self.key_prefix}:{session_id or 'default'}"
 
-    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[Message]:
+    async def get_messages(
+        self,
+        session_id: str | None,
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[Message]:
         """Retrieve stored messages for this session from Redis.
 
         Args:
             session_id: The session ID to retrieve messages for.
+            state: Optional session state. Unused for Redis-backed history.
             **kwargs: Additional arguments (unused).
 
         Returns:
@@ -125,12 +132,20 @@ class RedisHistoryProvider(BaseHistoryProvider):
                 messages.append(Message.from_dict(self._deserialize_json(serialized)))  # type: ignore[union-attr]
         return messages
 
-    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs: Any) -> None:
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Persist messages for this session to Redis.
 
         Args:
             session_id: The session ID to store messages for.
             messages: The messages to persist.
+            state: Optional session state. Unused for Redis-backed history.
             **kwargs: Additional arguments (unused).
         """
         if not messages:

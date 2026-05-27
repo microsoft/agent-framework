@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Provides methods for creating <see cref="Configured{TSubject}"/> instances.
 /// </summary>
-public static class Configured
+internal static class Configured
 {
     /// <summary>
     /// Creates a <see cref="Configured{TSubject}"/> instance from an existing subject instance.
@@ -50,10 +50,10 @@ public static class Configured
 /// A representation of a preconfigured, lazy-instantiatable instance of <typeparamref name="TSubject"/>.
 /// </summary>
 /// <typeparam name="TSubject">The type of the preconfigured subject.</typeparam>
-/// <param name="factoryAsync">A factory to intantiate the subject when desired.</param>
+/// <param name="factoryAsync">A factory to instantiate the subject when desired.</param>
 /// <param name="id">The unique identifier for the configured subject.</param>
 /// <param name="raw"></param>
-public class Configured<TSubject>(Func<Config, string, ValueTask<TSubject>> factoryAsync, string id, object? raw = null)
+internal class Configured<TSubject>(Func<ExecutorConfig, string, ValueTask<TSubject>> factoryAsync, string id, object? raw = null)
 {
     /// <summary>
     /// Gets the raw representation of the configured object, if any.
@@ -66,14 +66,14 @@ public class Configured<TSubject>(Func<Config, string, ValueTask<TSubject>> fact
     public string Id => id;
 
     /// <summary>
-    /// Gets the factory function to create an instance of <typeparamref name="TSubject"/> given a <see cref="Config"/>.
+    /// Gets the factory function to create an instance of <typeparamref name="TSubject"/> given a <see cref="ExecutorConfig"/>.
     /// </summary>
-    public Func<Config, string, ValueTask<TSubject>> FactoryAsync => factoryAsync;
+    public Func<ExecutorConfig, string, ValueTask<TSubject>> FactoryAsync => factoryAsync;
 
     /// <summary>
     /// The configuration for this configured instance.
     /// </summary>
-    public Config Configuration => new(this.Id);
+    public ExecutorConfig Configuration => new(this.Id);
 
     /// <summary>
     /// Gets a "partially" applied factory function that only requires no parameters to create an instance of
@@ -87,11 +87,11 @@ public class Configured<TSubject>(Func<Config, string, ValueTask<TSubject>> fact
 /// </summary>
 /// <typeparam name="TSubject">The type of the preconfigured subject.</typeparam>
 /// <typeparam name="TOptions">The type of configuration options for the preconfigured subject.</typeparam>
-/// <param name="factoryAsync">A factory to intantiate the subject when desired.</param>
+/// <param name="factoryAsync">A factory to instantiate the subject when desired.</param>
 /// <param name="id">The unique identifier for the configured subject.</param>
 /// <param name="options">Additional configuration options for the subject.</param>
 /// <param name="raw"></param>
-public class Configured<TSubject, TOptions>(Func<Config<TOptions>, string, ValueTask<TSubject>> factoryAsync, string id, TOptions? options = default, object? raw = null)
+internal class Configured<TSubject, TOptions>(Func<ExecutorConfig<TOptions>, string, ValueTask<TSubject>> factoryAsync, string id, TOptions? options = default, object? raw = null)
 {
     /// <summary>
     /// The raw representation of the configured object, if any.
@@ -109,14 +109,14 @@ public class Configured<TSubject, TOptions>(Func<Config<TOptions>, string, Value
     public TOptions? Options => options;
 
     /// <summary>
-    /// Gets the factory function to create an instance of <typeparamref name="TSubject"/> given a <see cref="Config{TOptions}"/>.
+    /// Gets the factory function to create an instance of <typeparamref name="TSubject"/> given a <see cref="ExecutorConfig{TOptions}"/>.
     /// </summary>
-    public Func<Config<TOptions>, string, ValueTask<TSubject>> FactoryAsync => factoryAsync;
+    public Func<ExecutorConfig<TOptions>, string, ValueTask<TSubject>> FactoryAsync => factoryAsync;
 
     /// <summary>
     /// The configuration for this configured instance.
     /// </summary>
-    public Config<TOptions> Configuration => new(this.Id, this.Options);
+    public ExecutorConfig<TOptions> Configuration => new(this.Id, this.Options);
 
     /// <summary>
     /// Gets a "partially" applied factory function that only requires no parameters to create an instance of
@@ -124,11 +124,11 @@ public class Configured<TSubject, TOptions>(Func<Config<TOptions>, string, Value
     /// </summary>
     internal Func<string, ValueTask<TSubject>> BoundFactoryAsync => (sessionId) => this.CreateValidatingMemoizedFactory()(this.Configuration, sessionId);
 
-    private Func<Config, string, ValueTask<TSubject>> CreateValidatingMemoizedFactory()
+    private Func<ExecutorConfig, string, ValueTask<TSubject>> CreateValidatingMemoizedFactory()
     {
         return FactoryAsync;
 
-        async ValueTask<TSubject> FactoryAsync(Config configuration, string sessionId)
+        async ValueTask<TSubject> FactoryAsync(ExecutorConfig configuration, string sessionId)
         {
             if (this.Id != configuration.Id)
             {

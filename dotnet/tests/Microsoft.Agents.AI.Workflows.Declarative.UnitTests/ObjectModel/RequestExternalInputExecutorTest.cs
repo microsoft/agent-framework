@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -84,6 +83,29 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
             variableName: "TestVariable",
             messageCount: 2,
             expectMessagesCreated: true);
+    }
+
+    [Fact]
+    public async Task CaptureResponseWithEmptyMessagesAsync()
+    {
+        await this.CaptureResponseTestAsync(
+            displayName: nameof(CaptureResponseWithEmptyMessagesAsync),
+            variableName: "TestVariable",
+            messageCount: 0);
+    }
+
+    [Fact]
+    public async Task CaptureResponseWithEmptyMessagesAndWorkflowConversationAsync()
+    {
+        // Arrange
+        this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New("WorkflowConversationId"), VariableScopeNames.System);
+
+        // Act & Assert
+        await this.CaptureResponseTestAsync(
+            displayName: nameof(CaptureResponseWithEmptyMessagesAndWorkflowConversationAsync),
+            variableName: "TestVariable",
+            messageCount: 0,
+            expectMessagesCreated: false);
     }
 
     private async Task ExecuteTestAsync(

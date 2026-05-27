@@ -2,10 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -49,12 +51,14 @@ public abstract class MessageAIContextProvider : AIContextProvider
     {
         // Call ProvideMessagesAsync directly to return only additional messages.
         // The base AIContextProvider.InvokingCoreAsync handles merging with the original input and stamping.
+#pragma warning disable MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         return new AIContext
         {
             Messages = await this.ProvideMessagesAsync(
                 new InvokingContext(context.Agent, context.Session, context.AIContext.Messages ?? []),
                 cancellationToken).ConfigureAwait(false)
         };
+#pragma warning restore MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
     }
 
     /// <summary>
@@ -109,10 +113,12 @@ public abstract class MessageAIContextProvider : AIContextProvider
 
         // Create a filtered context for ProvideMessagesAsync, filtering input messages
         // to exclude non-external messages (e.g. chat history, other AI context provider messages).
+#pragma warning disable MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         var filteredContext = new InvokingContext(
             context.Agent,
             context.Session,
             this.ProvideInputMessageFilter(inputMessages));
+#pragma warning restore MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
         var providedMessages = await this.ProvideMessagesAsync(filteredContext, cancellationToken).ConfigureAwait(false);
 
@@ -163,6 +169,7 @@ public abstract class MessageAIContextProvider : AIContextProvider
         /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="requestMessages">The messages to be used by the agent for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="agent"/> or <paramref name="requestMessages"/> is <see langword="null"/>.</exception>
+        [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
         public InvokingContext(
             AIAgent agent,
             AgentSession? session,

@@ -17,7 +17,7 @@ internal sealed class Tools(ILogger<Tools> logger)
     [Description("Starts a content generation workflow and returns the instance ID for tracking.")]
     public string StartContentGenerationWorkflow([Description("The topic for content generation")] string topic)
     {
-        this._logger.LogInformation("Starting content generation workflow for topic: {Topic}", topic);
+        this._logger.LogInformation("Starting content generation workflow for topic: {Topic}", SanitizeLogValue(topic));
 
         const int MaxReviewAttempts = 3;
         const float ApprovalTimeoutHours = 72;
@@ -34,7 +34,7 @@ internal sealed class Tools(ILogger<Tools> logger)
 
         this._logger.LogInformation(
             "Content generation workflow scheduled to be started for topic '{Topic}' with instance ID: {InstanceId}",
-            topic,
+            SanitizeLogValue(topic),
             instanceId);
 
         return $"Workflow started with instance ID: {instanceId}";
@@ -45,7 +45,7 @@ internal sealed class Tools(ILogger<Tools> logger)
         [Description("The instance ID of the workflow to check")] string instanceId,
         [Description("Whether to include detailed information")] bool includeDetails = true)
     {
-        this._logger.LogInformation("Getting status for workflow instance: {InstanceId}", instanceId);
+        this._logger.LogInformation("Getting status for workflow instance: {InstanceId}", SanitizeLogValue(instanceId));
 
         // Get the current agent context using the session-static property
         OrchestrationMetadata? status = await DurableAgentContext.Current.GetOrchestrationStatusAsync(
@@ -54,7 +54,7 @@ internal sealed class Tools(ILogger<Tools> logger)
 
         if (status is null)
         {
-            this._logger.LogInformation("Workflow instance '{InstanceId}' not found.", instanceId);
+            this._logger.LogInformation("Workflow instance '{InstanceId}' not found.", SanitizeLogValue(instanceId));
             return new
             {
                 instanceId,
@@ -78,7 +78,16 @@ internal sealed class Tools(ILogger<Tools> logger)
         [Description("The instance ID of the workflow to submit feedback for")] string instanceId,
         [Description("Feedback to submit")] HumanApprovalResponse feedback)
     {
-        this._logger.LogInformation("Submitting human approval for workflow instance: {InstanceId}", instanceId);
+        this._logger.LogInformation("Submitting human approval for workflow instance: {InstanceId}", SanitizeLogValue(instanceId));
         await DurableAgentContext.Current.RaiseOrchestrationEventAsync(instanceId, "HumanApproval", feedback);
     }
+
+    /// <summary>
+    /// Sanitizes a user-provided value for safe inclusion in log entries
+    /// by removing control characters that could be used for log forging.
+    /// </summary>
+    private static string SanitizeLogValue(string value) =>
+        value
+            .Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Replace("\n", string.Empty, StringComparison.Ordinal);
 }

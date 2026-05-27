@@ -23,11 +23,11 @@ internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentC
     {
         OpenAIClientOptions options = new()
         {
-            Endpoint = new Uri(httpClient.BaseAddress!, "/v1/"),
+            Endpoint = new Uri(httpClient.BaseAddress!, $"/{Uri.EscapeDataString(agentName)}/v1/"),
             Transport = new HttpClientPipelineTransport(httpClient)
         };
 
-        var openAiClient = new ResponsesClient(model: agentName, credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
+        var openAiClient = new ResponsesClient(credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient(agentName);
         var chatOptions = new ChatOptions()
         {
             ConversationId = sessionId

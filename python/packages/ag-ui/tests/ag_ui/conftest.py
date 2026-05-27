@@ -45,8 +45,8 @@ def pytest_configure() -> None:
 
 
 class StreamingChatClientStub(
-    ChatMiddlewareLayer[OptionsCoT],
     FunctionInvocationLayer[OptionsCoT],
+    ChatMiddlewareLayer[OptionsCoT],
     ChatTelemetryLayer[OptionsCoT],
     BaseChatClient[OptionsCoT],
     Generic[OptionsCoT],
@@ -54,7 +54,7 @@ class StreamingChatClientStub(
     """Typed streaming stub that satisfies SupportsChatGetResponse."""
 
     def __init__(self, stream_fn: StreamFn, response_fn: ResponseFn | None = None) -> None:
-        super().__init__(function_middleware=[])
+        super().__init__(middleware=[])
         self._stream_fn = stream_fn
         self._response_fn = response_fn
         self.last_session: AgentSession | None = None
@@ -98,7 +98,11 @@ class StreamingChatClientStub(
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        self.last_session = kwargs.get("session")
+        client_kwargs = kwargs.get("client_kwargs")
+        if isinstance(client_kwargs, Mapping):
+            self.last_session = cast(AgentSession | None, client_kwargs.get("session"))
+        else:
+            self.last_session = None
         self.last_service_session_id = self.last_session.service_session_id if self.last_session else None
         return cast(
             Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
@@ -179,6 +183,7 @@ class StubAgent(SupportsAgentRun):
         self.client = client or SimpleNamespace(function_invocation_configuration=None)
         self.messages_received: list[Any] = []
         self.tools_received: list[Any] | None = None
+        self.last_session: AgentSession | None = None
 
     @overload
     def run(
@@ -212,6 +217,7 @@ class StubAgent(SupportsAgentRun):
 
             async def _stream() -> AsyncIterator[AgentResponseUpdate]:
                 self.messages_received = [] if messages is None else list(messages)  # type: ignore[arg-type]
+                self.last_session = session
                 self.tools_received = kwargs.get("tools")
                 for update in self.updates:
                     yield update

@@ -213,3 +213,134 @@ def test_sse_response_headers() -> None:
 
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
     assert response.headers.get("cache-control") == "no-cache"
+
+
+# ── MCP tool call SSE round-trip ──
+
+
+def test_mcp_tool_call_sse_round_trip() -> None:
+    """MCP tool call + result events survive SSE encoding/parsing round-trip."""
+    app = _build_app_with_agent(
+        [
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_mcp_server_tool_call(
+                        call_id="mcp-1",
+                        tool_name="search",
+                        server_name="brave",
+                        arguments={"query": "weather"},
+                    )
+                ],
+                role="assistant",
+            ),
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_mcp_server_tool_result(
+                        call_id="mcp-1",
+                        output={"results": ["sunny"]},
+                    )
+                ],
+                role="assistant",
+            ),
+            AgentResponseUpdate(
+                contents=[Content.from_text(text="It's sunny!")],
+                role="assistant",
+            ),
+        ]
+    )
+    client = TestClient(app)
+    response = client.post("/", json=USER_PAYLOAD)
+
+    assert response.status_code == 200
+    stream = parse_sse_to_event_stream(response.content)
+    stream.assert_bookends()
+    stream.assert_tool_calls_balanced()
+    stream.assert_text_messages_balanced()
+    stream.assert_no_run_error()
+
+    # Verify MCP tool call details survive SSE encoding
+    start = stream.first("TOOL_CALL_START")
+    assert start.tool_call_name == "search"
+    assert start.tool_call_id == "mcp-1"
+
+    # Verify the result came through
+    result = stream.first("TOOL_CALL_RESULT")
+    assert "sunny" in result.content
+
+
+# ── Text reasoning SSE round-trip ──
+
+
+def test_text_reasoning_sse_round_trip() -> None:
+    """Text reasoning events survive SSE encoding/parsing round-trip."""
+    app = _build_app_with_agent(
+        [
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_text_reasoning(
+                        id="reason-1",
+                        text="The user wants weather info, I should use a tool.",
+                    )
+                ],
+                role="assistant",
+            ),
+            AgentResponseUpdate(
+                contents=[Content.from_text(text="Let me check the weather.")],
+                role="assistant",
+            ),
+        ]
+    )
+    client = TestClient(app)
+    response = client.post("/", json=USER_PAYLOAD)
+
+    assert response.status_code == 200
+    stream = parse_sse_to_event_stream(response.content)
+    stream.assert_bookends()
+    stream.assert_text_messages_balanced()
+    stream.assert_no_run_error()
+    stream.assert_has_type("REASONING_START")
+    stream.assert_has_type("REASONING_MESSAGE_CONTENT")
+    stream.assert_has_type("REASONING_END")
+
+    # Verify reasoning content survives SSE encoding
+    raw_events = parse_sse_response(response.content)
+    reasoning_content = [e for e in raw_events if e["type"] == "REASONING_MESSAGE_CONTENT"]
+    assert len(reasoning_content) == 1
+    assert "weather" in reasoning_content[0]["delta"]
+
+
+def test_text_reasoning_with_encrypted_value_sse_round_trip() -> None:
+    """Reasoning with protected_data emits ReasoningEncryptedValue through SSE."""
+    app = _build_app_with_agent(
+        [
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_text_reasoning(
+                        id="reason-enc",
+                        text="visible reasoning",
+                        protected_data="encrypted-payload-abc123",
+                    )
+                ],
+                role="assistant",
+            ),
+            AgentResponseUpdate(
+                contents=[Content.from_text(text="Done.")],
+                role="assistant",
+            ),
+        ]
+    )
+    client = TestClient(app)
+    response = client.post("/", json=USER_PAYLOAD)
+
+    assert response.status_code == 200
+    stream = parse_sse_to_event_stream(response.content)
+    stream.assert_bookends()
+    stream.assert_no_run_error()
+    stream.assert_has_type("REASONING_ENCRYPTED_VALUE")
+
+    raw_events = parse_sse_response(response.content)
+    encrypted = [e for e in raw_events if e["type"] == "REASONING_ENCRYPTED_VALUE"]
+    assert len(encrypted) == 1
+    assert encrypted[0]["encryptedValue"] == "encrypted-payload-abc123"
+    assert encrypted[0]["entityId"] == "reason-enc"
+    assert encrypted[0]["subtype"] == "message"

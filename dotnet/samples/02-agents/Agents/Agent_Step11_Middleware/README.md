@@ -27,7 +27,7 @@ Attempting to use function middleware on agents that do not wrap a ChatClientAge
 
 1. Environment variables:
    - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
-   - `AZURE_OPENAI_DEPLOYMENT_NAME`: Chat deployment name (optional; defaults to `gpt-4o`)
+   - `AZURE_OPENAI_DEPLOYMENT_NAME`: Chat deployment name (optional; defaults to `gpt-5.4-mini`)
 2. Sign in with Azure CLI (PowerShell):
    ```powershell
    az login

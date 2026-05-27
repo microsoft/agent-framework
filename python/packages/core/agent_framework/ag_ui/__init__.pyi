@@ -8,6 +8,7 @@ from agent_framework_ag_ui import (
     AGUIHttpService,
     __version__,
     add_agent_framework_fastapi_endpoint,
+    state_update,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "AgentFrameworkWorkflow",
     "__version__",
     "add_agent_framework_fastapi_endpoint",
+    "state_update",
 ]

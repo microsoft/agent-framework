@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+
 namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 
 /// <summary>
@@ -25,6 +27,11 @@ public sealed record class ActionExecutorResult
 
     internal static ActionExecutorResult ThrowIfNot(object? message)
     {
+        if (message is PortableValue portableValue && portableValue.IsType(out ActionExecutorResult? unwrapped))
+        {
+            return unwrapped;
+        }
+
         if (message is not ActionExecutorResult executorMessage)
         {
             throw new DeclarativeActionException($"Unexpected message type: {message?.GetType().Name ?? "(null)"} (Expected: {nameof(ActionExecutorResult)})");

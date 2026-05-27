@@ -1,39 +1,31 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 """
 Hello Agent — Simplest possible agent
 
-This sample creates a minimal agent using AzureOpenAIResponsesClient via an
+This sample creates a minimal agent using FoundryChatClient via an
 Azure AI Foundry project endpoint, and runs it in both non-streaming and streaming modes.
 
 There are XML tags in all of the get started samples, those are used to display the same code in the docs repo.
-
-Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
 """
 
 
 async def main() -> None:
     # <create_agent>
-    credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=credential,
+    client = FoundryChatClient(
+        project_endpoint="https://your-project.services.ai.azure.com",
+        model="gpt-4o",
+        credential=AzureCliCredential(),
     )
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="HelloAgent",
         instructions="You are a friendly assistant. Keep your answers brief.",
     )

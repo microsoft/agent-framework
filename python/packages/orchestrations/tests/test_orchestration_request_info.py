@@ -72,7 +72,7 @@ class TestAgentRequestInfoResponse:
 
     def test_create_response_with_messages(self):
         """Test creating an AgentRequestInfoResponse with messages."""
-        messages = [Message(role="user", text="Additional info")]
+        messages = [Message(role="user", contents=["Additional info"])]
         response = AgentRequestInfoResponse(messages=messages)
 
         assert response.messages == messages
@@ -80,8 +80,8 @@ class TestAgentRequestInfoResponse:
     def test_from_messages_factory(self):
         """Test creating response from Message list."""
         messages = [
-            Message(role="user", text="Message 1"),
-            Message(role="user", text="Message 2"),
+            Message(role="user", contents=["Message 1"]),
+            Message(role="user", contents=["Message 2"]),
         ]
         response = AgentRequestInfoResponse.from_messages(messages)
 
@@ -113,10 +113,11 @@ class TestAgentRequestInfoExecutor:
         """Test that request_info handler calls ctx.request_info."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_response = AgentResponse(messages=[Message(role="assistant", text="Agent response")])
+        agent_response = AgentResponse(messages=[Message(role="assistant", contents=["Agent response"])])
         agent_response = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
+            full_conversation=agent_response.messages,
         )
 
         ctx = MagicMock(spec=WorkflowContext)
@@ -131,10 +132,11 @@ class TestAgentRequestInfoExecutor:
         """Test response handler when user provides additional messages."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_response = AgentResponse(messages=[Message(role="assistant", text="Original")])
+        agent_response = AgentResponse(messages=[Message(role="assistant", contents=["Original"])])
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
+            full_conversation=agent_response.messages,
         )
 
         response = AgentRequestInfoResponse.from_strings(["Additional input"])
@@ -157,10 +159,11 @@ class TestAgentRequestInfoExecutor:
         """Test response handler when user approves (no additional messages)."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_response = AgentResponse(messages=[Message(role="assistant", text="Original")])
+        agent_response = AgentResponse(messages=[Message(role="assistant", contents=["Original"])])
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
+            full_conversation=agent_response.messages,
         )
 
         response = AgentRequestInfoResponse.approve()
@@ -209,10 +212,10 @@ class _TestAgent:
         """Dummy run method."""
         if stream:
             return self._run_stream_impl()
-        return AgentResponse(messages=[Message(role="assistant", text="Test response")])
+        return AgentResponse(messages=[Message(role="assistant", contents=["Test response"])])
 
     async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
-        yield AgentResponseUpdate(messages=[Message(role="assistant", text="Test response stream")])
+        yield AgentResponseUpdate(messages=[Message(role="assistant", contents=["Test response stream"])])
 
     def create_session(self, **kwargs: Any) -> AgentSession:
         """Creates a new conversation session for the agent."""

@@ -22,9 +22,14 @@ import importlib
 import logging
 from contextlib import suppress
 from dataclasses import is_dataclass
-from typing import Any
+from typing import Any, cast
 
-from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from agent_framework._workflows._checkpoint_encoding import (
+    _PICKLE_MARKER,  # pyright: ignore[reportPrivateUsage]
+    _TYPE_MARKER,  # pyright: ignore[reportPrivateUsage]
+    decode_checkpoint_value,
+    encode_checkpoint_value,
+)
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -46,6 +51,41 @@ def resolve_type(type_key: str) -> type | None:
     except Exception:
         logger.debug("Could not resolve type %s", type_key)
         return None
+
+
+# ============================================================================
+# Pickle marker sanitization (security)
+# ============================================================================
+
+
+def strip_pickle_markers(data: Any) -> Any:
+    """Recursively strip pickle/type markers from untrusted data.
+
+    The core checkpoint encoding uses ``__pickled__`` and ``__type__`` markers to
+    roundtrip arbitrary Python objects via *pickle*.  If an attacker crafts an
+    HTTP payload that contains these markers, the data would flow into
+    ``pickle.loads()`` and enable **arbitrary code execution**.
+
+    This function walks the incoming data structure and replaces any ``dict``
+    that contains either marker key with ``None``, neutralising the attack
+    vector while leaving all other data untouched.
+
+    It **must** be called on every value that originates from an untrusted
+    source (e.g. ``req.get_json()``) *before* the value is passed to
+    ``deserialize_value`` / ``decode_checkpoint_value``.
+    """
+    if isinstance(data, dict):
+        if _PICKLE_MARKER in data or _TYPE_MARKER in data:
+            logger.debug("Stripped pickle/type markers from untrusted input.")
+            return None
+        typed_dict = cast(dict[str, Any], data)
+        return {k: strip_pickle_markers(v) for k, v in typed_dict.items()}
+
+    if isinstance(data, list):
+        typed_list = cast(list[Any], data)  # type: ignore[redundant-cast]
+        return [strip_pickle_markers(item) for item in typed_list]
+
+    return data
 
 
 # ============================================================================
@@ -117,7 +157,10 @@ def reconstruct_to_type(value: Any, target_type: type) -> Any:
     if not isinstance(value, dict):
         return value
 
-    # Try decoding if data has pickle markers (from checkpoint encoding)
+    # Try decoding if data has pickle markers (from checkpoint encoding).
+    # NOTE: This function is general-purpose.  Callers that handle untrusted
+    # data (e.g. HITL responses) MUST call strip_pickle_markers() before
+    # passing data here.  See _deserialize_hitl_response in _workflow.py.
     decoded = deserialize_value(value)
     if not isinstance(decoded, dict):
         return decoded

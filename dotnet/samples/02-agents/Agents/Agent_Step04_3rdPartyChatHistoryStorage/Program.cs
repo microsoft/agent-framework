@@ -18,7 +18,7 @@ using SampleApp;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Create a vector store to store the chat messages in.
 // Replace this with a vector store implementation of your choice if you want to persist the chat history to disk.

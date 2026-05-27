@@ -1,0 +1,9 @@
+﻿<Project>
+
+  <Import Project="../Directory.Build.props" />
+
+  <ItemGroup>
+    <PackageReference Include="ReferenceTrimmer" PrivateAssets="all" IncludeAssets="build;analyzers;buildTransitive" />
+  </ItemGroup>
+
+</Project>

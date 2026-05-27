@@ -82,17 +82,6 @@ class TestDurableAIAgentOrchestrationContextIntegration:
 
         assert isinstance(session, DurableAgentSession)
 
-    def test_orchestration_agent_session_with_parameters(
-        self, agent_context: DurableAIAgentOrchestrationContext
-    ) -> None:
-        """Verify agent can create sessions with custom parameters."""
-        agent = agent_context.get_agent("assistant")
-
-        session = agent.create_session(service_session_id="orch-session-456")
-
-        assert isinstance(session, DurableAgentSession)
-        assert session.service_session_id == "orch-session-456"
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

@@ -1,0 +1,53 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Step 1: Start the expense reimbursement workflow
+POST {{authority}}/api/workflows/ExpenseReimbursement/run
+Content-Type: text/plain
+
+EXP-2025-001
+
+### Step 1 (alternative): Start the workflow with a custom run ID
+POST {{authority}}/api/workflows/ExpenseReimbursement/run?runId=expense-001
+Content-Type: text/plain
+
+EXP-2025-001
+
+### Step 2: Check workflow status (replace {runId} with actual run ID from Step 1)
+GET {{authority}}/api/workflows/ExpenseReimbursement/status/{runId}
+
+### Step 3: Send manager approval (replace {runId} with actual run ID from Step 1)
+POST {{authority}}/api/workflows/ExpenseReimbursement/respond/{runId}
+Content-Type: application/json
+
+{"eventName": "ManagerApproval", "response": {"Approved": true, "Comments": "Approved by manager."}}
+
+### Step 3 (alternative): Deny the expense at manager level
+POST {{authority}}/api/workflows/ExpenseReimbursement/respond/{runId}
+Content-Type: application/json
+
+{"eventName": "ManagerApproval", "response": {"Approved": false, "Comments": "Insufficient documentation. Please resubmit."}}
+
+### Step 4: Check workflow status after manager approval (now waiting for parallel finance approvals)
+GET {{authority}}/api/workflows/ExpenseReimbursement/status/{runId}
+
+### Step 5a: Send budget approval (replace {runId} with actual run ID from Step 1)
+POST {{authority}}/api/workflows/ExpenseReimbursement/respond/{runId}
+Content-Type: application/json
+
+{"eventName": "BudgetApproval", "response": {"Approved": true, "Comments": "Budget approved."}}
+
+### Step 5b: Send compliance approval (replace {runId} with actual run ID from Step 1)
+POST {{authority}}/api/workflows/ExpenseReimbursement/respond/{runId}
+Content-Type: application/json
+
+{"eventName": "ComplianceApproval", "response": {"Approved": true, "Comments": "Compliance approved."}}
+
+### Step 5b (alternative): Deny the expense at compliance level
+POST {{authority}}/api/workflows/ExpenseReimbursement/respond/{runId}
+Content-Type: application/json
+
+{"eventName": "ComplianceApproval", "response": {"Approved": false, "Comments": "Compliance requirements not met."}}
+
+### Step 6: Check final workflow status after all approvals
+GET {{authority}}/api/workflows/ExpenseReimbursement/status/{runId}

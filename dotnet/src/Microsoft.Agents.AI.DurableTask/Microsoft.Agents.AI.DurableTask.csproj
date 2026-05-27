@@ -17,7 +17,6 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedStructuredOutput>true</InjectSharedStructuredOutput>
   </PropertyGroup>
   
@@ -28,6 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
   </ItemGroup>
 
