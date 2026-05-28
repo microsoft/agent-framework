@@ -1716,6 +1716,123 @@ def test_text_reasoning_content_add_neither_has_id():
     assert result.id is None
 
 
+def test_coalesce_code_interpreter_tool_calls_keeps_done_event():
+    """OpenAI Responses streaming emits one code_interpreter_tool_call per code
+    delta plus a final 'done' event with the full aggregated script. The
+    finalization pass should drop the deltas and keep only the done event.
+
+    Regression test for microsoft/agent-framework#5793 — without this,
+    CosmosHistoryProvider and other history providers persist hundreds of
+    per-chunk content items.
+    """
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    call_id = "ci_abc123"
+
+    def _chunk(text: str, seq: int) -> Content:
+        return Content.from_code_interpreter_tool_call(
+            call_id=call_id,
+            inputs=[Content.from_text(text=text)],
+            additional_properties={
+                "output_index": 1,
+                "sequence_number": seq,
+                "item_id": call_id,
+            },
+        )
+
+    contents: list[Content] = [
+        Content.from_text_reasoning(id="rs_x", text="planning"),
+        _chunk("import", seq=6),
+        _chunk(" pandas", seq=7),
+        _chunk(" as pd", seq=8),
+        # Final 'done' event carries the complete aggregated script.
+        _chunk("import pandas as pd\nprint('hi')", seq=261),
+    ]
+
+    _coalesce_code_interpreter_tool_calls(contents)
+
+    assert len(contents) == 2
+    assert contents[0].type == "text_reasoning"
+    assert contents[1].type == "code_interpreter_tool_call"
+    assert contents[1].call_id == call_id  # type: ignore[attr-defined]
+    assert contents[1].inputs[0].text == "import pandas as pd\nprint('hi')"  # type: ignore[attr-defined,index]
+
+
+def test_coalesce_code_interpreter_tool_calls_groups_by_call_id():
+    """Multiple distinct call_ids must each keep their own winning chunk."""
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    def _chunk(call_id: str, text: str, seq: int) -> Content:
+        return Content.from_code_interpreter_tool_call(
+            call_id=call_id,
+            inputs=[Content.from_text(text=text)],
+            additional_properties={"sequence_number": seq, "item_id": call_id},
+        )
+
+    contents: list[Content] = [
+        _chunk("call_one", "imp", seq=1),
+        _chunk("call_one", "import os", seq=20),  # winner for call_one
+        _chunk("call_two", "x =", seq=3),
+        _chunk("call_two", "x = 1 + 1", seq=15),  # winner for call_two
+    ]
+
+    _coalesce_code_interpreter_tool_calls(contents)
+
+    assert len(contents) == 2
+    assert contents[0].call_id == "call_one"  # type: ignore[attr-defined]
+    assert contents[0].inputs[0].text == "import os"  # type: ignore[attr-defined,index]
+    assert contents[1].call_id == "call_two"  # type: ignore[attr-defined]
+    assert contents[1].inputs[0].text == "x = 1 + 1"  # type: ignore[attr-defined,index]
+
+
+def test_coalesce_code_interpreter_tool_calls_no_sequence_number_falls_back_to_longest_text():
+    """Providers that emit code_interpreter chunks without sequence_number
+    metadata (e.g. future providers, or partial events) should still get the
+    longest text as the winner.
+    """
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    def _chunk(text: str) -> Content:
+        return Content.from_code_interpreter_tool_call(
+            call_id="ci_x",
+            inputs=[Content.from_text(text=text)],
+        )
+
+    contents: list[Content] = [
+        _chunk("short"),
+        _chunk("a much longer aggregated body"),
+        _chunk("medium length"),
+    ]
+
+    _coalesce_code_interpreter_tool_calls(contents)
+
+    assert len(contents) == 1
+    assert contents[0].inputs[0].text == "a much longer aggregated body"  # type: ignore[attr-defined,index]
+
+
+def test_coalesce_code_interpreter_tool_calls_single_call_is_noop():
+    """Providers that emit a single content per call (Anthropic, Foundry, the
+    non-streaming OpenAI path) must not be affected.
+    """
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    contents: list[Content] = [
+        Content.from_text(text="hello"),
+        Content.from_code_interpreter_tool_call(
+            call_id="ci_only",
+            inputs=[Content.from_text(text="print('hi')")],
+        ),
+        Content.from_text(text="world"),
+    ]
+    original_count = len(contents)
+
+    _coalesce_code_interpreter_tool_calls(contents)
+
+    assert len(contents) == original_count
+    assert contents[1].call_id == "ci_only"  # type: ignore[attr-defined]
+    assert contents[1].inputs[0].text == "print('hi')"  # type: ignore[attr-defined,index]
+
+
 def test_coalesce_text_reasoning_with_different_ids():
     """Test that _coalesce_text_content keeps separate text_reasoning items when IDs differ.
 

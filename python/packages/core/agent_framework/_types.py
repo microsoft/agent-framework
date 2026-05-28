@@ -1973,11 +1973,95 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
     contents.extend(coalesced_contents)
 
 
+def _coalesce_code_interpreter_tool_calls(contents: list[Content]) -> None:
+    """Deduplicate code_interpreter_tool_call items that share a call_id.
+
+    During streaming, the OpenAI Responses API emits one
+    ``response.code_interpreter_call_code.delta`` event per chunk of generated
+    code, followed by a single ``response.code_interpreter_call_code.done``
+    event whose ``code`` field holds the complete aggregated script. The
+    provider client surfaces each event as its own
+    ``code_interpreter_tool_call`` content item (see
+    ``agent_framework_openai/_chat_client.py``). Without this pass, those
+    items flow through ``_process_update`` into ``message.contents`` and end
+    up persisted one-per-chunk by downstream history providers
+    (microsoft/agent-framework#5793).
+
+    Each chunk's ``additional_properties.sequence_number`` is monotonically
+    increasing; the ``done`` event has the highest sequence number and its
+    first text input contains the full script. This function keeps only the
+    highest-sequence_number content per ``call_id``. When sequence numbers are
+    not available (other providers, or future changes), it falls back to the
+    item whose first input text is the longest, which preserves the same
+    "most complete wins" semantics.
+
+    Providers that emit a single content per call (Anthropic, Foundry, the
+    non-streaming OpenAI path) are unaffected: only the single item exists
+    per ``call_id`` and the loop is a no-op.
+    """
+    if not contents:
+        return
+
+    # Group code_interpreter_tool_call items by call_id and find the best
+    # candidate (highest sequence number, or longest input text as fallback).
+    def _sequence_number(content: Content) -> int | None:
+        props = content.additional_properties or {}
+        value = props.get("sequence_number")
+        return value if isinstance(value, int) else None
+
+    def _first_input_text_len(content: Content) -> int:
+        inputs = getattr(content, "inputs", None)
+        if not inputs:
+            return 0
+        first = inputs[0]
+        text = getattr(first, "text", None)
+        return len(text) if isinstance(text, str) else 0
+
+    best_per_call: dict[str | None, Content] = {}
+    for content in contents:
+        if content.type != "code_interpreter_tool_call":
+            continue
+        call_id = getattr(content, "call_id", None)
+        existing = best_per_call.get(call_id)
+        if existing is None:
+            best_per_call[call_id] = content
+            continue
+        existing_seq = _sequence_number(existing)
+        new_seq = _sequence_number(content)
+        if existing_seq is not None and new_seq is not None:
+            if new_seq > existing_seq:
+                best_per_call[call_id] = content
+        elif _first_input_text_len(content) > _first_input_text_len(existing):
+            best_per_call[call_id] = content
+
+    if not best_per_call:
+        return
+
+    # Rebuild contents, replacing each call_id's first occurrence with the
+    # winning item and dropping the rest. Order is preserved relative to the
+    # other content types.
+    rebuilt: list[Content] = []
+    emitted: set[str | None] = set()
+    for content in contents:
+        if content.type != "code_interpreter_tool_call":
+            rebuilt.append(content)
+            continue
+        call_id = getattr(content, "call_id", None)
+        if call_id in emitted:
+            continue
+        rebuilt.append(best_per_call[call_id])
+        emitted.add(call_id)
+
+    contents.clear()
+    contents.extend(rebuilt)
+
+
 def _finalize_response(response: ChatResponse | AgentResponse) -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
+        _coalesce_code_interpreter_tool_calls(msg.contents)
 
 
 # region ContinuationToken
