@@ -48,11 +48,12 @@ members = [
     "agent-framework-gemini",
     "agent-framework-github-copilot",
     "agent-framework-hosting",
-    "agent-framework-hosting-responses",
-    "agent-framework-hosting-invocations",
-    "agent-framework-hosting-telegram",
     "agent-framework-hosting-activity-protocol",
+    "agent-framework-hosting-discord",
     "agent-framework-hosting-entra",
+    "agent-framework-hosting-invocations",
+    "agent-framework-hosting-responses",
+    "agent-framework-hosting-telegram",
     "agent-framework-hyperlight",
     "agent-framework-lab",
     "agent-framework-mem0",
@@ -648,13 +649,41 @@ provides-extras = ["serve", "disk"]
 dev = [{ name = "httpx", specifier = ">=0.28.1" }]
 
 [[package]]
-name = "agent-framework-hosting-telegram"
+name = "agent-framework-hosting-activity-protocol"
 version = "1.0.0a260424"
-source = { editable = "packages/hosting-telegram" }
+source = { editable = "packages/hosting-activity-protocol" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "azure-identity", specifier = ">=1.20,<2" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+]
+
+[[package]]
+name = "agent-framework-hosting-discord"
+version = "1.0.0a260526"
+source = { editable = "packages/hosting-discord" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pynacl", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "pynacl", specifier = ">=1.2.0,<2" },
 ]
 
 [[package]]
@@ -669,32 +698,13 @@ dependencies = [
     { name = "msal", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
-[[package]]
-name = "agent-framework-hosting-responses"
-version = "1.0.0a260424"
-source = { editable = "packages/hosting-responses" }
-dependencies = [
-    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-
-
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-hosting", editable = "packages/hosting" },
-    { name = "openai", specifier = ">=1.99.0,<3" },
-]
-
-[[package]]
-name = "agent-framework-hosting-activity-protocol"
-version = "1.0.0a260424"
-source = { editable = "packages/hosting-activity-protocol" }
-dependencies = [
-    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "cryptography", specifier = ">=42" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "msal", specifier = ">=1.28,<2" },
 ]
 
 [[package]]
@@ -704,11 +714,46 @@ source = { editable = "packages/hosting-invocations" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-identity", specifier = ">=1.20,<2" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+]
+
+[[package]]
+name = "agent-framework-hosting-responses"
+version = "1.0.0a260424"
+source = { editable = "packages/hosting-responses" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "openai", specifier = ">=1.99.0,<3" },
+]
+
+[[package]]
+name = "agent-framework-hosting-telegram"
+version = "1.0.0a260424"
+source = { editable = "packages/hosting-telegram" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
     { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "cryptography", specifier = ">=42" },
-    { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "msal", specifier = ">=1.28,<2" },
 ]
 
 [[package]]

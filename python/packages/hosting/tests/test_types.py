@@ -7,12 +7,16 @@ from __future__ import annotations
 from typing import Any
 
 from agent_framework_hosting import (
+    ChannelContribution,
     ChannelIdentity,
     ChannelRequest,
+    ChannelResponseContext,
     ChannelSession,
     DurableTaskPayloadMode,
+    HostedRunResult,
     ResponseTarget,
     ResponseTargetKind,
+    apply_channel_response_hook,
     apply_run_hook,
 )
 
@@ -115,6 +119,88 @@ class _DummyTarget:
     `apply_run_hook` doesn't introspect the target — it just forwards
     it as a kwarg to the user's hook — so a bare class is enough.
     """
+
+
+class _DummyChannel:
+    name = "dummy"
+    path = "/dummy"
+
+    def contribute(self, _context: Any) -> ChannelContribution:
+        return ChannelContribution()
+
+
+class TestApplyChannelResponseHook:
+    async def test_originating_hook_receives_standard_context(self) -> None:
+        request = ChannelRequest(channel="discord", operation="message.create", input="hi")
+        payload = HostedRunResult("original")
+        captured: list[ChannelResponseContext] = []
+
+        async def hook(
+            result: HostedRunResult[Any],
+            *,
+            context: ChannelResponseContext,
+        ) -> HostedRunResult[Any]:
+            captured.append(context)
+            return result.replace(result="hooked")
+
+        channel = _DummyChannel()
+        channel.response_hook = hook  # type: ignore[attr-defined]
+
+        shaped = await apply_channel_response_hook(channel, payload, request=request, originating=True)
+
+        assert shaped.result == "hooked"
+        assert captured[0].request is request
+        assert captured[0].channel_name == "dummy"
+        assert captured[0].destination_identity is None
+        assert captured[0].originating is True
+        assert captured[0].is_echo is False
+
+    async def test_non_originating_hook_can_clone_before_shaping(self) -> None:
+        request = ChannelRequest(channel="responses", operation="message.create", input="hi")
+        identity = ChannelIdentity(channel="dummy", native_id="user-1")
+        payload = HostedRunResult("original")
+        seen_payloads: list[HostedRunResult[Any]] = []
+        seen_contexts: list[ChannelResponseContext] = []
+
+        def hook(
+            result: HostedRunResult[Any],
+            *,
+            context: ChannelResponseContext,
+        ) -> HostedRunResult[Any]:
+            seen_payloads.append(result)
+            seen_contexts.append(context)
+            return result.replace(result="hooked")
+
+        channel = _DummyChannel()
+        channel.response_hook = hook  # type: ignore[attr-defined]
+
+        shaped = await apply_channel_response_hook(
+            channel,
+            payload,
+            request=request,
+            destination_identity=identity,
+            originating=False,
+            is_echo=True,
+            clone=True,
+        )
+
+        assert seen_payloads[0] is not payload
+        assert shaped.result == "hooked"
+        assert seen_contexts[0].destination_identity is identity
+        assert seen_contexts[0].originating is False
+        assert seen_contexts[0].is_echo is True
+
+    async def test_missing_hook_returns_payload_or_clone(self) -> None:
+        request = ChannelRequest(channel="responses", operation="message.create", input="hi")
+        payload = HostedRunResult("original")
+        channel = _DummyChannel()
+
+        same = await apply_channel_response_hook(channel, payload, request=request, originating=True)
+        cloned = await apply_channel_response_hook(channel, payload, request=request, originating=True, clone=True)
+
+        assert same is payload
+        assert cloned is not payload
+        assert cloned.result == payload.result
 
 
 class TestApplyRunHook:
