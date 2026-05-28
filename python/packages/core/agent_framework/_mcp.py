@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import contextvars
 import json
 import logging
 import re
@@ -61,7 +60,6 @@ class MCPSpecificApproval(TypedDict, total=False):
 
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
-_mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
 MCP_DEFAULT_TIMEOUT = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
 
@@ -1760,6 +1758,8 @@ class MCPStreamableHTTPTool(MCPTool):
         self.terminate_on_close = terminate_on_close
         self._httpx_client: AsyncClient | None = http_client
         self._header_provider = header_provider
+        self._active_call_headers: dict[str, str] = {}
+        self._header_provider_call_lock = asyncio.Lock()
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -1784,8 +1784,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 async def _inject_headers(request: Request) -> None:  # noqa: RUF029
                     if _url_origin(request.url) != target_origin:
                         return
-                    headers = _mcp_call_headers.get({})
-                    for key, value in headers.items():
+                    for key, value in self._active_call_headers.items():
                         request.headers[key] = value
 
                 self._inject_headers_hook = _inject_headers  # type: ignore[attr-defined]
@@ -1802,8 +1801,8 @@ class MCPStreamableHTTPTool(MCPTool):
 
         When a ``header_provider`` was supplied at construction time, the runtime
         *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
-        to the provider.  The returned headers are attached to every HTTP request
-        made during this tool call via a ``contextvars.ContextVar``.
+        to the provider. The returned headers are attached to every HTTP request
+        made during this tool call.
 
         Args:
             tool_name: The name of the tool to call.
@@ -1815,12 +1814,13 @@ class MCPStreamableHTTPTool(MCPTool):
             A list of Content items representing the tool output.
         """
         if self._header_provider is not None:
-            headers = self._header_provider(kwargs)
-            token = _mcp_call_headers.set(headers)
-            try:
-                return await super().call_tool(tool_name, **kwargs)
-            finally:
-                _mcp_call_headers.reset(token)
+            async with self._header_provider_call_lock:
+                previous_headers = self._active_call_headers
+                self._active_call_headers = dict(self._header_provider(kwargs))
+                try:
+                    return await super().call_tool(tool_name, **kwargs)
+                finally:
+                    self._active_call_headers = previous_headers
         return await super().call_tool(tool_name, **kwargs)
 
 
