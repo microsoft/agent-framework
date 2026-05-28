@@ -1,6 +1,6 @@
 # Squad + DTS Sample
 
-This sample demonstrates how to compose [Squad](https://github.com/github/copilot-extensions/blob/main/docs/extensions/implementing-skills.md) (the GitHub Copilot governance agent) with [Microsoft Agent Framework (MAF)](https://github.com/microsoft/agent-framework) and [Durable Task Scheduler (DTS)](https://learn.microsoft.com/azure/durable-task-scheduler/overview) to build governance-driven, durably-orchestrated AI workflows.
+This sample demonstrates how to compose [Squad](https://github.com/bradygaster/squad) (a multi-agent orchestration framework for GitHub Copilot — one coordinator, many specialist sub-agents, with shared memory, routing, and structured handoffs) with [Microsoft Agent Framework (MAF)](https://github.com/microsoft/agent-framework) and [Durable Task Scheduler (DTS)](https://learn.microsoft.com/azure/durable-task-scheduler/overview) to build governance-driven, durably-orchestrated AI workflows.
 
 > **Companion to the blog post:** ["Make It So — But Let the Computer Handle the Math"](https://tamirdresher.com/2026/05/20/deterministic-meets-squads/)
 
