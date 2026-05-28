@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -723,42 +723,31 @@ def _extract_per_evaluator(run: RunRetrieveResponse) -> dict[str, dict[str, int]
     return per_eval
 
 
-def _extract_rubric_scores(sample: Any) -> list[RubricScore] | None:
-    """Extract typed ``RubricScore`` instances from an evaluator's raw sample payload.
+_RUBRIC_DIMENSION_KEYS: tuple[str, ...] = ("dimension_scores", "rubric_scores")
+"""Property keys that may carry per-dimension rubric breakdowns.
 
-    Foundry rubric evaluators include a per-dimension breakdown under
-    ``properties.rubric_scores`` on each result.  The exact location may
-    vary across SDK versions, so this helper accepts a few shapes:
+The published Foundry rubric-evaluator output format uses
+``properties.dimension_scores`` (see the Microsoft Learn "Rubric
+evaluators" reference).  Earlier preview builds and some SDK shapes
+used ``rubric_scores``; we accept both for defensive forward/backward
+compatibility.
+"""
 
-    * The SDK ``sample`` object exposes ``properties.rubric_scores``.
-    * The ``sample`` is a dict containing ``properties.rubric_scores``.
-    * The ``sample`` is a dict with ``rubric_scores`` at the top level.
 
-    Returns ``None`` when no rubric scores are present (i.e. the
-    evaluator was not a rubric evaluator).
+def _parse_dimension_entries(raw: Any) -> list[RubricScore]:
+    """Parse a raw list-like payload into ``RubricScore`` instances.
+
+    Returns an empty list when ``raw`` is falsy, not iterable, or
+    contains no well-formed entries.
     """
-    if sample is None:
-        return None
-
-    raw: Any = None
-    properties: Any = getattr(sample, "properties", None)
-    if properties is not None:
-        raw = getattr(properties, "rubric_scores", None)
-        if raw is None and isinstance(properties, dict):
-            raw = cast("dict[str, Any]", properties).get("rubric_scores")
-    if raw is None and isinstance(sample, dict):
-        sample_any = cast("dict[str, Any]", sample)
-        props_dict: Any = sample_any.get("properties")
-        if isinstance(props_dict, dict):
-            raw = cast("dict[str, Any]", props_dict).get("rubric_scores")
-        if raw is None:
-            raw = sample_any.get("rubric_scores")
-
     if not raw:
-        return None
+        return []
+    try:
+        raw_iter: Iterable[Any] = iter(raw)
+    except TypeError:
+        return []
 
     parsed: list[RubricScore] = []
-    raw_iter: Any = raw
     for raw_entry in raw_iter:
         entry: Any = raw_entry
         try:
@@ -792,8 +781,54 @@ def _extract_rubric_scores(sample: Any) -> list[RubricScore] | None:
                 )
             )
         except (TypeError, ValueError):
-            logger.debug("Skipping malformed rubric_scores entry: %s", cast("Any", entry), exc_info=True)
-    return parsed or None
+            logger.debug("Skipping malformed rubric dimension entry: %s", cast("Any", entry), exc_info=True)
+    return parsed
+
+
+def _extract_rubric_scores(sample: Any) -> list[RubricScore] | None:
+    """Extract typed ``RubricScore`` instances from an evaluator's raw sample payload.
+
+    Foundry rubric evaluators include a per-dimension breakdown under
+    ``properties.dimension_scores`` on each result (preview builds used
+    ``rubric_scores``; both keys are accepted, with the canonical
+    ``dimension_scores`` taking priority).  The exact location may
+    vary across SDK versions, so this helper accepts a few shapes:
+
+    * The SDK ``sample`` object exposes
+      ``properties.dimension_scores`` / ``properties.rubric_scores``.
+    * The ``sample`` is a dict containing the same under
+      ``properties.<key>``.
+    * The ``sample`` is a dict with ``dimension_scores`` /
+      ``rubric_scores`` at the top level.
+
+    Returns ``None`` when no rubric scores are present (i.e. the
+    evaluator was not a rubric evaluator).
+    """
+    if sample is None:
+        return None
+
+    containers: list[Any] = []
+    properties: Any = getattr(sample, "properties", None)
+    if properties is not None:
+        containers.append(properties)
+    if isinstance(sample, dict):
+        sample_any = cast("dict[str, Any]", sample)
+        props_dict: Any = sample_any.get("properties")
+        if props_dict is not None and props_dict is not properties:
+            containers.append(props_dict)
+        containers.append(sample_any)
+
+    for container in containers:
+        for key in _RUBRIC_DIMENSION_KEYS:
+            raw: Any = None
+            if isinstance(container, dict):
+                raw = cast("dict[str, Any]", container).get(key)
+            elif hasattr(container, key):
+                raw = getattr(container, key, None)
+            parsed = _parse_dimension_entries(raw)
+            if parsed:
+                return parsed
+    return None
 
 
 async def _fetch_output_items(

@@ -2605,6 +2605,56 @@ class TestExtractRubricScores:
         assert len(result) == 1
         assert result[0].id == "good"
 
+    def test_canonical_dimension_scores_key_from_docs(self) -> None:
+        """Per the Microsoft Learn docs, runtime output uses ``properties.dimension_scores``."""
+        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
+
+        sample = {
+            "properties": {
+                "dimension_scores": [
+                    {
+                        "id": "intent_recognition",
+                        "score": 5,
+                        "applicable": True,
+                        "weight": 9,
+                        "reason": "Identified correctly.",
+                    },
+                    {
+                        "id": "general_quality",
+                        "score": 4,
+                        "applicable": True,
+                        "weight": 5,
+                        "reason": "Strong overall.",
+                    },
+                ]
+            }
+        }
+        result = _extract_rubric_scores(sample)
+        assert result is not None
+        assert [r.id for r in result] == ["intent_recognition", "general_quality"]
+        assert [r.score for r in result] == [5, 4]
+        assert [r.weight for r in result] == [9, 5]
+
+    def test_dimension_scores_via_attribute(self) -> None:
+        """Canonical key also resolves when properties exposes ``dimension_scores`` as an attr."""
+        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
+
+        rs = MagicMock()
+        rs.id = "policy_enforcement"
+        rs.score = 1
+        rs.applicable = True
+        rs.weight = 5
+        rs.reason = "violated"
+
+        sample = MagicMock()
+        sample.properties = MagicMock(spec=["dimension_scores"])
+        sample.properties.dimension_scores = [rs]
+
+        result = _extract_rubric_scores(sample)
+        assert result is not None
+        assert result[0].id == "policy_enforcement"
+        assert result[0].score == 1
+
 
 # ---------------------------------------------------------------------------
 # _poll_eval_run — timeout / failed / canceled paths
