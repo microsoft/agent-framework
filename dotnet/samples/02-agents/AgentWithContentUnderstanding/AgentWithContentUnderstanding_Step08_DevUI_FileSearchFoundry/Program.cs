@@ -63,9 +63,9 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
     credential,
     options =>
     {
-        // 10 s combined budget for CU analysis + vector store upload.
+        // 60 s combined budget for CU analysis + vector store upload.
         // Larger files (audio, video) will defer to background and resolve on the next turn.
-        options.MaxWait = TimeSpan.FromSeconds(10);
+        options.MaxWait = TimeSpan.FromSeconds(60);
         options.FileSearchConfig = FileSearchConfig.FromFoundry(
             aiProjectClient,
             vectorStoreId,
