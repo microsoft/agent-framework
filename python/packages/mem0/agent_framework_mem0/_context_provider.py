@@ -108,16 +108,17 @@ class Mem0ContextProvider(ContextProvider):
 
         filters = self._build_filters()
 
-        # AsyncMemory (OSS) expects user_id/agent_id/run_id as direct kwargs
-        # AsyncMemoryClient (Platform) expects them in a filters dict
-        search_kwargs: dict[str, Any] = {"query": input_text}
+        # mem0 >=2.0: both OSS (AsyncMemory) and Platform (AsyncMemoryClient) take
+        # entity IDs in a filters dict (top-level entity kwargs are rejected). OSS only
+        # recognizes user_id/agent_id/run_id as entities, so app_id (Platform-only) is
+        # dropped for the OSS client to avoid it being treated as a non-matching
+        # metadata filter that would silently exclude all results.
         if isinstance(self.mem0_client, AsyncMemory):
-            search_kwargs.update(filters)
-        else:
-            search_kwargs["filters"] = filters
+            filters = {key: value for key, value in filters.items() if key != "app_id"}
 
         search_response: _MemorySearchResponse_v1_1 | _MemorySearchResponse_v2 = await self.mem0_client.search(  # type: ignore[misc]
-            **search_kwargs,
+            query=input_text,
+            filters=filters,
         )
 
         if isinstance(search_response, list):
