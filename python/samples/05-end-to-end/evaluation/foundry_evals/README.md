@@ -35,25 +35,31 @@ Evaluate what already happened — zero changes to agent code:
 uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_traces_sample.py
 ```
 
-### `evaluate_with_generated_rubric_sample.py` — Auto-Generate a Rubric
+### Referencing a rubric evaluator created in Foundry
 
-Let Foundry draft the rubric dimensions for you from the agent's
-context (instructions, tools, description).  Best when you don't yet
-have a fixed scoring rubric and want a strong baseline you can refine.
+Foundry users can create rubric evaluators in the Foundry portal (or
+through the dedicated SDK / REST surface) — see
+[Rubric evaluators](https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-evaluators/rubric-evaluators)
+for the authoring flow. Once an evaluator exists, agent-framework
+consumes it like any other evaluator: pass a
+`GeneratedEvaluatorRef(name=..., version=...)` in the `evaluators=`
+list and pin the version for reproducible runs.
 
-```bash
-uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_with_generated_rubric_sample.py
+```python
+from agent_framework.foundry import FoundryEvals, GeneratedEvaluatorRef
+
+evals = FoundryEvals(
+    evaluators=[
+        GeneratedEvaluatorRef(name="reservation-policy-rubric", version="3"),
+        "relevance",
+        "coherence",
+    ],
+)
 ```
 
-### `evaluate_with_manual_rubric_sample.py` — Author a Rubric Yourself
-
-Bring your own `RubricDimension`s (from a spec, a competing framework,
-or hand tuning) and register them as a versioned evaluator.  Use this
-when you already know what you want to score.
-
-```bash
-uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_with_manual_rubric_sample.py
-```
+Quality gates on rubric output use the standard `EvalResults` helpers,
+including `assert_dimension_score_at_least(...)` for per-dimension
+thresholds.
 
 ## Setup
 
@@ -64,5 +70,4 @@ Create a `.env` file with configuration as in the `.env.example` file in this fo
 - **"I want to test my agent during development"** → `evaluate_agent_sample.py`, Pattern 1
 - **"I want to evaluate past agent runs"** → `evaluate_traces_sample.py`
 - **"I want to inspect/modify eval data before submitting"** → `evaluate_agent_sample.py`, Pattern 2
-- **"I want Foundry to draft a custom rubric for my agent"** → `evaluate_with_generated_rubric_sample.py`
-- **"I already have a rubric I want to bring into Foundry"** → `evaluate_with_manual_rubric_sample.py`
+- **"I want to score against a custom rubric I created in Foundry"** → pass a `GeneratedEvaluatorRef` (see snippet above)

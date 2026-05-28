@@ -410,55 +410,6 @@ class Workflow(DictConvertible):
         """Serialize the workflow definition to JSON."""
         return json.dumps(self.to_dict())
 
-    def as_eval_source(
-        self,
-        *,
-        include_instructions: bool = True,
-        include_tools: bool = True,
-        include_context_providers: bool = False,
-        include_examples: bool = False,
-        examples: Sequence[str] | None = None,
-        include_topology: bool = True,
-    ) -> str:
-        """Render this workflow as a textual dossier for rubric-evaluator generation.
-
-        Produces a plain-text dossier containing the workflow's name,
-        description, optional JSON-encoded topology (from
-        :meth:`Workflow.to_dict`), and per-agent dossiers extracted from
-        ``AgentExecutor`` nodes.  Suitable for passing to a rubric
-        generation pipeline (e.g. ``FoundryEvals.generate_rubric``).
-
-        Defaults are conservative: per-agent instructions and tools are
-        included, plus the JSON-encoded topology.  Examples and
-        context-provider class names are excluded by default.
-
-        Keyword Args:
-            include_instructions: Per-agent instructions inclusion.
-            include_tools: Per-agent tool-definition inclusion.
-            include_context_providers: Per-agent context-provider
-                inclusion.
-            include_examples: Whether to include workflow-level
-                ``examples``.
-            examples: Sample queries / interactions to include when
-                ``include_examples`` is true.
-            include_topology: Whether to embed the JSON-encoded workflow
-                topology in the rendered dossier.
-
-        Returns:
-            A plain-text dossier describing the workflow.
-        """
-        from .._evaluation import _render_workflow_dossier  # pyright: ignore[reportPrivateUsage]
-
-        return _render_workflow_dossier(
-            self,
-            include_instructions=include_instructions,
-            include_tools=include_tools,
-            include_context_providers=include_context_providers,
-            include_examples=include_examples,
-            examples=examples,
-            include_topology=include_topology,
-        )
-
     def get_start_executor(self) -> Executor:
         """Get the starting executor of the workflow.
 

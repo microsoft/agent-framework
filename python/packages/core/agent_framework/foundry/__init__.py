@@ -40,11 +40,8 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "RawFoundryAgentChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
-    "RubricDimension": ("agent_framework_foundry", "agent-framework-foundry"),
-    "build_sources": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
-    "load_evals_config": ("agent_framework_foundry", "agent-framework-foundry"),
 }
 
 

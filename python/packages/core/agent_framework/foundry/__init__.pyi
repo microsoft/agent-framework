@@ -25,11 +25,8 @@ from agent_framework_foundry import (
     RawFoundryAgentChatClient,
     RawFoundryChatClient,
     RawFoundryEmbeddingClient,
-    RubricDimension,
-    build_sources,
     evaluate_foundry_target,
     evaluate_traces,
-    load_evals_config,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -61,9 +58,6 @@ __all__ = [
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",
     "RawFoundryEmbeddingClient",
-    "RubricDimension",
-    "build_sources",
     "evaluate_foundry_target",
     "evaluate_traces",
-    "load_evals_config",
 ]
