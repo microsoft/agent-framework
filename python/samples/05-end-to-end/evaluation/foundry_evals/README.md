@@ -35,6 +35,26 @@ Evaluate what already happened — zero changes to agent code:
 uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_traces_sample.py
 ```
 
+### `evaluate_with_generated_rubric_sample.py` — Auto-Generate a Rubric
+
+Let Foundry draft the rubric dimensions for you from the agent's
+context (instructions, tools, description).  Best when you don't yet
+have a fixed scoring rubric and want a strong baseline you can refine.
+
+```bash
+uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_with_generated_rubric_sample.py
+```
+
+### `evaluate_with_manual_rubric_sample.py` — Author a Rubric Yourself
+
+Bring your own `RubricDimension`s (from a spec, a competing framework,
+or hand tuning) and register them as a versioned evaluator.  Use this
+when you already know what you want to score.
+
+```bash
+uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_with_manual_rubric_sample.py
+```
+
 ## Setup
 
 Create a `.env` file with configuration as in the `.env.example` file in this folder.
@@ -44,3 +64,5 @@ Create a `.env` file with configuration as in the `.env.example` file in this fo
 - **"I want to test my agent during development"** → `evaluate_agent_sample.py`, Pattern 1
 - **"I want to evaluate past agent runs"** → `evaluate_traces_sample.py`
 - **"I want to inspect/modify eval data before submitting"** → `evaluate_agent_sample.py`, Pattern 2
+- **"I want Foundry to draft a custom rubric for my agent"** → `evaluate_with_generated_rubric_sample.py`
+- **"I already have a rubric I want to bring into Foundry"** → `evaluate_with_manual_rubric_sample.py`
