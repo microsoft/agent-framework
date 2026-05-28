@@ -9,10 +9,10 @@ import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
-from contextlib import suppress
-from pathlib import Path
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
+from dataclasses import asdict, is_dataclass
+from pathlib import Path
 from typing import Protocol, cast
 
 from agent_framework import (
@@ -72,6 +72,7 @@ from azure.ai.agentserver.responses.models import (
     MessageContentOutputTextContent,
     MessageContentReasoningTextContent,
     MessageContentRefusalContent,
+    MessageRole,
     OAuthConsentRequestOutputItem,
     OutputItem,
     OutputItemApplyPatchToolCall,
@@ -115,6 +116,8 @@ from mcp import McpError
 from typing_extensions import Any
 
 logger = logging.getLogger(__name__)
+
+_AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
 
 
 # region Approval Storage
@@ -249,7 +252,12 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
     storage_path = (root_path / context_id).resolve()
     if not storage_path.is_relative_to(root_path):
         raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
-    return FileCheckpointStorage(storage_path)
+    return FileCheckpointStorage(
+        storage_path,
+        # Keep this provider-specific allowlist narrow. Hosted workflow
+        # checkpoints can persist Azure's role enum inside Message objects.
+        allowed_checkpoint_types=[_AZURE_RESPONSES_MESSAGE_ROLE_TYPE],
+    )
 
 
 # endregion Approval Storage
@@ -1505,11 +1513,20 @@ def _convert_message_content(content: MessageContent) -> Content:
 # region Output Item Conversion
 
 
-def _arguments_to_str(arguments: str | Mapping[str, Any] | None) -> str:
+def _argument_json_default(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _arguments_to_str(arguments: Any | None) -> str:
     """Convert arguments to a JSON string.
 
     Args:
-        arguments: The arguments to convert, can be a string, mapping, or None.
+        arguments: The arguments to convert, can be a string, JSON-like object, or None.
 
     Returns:
         The arguments as a JSON string.
@@ -1518,7 +1535,7 @@ def _arguments_to_str(arguments: str | Mapping[str, Any] | None) -> str:
         return ""
     if isinstance(arguments, str):
         return arguments
-    return json.dumps(arguments)
+    return json.dumps(arguments, default=_argument_json_default)
 
 
 async def _to_outputs(

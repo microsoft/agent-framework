@@ -3,7 +3,6 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry;
 
@@ -22,7 +21,6 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <c>FoundryAITool.CreateHostedMcpToolbox(...)</c> factory overloads.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class HostedMcpToolboxAITool : HostedMcpServerTool
 {
     /// <summary>

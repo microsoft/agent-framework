@@ -45,6 +45,27 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Content</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Resources</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Scripts</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillScript.RunAsync(Microsoft.Agents.AI.AgentSkill,Microsoft.Extensions.AI.AIFunctionArguments,System.Threading.CancellationToken)</Target>
     <Left>lib/net10.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net10.0/Microsoft.Agents.AI.dll</Right>
@@ -108,6 +129,27 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Content</Target>
+    <Left>lib/net472/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net472/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Resources</Target>
+    <Left>lib/net472/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net472/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Scripts</Target>
+    <Left>lib/net472/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net472/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillScript.RunAsync(Microsoft.Agents.AI.AgentSkill,Microsoft.Extensions.AI.AIFunctionArguments,System.Threading.CancellationToken)</Target>
     <Left>lib/net472/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net472/Microsoft.Agents.AI.dll</Right>
@@ -171,6 +213,27 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Content</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Resources</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Scripts</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillScript.RunAsync(Microsoft.Agents.AI.AgentSkill,Microsoft.Extensions.AI.AIFunctionArguments,System.Threading.CancellationToken)</Target>
     <Left>lib/net8.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net8.0/Microsoft.Agents.AI.dll</Right>
@@ -234,6 +297,27 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Content</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Resources</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Scripts</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillScript.RunAsync(Microsoft.Agents.AI.AgentSkill,Microsoft.Extensions.AI.AIFunctionArguments,System.Threading.CancellationToken)</Target>
     <Left>lib/net9.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net9.0/Microsoft.Agents.AI.dll</Right>
@@ -297,6 +381,27 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Content</Target>
+    <Left>lib/netstandard2.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/netstandard2.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Resources</Target>
+    <Left>lib/netstandard2.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/netstandard2.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.get_Scripts</Target>
+    <Left>lib/netstandard2.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/netstandard2.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillScript.RunAsync(Microsoft.Agents.AI.AgentSkill,Microsoft.Extensions.AI.AIFunctionArguments,System.Threading.CancellationToken)</Target>
     <Left>lib/netstandard2.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/netstandard2.0/Microsoft.Agents.AI.dll</Right>
@@ -314,6 +419,13 @@
     <Target>M:Microsoft.Agents.AI.AgentSkillsProvider.#ctor(System.Collections.Generic.IEnumerable{Microsoft.Agents.AI.AgentInlineSkill},Microsoft.Agents.AI.AgentSkillsProviderOptions,Microsoft.Extensions.Logging.ILoggerFactory)</Target>
     <Left>lib/netstandard2.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/netstandard2.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0005</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.GetContentAsync(System.Threading.CancellationToken)</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
   </Suppression>
   <Suppression>
@@ -325,9 +437,23 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0005</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.GetContentAsync(System.Threading.CancellationToken)</Target>
+    <Left>lib/net472/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net472/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0005</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillScript.RunAsync(Microsoft.Agents.AI.AgentSkill,System.Nullable{System.Text.Json.JsonElement},System.IServiceProvider,System.Threading.CancellationToken)</Target>
     <Left>lib/net472/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net472/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0005</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.GetContentAsync(System.Threading.CancellationToken)</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
   </Suppression>
   <Suppression>
@@ -339,9 +465,23 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0005</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.GetContentAsync(System.Threading.CancellationToken)</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0005</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillScript.RunAsync(Microsoft.Agents.AI.AgentSkill,System.Nullable{System.Text.Json.JsonElement},System.IServiceProvider,System.Threading.CancellationToken)</Target>
     <Left>lib/net9.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net9.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0005</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkill.GetContentAsync(System.Threading.CancellationToken)</Target>
+    <Left>lib/netstandard2.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/netstandard2.0/Microsoft.Agents.AI.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
   </Suppression>
   <Suppression>

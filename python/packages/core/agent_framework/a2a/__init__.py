@@ -7,6 +7,7 @@ This module lazily re-exports objects from:
 
 Supported classes:
 - A2AAgent
+- A2AAgentSession
 - A2AExecutor
 """
 
@@ -15,7 +16,7 @@ from typing import Any
 
 IMPORT_PATH = "agent_framework_a2a"
 PACKAGE_NAME = "agent-framework-a2a"
-_IMPORTS = ["A2AAgent", "A2AExecutor"]
+_IMPORTS = ["A2AAgent", "A2AAgentSession", "A2AExecutor"]
 
 
 def __getattr__(name: str) -> Any:

@@ -1,7 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
@@ -34,29 +35,44 @@ public abstract class AgentSkill
     /// <summary>
     /// Gets the full skill content.
     /// </summary>
-    /// <remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
     /// For file-based skills this is the raw SKILL.md file content, optionally
     /// augmented with a synthesized scripts block when scripts are present.
     /// For code-defined skills this is a synthesized XML document
     /// containing name, description, and body (instructions, resources, scripts).
-    /// </remarks>
-    public abstract string Content { get; }
+    /// </returns>
+    public abstract ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Gets the resources associated with this skill, or <see langword="null"/> if none.
+    /// Gets a resource owned by this skill by name.
     /// </summary>
+    /// <param name="name">The resource name (e.g. an identifier or a relative path referenced inside the skill content).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// The <see cref="AgentSkillResource"/>, or <see langword="null"/> when no resource with the given name exists.
+    /// </returns>
     /// <remarks>
-    /// The default implementation returns <see langword="null"/>.
-    /// Override this property in derived classes to provide skill-specific resources.
+    /// The default implementation returns <see langword="null"/>. Override in derived classes that
+    /// expose resources.
     /// </remarks>
-    public virtual IReadOnlyList<AgentSkillResource>? Resources => null;
+    public virtual ValueTask<AgentSkillResource?> GetResourceAsync(
+        string name,
+        CancellationToken cancellationToken = default) => default;
 
     /// <summary>
-    /// Gets the scripts associated with this skill, or <see langword="null"/> if none.
+    /// Gets a script owned by this skill by name.
     /// </summary>
+    /// <param name="name">The script name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// The <see cref="AgentSkillScript"/>, or <see langword="null"/> when no script with the given name exists.
+    /// </returns>
     /// <remarks>
-    /// The default implementation returns <see langword="null"/>.
-    /// Override this property in derived classes to provide skill-specific scripts.
+    /// The default implementation returns <see langword="null"/>. Override in derived classes that
+    /// expose scripts.
     /// </remarks>
-    public virtual IReadOnlyList<AgentSkillScript>? Scripts => null;
+    public virtual ValueTask<AgentSkillScript?> GetScriptAsync(
+        string name,
+        CancellationToken cancellationToken = default) => default;
 }

@@ -26,6 +26,7 @@
       "src\\Microsoft.Agents.AI.Mem0\\Microsoft.Agents.AI.Mem0.csproj",
       "src\\Microsoft.Agents.AI.OpenAI\\Microsoft.Agents.AI.OpenAI.csproj",
       "src\\Microsoft.Agents.AI.Purview\\Microsoft.Agents.AI.Purview.csproj",
+      "src\\Microsoft.Agents.AI.Tools.Shell\\Microsoft.Agents.AI.Tools.Shell.csproj",
       "src\\Microsoft.Agents.AI.Workflows.Declarative.Foundry\\Microsoft.Agents.AI.Workflows.Declarative.Foundry.csproj",
       "src\\Microsoft.Agents.AI.Workflows.Declarative\\Microsoft.Agents.AI.Workflows.Declarative.csproj",
       "src\\Microsoft.Agents.AI.Workflows.Generators\\Microsoft.Agents.AI.Workflows.Generators.csproj",
