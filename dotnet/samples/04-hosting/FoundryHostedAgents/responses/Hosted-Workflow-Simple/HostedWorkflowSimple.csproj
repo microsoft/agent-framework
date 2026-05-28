@@ -27,10 +27,10 @@
 
   <!-- For end-users: uncomment the PackageReference below and remove the ProjectReferences above
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.0.0" />
-    <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.0.0" />
-    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0" />
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.6.1-preview.260514.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.6.1-preview.260514.1" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.6.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.6.1" />
   </ItemGroup>
   -->
 

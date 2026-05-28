@@ -73,7 +73,7 @@ public class AgentModeProviderTests
     {
         // Arrange
         var (tools, state) = await CreateToolsWithStateAsync();
-        AIFunction setMode = GetTool(tools, "AgentMode_Set");
+        AIFunction setMode = GetTool(tools, "mode_set");
 
         // Act
         await setMode.InvokeAsync(new AIFunctionArguments() { ["mode"] = "execute" });
@@ -90,7 +90,7 @@ public class AgentModeProviderTests
     {
         // Arrange
         var (tools, _) = await CreateToolsWithStateAsync();
-        AIFunction setMode = GetTool(tools, "AgentMode_Set");
+        AIFunction setMode = GetTool(tools, "mode_set");
 
         // Act
         object? result = await setMode.InvokeAsync(new AIFunctionArguments() { ["mode"] = "execute" });
@@ -107,8 +107,8 @@ public class AgentModeProviderTests
     {
         // Arrange
         var (tools, provider, session) = await CreateToolsWithProviderAndSessionAsync();
-        AIFunction setMode = GetTool(tools, "AgentMode_Set");
-        AIFunction getMode = GetTool(tools, "AgentMode_Get");
+        AIFunction setMode = GetTool(tools, "mode_set");
+        AIFunction getMode = GetTool(tools, "mode_get");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -131,7 +131,7 @@ public class AgentModeProviderTests
     {
         // Arrange
         var (tools, _) = await CreateToolsWithStateAsync();
-        AIFunction getMode = GetTool(tools, "AgentMode_Get");
+        AIFunction getMode = GetTool(tools, "mode_get");
 
         // Act
         object? result = await getMode.InvokeAsync(new AIFunctionArguments());
@@ -148,8 +148,8 @@ public class AgentModeProviderTests
     {
         // Arrange
         var (tools, _) = await CreateToolsWithStateAsync();
-        AIFunction setMode = GetTool(tools, "AgentMode_Set");
-        AIFunction getMode = GetTool(tools, "AgentMode_Get");
+        AIFunction setMode = GetTool(tools, "mode_set");
+        AIFunction getMode = GetTool(tools, "mode_get");
 
         // Act
         await setMode.InvokeAsync(new AIFunctionArguments() { ["mode"] = "execute" });
@@ -236,7 +236,7 @@ public class AgentModeProviderTests
 
         // Act
         AIContext result = await provider.InvokingAsync(context);
-        AIFunction getMode = GetTool(result.Tools!, "AgentMode_Get");
+        AIFunction getMode = GetTool(result.Tools!, "mode_get");
         object? modeResult = await getMode.InvokeAsync(new AIFunctionArguments());
 
         // Assert
@@ -264,12 +264,12 @@ public class AgentModeProviderTests
 
         // Act — first invocation changes mode
         AIContext result1 = await provider.InvokingAsync(context);
-        AIFunction setMode = GetTool(result1.Tools!, "AgentMode_Set");
+        AIFunction setMode = GetTool(result1.Tools!, "mode_set");
         await setMode.InvokeAsync(new AIFunctionArguments() { ["mode"] = "execute" });
 
         // Second invocation should see the updated mode
         AIContext result2 = await provider.InvokingAsync(context);
-        AIFunction getMode = GetTool(result2.Tools!, "AgentMode_Get");
+        AIFunction getMode = GetTool(result2.Tools!, "mode_get");
         object? modeResult = await getMode.InvokeAsync(new AIFunctionArguments());
 
         // Assert
@@ -579,7 +579,7 @@ public class AgentModeProviderTests
 
         // First call to initialize
         AIContext result1 = await provider.InvokingAsync(context);
-        AIFunction setMode = GetTool(result1.Tools!, "AgentMode_Set");
+        AIFunction setMode = GetTool(result1.Tools!, "mode_set");
 
         // Change mode via the tool (agent-initiated)
         await setMode.InvokeAsync(new AIFunctionArguments() { ["mode"] = "execute" });

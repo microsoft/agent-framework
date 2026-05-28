@@ -1277,6 +1277,121 @@ class CompactionProvider(ContextProvider):
         # whether excluded messages are loaded on the next turn.
 
 
+class ContextWindowCompactionStrategy:
+    """Token-budget compaction derived from a model's context window size.
+
+    Computes an input budget from the model's context window and output token
+    limits, then applies a two-phase compaction pipeline:
+
+    1. **Tool result eviction** — collapses older tool-call groups into summaries
+       when included tokens exceed ``tool_eviction_threshold`` of the input budget.
+    2. **Truncation** — removes oldest non-system groups when included tokens
+       exceed ``truncation_threshold`` of the input budget.
+
+    The class uses two independent :class:`TokenBudgetComposedStrategy`
+    instances — one per phase — so each fires only when its own threshold
+    is exceeded.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ContextWindowCompactionStrategy, CompactionProvider
+
+            strategy = ContextWindowCompactionStrategy(
+                max_context_window_tokens=128_000,
+                max_output_tokens=16_384,
+            )
+            provider = CompactionProvider(before_strategy=strategy)
+    """
+
+    DEFAULT_TOOL_EVICTION_THRESHOLD: float = 0.5
+    """Default fraction of input budget at which tool result eviction triggers."""
+
+    DEFAULT_TRUNCATION_THRESHOLD: float = 0.8
+    """Default fraction of input budget at which truncation triggers."""
+
+    def __init__(
+        self,
+        *,
+        max_context_window_tokens: int,
+        max_output_tokens: int,
+        tokenizer: TokenizerProtocol | None = None,
+        tool_eviction_threshold: float = DEFAULT_TOOL_EVICTION_THRESHOLD,
+        truncation_threshold: float = DEFAULT_TRUNCATION_THRESHOLD,
+        keep_last_tool_call_groups: int = 4,
+    ) -> None:
+        """Create a context-window compaction strategy.
+
+        Keyword Args:
+            max_context_window_tokens: The model's maximum context window size
+                in tokens (e.g. 128,000).
+            max_output_tokens: The model's maximum output tokens per response
+                (e.g. 16,384).
+            tokenizer: Token counter for measuring message sizes. Defaults to
+                :class:`CharacterEstimatorTokenizer` (4 chars/token heuristic).
+            tool_eviction_threshold: Fraction of input budget (0.0, 1.0] at
+                which tool result eviction triggers. Defaults to 0.5.
+            truncation_threshold: Fraction of input budget (0.0, 1.0] at which
+                truncation triggers. Must be ≥ ``tool_eviction_threshold``.
+                Defaults to 0.8.
+            keep_last_tool_call_groups: Number of most recent tool-call groups
+                to retain verbatim during tool eviction. Older groups are
+                collapsed into summaries. Defaults to 4.
+
+        Raises:
+            ValueError: If thresholds are out of range or inconsistent.
+        """
+        if max_context_window_tokens <= 0:
+            raise ValueError("max_context_window_tokens must be positive.")
+        if max_output_tokens < 0 or max_output_tokens >= max_context_window_tokens:
+            raise ValueError("max_output_tokens must be >= 0 and < max_context_window_tokens.")
+        if not (0.0 < tool_eviction_threshold <= 1.0):
+            raise ValueError("tool_eviction_threshold must be in (0.0, 1.0].")
+        if not (0.0 < truncation_threshold <= 1.0):
+            raise ValueError("truncation_threshold must be in (0.0, 1.0].")
+        if truncation_threshold < tool_eviction_threshold:
+            raise ValueError("truncation_threshold must be >= tool_eviction_threshold.")
+
+        resolved_tokenizer = tokenizer or CharacterEstimatorTokenizer()
+        input_budget = max_context_window_tokens - max_output_tokens
+        tool_eviction_tokens = int(input_budget * tool_eviction_threshold)
+        truncation_tokens = int(input_budget * truncation_threshold)
+
+        self.max_context_window_tokens = max_context_window_tokens
+        self.max_output_tokens = max_output_tokens
+        self.input_budget_tokens = input_budget
+        self.tool_eviction_threshold = tool_eviction_threshold
+        self.truncation_threshold = truncation_threshold
+
+        self._tool_eviction = TokenBudgetComposedStrategy(
+            token_budget=tool_eviction_tokens,
+            tokenizer=resolved_tokenizer,
+            strategies=[
+                ToolResultCompactionStrategy(keep_last_tool_call_groups=keep_last_tool_call_groups),
+            ],
+        )
+        self._truncation = TokenBudgetComposedStrategy(
+            token_budget=truncation_tokens,
+            tokenizer=resolved_tokenizer,
+            strategies=[
+                TruncationStrategy(
+                    max_n=truncation_tokens,
+                    compact_to=tool_eviction_tokens,
+                    tokenizer=resolved_tokenizer,
+                ),
+            ],
+        )
+
+    async def __call__(self, messages: list[Message]) -> bool:
+        """Apply the two-phase compaction pipeline.
+
+        Returns:
+            True if compaction changed message inclusion; otherwise False.
+        """
+        changed = await self._tool_eviction(messages)
+        return (await self._truncation(messages)) or changed
+
+
 __all__ = [
     "COMPACTION_STATE_KEY",
     "EXCLUDED_KEY",
@@ -1293,6 +1408,7 @@ __all__ = [
     "CharacterEstimatorTokenizer",
     "CompactionProvider",
     "CompactionStrategy",
+    "ContextWindowCompactionStrategy",
     "GroupKind",
     "SelectiveToolCallCompactionStrategy",
     "SlidingWindowStrategy",

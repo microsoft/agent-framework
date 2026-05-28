@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using OpenAI.Responses;
 
 #pragma warning disable OPENAI001
@@ -27,7 +26,6 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <c>FoundryAITool.CreateOpenApiTool(definition)</c>
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class FoundryAITool
 {
     /// <summary>
