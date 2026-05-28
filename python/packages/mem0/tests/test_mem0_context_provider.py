@@ -177,8 +177,8 @@ class TestBeforeRun:
         call_kwargs = mock_mem0_client.search.call_args.kwargs
         assert call_kwargs["query"] == "Hello\nWorld"
 
-    async def test_oss_client_passes_direct_kwargs(self, mock_oss_mem0_client: AsyncMock) -> None:
-        """OSS AsyncMemory client should receive user_id as direct kwarg, not in filters."""
+    async def test_oss_client_passes_filters_dict(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS AsyncMemory client should receive entity IDs in a filters dict (mem0 >=2.0)."""
         mock_oss_mem0_client.search.return_value = [{"memory": "User likes Python"}]
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1")
         session = AgentSession(session_id="test-session")
@@ -190,11 +190,11 @@ class TestBeforeRun:
 
         call_kwargs = mock_oss_mem0_client.search.call_args.kwargs
         assert call_kwargs["query"] == "Hello"
-        assert call_kwargs["user_id"] == "u1"
-        assert "filters" not in call_kwargs
+        assert call_kwargs["filters"] == {"user_id": "u1"}
+        assert "user_id" not in call_kwargs
 
     async def test_oss_client_all_scoping_params(self, mock_oss_mem0_client: AsyncMock) -> None:
-        """OSS client with all scoping parameters passes them as direct kwargs."""
+        """OSS client passes user_id/agent_id in filters; app_id is dropped (OSS has no app_id entity)."""
         mock_oss_mem0_client.search.return_value = []
         provider = Mem0ContextProvider(
             source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
@@ -207,9 +207,22 @@ class TestBeforeRun:
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_oss_mem0_client.search.call_args.kwargs
-        assert call_kwargs["user_id"] == "u1"
-        assert call_kwargs["agent_id"] == "a1"
-        assert "filters" not in call_kwargs
+        assert call_kwargs["filters"] == {"user_id": "u1", "agent_id": "a1"}
+        assert "app_id" not in call_kwargs["filters"]
+        assert "user_id" not in call_kwargs
+
+    async def test_oss_client_rejects_application_id_only(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client with only application_id set: before_run raises and search is never called."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, application_id="app1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            await provider.before_run(
+                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            )  # type: ignore[arg-type]
+
+        mock_oss_mem0_client.search.assert_not_awaited()
 
     async def test_platform_client_passes_filters_dict(self, mock_mem0_client: AsyncMock) -> None:
         """Platform AsyncMemoryClient should receive scoping params in a filters dict."""
@@ -226,6 +239,22 @@ class TestBeforeRun:
         assert call_kwargs["query"] == "Hello"
         assert "filters" in call_kwargs
         assert call_kwargs["filters"]["user_id"] == "u1"
+
+    async def test_platform_client_keeps_app_id(self, mock_mem0_client: AsyncMock) -> None:
+        """Platform AsyncMemoryClient keeps app_id in filters (it is a recognized Platform entity)."""
+        mock_mem0_client.search.return_value = []
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", application_id="app1"
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        call_kwargs = mock_mem0_client.search.call_args.kwargs
+        assert call_kwargs["filters"] == {"user_id": "u1", "app_id": "app1"}
 
 
 # -- after_run tests -----------------------------------------------------------
@@ -356,6 +385,17 @@ class TestValidateFilters:
     def test_passes_with_application_id(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, application_id="app1")
         provider._validate_filters()
+
+    def test_oss_application_id_only_raises(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client with only application_id is rejected (application_id is Platform-only)."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, application_id="app1")
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            provider._validate_filters()
+
+    def test_oss_passes_with_user_id(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client with user_id is accepted."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1")
+        provider._validate_filters()  # should not raise
 
 
 # -- _build_filters tests -----------------------------------------------------
