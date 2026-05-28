@@ -85,25 +85,58 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
     /// </exception>
     private static AIFunctionArguments ConvertToFunctionArguments(JsonElement? arguments)
     {
-        if (arguments is null ||
-            arguments.Value.ValueKind == JsonValueKind.Null ||
-            arguments.Value.ValueKind == JsonValueKind.Undefined)
+        if (arguments is null)
         {
             return [];
         }
 
-        if (arguments.Value.ValueKind != JsonValueKind.Object)
+        var argumentElement = arguments.Value;
+        if (argumentElement.ValueKind == JsonValueKind.Null ||
+            argumentElement.ValueKind == JsonValueKind.Undefined)
+        {
+            return [];
+        }
+
+        using JsonDocument? parsedArguments = argumentElement.ValueKind == JsonValueKind.String
+            ? ParseStringArguments(argumentElement)
+            : null;
+
+        if (parsedArguments is not null)
+        {
+            argumentElement = parsedArguments.RootElement;
+        }
+
+        if (argumentElement.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException(
-                $"Inline skill scripts expect arguments as a JSON object but received a JSON element of kind '{arguments.Value.ValueKind}'.");
+                $"Inline skill scripts expect arguments as a JSON object but received a JSON element of kind '{argumentElement.ValueKind}'.");
         }
 
         var dict = new Dictionary<string, object?>();
-        foreach (var property in arguments.Value.EnumerateObject())
+        foreach (var property in argumentElement.EnumerateObject())
         {
-            dict[property.Name] = property.Value;
+            dict[property.Name] = property.Value.Clone();
         }
 
         return new AIFunctionArguments(dict);
+    }
+
+    private static JsonDocument? ParseStringArguments(JsonElement argumentElement)
+    {
+        var argumentText = argumentElement.GetString();
+        if (string.IsNullOrWhiteSpace(argumentText))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonDocument.Parse(argumentText);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException(
+                "Inline skill scripts expect string arguments to contain a JSON object.", ex);
+        }
     }
 }
