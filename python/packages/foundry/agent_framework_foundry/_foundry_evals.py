@@ -1349,6 +1349,104 @@ class FoundryEvals:
 
         return _generation_job_to_ref(completed, category=category)
 
+    @classmethod
+    @experimental(feature_id=ExperimentalFeature.EVALS)
+    async def create_rubric_evaluator(
+        cls,
+        *,
+        project_client: AIProjectClient,
+        name: str,
+        dimensions: Sequence[RubricDimension],
+        category: Literal["quality", "safety"] = "quality",
+        pass_threshold: float | None = None,
+        display_name: str | None = None,
+        description: str | None = None,
+        tags: dict[str, str] | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> GeneratedEvaluatorRef:
+        """Register a rubric evaluator from caller-supplied dimensions.
+
+        This is the *manual* counterpart to :meth:`generate_rubric` and
+        maps directly to ``project_client.beta.evaluators.create_version``.
+        Use it to bring a rubric you authored elsewhere (e.g. authored
+        from an agent's local context, ported from another framework, or
+        hand-tuned) into Foundry as a versioned ``EvaluatorVersion``
+        that any subsequent ``evaluators=`` list can reference via the
+        returned :class:`GeneratedEvaluatorRef`.
+
+        The service auto-attaches a non-editable residual dimension
+        (``general_quality`` for ``category="quality"``,
+        ``general_policy_compliance`` for ``"safety"``) — do not include
+        it in ``dimensions``.
+
+        Keyword Args:
+            project_client: Async ``AIProjectClient`` for the target
+                Foundry project.
+            name: Stable evaluator name (e.g.
+                ``"reservation-agent-policy-v1"``). A new version is
+                allocated on each call.
+            dimensions: One or more :class:`RubricDimension` instances
+                describing the scoring blueprint. Each dimension's
+                ``id`` must be unique; ``weight`` must be in ``[1, 10]``.
+            category: ``"quality"`` (default) or ``"safety"``.
+            pass_threshold: Optional aggregate pass threshold on the
+                normalized 0.0-1.0 scale. Defaults to the service-side
+                default of ``0.5`` when omitted.
+            display_name: Optional human-readable name shown in the
+                Foundry portal.
+            description: Optional asset description.
+            tags: Optional asset tags.
+            metadata: Optional free-form metadata persisted with the
+                evaluator definition.
+
+        Returns:
+            A pinned :class:`GeneratedEvaluatorRef` referring to the
+            newly created evaluator version.
+
+        Raises:
+            ValueError: If ``dimensions`` is empty, contains duplicate
+                ids, or contains a weight outside ``[1, 10]``.
+            NotImplementedError: If the installed ``azure-ai-projects``
+                version does not expose the manual rubric APIs.
+        """
+        if category not in ("quality", "safety"):
+            raise ValueError(f"category must be 'quality' or 'safety', got {category!r}.")
+        if pass_threshold is not None and not (0.0 <= pass_threshold <= 1.0):
+            raise ValueError(f"pass_threshold must be in [0.0, 1.0] when set (got {pass_threshold!r}).")
+        if not dimensions:
+            raise ValueError("create_rubric_evaluator requires at least one dimension.")
+
+        try:
+            sdk_types = _import_manual_rubric_sdk_types()
+        except _RubricSdkUnavailableError as exc:
+            raise NotImplementedError(str(exc)) from exc
+
+        sdk_dimensions = _to_sdk_dimensions(dimensions, sdk_types.Dimension)
+        definition_kwargs: dict[str, Any] = {"dimensions": sdk_dimensions}
+        if pass_threshold is not None:
+            definition_kwargs["pass_threshold"] = pass_threshold
+        definition = sdk_types.RubricBasedEvaluatorDefinition(**definition_kwargs)
+
+        version_kwargs: dict[str, Any] = {
+            "evaluator_type": "custom",
+            "categories": [category],
+            "definition": definition,
+        }
+        if display_name is not None:
+            version_kwargs["display_name"] = display_name
+        if description is not None:
+            version_kwargs["description"] = description
+        if tags is not None:
+            version_kwargs["tags"] = tags
+        if metadata is not None:
+            version_kwargs["metadata"] = metadata
+
+        evaluator_version = sdk_types.EvaluatorVersion(**version_kwargs)
+        evaluators_ops = _get_beta_evaluators(project_client)
+        created = await evaluators_ops.create_version(name, evaluator_version=evaluator_version)
+
+        return _evaluator_version_to_ref(created, fallback_name=name, category=category)
+
 
 _TERMINAL_GENERATION_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled", "canceled"})
 
@@ -1369,12 +1467,31 @@ class _GenerationSdkTypes:
     TracesSource: Any | None
 
 
+@dataclass(frozen=True)
+class _ManualRubricSdkTypes:
+    """Resolved SDK type handles for manual rubric-evaluator creation."""
+
+    EvaluatorVersion: Any
+    RubricBasedEvaluatorDefinition: Any
+    Dimension: Any
+
+
 _RUBRIC_SDK_MISSING_MSG = (
     "FoundryEvals.generate_rubric requires the rubric-evaluator generation APIs "
     "from azure-ai-projects (currently 2.3.0a* on the Azure SDK Python dev feed). "
     "Install a build that exposes "
     "`azure.ai.projects.models.EvaluatorGenerationInputs` and "
     "`AIProjectClient.beta.evaluators.create_generation_job`."
+)
+
+
+_MANUAL_RUBRIC_SDK_MISSING_MSG = (
+    "FoundryEvals.create_rubric_evaluator requires the manual rubric-evaluator "
+    "APIs from azure-ai-projects (currently 2.3.0a* on the Azure SDK Python dev "
+    "feed). Install a build that exposes "
+    "`azure.ai.projects.models.RubricBasedEvaluatorDefinition`, "
+    "`azure.ai.projects.models.Dimension`, and "
+    "`AIProjectClient.beta.evaluators.create_version`."
 )
 
 
@@ -1403,6 +1520,116 @@ def _import_generation_sdk_types() -> _GenerationSdkTypes:
         AgentSource=agent_cls,
         DatasetSource=dataset_cls,
         TracesSource=traces_cls,
+    )
+
+
+def _import_manual_rubric_sdk_types() -> _ManualRubricSdkTypes:
+    """Lazily resolve the manual rubric-evaluator SDK types from azure-ai-projects."""
+    try:
+        from azure.ai.projects import models as _models  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise _RubricSdkUnavailableError(_MANUAL_RUBRIC_SDK_MISSING_MSG) from exc
+
+    models_mod: Any = _models
+    version_cls: Any = getattr(models_mod, "EvaluatorVersion", None)
+    definition_cls: Any = getattr(models_mod, "RubricBasedEvaluatorDefinition", None)
+    dimension_cls: Any = getattr(models_mod, "Dimension", None)
+    if version_cls is None or definition_cls is None or dimension_cls is None:
+        raise _RubricSdkUnavailableError(_MANUAL_RUBRIC_SDK_MISSING_MSG)
+
+    return _ManualRubricSdkTypes(
+        EvaluatorVersion=version_cls,
+        RubricBasedEvaluatorDefinition=definition_cls,
+        Dimension=dimension_cls,
+    )
+
+
+def _to_sdk_dimensions(
+    dimensions: Sequence[RubricDimension],
+    dimension_cls: Any,
+) -> list[Any]:
+    """Translate user-facing ``RubricDimension`` instances to SDK ``Dimension`` models.
+
+    The agent-framework type uses ``id`` (matching the runtime output
+    schema and competing frameworks); the SDK input model uses
+    ``dimension_id`` for the editable identifier.
+    """
+    if not dimensions:
+        raise ValueError("create_rubric_evaluator requires at least one dimension.")
+    seen: set[str] = set()
+    sdk_dims: list[Any] = []
+    for dim in dimensions:
+        if not dim.id:
+            raise ValueError("RubricDimension.id must be a non-empty string.")
+        if not dim.description:
+            raise ValueError(f"RubricDimension(id={dim.id!r}).description must be non-empty.")
+        if not isinstance(dim.weight, int) or not (1 <= dim.weight <= 10):
+            raise ValueError(f"RubricDimension(id={dim.id!r}).weight must be an int in [1, 10] (got {dim.weight!r}).")
+        if dim.id in seen:
+            raise ValueError(f"Duplicate RubricDimension.id={dim.id!r}; ids must be unique within a rubric.")
+        seen.add(dim.id)
+        kwargs: dict[str, Any] = {
+            "dimension_id": dim.id,
+            "description": dim.description,
+            "weight": dim.weight,
+        }
+        if dim.always_applicable:
+            kwargs["always_applicable"] = True
+        sdk_dims.append(dimension_cls(**kwargs))
+    return sdk_dims
+
+
+def _evaluator_version_to_ref(
+    created: Any,
+    *,
+    fallback_name: str,
+    category: Literal["quality", "safety"],
+) -> GeneratedEvaluatorRef:
+    """Translate a persisted ``EvaluatorVersion`` to a :class:`GeneratedEvaluatorRef`.
+
+    Used by both the generation-job path and the manual ``create_version``
+    path so callers see a uniform pinned reference regardless of how the
+    evaluator was authored.
+    """
+    ev_name = getattr(created, "name", None) or fallback_name
+    ev_version = getattr(created, "version", None)
+    if ev_version is None:
+        raise RuntimeError("Created evaluator version is missing a version identifier.")
+
+    definition: Any = getattr(created, "definition", None)
+    dimensions: tuple[RubricDimension, ...] | None = None
+    raw_dims: Any = getattr(definition, "dimensions", None) if definition is not None else None
+    if raw_dims:
+        parsed: list[RubricDimension] = []
+        for entry in raw_dims:
+            dim_id = getattr(entry, "dimension_id", None) or getattr(entry, "id", None)
+            try:
+                parsed.append(
+                    RubricDimension(
+                        id=str(dim_id or ""),
+                        description=str(getattr(entry, "description", "") or ""),
+                        weight=int(getattr(entry, "weight", 0) or 0),
+                        always_applicable=bool(getattr(entry, "always_applicable", False)),
+                    )
+                )
+            except (TypeError, ValueError):
+                logger.debug("Skipping malformed dimension on persisted evaluator", exc_info=True)
+        if parsed:
+            dimensions = tuple(parsed)
+
+    pass_threshold: float | None = None
+    raw_threshold: Any = getattr(definition, "pass_threshold", None) if definition is not None else None
+    if isinstance(raw_threshold, (int, float)):
+        pass_threshold = float(raw_threshold)
+
+    return GeneratedEvaluatorRef(
+        name=str(ev_name),
+        version=str(ev_version),
+        category=category,
+        display_name=getattr(created, "display_name", None),
+        description=getattr(created, "description", None),
+        dimensions=dimensions,
+        pass_threshold=pass_threshold,
     )
 
 

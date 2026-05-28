@@ -27,6 +27,7 @@ from openai import AsyncOpenAI
 
 from agent_framework_foundry._foundry_evals import (
     FoundryEvals,
+    RubricDimension,
     _build_item_schema,
     _build_testing_criteria,
     _extract_per_evaluator,
@@ -3530,3 +3531,243 @@ class TestGenerateRubricE2E:
 
         job_cls.assert_called_once_with(inputs="sdk-inputs")
         evaluators_ops.create_generation_job.assert_awaited_once_with(job="sdk-job", operation_id="op-123")
+
+
+# ---------------------------------------------------------------------------
+# FoundryEvals.create_rubric_evaluator — manual rubric registration
+# ---------------------------------------------------------------------------
+
+
+class TestCreateRubricEvaluatorValidation:
+    """Argument validation for ``FoundryEvals.create_rubric_evaluator``."""
+
+    async def test_rejects_empty_dimensions(self) -> None:
+        with pytest.raises(ValueError, match="at least one dimension"):
+            await FoundryEvals.create_rubric_evaluator(
+                project_client=MagicMock(),
+                name="x",
+                dimensions=[],
+            )
+
+    async def test_rejects_invalid_category(self) -> None:
+        with pytest.raises(ValueError, match="category"):
+            await FoundryEvals.create_rubric_evaluator(
+                project_client=MagicMock(),
+                name="x",
+                dimensions=[RubricDimension(id="a", description="d", weight=5)],
+                category="bogus",  # type: ignore[arg-type]
+            )
+
+    async def test_rejects_out_of_range_pass_threshold(self) -> None:
+        with pytest.raises(ValueError, match="pass_threshold"):
+            await FoundryEvals.create_rubric_evaluator(
+                project_client=MagicMock(),
+                name="x",
+                dimensions=[RubricDimension(id="a", description="d", weight=5)],
+                pass_threshold=1.5,
+            )
+
+    async def test_rejects_duplicate_dimension_ids(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework_foundry import _foundry_evals as fm
+
+        sdk = fm._ManualRubricSdkTypes(
+            EvaluatorVersion=MagicMock(),
+            RubricBasedEvaluatorDefinition=MagicMock(),
+            Dimension=MagicMock(),
+        )
+        monkeypatch.setattr(fm, "_import_manual_rubric_sdk_types", lambda: sdk)
+        with pytest.raises(ValueError, match="Duplicate"):
+            await FoundryEvals.create_rubric_evaluator(
+                project_client=MagicMock(),
+                name="x",
+                dimensions=[
+                    RubricDimension(id="dup", description="d1", weight=5),
+                    RubricDimension(id="dup", description="d2", weight=3),
+                ],
+            )
+
+    async def test_rejects_weight_out_of_range(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework_foundry import _foundry_evals as fm
+
+        sdk = fm._ManualRubricSdkTypes(
+            EvaluatorVersion=MagicMock(),
+            RubricBasedEvaluatorDefinition=MagicMock(),
+            Dimension=MagicMock(),
+        )
+        monkeypatch.setattr(fm, "_import_manual_rubric_sdk_types", lambda: sdk)
+        with pytest.raises(ValueError, match="weight"):
+            await FoundryEvals.create_rubric_evaluator(
+                project_client=MagicMock(),
+                name="x",
+                dimensions=[RubricDimension(id="a", description="d", weight=0)],
+            )
+
+    async def test_rejects_empty_description(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework_foundry import _foundry_evals as fm
+
+        sdk = fm._ManualRubricSdkTypes(
+            EvaluatorVersion=MagicMock(),
+            RubricBasedEvaluatorDefinition=MagicMock(),
+            Dimension=MagicMock(),
+        )
+        monkeypatch.setattr(fm, "_import_manual_rubric_sdk_types", lambda: sdk)
+        with pytest.raises(ValueError, match="description"):
+            await FoundryEvals.create_rubric_evaluator(
+                project_client=MagicMock(),
+                name="x",
+                dimensions=[RubricDimension(id="a", description="", weight=5)],
+            )
+
+
+class TestCreateRubricEvaluatorSdkMissing:
+    async def test_raises_not_implemented_when_sdk_lacks_types(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework_foundry import _foundry_evals as fm
+
+        def _raise() -> Any:
+            raise fm._RubricSdkUnavailableError("nope")
+
+        monkeypatch.setattr(fm, "_import_manual_rubric_sdk_types", _raise)
+        with pytest.raises(NotImplementedError, match="nope"):
+            await FoundryEvals.create_rubric_evaluator(
+                project_client=MagicMock(),
+                name="x",
+                dimensions=[RubricDimension(id="a", description="d", weight=5)],
+            )
+
+
+class TestCreateRubricEvaluatorE2E:
+    """End-to-end happy path for create_rubric_evaluator with mocked SDK."""
+
+    async def test_calls_create_version_with_rubric_definition(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework_foundry import _foundry_evals as fm
+
+        dimension_cls = MagicMock(name="Dimension", side_effect=lambda **kw: ("dim", kw))
+        definition_cls = MagicMock(name="RubricBasedEvaluatorDefinition", side_effect=lambda **kw: ("def", kw))
+        version_cls = MagicMock(name="EvaluatorVersion", side_effect=lambda **kw: ("ver", kw))
+
+        sdk = fm._ManualRubricSdkTypes(
+            EvaluatorVersion=version_cls,
+            RubricBasedEvaluatorDefinition=definition_cls,
+            Dimension=dimension_cls,
+        )
+        monkeypatch.setattr(fm, "_import_manual_rubric_sdk_types", lambda: sdk)
+
+        created_definition = MagicMock()
+        created_definition.dimensions = [
+            MagicMock(dimension_id="intent", description="d1", weight=9, always_applicable=False),
+            MagicMock(dimension_id="general_quality", description="g", weight=5, always_applicable=True),
+        ]
+        created_definition.pass_threshold = 0.7
+        created_version = MagicMock(
+            display_name="DN",
+            description="hand-authored",
+        )
+        created_version.name = "policy-eval"
+        created_version.version = "3"
+        created_version.definition = created_definition
+
+        evaluators_ops = MagicMock()
+        evaluators_ops.create_version = AsyncMock(return_value=created_version)
+        project_client = MagicMock()
+        project_client.beta = MagicMock(evaluators=evaluators_ops)
+
+        ref = await FoundryEvals.create_rubric_evaluator(
+            project_client=project_client,
+            name="policy-eval",
+            dimensions=[
+                RubricDimension(id="intent", description="d1", weight=9),
+                RubricDimension(id="general_quality", description="g", weight=5, always_applicable=True),
+            ],
+            category="quality",
+            pass_threshold=0.7,
+            display_name="DN",
+            description="hand-authored",
+            tags={"team": "agents"},
+            metadata={"source": "manual"},
+        )
+
+        # Returned ref carries the persisted (name, version) and snapshot of dimensions.
+        assert ref.name == "policy-eval"
+        assert ref.version == "3"
+        assert ref.category == "quality"
+        assert ref.pass_threshold == 0.7
+        assert ref.dimensions is not None
+        assert [d.id for d in ref.dimensions] == ["intent", "general_quality"]
+        assert ref.dimensions[1].always_applicable is True
+
+        # Dimension construction used dimension_id, included always_applicable only when True.
+        assert dimension_cls.call_count == 2
+        first_kwargs = dimension_cls.call_args_list[0].kwargs
+        assert first_kwargs == {"dimension_id": "intent", "description": "d1", "weight": 9}
+        second_kwargs = dimension_cls.call_args_list[1].kwargs
+        assert second_kwargs == {
+            "dimension_id": "general_quality",
+            "description": "g",
+            "weight": 5,
+            "always_applicable": True,
+        }
+
+        # Definition construction forwarded pass_threshold and the two sdk dimensions.
+        definition_cls.assert_called_once()
+        def_kwargs = definition_cls.call_args.kwargs
+        assert def_kwargs["pass_threshold"] == 0.7
+        assert def_kwargs["dimensions"] == [
+            ("dim", {"dimension_id": "intent", "description": "d1", "weight": 9}),
+            (
+                "dim",
+                {
+                    "dimension_id": "general_quality",
+                    "description": "g",
+                    "weight": 5,
+                    "always_applicable": True,
+                },
+            ),
+        ]
+
+        # EvaluatorVersion construction passed evaluator_type="custom", category list, and optionals.
+        version_cls.assert_called_once()
+        ver_kwargs = version_cls.call_args.kwargs
+        assert ver_kwargs["evaluator_type"] == "custom"
+        assert ver_kwargs["categories"] == ["quality"]
+        assert ver_kwargs["display_name"] == "DN"
+        assert ver_kwargs["description"] == "hand-authored"
+        assert ver_kwargs["tags"] == {"team": "agents"}
+        assert ver_kwargs["metadata"] == {"source": "manual"}
+
+        # SDK ops invoked with name + evaluator_version kwarg.
+        evaluators_ops.create_version.assert_awaited_once()
+        call = evaluators_ops.create_version.await_args
+        assert call.args == ("policy-eval",)
+        assert "evaluator_version" in call.kwargs
+
+    async def test_omits_pass_threshold_when_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework_foundry import _foundry_evals as fm
+
+        dimension_cls = MagicMock(side_effect=lambda **kw: kw)
+        definition_cls = MagicMock(side_effect=lambda **kw: kw)
+        version_cls = MagicMock(side_effect=lambda **kw: kw)
+
+        sdk = fm._ManualRubricSdkTypes(
+            EvaluatorVersion=version_cls,
+            RubricBasedEvaluatorDefinition=definition_cls,
+            Dimension=dimension_cls,
+        )
+        monkeypatch.setattr(fm, "_import_manual_rubric_sdk_types", lambda: sdk)
+
+        created = MagicMock(display_name=None, description=None)
+        created.name = "x"
+        created.version = "1"
+        created.definition = MagicMock(dimensions=[], pass_threshold=None)
+
+        evaluators_ops = MagicMock()
+        evaluators_ops.create_version = AsyncMock(return_value=created)
+        project_client = MagicMock()
+        project_client.beta = MagicMock(evaluators=evaluators_ops)
+
+        ref = await FoundryEvals.create_rubric_evaluator(
+            project_client=project_client,
+            name="x",
+            dimensions=[RubricDimension(id="a", description="d", weight=5)],
+        )
+        assert ref.pass_threshold is None
+        assert "pass_threshold" not in definition_cls.call_args.kwargs
