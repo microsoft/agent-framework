@@ -25,7 +25,7 @@ import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypedDict, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
 from agent_framework import (
     AgentResponse,
@@ -760,6 +760,52 @@ class ChannelPush(Protocol):
     async def push(self, identity: ChannelIdentity, payload: HostedRunResult[Any]) -> None: ...
 
 
+async def apply_channel_response_hook(
+    channel: Channel | ChannelPush,
+    result: HostedRunResult[Any],
+    *,
+    request: ChannelRequest,
+    originating: bool,
+    destination_identity: ChannelIdentity | None = None,
+    is_echo: bool = False,
+    clone: bool = False,
+) -> HostedRunResult[Any]:
+    """Apply a channel's optional response hook with the standard context.
+
+    Channels and the host call this helper when they need to shape a
+    :class:`HostedRunResult` for one destination. The helper centralizes the
+    response-hook convention: hooks are discovered from a duck-typed
+    ``response_hook`` attribute, called through :func:`apply_response_hook`,
+    and receive a :class:`ChannelResponseContext` that identifies the channel,
+    destination identity, originating-vs-push phase, and echo phase.
+
+    Args:
+        channel: Channel whose ``response_hook`` attribute may shape the payload.
+        result: Hosted run result to pass to the hook.
+        request: Originating channel request.
+        originating: Whether this is the originating channel's synchronous reply.
+        destination_identity: Destination identity for non-originating pushes, or
+            ``None`` for originating replies.
+        is_echo: Whether the payload is an echo of the user input.
+        clone: Whether to shallow-clone ``result`` before applying the hook.
+
+    Returns:
+        The original, cloned, or hook-shaped hosted run result.
+    """
+    shaped = result.replace() if clone else result
+    hook = cast(ChannelResponseHook | None, getattr(channel, "response_hook", None))
+    if not callable(hook):
+        return shaped
+    context = ChannelResponseContext(
+        request=request,
+        channel_name=channel.name,
+        destination_identity=destination_identity,
+        originating=originating,
+        is_echo=is_echo,
+    )
+    return await apply_response_hook(hook, shaped, context=context)
+
+
 # --------------------------------------------------------------------------- #
 # Durable task runner — pluggable seam for non-originating push fan-out and
 # (in v1 fast-follow) background runs. See spec §"Durable task runner".
@@ -910,6 +956,7 @@ __all__ = [
     "RetryPolicy",
     "TaskHandle",
     "TaskStatus",
+    "apply_channel_response_hook",
     "apply_response_hook",
     "apply_run_hook",
 ]

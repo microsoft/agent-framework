@@ -92,6 +92,7 @@ agent-framework-hosting-invocations = { workspace = true }
 agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hosting-activity-protocol = { workspace = true }
 agent-framework-hosting-entra = { workspace = true }
+agent-framework-hosting-discord = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
