@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
+_SIMPLE_STATE_REFERENCE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
 
 
 @dataclass(frozen=True)
@@ -508,6 +509,10 @@ class DeclarativeWorkflowState:
         formula = self._preprocess_custom_functions(formula)
 
         if Engine is None:
+            handled, value = self._eval_simple_state_reference(formula)
+            if handled:
+                return value
+
             raise RuntimeError(
                 f"PowerFx is not available (dotnet runtime not installed). "
                 f"Expression '={formula[:80]}' cannot be evaluated. "
@@ -551,6 +556,24 @@ class DeclarativeWorkflowState:
             raise
         finally:
             locale.setlocale(locale.LC_NUMERIC, original_numeric_locale)
+
+    def _eval_simple_state_reference(self, formula: str) -> tuple[bool, Any]:
+        formula = formula.strip()
+        if not _SIMPLE_STATE_REFERENCE_RE.fullmatch(formula):
+            return False, None
+
+        if formula.startswith("inputs."):
+            return True, self.get(f"Workflow.Inputs.{formula.removeprefix('inputs.')}")
+
+        if formula.startswith(("Workflow.", "Local.", "System.", "Agent.", "Conversation.")):
+            return True, self.get(formula)
+
+        not_found = object()
+        value = self.get(formula, default=not_found)
+        if value is not not_found:
+            return True, value
+
+        return False, None
 
     def _eval_custom_function(self, formula: str) -> Any | None:
         """Handle custom functions not supported by the Python PowerFx library.

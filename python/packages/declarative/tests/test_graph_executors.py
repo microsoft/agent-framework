@@ -1314,6 +1314,46 @@ class TestPowerFxConditionalImport:
         finally:
             base_mod.Engine = original_engine
 
+    def test_eval_handles_simple_state_references_without_engine(self):
+        import agent_framework_declarative._workflows._declarative_base as base_mod
+
+        mock_state = MagicMock()
+        mock_state._data: dict[str, Any] = {}
+        mock_state.get = MagicMock(side_effect=lambda k, d=None: mock_state._data.get(k, d))
+        mock_state.set = MagicMock(side_effect=lambda k, v: mock_state._data.__setitem__(k, v))
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"age": 25})
+        state.set("Local.status", "ready")
+
+        original_engine = base_mod.Engine
+        try:
+            base_mod.Engine = None
+            assert state.eval("=inputs.age") == 25
+            assert state.eval("=Workflow.Inputs.age") == 25
+            assert state.eval("=Local.status") == "ready"
+        finally:
+            base_mod.Engine = original_engine
+
+    def test_eval_still_requires_engine_for_complex_expressions(self):
+        import agent_framework_declarative._workflows._declarative_base as base_mod
+
+        mock_state = MagicMock()
+        mock_state._data: dict[str, Any] = {}
+        mock_state.get = MagicMock(side_effect=lambda k, d=None: mock_state._data.get(k, d))
+        mock_state.set = MagicMock(side_effect=lambda k, v: mock_state._data.__setitem__(k, v))
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"age": 25})
+
+        original_engine = base_mod.Engine
+        try:
+            base_mod.Engine = None
+            with pytest.raises(RuntimeError, match="PowerFx is not available"):
+                state.eval("=inputs.age + 1")
+        finally:
+            base_mod.Engine = original_engine
+
     def test_eval_passes_through_plain_strings_without_engine(self):
         """Non-PowerFx strings (no leading '=') should work without Engine."""
         import agent_framework_declarative._workflows._declarative_base as base_mod
