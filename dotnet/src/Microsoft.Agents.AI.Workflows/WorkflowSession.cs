@@ -522,14 +522,18 @@ internal sealed class WorkflowSession : AgentSession
                 case AgentResponseEvent agentResponse:
                     // Under Futures.EnableAgentResponseOutputTaggingAndFiltering=true, mirror
                     // AgentResponseUpdateEvent's behavior: always forward, regardless of the
-                    // _includeWorkflowOutputsInResponse host flag. Under the legacy default,
-                    // keep today's behavior — gated by the include flag.
-                    if ((Futures.EnableAgentResponseOutputTaggingAndFiltering && !agentResponse.IsIntermediate()) ||
-                        (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse))
+                    // _includeWorkflowOutputsInResponse host flag / "intermediate" tag. Under
+                    // the legacy default, keep today's behavior — gated by the include flag.
+                    if (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse)
                     {
                         goto default;
                     }
 
+                    // Either EnableAgentResponseOutputTaggingAndFiltering -- so yield the Response
+                    // regardless of whether it is tagged "intermediate" or whether the
+                    // _includeWorkflowOutputInResponse flag is set. Reason being: The user specifies
+                    // exclusion of an event by enabling filtering and then _not_ marking an Executor
+                    // as an output executor.
                     foreach (ChatMessage message in agentResponse.Response.Messages)
                     {
                         yield return this.CreateUpdate(this.LastResponseId, evt, message);
@@ -544,11 +548,11 @@ internal sealed class WorkflowSession : AgentSession
                         _ => null
                     };
 
-                    // Same gating asymmetry as AgentResponseEvent: intermediate outputs are
-                    // forwarded unconditionally; terminal/untagged outputs require the host
-                    // to opt in via _includeWorkflowOutputsInResponse.
-                    if (updateMessages == null ||
-                        (!output.IsIntermediate() && !this._includeWorkflowOutputsInResponse))
+                    // Same assymetry as with AgentResponseEvent, but there is no EnableFiltering flag
+                    // to consider. If this made it here (and since it is not an AgentResponse[Update]),
+                    // it means it is already been selected as an Output() from the user. Intermediate
+                    // is irrelevant here.
+                    if (updateMessages == null || !this._includeWorkflowOutputsInResponse)
                     {
                         goto default;
                     }
