@@ -98,7 +98,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         http_client: httpx.AsyncClient | None = None,
         auth_interceptor: AuthInterceptor | None = None,
         timeout: float | httpx.Timeout | None = None,
-        supported_protocol_bindings: list[str] | None = None,
+        supported_protocol_bindings: list[Literal["JSONRPC", "GRPC", "HTTP+JSON"] | str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
