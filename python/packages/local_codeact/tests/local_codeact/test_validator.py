@@ -214,6 +214,49 @@ pipe = os.popen('ls')"""
     assert "os.popen" in str(exc_info.value)
 
 
+def test_validate_blocks_os_listdir() -> None:
+    """os.listdir is not in the default allow-list ({environ, path}) and must be rejected."""
+    code = """import os
+entries = os.listdir('/etc')"""
+    with pytest.raises(CodeValidationError) as exc_info:
+        validate_code(code)
+    assert "os.listdir" in str(exc_info.value)
+
+
+def test_validate_blocks_os_open() -> None:
+    """os.open bypasses pathlib mounts and must be rejected by the allow-list."""
+    code = """import os
+fd = os.open('/etc/passwd', 0)"""
+    with pytest.raises(CodeValidationError) as exc_info:
+        validate_code(code)
+    assert "os.open" in str(exc_info.value)
+
+
+def test_validate_blocks_os_getcwd() -> None:
+    """Any os.* attribute outside {environ, path} must be rejected by the allow-list."""
+    code = """import os
+cwd = os.getcwd()"""
+    with pytest.raises(CodeValidationError) as exc_info:
+        validate_code(code)
+    assert "os.getcwd" in str(exc_info.value)
+
+
+def test_validate_custom_allowed_os_attrs() -> None:
+    """Custom allowed_os_attrs replaces the default {environ, path} allow-list."""
+    code = """import os
+entries = os.listdir('/tmp')"""
+    # Default policy rejects.
+    with pytest.raises(CodeValidationError):
+        validate_code(code)
+    # Caller can opt in to a broader allow-list.
+    validate_code(code, allowed_os_attrs={"environ", "path", "listdir"})
+    # And opting in to a narrower allow-list still rejects environ.
+    code_env = "import os\nv = os.environ.get('K')"
+    with pytest.raises(CodeValidationError) as exc_info:
+        validate_code(code_env, allowed_os_attrs={"path"})
+    assert "os.environ" in str(exc_info.value)
+
+
 def test_validate_blocks_globals() -> None:
     """globals() should be blocked."""
     code = "g = globals()"

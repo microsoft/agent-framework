@@ -109,6 +109,31 @@ and output capture; they are not an OS-level filesystem policy.
 
 Only files under `read-write` mounts are captured after execution.
 
+### Virtual mount paths are display labels
+
+Each mount has a `mount_path` (for example `/input`, `/output`) that is used
+**only** for instructions to the model and for tagging captured files in the
+response. The subprocess executes against the real host filesystem and does
+not see a chrooted virtual path. Filesystem isolation comes from the outer
+sandbox (for example a Foundry hosted-agent container); within that sandbox
+the validator and capture rules below provide defense-in-depth so that
+generated code cannot redirect a virtual mount label to data outside the
+configured host directory:
+
+- Mount roots may not themselves be symbolic links — a symlinked `host_path`
+  is rejected so it cannot silently point at another directory.
+- Symbolic links inside a mount (file or directory) are skipped during
+  capture, so a symlink created at runtime cannot leak content from outside
+  the mount root.
+- Hard links inside a mount are skipped during capture — a hardlink whose
+  inode lives outside the mount (for example `ln /etc/passwd
+  /input/loot.txt`) cannot surface protected host data through the mount.
+- During capture every entry's resolved path is required to stay under the
+  mount root, so OS features that bypass `is_symlink()` (junctions, bind
+  mounts) still cannot escape.
+- `mount_path` is normalized to reject `..` segments so the virtual path
+  cannot be crafted to traverse out of the mount in captured-file metadata.
+
 ## Python interpreter and runner
 
 Subprocess mode launches Python as:
@@ -146,8 +171,10 @@ Generated code is validated against AST allow-lists before execution:
   `threading`, `multiprocessing`, and others.
 - **Blocked builtins**: `eval`, `exec`, `compile`, `__import__`, `globals`,
   `locals`, `open`, and others.
-- **Blocked os operations**: `os.system`, `os.exec*`, `os.popen`, `os.fork`,
-  file system modifications outside configured mounts, and others.
+- **`os` attribute allow-list**: only `os.environ` and `os.path` are permitted.
+  Every other `os.<attr>` access (`os.system`, `os.exec*`, `os.popen`,
+  `os.fork`, `os.listdir`, `os.open`, `os.getcwd`, file-system mutations, etc.)
+  is rejected. Override via `allowed_os_attrs` to opt in to a different set.
 
 Validation errors are returned as `Content.from_error` with details about which
 operations are not allowed. This is defense-in-depth only and does not make

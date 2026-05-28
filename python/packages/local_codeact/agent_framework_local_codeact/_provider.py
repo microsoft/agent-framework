@@ -37,6 +37,7 @@ class LocalCodeActProvider(ContextProvider):
         blocked_imports: set[str] | None = None,
         allowed_builtins: set[str] | None = None,
         blocked_builtins: set[str] | None = None,
+        allowed_os_attrs: set[str] | None = None,
     ) -> None:
         """Initialize a local CodeAct context provider.
 
@@ -55,6 +56,8 @@ class LocalCodeActProvider(ContextProvider):
             blocked_imports: Custom blocked imports (replaces defaults).
             allowed_builtins: Custom allowed builtins (replaces defaults).
             blocked_builtins: Custom blocked builtins (replaces defaults).
+            allowed_os_attrs: Custom allowed ``os`` attribute names (replaces the
+                default ``{"environ", "path"}`` allow-list).
         """
         super().__init__(source_id)
         self._execute_code_tool = LocalExecuteCodeTool(
@@ -71,6 +74,7 @@ class LocalCodeActProvider(ContextProvider):
             blocked_imports=blocked_imports,
             allowed_builtins=allowed_builtins,
             blocked_builtins=blocked_builtins,
+            allowed_os_attrs=allowed_os_attrs,
         )
 
     def add_tools(

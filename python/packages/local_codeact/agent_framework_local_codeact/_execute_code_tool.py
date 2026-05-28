@@ -79,6 +79,7 @@ def _validate_code(
     blocked_imports: set[str] | None = None,
     allowed_builtins: set[str] | None = None,
     blocked_builtins: set[str] | None = None,
+    allowed_os_attrs: set[str] | None = None,
 ) -> None:
     if not isinstance(code, str):
         raise TypeError("code must be a string.")
@@ -94,6 +95,7 @@ def _validate_code(
         blocked_imports=blocked_imports,
         allowed_builtins=allowed_builtins,
         blocked_builtins=blocked_builtins,
+        allowed_os_attrs=allowed_os_attrs,
     )
 
 
@@ -192,6 +194,7 @@ class LocalExecuteCodeTool(FunctionTool):
         blocked_imports: set[str] | None = None,
         allowed_builtins: set[str] | None = None,
         blocked_builtins: set[str] | None = None,
+        allowed_os_attrs: set[str] | None = None,
     ) -> None:
         """Initialize a local execute-code tool.
 
@@ -209,6 +212,8 @@ class LocalExecuteCodeTool(FunctionTool):
             blocked_imports: Custom blocked imports (replaces defaults).
             allowed_builtins: Custom allowed builtins (replaces defaults).
             blocked_builtins: Custom blocked builtins (replaces defaults).
+            allowed_os_attrs: Custom allowed ``os`` attribute names (replaces the
+                default ``{"environ", "path"}`` allow-list).
         """
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
@@ -234,6 +239,7 @@ class LocalExecuteCodeTool(FunctionTool):
         self._blocked_imports = blocked_imports
         self._allowed_builtins = allowed_builtins
         self._blocked_builtins = blocked_builtins
+        self._allowed_os_attrs = allowed_os_attrs
         if tools is not None:
             self.add_tools(tools)
         if file_mounts is not None:
@@ -353,6 +359,7 @@ class LocalExecuteCodeTool(FunctionTool):
             blocked_imports=self._blocked_imports,
             allowed_builtins=self._allowed_builtins,
             blocked_builtins=self._blocked_builtins,
+            allowed_os_attrs=self._allowed_os_attrs,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
@@ -424,6 +431,7 @@ class LocalExecuteCodeTool(FunctionTool):
                 blocked_imports=self._blocked_imports,
                 allowed_builtins=self._allowed_builtins,
                 blocked_builtins=self._blocked_builtins,
+                allowed_os_attrs=self._allowed_os_attrs,
             )
         except (TypeError, ValueError, CodeValidationError) as exc:
             return [Content.from_error(message="Invalid code", error_details=str(exc))]

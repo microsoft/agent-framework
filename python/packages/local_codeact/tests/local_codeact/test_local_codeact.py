@@ -227,6 +227,42 @@ async def test_file_capture_skips_symlinks_and_returns_written_files(tmp_path: P
     assert base64.b64decode(encoded) == b"hello"
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX hardlink semantics required.")
+async def test_file_capture_skips_hardlinks_to_outside_files(tmp_path: Path) -> None:
+    """A hardlink inside the mount must not surface a file whose canonical path is outside it."""
+    import os
+
+    mounted = tmp_path / "mounted"
+    mounted.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("classified", encoding="utf-8")
+    os.link(secret, mounted / "loot.txt")
+
+    local_tool = LocalExecuteCodeTool(
+        file_mounts=[FileMount(mounted, "/output", mode="read-write")],
+        execution_limits=ProcessExecutionLimits(timeout_seconds=5),
+    )
+    result = await local_tool._run_code(
+        code=f"from pathlib import Path\nPath({str(mounted)!r}, 'visible.txt').write_text('ok', encoding='utf-8')"
+    )
+
+    data_contents = [content for content in result if content.type == "data"]
+    paths = [content.additional_properties["path"] for content in data_contents]
+    assert "/output/visible.txt" in paths
+    assert all("loot.txt" not in path for path in paths)
+
+
+def test_symlinked_mount_root_is_rejected(tmp_path: Path) -> None:
+    """A symlink at the mount root must be rejected so it cannot expose another directory."""
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real_dir)
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        LocalExecuteCodeTool(workspace_root=link)
+
+
 async def test_unsafe_in_process_mode_runs_code() -> None:
     local_tool = LocalExecuteCodeTool(execution_mode="unsafe_in_process")
     result = await local_tool._run_code(code="print('unsafe')\n'ran'")

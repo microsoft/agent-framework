@@ -31,8 +31,18 @@ def normalize_mount_path(mount_path: str) -> str:
 
 
 def resolve_existing_directory(value: str | Path) -> Path:
-    """Resolve a path and require it to point at an existing directory."""
-    resolved = Path(value).expanduser().resolve(strict=True)
+    """Resolve a path and require it to point at an existing real directory.
+
+    Symlinks at the mount root are rejected: a mount whose host_path is itself
+    a symlink could silently expose a directory outside the intended location
+    (for example a ``/tmp/foo`` symlink pointing at ``/etc``). Callers must
+    supply concrete directories so the surface visible to generated code is
+    the surface the host actually approved.
+    """
+    raw = Path(value).expanduser()
+    if raw.is_symlink():
+        raise ValueError(f"Path {value!r} must not be a symbolic link.")
+    resolved = raw.resolve(strict=True)
     if not resolved.is_dir():
         raise ValueError(f"Path {value!r} must point to an existing directory.")
     return resolved
@@ -78,8 +88,25 @@ def normalize_file_mount(file_mount: FileMountInput) -> FileMount:
 
 
 def iter_real_files(root: Path) -> Iterator[Path]:
-    """Walk ``root`` recursively, yielding only real non-symlink files."""
-    stack: list[Path] = [root]
+    """Walk ``root`` recursively, yielding only real non-symlink files.
+
+    Defenses against generated code trying to surface protected host data via
+    a virtual mount path:
+
+    * Symlinks (file or directory) are skipped so they cannot redirect the
+      walk to content outside the mount.
+    * Hardlinks (``st_nlink > 1``) are skipped because a hardlink inside the
+      mount can point at an inode whose canonical path is outside the mount
+      (for example ``ln /etc/passwd /input/loot.txt``).
+    * Every entry's resolved path is required to stay under ``root`` so that
+      junctions, bind mounts, or any other filesystem feature that ``is_symlink``
+      does not flag cannot escape the mount boundary.
+    """
+    try:
+        root_resolved = root.resolve(strict=True)
+    except OSError:
+        return
+    stack: list[Path] = [root_resolved]
     while stack:
         current = stack.pop()
         try:
@@ -90,9 +117,15 @@ def iter_real_files(root: Path) -> Iterator[Path]:
             try:
                 if entry.is_symlink():
                     continue
+                resolved = entry.resolve(strict=False)
+                if not resolved.is_relative_to(root_resolved):
+                    continue
                 if entry.is_dir():
                     stack.append(entry)
                 elif entry.is_file():
+                    stat = entry.lstat()
+                    if stat.st_nlink > 1:
+                        continue
                     yield entry
             except OSError:
                 continue
