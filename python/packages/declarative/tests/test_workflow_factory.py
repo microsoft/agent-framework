@@ -766,6 +766,52 @@ class TestDroppedShapesAreRejected:
         with pytest.raises(ValueError, match="source"):
             builder.build()
 
+    def test_condition_group_with_else_field_raises(self):
+        """ConditionGroup with an ``else`` field must fail fast and point at ``elseActions``."""
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "cg-else-rejected",
+            "actions": [
+                {
+                    "kind": "ConditionGroup",
+                    "conditions": [
+                        {
+                            "condition": "=Local.x = 1",
+                            "actions": [{"kind": "SendActivity", "activity": {"text": "one"}}],
+                        },
+                    ],
+                    "else": [{"kind": "SendActivity", "activity": {"text": "other"}}],
+                }
+            ],
+        }
+        builder = DeclarativeWorkflowBuilder(yaml_def)
+        with pytest.raises(ValueError, match="elseActions"):
+            builder.build()
+
+    def test_condition_group_with_default_field_raises(self):
+        """ConditionGroup with a ``default`` field must fail fast and point at ``elseActions``."""
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "cg-default-rejected",
+            "actions": [
+                {
+                    "kind": "ConditionGroup",
+                    "conditions": [
+                        {
+                            "condition": "=Local.x = 1",
+                            "actions": [{"kind": "SendActivity", "activity": {"text": "one"}}],
+                        },
+                    ],
+                    "default": [{"kind": "SendActivity", "activity": {"text": "other"}}],
+                }
+            ],
+        }
+        builder = DeclarativeWorkflowBuilder(yaml_def)
+        with pytest.raises(ValueError, match="elseActions"):
+            builder.build()
+
 
 class TestQuestionAndRequestExternalInputShapes:
     """Tests for accepted YAML shapes of ``Question`` and ``RequestExternalInput``.

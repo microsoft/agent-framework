@@ -60,7 +60,12 @@ class ExternalInputRequest:
     Attributes:
         request_id: Unique identifier for this request.
         message: The prompt or question to display to the user.
-        request_type: Type of input requested (question, external).
+        request_type: A free-form discriminator describing the kind of input
+            being requested. ``QuestionExecutor`` emits ``"question"`` and
+            ``RequestExternalInputExecutor`` defaults to ``"external"``; callers
+            may supply any other string via the ``requestType`` field on a
+            ``RequestExternalInput`` action (e.g. ``"approval"``) and it is
+            propagated unchanged.
         metadata: Additional context (choices, output_property, timeout, etc.).
     """
 

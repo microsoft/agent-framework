@@ -313,6 +313,12 @@ class DeclarativeWorkflowBuilder:
                     self._validate_actions_recursive(else_actions, seen_ids, goto_targets, defined_ids)
 
             elif kind == "ConditionGroup":
+                for forbidden in ("else", "default"):
+                    if forbidden in action_def:
+                        raise ValueError(
+                            f"Action 'ConditionGroup' field '{forbidden}' is not supported; "
+                            "use 'elseActions' instead."
+                        )
                 conditions = action_def.get("conditions", [])
                 for condition_branch in conditions:
                     branch_actions = condition_branch.get("actions", [])

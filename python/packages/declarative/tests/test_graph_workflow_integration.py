@@ -151,10 +151,10 @@ class TestGraphBasedWorkflowExecution:
         assert outputs == ["1-A", "2-A", "3-A", "1-B", "2-B", "3-B"]
 
     @pytest.mark.asyncio
-    async def test_workflow_with_switch(self):
+    async def test_workflow_with_condition_group(self):
         """Test workflow with ConditionGroup."""
         yaml_def = {
-            "name": "switch_workflow",
+            "name": "condition_group_workflow",
             "actions": [
                 {"kind": "SetValue", "id": "set_level", "path": "Local.level", "value": 2},
                 {
@@ -174,7 +174,7 @@ class TestGraphBasedWorkflowExecution:
                             ],
                         },
                     ],
-                    "else": [
+                    "elseActions": [
                         {"kind": "SendActivity", "id": "default", "activity": {"text": "Other level"}},
                     ],
                 },
