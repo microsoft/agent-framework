@@ -78,7 +78,7 @@ if (string.IsNullOrWhiteSpace(query))
 Console.WriteLine($"Assistant: {await agent.RunAsync(query)}");
 
 // ---------------------------------------------------------------------------
-// DelegatingHandler: attaches a fresh Azure AI bearer token to every request
+// DelegatingHandler: attaches a fresh Foundry bearer token to every request
 // ---------------------------------------------------------------------------
 internal sealed class BearerTokenHandler(TokenCredential credential, string scope) : DelegatingHandler
 {
