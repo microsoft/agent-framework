@@ -41,19 +41,19 @@
     <!-- Newtonsoft.Json -->
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
     <!-- System.* -->
-    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.6" />
+    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.8" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
     <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.5" />
     <PackageVersion Include="System.ClientModel" Version="1.11.0" />
     <PackageVersion Include="System.CodeDom" Version="10.0.0" />
     <PackageVersion Include="System.Collections.Immutable" Version="10.0.1" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
-    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.6" />
+    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.8" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.5" />
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.0" />
     <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.5" />
-    <PackageVersion Include="System.Text.Json" Version="10.0.6" />
-    <PackageVersion Include="System.Threading.Channels" Version="10.0.6" />
+    <PackageVersion Include="System.Text.Json" Version="10.0.8" />
+    <PackageVersion Include="System.Threading.Channels" Version="10.0.8" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <PackageVersion Include="System.Net.Security" Version="4.3.2" />
     <!-- OpenTelemetry -->
