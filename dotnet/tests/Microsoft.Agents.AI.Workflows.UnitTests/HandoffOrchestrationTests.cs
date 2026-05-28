@@ -390,6 +390,111 @@ public class HandoffOrchestrationTests
     }
 
     [Fact]
+    public async Task Handoffs_CoordSpecCoordPingPong_MergedMessagesPreserveStepOrderAsync()
+    {
+        // Regression test for https://github.com/microsoft/agent-framework/issues/4544 /
+        // https://github.com/microsoft/agent-framework/issues/5720.
+        //
+        // Scenario mirrors the user-reported "Coord -> Spec -> Coord" ping-pong where
+        // the same coordinator agent is invoked twice (first to hand off to the
+        // specialist, then a final time to summarize). Additionally exercises the
+        // case where the specialist returns its assistant text and its handoff
+        // FunctionCall in two SEPARATE ChatMessages (i.e. different MessageIds),
+        // because real OpenAI streams sometimes split text and tool calls that way.
+        //
+        // The merged AgentResponse.Messages must preserve per-step grouping:
+        //   step 1 (Coord):  FunctionCall(call1) then synthesized FunctionResult(call1)
+        //   step 2 (Spec) :  TextContent "Here are recs" then FunctionCall(call2)
+        //                    then synthesized FunctionResult(call2)
+        //   step 3 (Coord):  TextContent "Here are recs"
+        // The bug previously bunched the FunctionResult ("Transferred.") tool messages
+        // at the very end, breaking the contiguity of each step's block.
+
+        int coordCallCount = 0;
+        var coord = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            coordCallCount++;
+            if (coordCallCount == 1)
+            {
+                string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+                Assert.NotNull(transferFuncName);
+                return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call_coord_1", transferFuncName)]) { MessageId = "coord-msg-1" })
+                {
+                    ResponseId = "resp-coord-1",
+                };
+            }
+
+            return new(new ChatMessage(ChatRole.Assistant, "Here are two fake Excel course recommendations") { MessageId = "coord-msg-2" })
+            {
+                ResponseId = "resp-coord-2",
+            };
+        }), name: "Coord");
+
+        var spec = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            // Split text and FunctionCall into two separate ChatMessages (distinct MessageIds)
+            // to mirror the real-world streaming pattern where a specialist's narration
+            // and its handoff tool-call land in different ChatMessages.
+            return new(
+                [
+                    new ChatMessage(ChatRole.Assistant, "Here are two fake Excel course recommendations") { MessageId = "spec-msg-text" },
+                    new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call_spec_1", transferFuncName)]) { MessageId = "spec-msg-call" },
+                ])
+            {
+                ResponseId = "resp-spec-1",
+            };
+        }), name: "Spec", description: "The specialist agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(coord)
+            .WithHandoff(coord, spec)
+            .WithHandoff(spec, coord)
+            .Build();
+
+        AIAgent hostAgent = workflow.AsAIAgent(name: "HandoffWorkflow");
+
+        AgentResponse response = await hostAgent.RunAsync("Tell me about Excel courses.");
+
+        List<ChatMessage> result = response.Messages.ToList();
+
+        // Expected merged sequence keeps each step contiguous (6 messages):
+        //   [0] Assistant (Coord): FunctionCall(call_coord_1)
+        //   [1] Tool      (Coord): FunctionResult(call_coord_1, "Transferred.")
+        //   [2] Assistant (Spec) : TextContent "Here are recs"
+        //   [3] Assistant (Spec) : FunctionCall(call_spec_1)
+        //   [4] Tool      (Spec) : FunctionResult(call_spec_1, "Transferred.")
+        //   [5] Assistant (Coord): TextContent "Here are recs"
+        Assert.Equal(6, result.Count);
+
+        Assert.Equal(ChatRole.Assistant, result[0].Role);
+        Assert.Contains("Coord", result[0].AuthorName);
+        Assert.Contains(result[0].Contents, c => c is FunctionCallContent fcc && fcc.CallId == "call_coord_1");
+
+        Assert.Equal(ChatRole.Tool, result[1].Role);
+        Assert.Contains("Coord", result[1].AuthorName);
+        Assert.Contains(result[1].Contents, c => c is FunctionResultContent frc && frc.CallId == "call_coord_1");
+
+        Assert.Equal(ChatRole.Assistant, result[2].Role);
+        Assert.Contains("Spec", result[2].AuthorName);
+        Assert.Equal("Here are two fake Excel course recommendations", result[2].Text);
+
+        Assert.Equal(ChatRole.Assistant, result[3].Role);
+        Assert.Contains("Spec", result[3].AuthorName);
+        Assert.Contains(result[3].Contents, c => c is FunctionCallContent fcc && fcc.CallId == "call_spec_1");
+
+        Assert.Equal(ChatRole.Tool, result[4].Role);
+        Assert.Contains("Spec", result[4].AuthorName);
+        Assert.Contains(result[4].Contents, c => c is FunctionResultContent frc && frc.CallId == "call_spec_1");
+
+        Assert.Equal(ChatRole.Assistant, result[5].Role);
+        Assert.Contains("Coord", result[5].AuthorName);
+        Assert.Equal("Here are two fake Excel course recommendations", result[5].Text);
+    }
+
+    [Fact]
     public async Task Handoffs_FilteringNone_HandoffTargetReceivesAllMessagesIncludingToolCallsAsync()
     {
         // With filtering set to None, the target agent should see everything including
