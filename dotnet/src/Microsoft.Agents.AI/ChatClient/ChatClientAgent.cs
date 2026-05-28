@@ -476,7 +476,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions, session);
 
         if (chatHistoryProvider is not null)
         {
@@ -508,7 +508,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions, session);
 
         if (chatHistoryProvider is not null)
         {
@@ -974,14 +974,15 @@ public sealed partial class ChatClientAgent : AIAgent
         }
     }
 
-    private ChatHistoryProvider? ResolveChatHistoryProvider(ChatOptions? chatOptions)
+    private ChatHistoryProvider? ResolveChatHistoryProvider(ChatOptions? chatOptions, ChatClientAgentSession? session = null)
     {
-        ChatHistoryProvider? provider = chatOptions?.ConversationId is null ? this.ChatHistoryProvider : null;
+        string? conversationId = !string.IsNullOrWhiteSpace(chatOptions?.ConversationId) ? chatOptions.ConversationId : session?.ConversationId;
+        ChatHistoryProvider? provider = IsServiceManagedConversationId(conversationId) ? null : this.ChatHistoryProvider;
 
         // If someone provided an override ChatHistoryProvider via AdditionalProperties, we should use that instead.
         if (chatOptions?.AdditionalProperties?.TryGetValue(out ChatHistoryProvider? overrideProvider) is true)
         {
-            if (this._agentOptions?.ThrowOnChatHistoryProviderConflict is true && string.IsNullOrWhiteSpace(chatOptions?.ConversationId) is false)
+            if (this._agentOptions?.ThrowOnChatHistoryProviderConflict is true && IsServiceManagedConversationId(conversationId))
             {
                 throw new InvalidOperationException(
                     $"Only {nameof(ChatClientAgentSession.ConversationId)} or {nameof(this.ChatHistoryProvider)} may be used, but not both. The current {nameof(ChatClientAgentSession)} has a {nameof(ChatClientAgentSession.ConversationId)} indicating server-side chat history management, but an override {nameof(this.ChatHistoryProvider)} was provided via {nameof(AgentRunOptions.AdditionalProperties)}.");
@@ -1006,6 +1007,12 @@ public sealed partial class ChatClientAgent : AIAgent
         return provider;
     }
 
+    private static bool IsServiceManagedConversationId(string? conversationId)
+    {
+        return !string.IsNullOrWhiteSpace(conversationId)
+            && conversationId != PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId;
+    }
+
     /// <summary>
     /// Loads chat history from the resolved <see cref="ChatHistoryProvider"/> and prepends it to the given messages.
     /// </summary>
@@ -1019,7 +1026,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        var chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        var chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions, session);
         if (chatHistoryProvider is null)
         {
             return messages;
