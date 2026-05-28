@@ -53,6 +53,7 @@ members = [
     "agent-framework-hosting",
     "agent-framework-hosting-responses",
     "agent-framework-hosting-invocations",
+    "agent-framework-hosting-telegram",
     "agent-framework-hyperlight",
     "agent-framework-lab",
     "agent-framework-mem0",
@@ -650,6 +651,16 @@ provides-extras = ["serve", "disk"]
 dev = [{ name = "httpx", specifier = ">=0.28.1" }]
 
 [[package]]
+name = "agent-framework-hosting-telegram"
+version = "1.0.0a260424"
+source = { editable = "packages/hosting-telegram" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[package]]
 name = "agent-framework-hosting-responses"
 version = "1.0.0a260424"
 source = { editable = "packages/hosting-responses" }
@@ -672,6 +683,7 @@ source = { editable = "packages/hosting-invocations" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx", specifier = ">=0.27,<1" },
 ]
 
 [[package]]

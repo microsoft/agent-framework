@@ -89,6 +89,7 @@ agent-framework-gemini = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-hosting = { workspace = true }
 agent-framework-hosting-invocations = { workspace = true }
+agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
@@ -214,6 +215,7 @@ executionEnvironments = [
     { root = "packages/github_copilot/tests", reportPrivateUsage = "none" },
     { root = "packages/hosting/tests", reportPrivateUsage = "none" },
     { root = "packages/hosting-invocations/tests", reportPrivateUsage = "none" },
+    { root = "packages/hosting-telegram/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/lightning/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/tau2/tests", reportPrivateUsage = "none" },
