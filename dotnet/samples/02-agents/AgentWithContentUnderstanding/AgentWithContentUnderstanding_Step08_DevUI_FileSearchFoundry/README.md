@@ -1,24 +1,40 @@
 # Step 08 — DevUI File-Search Agent (Foundry backend)
 
-Hosts a Foundry-backed agent with the Content Understanding context provider behind the DevUI web interface. Wires `FileSearchConfig.FromFoundry` so each uploaded file is CU-extracted and indexed in a Foundry vector store, then queried via the `file_search` tool — the same RAG flow as [Step 05](../AgentWithContentUnderstanding_Step05_LargeDocFileSearch/), but driven from an interactive DevUI session instead of a script.
+Interactive web UI for uploading and chatting with documents, images, audio, and video using Azure Content Understanding + Foundry `file_search` RAG.
 
-## Prerequisites
+This is the **Foundry** variant. For the Azure OpenAI Responses API variant, see [Step 07](../AgentWithContentUnderstanding_Step07_DevUI_FileSearchAzureOpenAI/).
 
-| Environment variable | Description |
-| --- | --- |
-| `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint URL. |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Foundry model deployment name (defaults to `gpt-4.1`). |
-| `AZURE_CONTENTUNDERSTANDING_ENDPOINT` | Azure Content Understanding endpoint URL. |
+## How It Works
 
-Authenticate with `az login` (the sample uses `DefaultAzureCredential`).
+1. **Upload** any supported file (PDF, image, audio, video) via the DevUI chat
+2. **CU analyzes** the file — auto-selects the right analyzer per media type
+3. **Markdown extracted** by CU is uploaded to a Foundry vector store
+4. **file_search** tool is registered — LLM retrieves top-k relevant chunks
+5. **Ask questions** across all uploaded documents with token-efficient RAG
 
-## Run
+## Setup
 
-```sh
-dotnet run
-```
+1. Set environment variables:
 
-Then open <https://localhost:50524/devui> in a browser.
+   ```sh
+   AZURE_AI_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com/
+   AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4.1
+   AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.services.ai.azure.com/
+   ```
+
+2. Log in with Azure CLI (the sample uses `DefaultAzureCredential`):
+
+   ```sh
+   az login
+   ```
+
+3. Run the sample:
+
+   ```sh
+   dotnet run
+   ```
+
+4. Open <https://localhost:50524/devui> in a browser and start uploading files.
 
 ## Cleanup
 

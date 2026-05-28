@@ -1,21 +1,36 @@
 # Step 06 — DevUI Multi-Modal Agent
 
-Hosts a Foundry-backed agent with the [Azure Content Understanding context provider](../../../../src/Microsoft.Agents.AI.AzureAI.ContentUnderstanding) behind the DevUI web interface. Upload a PDF, scanned image, audio, or video in the browser and ask questions about its contents.
+Interactive web UI for uploading and chatting with documents, images, audio, and video using Azure Content Understanding.
 
-## Prerequisites
+## Setup
 
-| Environment variable | Description |
-| --- | --- |
-| `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint URL. |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Foundry model deployment name (defaults to `gpt-4.1`). |
-| `AZURE_CONTENTUNDERSTANDING_ENDPOINT` | Azure Content Understanding endpoint URL. |
+1. Set environment variables:
 
-Authenticate with `az login` (the sample uses `DefaultAzureCredential`).
+   ```sh
+   AZURE_AI_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com/
+   AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4.1
+   AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.services.ai.azure.com/
+   ```
 
-## Run
+2. Log in with Azure CLI (the sample uses `DefaultAzureCredential`):
 
-```sh
-dotnet run
-```
+   ```sh
+   az login
+   ```
 
-Then open <https://localhost:50520/devui> in a browser.
+3. Run the sample:
+
+   ```sh
+   dotnet run
+   ```
+
+4. Open <https://localhost:50520/devui> in a browser and start uploading files.
+
+## What You Can Do
+
+- **Upload PDFs** — including scanned/image-based PDFs that LLM vision struggles with
+- **Upload images** — handwritten notes, infographics, charts
+- **Upload audio** — meeting recordings, call center calls (transcription with speaker ID)
+- **Upload video** — product demos, training videos (frame extraction + transcription)
+- **Ask questions** across all uploaded documents
+- **Check status** — "which documents are ready?" uses the auto-registered `list_documents()` tool

@@ -1,24 +1,59 @@
 # Step 07 — DevUI File-Search Agent (Azure OpenAI backend)
 
-Hosts an Azure-OpenAI–backed agent with the Content Understanding context provider behind the DevUI web interface. Wires `FileSearchConfig.FromOpenAI` so each uploaded file is CU-extracted and indexed in an Azure OpenAI vector store, then queried via the `file_search` tool — ideal for large documents or audio/video that exceed the context window.
+Interactive web UI for uploading and chatting with documents, images, audio, and video using Azure Content Understanding + Azure OpenAI `file_search` RAG.
 
-## Prerequisites
+This is the **Azure OpenAI Responses** variant. For the Foundry variant, see [Step 08](../AgentWithContentUnderstanding_Step08_DevUI_FileSearchFoundry/).
 
-| Environment variable | Description |
-| --- | --- |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint URL. |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Chat-model deployment name (defaults to `gpt-4.1`). |
-| `AZURE_CONTENTUNDERSTANDING_ENDPOINT` | Azure Content Understanding endpoint URL. |
+## How It Works
 
-Authenticate with `az login` (the sample uses `DefaultAzureCredential`).
+1. **Upload** any supported file (PDF, image, audio, video) via the DevUI chat
+2. **CU analyzes** the file — auto-selects the right analyzer per media type
+3. **Markdown extracted** by CU is uploaded to an Azure OpenAI vector store
+4. **file_search** tool is registered — LLM retrieves top-k relevant chunks
+5. **Ask questions** across all uploaded documents with token-efficient RAG
 
-## Run
+## Setup
 
-```sh
-dotnet run
-```
+1. Set environment variables:
 
-Then open <https://localhost:50522/devui> in a browser.
+   ```sh
+   AZURE_OPENAI_ENDPOINT=https://your-aoai-resource.openai.azure.com/
+   AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
+   AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.services.ai.azure.com/
+   ```
+
+2. Log in with Azure CLI (the sample uses `DefaultAzureCredential`):
+
+   ```sh
+   az login
+   ```
+
+3. Run the sample:
+
+   ```sh
+   dotnet run
+   ```
+
+4. Open <https://localhost:50522/devui> in a browser and start uploading files.
+
+## Supported File Types
+
+| Type | Formats | CU Analyzer (auto-detected) |
+|------|---------|-----------------------------|
+| Documents | PDF, DOCX, XLSX, PPTX, HTML, TXT, Markdown | `prebuilt-documentSearch` |
+| Images | JPEG, PNG, TIFF, BMP | `prebuilt-documentSearch` |
+| Audio | WAV, MP3, FLAC, OGG, M4A | `prebuilt-audioSearch` |
+| Video | MP4, MOV, AVI, WebM | `prebuilt-videoSearch` |
+
+## vs. Step 06 (Multi-Modal Agent)
+
+| Feature | Step 06 | Step 07 / Step 08 |
+|---------|---------|-------------------|
+| CU extraction | Full content injected | Content indexed in vector store |
+| RAG | No | `file_search` retrieves top-k chunks |
+| Large docs (100+ pages) | May exceed context window | Token-efficient |
+| Multiple large files | Context overflow risk | All indexed, searchable |
+| Best for | Small docs, quick inspection | Large docs, multi-file Q&A |
 
 ## Cleanup
 
