@@ -14,6 +14,8 @@ namespace Microsoft.Agents.AI.Workflows;
 [JsonDerivedType(typeof(AgentResponseUpdateEvent))]
 public class WorkflowOutputEvent : WorkflowEvent
 {
+    private HashSet<OutputTag> _tags;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="WorkflowOutputEvent"/> class with no tags.
     /// </summary>
@@ -44,7 +46,7 @@ public class WorkflowOutputEvent : WorkflowEvent
     public WorkflowOutputEvent(object data, string executorId, IEnumerable<OutputTag>? tags) : base(data)
     {
         this.ExecutorId = executorId;
-        this.Tags = tags is null ? new HashSet<OutputTag>() : new HashSet<OutputTag>(tags);
+        this._tags = tags is null ? new HashSet<OutputTag>() : new HashSet<OutputTag>(tags);
     }
 
     /// <summary>
@@ -64,12 +66,12 @@ public class WorkflowOutputEvent : WorkflowEvent
     /// empty for terminal/regular outputs. The presence of <see cref="OutputTag.Intermediate"/>
     /// marks this event as an intermediate output.
     /// </summary>
-    public HashSet<OutputTag> Tags { get; }
+    public IEnumerable<OutputTag> Tags => this._tags;
 
     /// <summary>
     /// Returns <see langword="true"/> if this event carries the given tag.
     /// </summary>
-    public bool HasTag(OutputTag tag) => this.Tags.Contains(tag);
+    public bool HasTag(OutputTag tag) => this._tags.Contains(tag);
 
     /// <summary>
     /// Determines whether the underlying data is of the specified type or a derived type.

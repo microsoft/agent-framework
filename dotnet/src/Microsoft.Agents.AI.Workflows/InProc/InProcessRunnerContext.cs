@@ -271,7 +271,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         if (!this._outputFilter.TryGetTags(sourceId, out HashSet<OutputTag>? tags))
         {
-            // Not designated as an output source — drop silently (matches Python semantics).
+            // Not designated as an output source — drop silently.
             return;
         }
 
