@@ -661,13 +661,13 @@ class MCPTool:
                 )
             else:
                 raise
+        except asyncio.CancelledError:
+            logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
         except Exception as e:
             if type(e).__name__ == "ExceptionGroup":
                 logger.warning("Could not cleanly close MCP exit stack due to cleanup error group. Error: %s", e)
             else:
                 raise
-        except asyncio.CancelledError:
-            logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
 
     async def _close_and_check_cancelled(self, ex: BaseException) -> bool:
         """Close the exit stack and return True if *ex* is a genuine task cancellation.
@@ -1322,9 +1322,16 @@ class MCPTool:
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
 
-        user_meta = kwargs.get("_meta")
-        if user_meta is not None and not isinstance(user_meta, dict):
+        raw_user_meta: Any = kwargs.get("_meta")
+        user_meta: dict[str, Any] | None = None
+        if raw_user_meta is not None and not isinstance(raw_user_meta, dict):
             raise ToolExecutionException("MCP tool metadata provided via _meta must be a dict.")
+        if isinstance(raw_user_meta, dict):
+            user_meta = {}
+            for key, value in cast(dict[Any, Any], raw_user_meta).items():
+                if not isinstance(key, str):
+                    raise ToolExecutionException("MCP tool metadata provided via _meta must use string keys.")
+                user_meta[key] = value
 
         # Filter out framework kwargs that cannot be serialized by the MCP SDK.
         # These are internal objects passed through the function invocation pipeline
