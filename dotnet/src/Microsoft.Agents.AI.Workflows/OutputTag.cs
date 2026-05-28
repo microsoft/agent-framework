@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Workflows;
 public readonly struct OutputTag : IEquatable<OutputTag>
 {
     /// <summary>
-    /// The normalized string identifier of the tag. Compared with ordinal equality.
+    /// The string identifier of the tag. Compared with ordinal equality.
     /// </summary>
     public string? Value { get; }
 

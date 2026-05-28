@@ -524,8 +524,8 @@ internal sealed class WorkflowSession : AgentSession
                     // AgentResponseUpdateEvent's behavior: always forward, regardless of the
                     // _includeWorkflowOutputsInResponse host flag. Under the legacy default,
                     // keep today's behavior — gated by the include flag.
-                    if ((Futures.EnableAgentResponseOutputTaggingAndFiltering && !output.IsIntermediate() ||
-                        (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse)))
+                    if ((Futures.EnableAgentResponseOutputTaggingAndFiltering && !agentResponse.IsIntermediate()) ||
+                        (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse))
                     {
                         goto default;
                     }
