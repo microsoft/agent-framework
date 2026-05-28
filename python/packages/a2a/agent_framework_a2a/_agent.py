@@ -487,6 +487,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     contents=contents,
                     role="assistant" if msg.role == A2ARole.ROLE_AGENT else "user",
                     response_id=msg.message_id or str(uuid.uuid4()),
+                    message_id=msg.message_id,
                     additional_properties={"a2a_metadata": metadata} if metadata else None,
                     raw_representation=msg,
                 )
@@ -727,6 +728,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 contents=contents,
                 role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
                 response_id=update_event.task_id,
+                message_id=message.message_id,
                 additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
                 raw_representation=update_event,
             )

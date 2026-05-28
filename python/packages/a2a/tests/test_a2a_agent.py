@@ -420,6 +420,7 @@ async def test_run_streaming_with_message_response(a2a_agent: A2AAgent, mock_a2a
     assert content.text == "Streaming response from agent!"
 
     assert updates[0].response_id == "msg-stream-123"
+    assert updates[0].message_id == "msg-stream-123"
     assert mock_a2a_client.call_count == 1
 
 
@@ -1335,7 +1336,7 @@ async def test_streaming_status_update_event_yields_content(
         status=TaskStatus(
             state=TaskState.TASK_STATE_COMPLETED,
             message=A2AMessage(
-                message_id=str(uuid4()),
+                message_id="msg-status-done",
                 role=A2ARole.ROLE_AGENT,
                 parts=[Part(text="Done")],
             ),
@@ -1350,6 +1351,7 @@ async def test_streaming_status_update_event_yields_content(
     assert len(updates) == 1
     assert updates[0].text == "Done"
     assert updates[0].role == "assistant"
+    assert updates[0].message_id == "msg-status-done"
     assert updates[0].raw_representation == update_event
 
 
@@ -1362,7 +1364,7 @@ async def test_streaming_input_required_emits_content(a2a_agent: A2AAgent, mock_
         status=TaskStatus(
             state=TaskState.TASK_STATE_INPUT_REQUIRED,
             message=A2AMessage(
-                message_id=str(uuid4()),
+                message_id="msg-input-req",
                 role=A2ARole.ROLE_AGENT,
                 parts=[Part(text="What is your name?")],
             ),
@@ -1376,6 +1378,7 @@ async def test_streaming_input_required_emits_content(a2a_agent: A2AAgent, mock_
 
     assert len(updates) == 1
     assert updates[0].text == "What is your name?"
+    assert updates[0].message_id == "msg-input-req"
 
 
 @mark.asyncio
