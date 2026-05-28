@@ -627,6 +627,7 @@ public class HandoffWorkflowBuilderCore<TBuilder> : OrchestrationBuilderBase<TBu
             agentMap[agent] = executors[agent.Id];
         }
 
+        this.ApplyMetadata(builder);
         this.ApplyOutputDesignations(builder, agentMap, "handoff", () =>
         {
             // Defaults (matches Python's Handoff orchestration):

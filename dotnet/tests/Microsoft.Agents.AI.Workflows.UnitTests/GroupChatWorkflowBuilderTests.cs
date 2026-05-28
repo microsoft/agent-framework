@@ -268,7 +268,7 @@ public class GroupChatWorkflowBuilderTests
             .Build();
 
         const string UserInput = "hello";
-        (_, List<ChatMessage>? result, _, _) = await AgentWorkflowBuilderTests.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+        (_, List<ChatMessage>? result, _, _) = await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
 
         Assert.NotNull(result);
         Assert.Equal(5, result.Count); // initial user input + 4 agent turns
@@ -314,7 +314,7 @@ public class GroupChatWorkflowBuilderTests
             .Build();
 
         const string UserInput = "hello";
-        await AgentWorkflowBuilderTests.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+        await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
 
         // Turn 1: agentA's buffer contains only the initial broadcast, which UpdateHistoryAsync
         // prefixed.
