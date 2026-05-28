@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -37,6 +37,7 @@ from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
+    _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
@@ -2740,6 +2741,12 @@ class TestCheckpointContextPathValidation:
         assert storage.storage_path.is_dir()
         assert storage.storage_path.parent == root.resolve()
 
+    def test_azure_message_role_allowlist_type_matches_generated_sdk_path(self) -> None:
+        assert (
+            _AZURE_RESPONSES_MESSAGE_ROLE_TYPE
+            == "azure.ai.agentserver.responses.models._generated.sdk.models.models._enums:MessageRole"
+        )
+
     async def test_storage_allows_azure_message_role_checkpoint_restore(self, tmp_path: Any) -> None:
         from azure.ai.agentserver.responses.models import MessageRole
 
@@ -2798,6 +2805,59 @@ class TestCheckpointContextPathValidation:
 
         assert latest is None
         assert any("MessageRole" in message for message in caplog.messages)
+
+    async def test_handle_inner_workflow_restores_message_role_checkpoint_from_previous_response(
+        self, tmp_path: Any
+    ) -> None:
+        from agent_framework import WorkflowAgent
+        from azure.ai.agentserver.responses import ResponseContext
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        previous_response_id = "resp_previous"
+        response_id = "resp_current"
+        root = tmp_path / "root"
+        root.mkdir()
+        checkpoint_storage = self._helper()(str(root), previous_response_id)
+        checkpoint = self._checkpoint_with_azure_message_role()
+        await checkpoint_storage.save(checkpoint)
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.run = AsyncMock(
+            side_effect=[
+                AgentResponse(messages=[]),
+                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
+            ]
+        )
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
+        context = ResponseContext(
+            response_id=response_id, previous_response_id=previous_response_id, mode_flags=MagicMock()
+        )
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            async for _ in server._handle_inner_workflow(request, context):  # pyright: ignore[reportPrivateUsage]
+                pass
+
+        assert agent.run.call_count == 2
+        restore_call = agent.run.call_args_list[0]
+        assert restore_call.kwargs["checkpoint_id"] == checkpoint.checkpoint_id
+        assert restore_call.kwargs["checkpoint_storage"].storage_path == (root / previous_response_id).resolve()
+
+        new_turn_call = agent.run.call_args_list[1]
+        new_turn_messages = new_turn_call.args[0]
+        assert len(new_turn_messages) == 1
+        assert new_turn_messages[0].text == "next turn"
+        assert new_turn_call.kwargs["checkpoint_storage"].storage_path == (root / response_id).resolve()
 
     @pytest.mark.parametrize(
         "bad_id",
