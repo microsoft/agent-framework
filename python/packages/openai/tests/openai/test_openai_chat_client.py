@@ -5603,6 +5603,42 @@ def test_prepare_messages_for_openai_serializes_mcp_server_tool_call_as_mcp_call
     assert "output" not in item or item["output"] is None
 
 
+def test_prepare_messages_for_openai_keeps_reasoning_with_mcp_call_without_storage() -> None:
+    """Hosted MCP calls returned by reasoning models need their paired reasoning item."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_abc123",
+                    text="I need to query the hosted MCP server.",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                ),
+            ],
+        ),
+    ]
+
+    storage_on = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=True)
+    assert "reasoning" not in [item.get("type") for item in storage_on]
+
+    storage_off = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+    types = [item.get("type") for item in storage_off]
+    assert types == ["reasoning", "mcp_call"]
+
+    reasoning = storage_off[0]
+    assert reasoning["id"] == "rs_abc123"
+    assert reasoning["status"] == "completed"
+    assert reasoning["summary"] == [{"type": "summary_text", "text": "I need to query the hosted MCP server."}]
+
+
 def test_prepare_messages_for_openai_coalesces_mcp_call_and_result_into_single_item() -> None:
     """An mcp_server_tool_call followed by an mcp_server_tool_result with the
     same call_id (in same or separate Messages) must produce ONE mcp_call
