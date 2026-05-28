@@ -481,3 +481,189 @@ def test_file_access_harness_classes_are_marked_experimental() -> None:
     assert FileSearchResult.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert FileAccessProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert ".. warning:: Experimental" in (FileAccessProvider.__doc__ or "")
+
+
+async def test_in_memory_store_preserves_original_case_on_list_and_search() -> None:
+    """``list_files`` / ``search_files`` should return original-case names, not lowercased keys.
+
+    Matches :class:`FileSystemAgentFileStore` on case-preserving filesystems so
+    tests written against the in-memory backend cannot encode a contract that
+    will diverge in production.
+    """
+    store = InMemoryAgentFileStore()
+    await store.write_file("Plan.MD", "ERROR happens here\n")
+    await store.write_file("Reports/Q1.MD", "alpha")
+
+    # list_files keeps the original case
+    assert sorted(await store.list_files()) == ["Plan.MD"]
+    assert sorted(await store.list_files("Reports")) == ["Q1.MD"]
+
+    # case-insensitive directory lookup still works
+    assert sorted(await store.list_files("reports")) == ["Q1.MD"]
+
+    # search_files emits the original-case file name in FileSearchResult
+    results = await store.search_files("", "error", "*.MD")
+    assert [r.file_name for r in results] == ["Plan.MD"]
+
+    # read_file remains case-insensitive
+    assert await store.read_file("plan.md") == "ERROR happens here\n"
+
+
+async def test_filesystem_store_read_file_raises_value_error_on_non_utf8(tmp_path: Path) -> None:
+    """Binary / non-UTF-8 files should raise a clean ``ValueError`` rather than ``UnicodeDecodeError``.
+
+    The tool-layer wrapper relies on this contract to convert the failure into
+    a recoverable string response for the agent.
+    """
+    store = FileSystemAgentFileStore(tmp_path)
+    (tmp_path / "blob.bin").write_bytes(b"\x80\x81\x82\x83")
+
+    with pytest.raises(ValueError, match="not UTF-8 text"):
+        await store.read_file("blob.bin")
+
+
+async def test_filesystem_store_search_logs_skipped_non_utf8_files(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``search_files`` skips non-UTF-8 files but logs per-file and a summary so operators have signal."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write_file("notes.md", "ERROR happens here")
+    (tmp_path / "blob.bin").write_bytes(b"\x80\x81\x82\x83")
+
+    with caplog.at_level("INFO", logger="agent_framework._harness._file_access"):
+        results = await store.search_files("", "error")
+
+    assert [r.file_name for r in results] == ["notes.md"]
+    assert any("Skipping non-UTF-8 file during search" in rec.message for rec in caplog.records)
+    assert any("skipped 1 non-UTF-8 file" in rec.message for rec in caplog.records)
+
+
+async def test_file_access_tool_wrappers_surface_value_error_as_message(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Recoverable failures (bad path, oversized regex, non-UTF-8 read) should be returned as strings.
+
+    Without these wrappers the model sees a raw stack trace for "you used ``..``"
+    but a polite message for "the file already exists", which is the opposite
+    of what is recoverable.
+    """
+    session = AgentSession(session_id="session-1")
+    store = InMemoryAgentFileStore()
+    provider = FileAccessProvider(store=store)
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["work with files"])],
+    )
+    tools = options["tools"]
+    assert isinstance(tools, list)
+
+    save_file = _tool_by_name(tools, "file_access_save_file")
+    read_file = _tool_by_name(tools, "file_access_read_file")
+    delete_file = _tool_by_name(tools, "file_access_delete_file")
+    list_files = _tool_by_name(tools, "file_access_list_files")
+    search_files = _tool_by_name(tools, "file_access_search_files")
+
+    # Path-traversal attempts on each tool should return a clean string, not raise.
+    saved = await save_file.invoke(arguments={"file_name": "../escape.txt", "content": "x"})
+    assert "Could not save" in saved[0].text and "escape" in saved[0].text.lower()
+    read = await read_file.invoke(arguments={"file_name": "../escape.txt"})
+    assert "Could not read" in read[0].text
+    deleted = await delete_file.invoke(arguments={"file_name": "../escape.txt"})
+    assert "Could not delete" in deleted[0].text
+    listed = await list_files.invoke(arguments={"directory": "../escape"})
+    assert "Could not list" in listed[0].text
+
+    # Regex length cap should also be returned to the model as text.
+    too_long = "a" * 1024
+    searched = await search_files.invoke(arguments={"regex_pattern": too_long})
+    assert "Could not search files" in searched[0].text
+
+
+async def test_file_access_tool_read_file_wrapper_surfaces_non_utf8(
+    tmp_path: Path, chat_client_base: SupportsChatGetResponse
+) -> None:
+    """The read-file tool wrapper should convert a non-UTF-8 ``ValueError`` into a readable string."""
+    store = FileSystemAgentFileStore(tmp_path)
+    (tmp_path / "blob.bin").write_bytes(b"\x80\x81\x82\x83")
+
+    session = AgentSession(session_id="session-1")
+    provider = FileAccessProvider(store=store)
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["read it"])],
+    )
+    read_file = _tool_by_name(options["tools"], "file_access_read_file")
+    response = await read_file.invoke(arguments={"file_name": "blob.bin"})
+    assert "Could not read" in response[0].text and "UTF-8" in response[0].text
+
+
+_NEEDS_SYMLINK = "Symbolic links are not supported in this environment"
+
+
+async def test_filesystem_store_rejects_symlink_on_delete_search_and_list(tmp_path: Path) -> None:
+    """The same symlink probe must front delete/search/list, not just read/write."""
+    target = tmp_path / "outside.txt"
+    target.write_text("outside", encoding="utf-8")
+    root = tmp_path / "root"
+    root.mkdir()
+    link = root / "link.txt"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"{_NEEDS_SYMLINK}: {exc!r}")
+
+    store = FileSystemAgentFileStore(root)
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        await store.delete_file("link.txt")
+
+    # search_files of the root never touches the symlink leaf directly, but
+    # search_files of a symlinked *directory* path must be rejected by the
+    # safe-directory resolver.
+    dir_link = root / "alias_dir"
+    other_dir = tmp_path / "outside_dir"
+    other_dir.mkdir()
+    try:
+        dir_link.symlink_to(other_dir)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"{_NEEDS_SYMLINK}: {exc!r}")
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        await store.search_files("alias_dir", "anything")
+    with pytest.raises(ValueError, match="symbolic link"):
+        await store.list_files("alias_dir")
+
+
+async def test_filesystem_store_rejects_symlinked_intermediate_directory(tmp_path: Path) -> None:
+    """A symlink used as a non-leaf path segment must still be rejected.
+
+    The classic escape vector is ``root/aliased_dir/file.txt`` where
+    ``aliased_dir`` is a symlink to somewhere outside the root. The
+    ``_throw_if_contains_symlink`` walk must check every segment, not only
+    the leaf.
+    """
+    outside = tmp_path / "outside_dir"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("payload", encoding="utf-8")
+    root = tmp_path / "root"
+    root.mkdir()
+    link = root / "aliased_dir"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"{_NEEDS_SYMLINK}: {exc!r}")
+
+    store = FileSystemAgentFileStore(root)
+
+    for op in ("read", "write", "delete"):
+        with pytest.raises(ValueError, match="symbolic link"):
+            if op == "read":
+                await store.read_file("aliased_dir/secret.txt")
+            elif op == "write":
+                await store.write_file("aliased_dir/secret.txt", "stomp")
+            else:
+                await store.delete_file("aliased_dir/secret.txt")

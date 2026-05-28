@@ -21,7 +21,9 @@ remote-blob backends. Two backends are shipped here:
 from __future__ import annotations
 
 import asyncio
+import errno
 import fnmatch
+import logging
 import os
 import re
 from abc import ABC, abstractmethod
@@ -33,6 +35,8 @@ from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._tools import tool
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_FILE_ACCESS_SOURCE_ID = "file_access"
 DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
@@ -61,6 +65,12 @@ _SEARCH_SNIPPET_RADIUS = 50
 # regex engine returns, but the caller and event loop stay responsive.
 _MAX_SEARCH_PATTERN_LENGTH = 256
 _SEARCH_TIMEOUT_SECONDS = 10.0
+
+# Errno raised by POSIX ``open`` when ``O_NOFOLLOW`` was requested and the
+# leaf path component is a symbolic link. Used to translate the kernel-level
+# refusal into the same :class:`ValueError` the static probe raises so the
+# caller can treat the two cases uniformly.
+_ELOOP = errno.ELOOP
 
 
 def _compile_search_regex(pattern: str) -> re.Pattern[str]:
@@ -439,9 +449,13 @@ class InMemoryAgentFileStore(AgentFileStore):
 
     def __init__(self) -> None:
         """Initialize an empty in-memory file store."""
-        # Keys are normalized forward-slash relative paths; comparisons are case-
-        # insensitive.
-        self._files: dict[str, str] = {}
+        # Keys are case-insensitive (normalized + lowercased) so the store
+        # behaves consistently on case-insensitive deployments. Each entry
+        # also records the *original* normalized path so ``list_files`` and
+        # ``search_files`` return display names that match what the caller
+        # wrote, mirroring how :class:`FileSystemAgentFileStore` preserves the
+        # on-disk casing.
+        self._files: dict[str, tuple[str, str]] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -455,17 +469,19 @@ class InMemoryAgentFileStore(AgentFileStore):
         store lock so concurrent callers cannot both observe a missing file
         and race to create it.
         """
-        key = self._key(path)
+        display = _normalize_relative_path(path)
+        key = display.lower()
         async with self._lock:
             if not overwrite and key in self._files:
                 raise FileExistsError(f"File already exists: {path!r}")
-            self._files[key] = content
+            self._files[key] = (display, content)
 
     async def read_file(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist."""
         key = self._key(path)
         async with self._lock:
-            return self._files.get(key)
+            entry = self._files.get(key)
+        return entry[1] if entry is not None else None
 
     async def delete_file(self, path: str) -> bool:
         """Delete the file and return whether anything was removed."""
@@ -474,13 +490,29 @@ class InMemoryAgentFileStore(AgentFileStore):
             return self._files.pop(key, None) is not None
 
     async def list_files(self, directory: str = "") -> list[str]:
-        """Return the direct child files of ``directory``."""
+        """Return the direct child files of ``directory``.
+
+        Returns the *original-case* file names that were written, so a caller
+        that does ``write_file("Plan.MD", ...)`` then ``list_files()`` gets
+        back ``["Plan.MD"]`` rather than ``["plan.md"]``. This matches the
+        behaviour of :class:`FileSystemAgentFileStore` on case-preserving
+        filesystems.
+        """
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
         async with self._lock:
-            keys = list(self._files.keys())
-        return [key[len(prefix) :] for key in keys if key.startswith(prefix) and "/" not in key[len(prefix) :]]
+            entries = [(key, display) for key, (display, _) in self._files.items()]
+        results: list[str] = []
+        for key, display in entries:
+            if not key.startswith(prefix):
+                continue
+            if "/" in key[len(prefix) :]:
+                continue
+            # ``display`` is the original-case normalized path; strip the
+            # directory prefix using the same length we matched on ``key``.
+            results.append(display[len(prefix) :])
+        return results
 
     async def file_exists(self, path: str) -> bool:
         """Return whether the file exists."""
@@ -498,7 +530,9 @@ class InMemoryAgentFileStore(AgentFileStore):
 
         Snapshots the entries under the store lock and offloads the regex scan
         to a worker thread with a bounded timeout so a pathological pattern
-        cannot stall the event loop.
+        cannot stall the event loop. Returned :class:`FileSearchResult`
+        instances use the *original-case* file names so the result mirrors
+        what :class:`FileSystemAgentFileStore` would produce.
         """
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
@@ -506,19 +540,20 @@ class InMemoryAgentFileStore(AgentFileStore):
         regex = _compile_search_regex(regex_pattern)
 
         async with self._lock:
-            entries = list(self._files.items())
+            entries = [(key, display, content) for key, (display, content) in self._files.items()]
 
         def scan() -> list[FileSearchResult]:
             results: list[FileSearchResult] = []
-            for key, file_content in entries:
+            for key, display, file_content in entries:
                 if not key.startswith(prefix):
                     continue
-                relative_name = key[len(prefix) :]
-                if "/" in relative_name:
+                relative_key = key[len(prefix) :]
+                if "/" in relative_key:
                     continue
-                if not _matches_glob(relative_name, file_pattern):
+                relative_display = display[len(prefix) :]
+                if not _matches_glob(relative_display, file_pattern):
                     continue
-                result = _search_file_content(relative_name, file_content, regex)
+                result = _search_file_content(relative_display, file_content, regex)
                 if result is not None:
                     results.append(result)
             return results
@@ -540,8 +575,15 @@ class FileSystemAgentFileStore(AgentFileStore):
     directory is created automatically if it does not already exist.
 
     Symbolic links and reparse points anywhere along the resolved path are
-    rejected on read, write, delete, and existence checks to prevent escaping
-    the root.
+    rejected on read, write, delete, list, and existence checks. The check is
+    a probe followed by an open: on POSIX the open also passes ``O_NOFOLLOW``
+    so the kernel refuses if the leaf segment becomes a symlink between the
+    probe and the open. On Windows the protection is best-effort: it covers
+    the static case (a symlink already exists when the call is made) but
+    cannot cover an adversarial caller that swaps a parent directory for a
+    symlink between the probe and the file open. This store is designed for
+    single-tenant or co-operating-tenant use; it is not a sandbox against a
+    hostile process that shares the root directory.
     """
 
     def __init__(self, root_directory: str | os.PathLike[str]) -> None:
@@ -573,6 +615,14 @@ class FileSystemAgentFileStore(AgentFileStore):
         "escapes the root" error for out-of-root targets. Checking the
         unresolved candidate first keeps the rejection deterministic and gives
         the caller the specific symlink error.
+
+        The probe is followed by the actual open, so there is an unavoidable
+        race window in which a concurrent writer on the host can swap an
+        intermediate path segment for a symlink. The open path mitigates the
+        common case by passing ``O_NOFOLLOW`` on POSIX so the kernel refuses
+        if the *leaf* segment becomes a symlink between the probe and the
+        open. The Windows ``open`` API has no equivalent flag and intermediate
+        directory swaps cannot be closed from user space on either platform.
         """
         normalized = _normalize_relative_path(relative_path)
         candidate = self._root_path / normalized
@@ -633,10 +683,12 @@ class FileSystemAgentFileStore(AgentFileStore):
     async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
 
-        When ``overwrite`` is ``False`` the file is created using ``mode="x"``
-        so the underlying ``open`` call performs an atomic exclusive create
-        (``O_EXCL`` on POSIX, ``CREATE_NEW`` on Windows) and raises
-        :class:`FileExistsError` if a file already exists.
+        When ``overwrite`` is ``False`` the file is created using
+        ``O_CREAT | O_EXCL`` so the underlying ``open`` call performs an
+        atomic exclusive create and raises :class:`FileExistsError` if a file
+        already exists. On POSIX the open additionally passes ``O_NOFOLLOW``
+        so the kernel refuses to overwrite or replace a leaf symlink, closing
+        the obvious probe-then-open race for the file itself.
         """
         full_path = self._resolve_safe_path(path)
         await asyncio.to_thread(self._write_file_sync, full_path, content, overwrite)
@@ -644,14 +696,39 @@ class FileSystemAgentFileStore(AgentFileStore):
     @staticmethod
     def _write_file_sync(full_path: Path, content: str, overwrite: bool) -> None:
         full_path.parent.mkdir(parents=True, exist_ok=True)
+        encoded = content.encode("utf-8")
+        flags = os.O_WRONLY | os.O_CREAT
         if overwrite:
-            full_path.write_text(content, encoding="utf-8")
-            return
-        with full_path.open("x", encoding="utf-8") as handle:
-            handle.write(content)
+            flags |= os.O_TRUNC
+        else:
+            flags |= os.O_EXCL
+        # ``O_NOFOLLOW`` is POSIX-only; on Windows ``Path.is_symlink`` /
+        # reparse-point detection in :meth:`_throw_if_contains_symlink` is the
+        # only line of defence for the leaf segment.
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        flags |= nofollow
+        try:
+            fd = os.open(full_path, flags, 0o644)
+        except OSError as exc:
+            if not overwrite and isinstance(exc, FileExistsError):
+                raise
+            # ``ELOOP`` (POSIX): the open refused because the leaf is a
+            # symlink. Surface the same message as the static symlink probe so
+            # the caller's exception-handling path is uniform.
+            if nofollow and getattr(exc, "errno", None) == _ELOOP:
+                raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.") from exc
+            raise
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
 
     async def read_file(self, path: str) -> str | None:
-        """Return the file content, or ``None`` if the file does not exist."""
+        """Return the file content, or ``None`` if the file does not exist.
+
+        Raises :class:`ValueError` if the file exists but its bytes are not
+        valid UTF-8. Tooling that calls this on possibly-binary content should
+        catch :class:`ValueError` and present the failure to the agent as a
+        recoverable string response rather than a stack trace.
+        """
         full_path = self._resolve_safe_path(path)
         return await asyncio.to_thread(self._read_file_sync, full_path)
 
@@ -659,7 +736,19 @@ class FileSystemAgentFileStore(AgentFileStore):
     def _read_file_sync(full_path: Path) -> str | None:
         if not full_path.is_file():
             return None
-        return full_path.read_text(encoding="utf-8")
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(full_path, os.O_RDONLY | nofollow)
+        except OSError as exc:
+            if nofollow and getattr(exc, "errno", None) == _ELOOP:
+                raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.") from exc
+            raise
+        with os.fdopen(fd, "rb") as handle:
+            raw = handle.read()
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"File '{full_path.name}' is not UTF-8 text and cannot be read.") from exc
 
     async def delete_file(self, path: str) -> bool:
         """Delete the file and return whether anything was removed."""
@@ -705,7 +794,14 @@ class FileSystemAgentFileStore(AgentFileStore):
         regex_pattern: str,
         file_pattern: str | None = None,
     ) -> list[FileSearchResult]:
-        """Search file contents for ``regex_pattern`` matches."""
+        """Search file contents for ``regex_pattern`` matches.
+
+        Files whose bytes are not valid UTF-8 are skipped (so a single binary
+        file does not abort the whole directory search). Each skip is logged at
+        ``WARNING`` level and a summary is logged at ``INFO`` so operators can
+        tell the difference between "no matches" and "the corpus was largely
+        not searchable".
+        """
         full_dir = self._resolve_safe_directory_path(directory)
         regex = _compile_search_regex(regex_pattern)
         return await _run_search_with_timeout(lambda: self._search_files_sync(full_dir, regex, file_pattern))
@@ -715,6 +811,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         if not full_dir.is_dir():
             return []
         results: list[FileSearchResult] = []
+        skipped: list[str] = []
         for entry in full_dir.iterdir():
             if entry.is_symlink() or not entry.is_file():
                 continue
@@ -726,10 +823,20 @@ class FileSystemAgentFileStore(AgentFileStore):
             except UnicodeDecodeError:
                 # Skip binary or otherwise non-UTF-8 files so a single
                 # un-decodable entry doesn't abort the whole directory search.
+                # Log per file so operators can audit which files were skipped.
+                logger.warning("Skipping non-UTF-8 file during search: %s", entry)
+                skipped.append(file_name)
                 continue
             result = _search_file_content(file_name, file_content, regex)
             if result is not None:
                 results.append(result)
+        if skipped:
+            logger.info(
+                "Search under %s skipped %d non-UTF-8 file(s) (matched %d).",
+                full_dir,
+                len(skipped),
+                len(results),
+            )
         return results
 
     async def create_directory(self, path: str) -> None:
@@ -797,43 +904,67 @@ class FileAccessProvider(ContextProvider):
         @tool(name="file_access_save_file", approval_mode="never_require")
         async def file_access_save_file(file_name: str, content: str, overwrite: bool = False) -> str:
             """Save a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # noqa: E501
-            normalized = _normalize_relative_path(file_name)
             try:
+                normalized = _normalize_relative_path(file_name)
                 await self.store.write_file(normalized, content, overwrite=overwrite)
             except FileExistsError:
                 return f"File '{file_name}' already exists. To replace it, save again with overwrite set to true."
+            except ValueError as exc:
+                return f"Could not save file '{file_name}': {exc}"
+            except OSError as exc:
+                return f"Could not save file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' saved."
 
         @tool(name="file_access_read_file", approval_mode="never_require")
         async def file_access_read_file(file_name: str) -> str:
-            """Read the content of a file by name. Returns the file content or a message indicating the file was not found."""  # noqa: E501
-            normalized = _normalize_relative_path(file_name)
-            content = await self.store.read_file(normalized)
+            """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # noqa: E501
+            try:
+                normalized = _normalize_relative_path(file_name)
+                content = await self.store.read_file(normalized)
+            except ValueError as exc:
+                return f"Could not read file '{file_name}': {exc}"
+            except OSError as exc:
+                return f"Could not read file '{file_name}': {exc.strerror or exc}"
             return content if content is not None else f"File '{file_name}' not found."
 
         @tool(name="file_access_delete_file", approval_mode="never_require")
         async def file_access_delete_file(file_name: str) -> str:
             """Delete a file by name."""
-            normalized = _normalize_relative_path(file_name)
-            deleted = await self.store.delete_file(normalized)
+            try:
+                normalized = _normalize_relative_path(file_name)
+                deleted = await self.store.delete_file(normalized)
+            except ValueError as exc:
+                return f"Could not delete file '{file_name}': {exc}"
+            except OSError as exc:
+                return f"Could not delete file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
         @tool(name="file_access_list_files", approval_mode="never_require")
-        async def file_access_list_files(directory: str | None = None) -> list[str]:
+        async def file_access_list_files(directory: str | None = None) -> list[str] | str:
             """List the direct child file names of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate files in a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``."""  # noqa: E501
             target = directory if directory and directory.strip() else ""
-            return await self.store.list_files(target)
+            try:
+                return await self.store.list_files(target)
+            except ValueError as exc:
+                return f"Could not list directory '{directory or ''}': {exc}"
+            except OSError as exc:
+                return f"Could not list directory '{directory or ''}': {exc.strerror or exc}"
 
         @tool(name="file_access_search_files", approval_mode="never_require")
         async def file_access_search_files(
             regex_pattern: str,
             file_pattern: str | None = None,
             directory: str | None = None,
-        ) -> list[dict[str, Any]]:
+        ) -> list[dict[str, Any]] | str:
             """Search file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Optionally scope the search to a subdirectory by passing its relative path; omit ``directory`` (or pass an empty string) to search the root. Returns matching file names, snippets, and matching lines with line numbers. The regex_pattern must be 256 characters or fewer."""  # noqa: E501
             pattern = file_pattern if file_pattern and file_pattern.strip() else None
             target = directory if directory and directory.strip() else ""
-            results = await self.store.search_files(target, regex_pattern, pattern)
+            try:
+                results = await self.store.search_files(target, regex_pattern, pattern)
+            except ValueError as exc:
+                return f"Could not search files: {exc}"
+            except OSError as exc:
+                return f"Could not search files: {exc.strerror or exc}"
             return [result.to_dict() for result in results]
 
         context.extend_instructions(self.source_id, [self.instructions])
