@@ -22,7 +22,7 @@ technologies to communicate seamlessly.
 By default the A2AAgent waits for the remote agent to finish before returning (background=False).
 This means long-running A2A tasks are handled transparently — the caller simply awaits the result.
 For advanced scenarios where you need to poll or resubscribe to in-progress tasks, see the
-background_responses sample: samples/concepts/background_responses.py
+a2a_polling and a2a_stream_reconnection samples in this folder.
 
 For more information about the A2A protocol specification, visit: https://a2a-protocol.org/latest/
 
@@ -71,8 +71,8 @@ async def main():
         response = await agent.run("What are your capabilities?")
 
         print("Agent Response:")
-        for message in response.messages:
-            print(f"  {message.text}")
+        text = "".join(msg.text for msg in response.messages if msg.role == "assistant" and msg.text)
+        print(f"  {text}")
 
         # 5. Stream a response — the natural model for A2A.
         #    Updates arrive as Server-Sent Events, letting you observe
@@ -82,12 +82,13 @@ async def main():
         async for update in stream:
             for content in update.contents:
                 if content.text:
-                    print(f"  {content.text}")
+                    print(content.text, end="", flush=True)
+        print()  # newline after streaming completes
 
         response = await stream.get_final_response()
-        print(f"\nFinal response ({len(response.messages)} message(s)):")
-        for message in response.messages:
-            print(f"  {message.text}")
+        print(f"\nFinal response:")
+        text = "".join(msg.text for msg in response.messages if msg.role == "assistant" and msg.text)
+        print(f"  {text}")
 
 
 if __name__ == "__main__":
@@ -105,8 +106,8 @@ Agent Response:
   I can help with code generation, analysis, and general Q&A.
 
 --- Streaming response ---
-  I am an AI assistant built to help with various tasks.
+I am an AI assistant built to help with various tasks.
 
-Final response (1 message(s)):
+Final response:
   I am an AI assistant built to help with various tasks.
 """

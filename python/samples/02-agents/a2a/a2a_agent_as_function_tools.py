@@ -33,7 +33,7 @@ Prerequisites:
 - Set FOUNDRY_MODEL to the model deployment name (e.g. gpt-4o)
 
 To run this sample:
-    cd python/samples/04-hosting/a2a
+    cd python/samples/02-agents/a2a
     uv run python a2a_agent_as_function_tools.py
 """
 
