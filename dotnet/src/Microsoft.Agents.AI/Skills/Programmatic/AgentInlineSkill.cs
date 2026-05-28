@@ -3,7 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -16,9 +19,9 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// All calls to <see cref="AddResource(string, object, string?)"/>,
 /// <see cref="AddResource(string, Delegate, string?, JsonSerializerOptions?)"/>, and <see cref="AddScript"/>
-/// must be made before the skill's <see cref="Content"/> is first accessed.
+/// must be made before the skill's <see cref="GetContentAsync"/> is first called.
 /// Calls made after that point will not be reflected in the generated
-/// <see cref="Content"/>. In typical usage, this means configuring all
+/// content. In typical usage, this means configuring all
 /// resources and scripts before registering the skill with an
 /// <see cref="AgentSkillsProvider"/> or <see cref="AgentSkillsProviderBuilder"/>.
 /// </remarks>
@@ -90,13 +93,24 @@ public sealed class AgentInlineSkill : AgentSkill
     public override AgentSkillFrontmatter Frontmatter { get; }
 
     /// <inheritdoc/>
-    public override string Content => this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._resources, this._scripts);
+    public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
+    {
+        return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._resources, this._scripts));
+    }
 
     /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillResource>? Resources => this._resources;
+    public override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
+    {
+        var resource = this._resources?.FirstOrDefault(r => r.Name == name);
+        return new(resource);
+    }
 
     /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillScript>? Scripts => this._scripts;
+    public override ValueTask<AgentSkillScript?> GetScriptAsync(string name, CancellationToken cancellationToken = default)
+    {
+        var script = this._scripts?.FirstOrDefault(s => s.Name == name);
+        return new(script);
+    }
 
     /// <summary>
     /// Registers a static resource with this skill.

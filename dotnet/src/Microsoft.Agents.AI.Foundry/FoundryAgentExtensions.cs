@@ -2,13 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Files;
 using OpenAI.VectorStores;
@@ -23,7 +21,6 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <see cref="FoundryChatClient"/> at the agent level so callers do not need to drop down to
 /// <c>agent.GetService&lt;FoundryChatClient&gt;().X()</c> for common workflows.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class FoundryAgentExtensions
 {
     /// <summary>

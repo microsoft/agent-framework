@@ -914,4 +914,147 @@ public sealed class AGUIChatMessageExtensionsTests
     }
 
     #endregion
+
+    #region Consecutive Assistant-Tool-Call Coalescing
+
+    /// <summary>
+    /// Bug #3 reproduction: consecutive AGUIAssistantMessages with ToolCalls should
+    /// be coalesced into a single ChatMessage with multiple FunctionCallContent
+    /// entries. Without coalescing, Azure OpenAI rejects the history with HTTP 400.
+    /// </summary>
+    [Fact]
+    public void AsChatMessages_ConsecutiveAssistantToolCallMessages_CoalesceIntoOneChatMessage()
+    {
+        // Arrange — 3 consecutive assistant messages with tool calls (no intervening tool msg)
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage { Id = "user-1", Content = "Run 3 queries" },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-1",
+                Content = "",
+                ToolCalls =
+                [
+                    new AGUIToolCall { Id = "call_A", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{\"q\":\"1\"}" } }
+                ]
+            },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-2",
+                Content = "",
+                ToolCalls =
+                [
+                    new AGUIToolCall { Id = "call_B", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{\"q\":\"2\"}" } }
+                ]
+            },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-3",
+                Content = "",
+                ToolCalls =
+                [
+                    new AGUIToolCall { Id = "call_C", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{\"q\":\"3\"}" } }
+                ]
+            },
+            new AGUIToolMessage { Id = "tool-1", ToolCallId = "call_A", Content = "\"result1\"" },
+            new AGUIToolMessage { Id = "tool-2", ToolCallId = "call_B", Content = "\"result2\"" },
+            new AGUIToolMessage { Id = "tool-3", ToolCallId = "call_C", Content = "\"result3\"" },
+            new AGUIUserMessage { Id = "user-2", Content = "Run it again" },
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert — the 3 consecutive assistant-tool-call messages should coalesce into 1
+        List<ChatMessage> assistantWithToolCalls = chatMessages
+            .Where(m => m.Role == ChatRole.Assistant && m.Contents.OfType<FunctionCallContent>().Any())
+            .ToList();
+
+        Assert.Single(assistantWithToolCalls);
+
+        // The single coalesced message should contain all 3 FunctionCallContent entries
+        List<FunctionCallContent> functionCalls = assistantWithToolCalls[0].Contents
+            .OfType<FunctionCallContent>().ToList();
+        Assert.Equal(3, functionCalls.Count);
+        Assert.Equal("call_A", functionCalls[0].CallId);
+        Assert.Equal("call_B", functionCalls[1].CallId);
+        Assert.Equal("call_C", functionCalls[2].CallId);
+
+        // MessageId should be from the first message in the coalesced group
+        Assert.Equal("asst-1", assistantWithToolCalls[0].MessageId);
+
+        // Total messages: user + coalesced assistant + 3 tools + user = 6
+        Assert.Equal(6, chatMessages.Count);
+    }
+
+    /// <summary>
+    /// A single assistant message with tool calls (not consecutive) should still
+    /// produce one ChatMessage — no behavior change from coalescing logic.
+    /// </summary>
+    [Fact]
+    public void AsChatMessages_SingleAssistantToolCallMessage_ProducesOneChatMessage()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIAssistantMessage
+            {
+                Id = "asst-1",
+                Content = "Here are the results",
+                ToolCalls =
+                [
+                    new AGUIToolCall { Id = "call_A", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{}" } },
+                    new AGUIToolCall { Id = "call_B", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{}" } },
+                ]
+            },
+            new AGUIToolMessage { Id = "tool-1", ToolCallId = "call_A", Content = "\"r1\"" },
+            new AGUIToolMessage { Id = "tool-2", ToolCallId = "call_B", Content = "\"r2\"" },
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert — single assistant message, not coalesced from multiple
+        Assert.Equal(3, chatMessages.Count);
+        Assert.Equal(ChatRole.Assistant, chatMessages[0].Role);
+        List<FunctionCallContent> calls = chatMessages[0].Contents.OfType<FunctionCallContent>().ToList();
+        Assert.Equal(2, calls.Count);
+        Assert.Equal("asst-1", chatMessages[0].MessageId);
+    }
+
+    /// <summary>
+    /// When consecutive assistant-tool-call messages are at the END of the stream
+    /// (no subsequent non-tool-call message to trigger flush), they should still
+    /// be coalesced and flushed.
+    /// </summary>
+    [Fact]
+    public void AsChatMessages_ConsecutiveAssistantToolCallsAtEndOfStream_FlushesCorrectly()
+    {
+        // Arrange — stream ends with consecutive assistant tool-call messages
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage { Id = "user-1", Content = "Do things" },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-1",
+                ToolCalls = [new AGUIToolCall { Id = "call_X", Type = "function", Function = new AGUIFunctionCall { Name = "fn", Arguments = "{}" } }]
+            },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-2",
+                ToolCalls = [new AGUIToolCall { Id = "call_Y", Type = "function", Function = new AGUIFunctionCall { Name = "fn", Arguments = "{}" } }]
+            },
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert — should be user + 1 coalesced assistant = 2 messages
+        Assert.Equal(2, chatMessages.Count);
+        Assert.Equal(ChatRole.User, chatMessages[0].Role);
+        Assert.Equal(ChatRole.Assistant, chatMessages[1].Role);
+        Assert.Equal(2, chatMessages[1].Contents.OfType<FunctionCallContent>().Count());
+    }
+
+    #endregion
 }
