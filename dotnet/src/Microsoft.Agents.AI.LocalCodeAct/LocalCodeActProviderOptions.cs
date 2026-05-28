@@ -42,9 +42,17 @@ public sealed class LocalCodeActProviderOptions
     public IEnumerable<FileMount>? FileMounts { get; set; }
 
     /// <summary>
-    /// Gets or sets environment variables passed to the subprocess. When <see langword="null"/>
-    /// the subprocess starts with a minimal, non-inherited environment.
+    /// Gets or sets environment variables passed to the subprocess.
     /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, the subprocess inherits the parent process environment
+    /// (the default <see cref="System.Diagnostics.ProcessStartInfo"/> behavior). To run with
+    /// a restricted environment, supply a dictionary containing only the variables the
+    /// subprocess should see — pass an empty dictionary for a fully scrubbed environment.
+    /// On Windows, a small set of system variables (SYSTEMROOT, SYSTEMDRIVE, COMSPEC,
+    /// PATHEXT, TEMP, TMP) is back-filled from the parent environment when not already
+    /// present so Python can locate its standard library.
+    /// </remarks>
     public IReadOnlyDictionary<string, string>? Environment { get; set; }
 
     /// <summary>

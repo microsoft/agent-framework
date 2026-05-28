@@ -100,6 +100,102 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task ExecuteCode_UnknownToolNameReturnsErrorToGeneratedCodeAsync()
+    {
+        SkipIfNoPython();
+
+        // No tools are registered, so any call_tool from generated code resolves to
+        // the "Unknown tool" branch in ProcessBridge.HandleToolCallAsync.
+        var function = new LocalExecuteCodeFunction(new LocalCodeActProviderOptions(s_python!));
+
+        var args = new AIFunctionArguments
+        {
+            ["code"] = @"
+try:
+    await call_tool('definitely_not_registered', x=1)
+    print('NO_ERROR')
+except Exception as exc:
+    print('GOT_ERROR:' + type(exc).__name__ + ':' + str(exc))
+",
+        };
+
+        var result = await function.InvokeAsync(args, CancellationToken.None);
+        var contents = Assert.IsAssignableFrom<System.Collections.Generic.IEnumerable<AIContent>>(result);
+        var combined = string.Join("\n", contents.OfType<TextContent>().Select(t => t.Text));
+        Assert.Contains("GOT_ERROR", combined);
+        Assert.Contains("definitely_not_registered", combined);
+        Assert.DoesNotContain("NO_ERROR", combined);
+    }
+
+    [Fact]
+    public async Task ExecuteCode_ToolThrowingExceptionPropagatesToGeneratedCodeAsync()
+    {
+        SkipIfNoPython();
+
+        // Tool that always throws — exercises ProcessBridge.HandleToolCallAsync exception path
+        // which sends a structured error response back to the subprocess.
+        var faultyTool = AIFunctionFactory.Create(
+            (string message) => throw new InvalidOperationException("intentional: " + message),
+            name: "faulty");
+
+        var options = new LocalCodeActProviderOptions(s_python!)
+        {
+            Tools = new[] { faultyTool },
+        };
+        var function = new LocalExecuteCodeFunction(options);
+
+        var args = new AIFunctionArguments
+        {
+            ["code"] = @"
+try:
+    await call_tool('faulty', message='boom')
+    print('NO_ERROR')
+except Exception as exc:
+    print('GOT_ERROR:' + type(exc).__name__ + ':' + str(exc))
+",
+        };
+
+        var result = await function.InvokeAsync(args, CancellationToken.None);
+        var contents = Assert.IsAssignableFrom<System.Collections.Generic.IEnumerable<AIContent>>(result);
+        var combined = string.Join("\n", contents.OfType<TextContent>().Select(t => t.Text));
+        Assert.Contains("GOT_ERROR", combined);
+        Assert.Contains("InvalidOperationException", combined);
+        Assert.Contains("intentional: boom", combined);
+    }
+
+    [Fact]
+    public async Task Validator_TimeoutKillsProcessAndThrowsAsync()
+    {
+        SkipIfNoPython();
+
+        // Custom validator script that ignores stdin and blocks forever so the
+        // parent timeout fires and exercises the timeout catch in CodeValidator.
+        var tempDir = Directory.CreateTempSubdirectory("localcodeact-vtimeout-").FullName;
+        try
+        {
+            var scriptPath = Path.Combine(tempDir, "hang_validator.py");
+            File.WriteAllText(scriptPath, "import time\nwhile True:\n    time.sleep(60)\n");
+
+            var validator = new Internal.CodeValidator(
+                s_python!,
+                scriptPath,
+                TimeSpan.FromSeconds(1),
+                allowedImports: null,
+                blockedImports: null,
+                allowedBuiltins: null,
+                blockedBuiltins: null);
+
+            var ex = await Assert.ThrowsAsync<CodeValidationException>(
+                async () => await validator.ValidateAsync("print('x')", CancellationToken.None));
+            Assert.Contains("exceeded", ex.Message);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     private static string? FindPython()
     {
         foreach (var name in new[] { "python3", "python" })

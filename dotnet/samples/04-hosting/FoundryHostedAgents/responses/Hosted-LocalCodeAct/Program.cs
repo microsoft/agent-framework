@@ -17,7 +17,6 @@ using Azure.Identity;
 using DotNetEnv;
 using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.AI.LocalCodeAct;
 using Microsoft.Extensions.AI;
