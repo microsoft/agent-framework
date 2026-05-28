@@ -123,10 +123,13 @@ def _run_result(text: str) -> HostedRunResult[AgentResponse]:
     return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
-def _make_telegram(stream_default: bool = False) -> tuple[TelegramChannel, _FakeAgent]:
+def _make_telegram(
+    stream_default: bool = False, *, path: str = "/telegram/webhook"
+) -> tuple[TelegramChannel, _FakeAgent]:
     agent = _FakeAgent("hi")
     ch = TelegramChannel(
         bot_token="123:abc",
+        path=path,
         webhook_url="https://example.com/hook",
         secret_token="s3cr3t",
         stream=stream_default,
@@ -152,6 +155,18 @@ class TestTelegramWebhook:
         with TestClient(host.app) as client:
             r = client.post(
                 "/telegram/webhook",
+                json={"update_id": 1, "message": {"chat": {"id": 99}, "text": "hello"}},
+                headers={"x-telegram-bot-api-secret-token": "s3cr3t"},
+            )
+        assert r.status_code == 200
+        assert agent.runs, "expected the agent to be invoked"
+
+    def test_empty_path_mounts_at_app_root(self) -> None:
+        ch, agent = _make_telegram(path="")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post(
+                "/",
                 json={"update_id": 1, "message": {"chat": {"id": 99}, "text": "hello"}},
                 headers={"x-telegram-bot-api-secret-token": "s3cr3t"},
             )

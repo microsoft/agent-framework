@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-hosting-invocations"
-description = "Minimal POST /invoke channel for agent-framework-hosting."
+description = "Minimal POST /invocations channel for agent-framework-hosting."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"

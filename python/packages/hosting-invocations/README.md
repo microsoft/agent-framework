@@ -1,13 +1,13 @@
 # agent-framework-hosting-invocations
 
-Minimal `POST /invoke` channel for [agent-framework-hosting](../hosting). Useful
+Minimal `POST /invocations` channel for [agent-framework-hosting](../hosting). Useful
 for smoke-testing, durable-task drivers, and bespoke clients that don't speak
 the OpenAI Responses protocol.
 
 ## Wire shape
 
 ```
-POST /invocations/invoke
+POST /invocations
 {
     "message": "hello",
     "session_id": "user-42",

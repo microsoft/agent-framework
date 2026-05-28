@@ -1,0 +1,26 @@
+[project]
+name = "agent-framework-hosting-foundry-telegram-invocations-weather"
+version = "0.0.1"
+description = "Foundry Hosted Agents Telegram weather sample using the Invocations path."
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-foundry-hosting",
+    "agent-framework-hosting",
+    "agent-framework-hosting-responses",
+    "agent-framework-hosting-telegram",
+    "azure-identity",
+    "aiohttp>=3.13.5",
+    "hypercorn>=0.17",
+    "mcp>=1.24,<2",
+    "azure-monitor-opentelemetry>=1.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+agent-framework-foundry-hosting = { git = "https://github.com/microsoft/agent-framework.git", branch = "feature/python-hosting", subdirectory = "python/packages/foundry_hosting" }
+agent-framework-hosting = { git = "https://github.com/microsoft/agent-framework.git", branch = "feature/python-hosting", subdirectory = "python/packages/hosting" }
+agent-framework-hosting-responses = { git = "https://github.com/microsoft/agent-framework.git", branch = "feature/python-hosting", subdirectory = "python/packages/hosting-responses" }
+agent-framework-hosting-telegram = { git = "https://github.com/microsoft/agent-framework.git", branch = "feature/python-hosting", subdirectory = "python/packages/hosting-telegram" }

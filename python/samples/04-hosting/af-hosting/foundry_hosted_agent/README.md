@@ -3,7 +3,7 @@
 Smallest end-to-end hosting sample. One Foundry-backed agent, two
 channels, no human-chat surface — and that minimal shape is the whole
 point: a host configured with at least the **Responses** and
-**Invocations** channels under their default mount roots is
+**Invocations** channels under their default endpoints is
 **runtime-compatible with the Foundry Hosted Agents platform**. The
 same container image runs locally, behind any ASGI server, or as a
 Hosted Agent — no protocol shim, no extra adapter.
@@ -11,7 +11,7 @@ Hosted Agent — no protocol shim, no extra adapter.
 | Route                          | Channel              | Used by                                     |
 | ------------------------------ | -------------------- | ------------------------------------------- |
 | `POST /responses`              | `ResponsesChannel`   | OpenAI Responses clients (`call_server.py`) |
-| `POST /invocations/invoke`     | `InvocationsChannel` | Host-native JSON envelope (Hosted Agents)   |
+| `POST /invocations`            | `InvocationsChannel` | Host-native JSON envelope (Hosted Agents)   |
 
 ## Conversation history
 

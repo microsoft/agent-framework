@@ -151,7 +151,7 @@ class TelegramChannel:
         self,
         *,
         bot_token: str,
-        path: str = "/telegram",
+        path: str = "/telegram/webhook",
         commands: Sequence[ChannelCommand] = (),
         register_native_commands: bool = True,
         run_hook: ChannelRunHook | None = None,
@@ -210,7 +210,7 @@ class TelegramChannel:
         self._ctx = context
         routes: list[BaseRoute] = []
         if self._transport == "webhook":
-            routes.append(Route("/webhook", self._handle, methods=["POST"]))
+            routes.append(Route("/", self._handle, methods=["POST"]))
         return ChannelContribution(
             routes=routes,
             commands=self._commands,

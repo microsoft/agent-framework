@@ -80,9 +80,11 @@ class _FakeAgent:
         return _coro()
 
 
-def _make_teams(stream: bool = False) -> tuple[ActivityProtocolChannel, _FakeAgent]:
+def _make_teams(
+    stream: bool = False, *, path: str = "/activity/messages"
+) -> tuple[ActivityProtocolChannel, _FakeAgent]:
     agent = _FakeAgent("hi there")
-    ch = ActivityProtocolChannel(stream=stream, send_typing_action=False)
+    ch = ActivityProtocolChannel(path=path, stream=stream, send_typing_action=False)
     fake_http = MagicMock()
     response_mock = MagicMock()
     response_mock.raise_for_status = MagicMock()
@@ -121,6 +123,14 @@ class TestTeamsWebhook:
         assert "/v3/conversations/" in ch._http.post.call_args[0][0]  # type: ignore[attr-defined]
         body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
         assert body["text"] == "hi there"
+
+    def test_empty_path_mounts_at_app_root(self) -> None:
+        ch, agent = _make_teams(path="")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/", json=_VALID_ACTIVITY)
+        assert r.status_code == 200
+        assert agent.runs, "expected the agent to be invoked"
 
     def test_response_hook_can_rewrite_originating_reply(self) -> None:
         contexts: list[Any] = []

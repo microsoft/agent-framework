@@ -92,7 +92,7 @@ class DiscordChannel:
         public_key: str,
         bot_token: str | None = None,
         guild_id: str | None = None,
-        path: str = "/discord",
+        path: str = "/discord/interactions",
         agent_command: str = "ask",
         agent_command_description: str = "Ask the agent",
         agent_command_option: str = "prompt",
@@ -120,8 +120,8 @@ class DiscordChannel:
             guild_id: Optional guild id for guild-scoped slash command
                 registration. Recommended for development because global
                 command registration can take a long time to propagate.
-            path: Host mount path. The interaction route is contributed as
-                ``/interactions`` below this path.
+            path: Interaction endpoint path on the host. Use ``""`` to expose
+                the interaction route at the app root.
             agent_command: Slash command name that invokes the hosted agent.
             agent_command_description: Description for the agent slash command.
             agent_command_option: String option name that carries the prompt.
@@ -159,7 +159,7 @@ class DiscordChannel:
         self.agent_command_description = agent_command_description
         self.agent_command_option = agent_command_option
         self.register_commands = register_commands
-        self._commands: set[ChannelCommand] = set(commands) or {}  # type: ignore
+        self._commands = tuple(commands or ())
         self._command_by_name = {command.name: command for command in self._commands}
         self._run_hook = run_hook
         self.response_hook = response_hook
@@ -184,7 +184,7 @@ class DiscordChannel:
         """Register the Discord interaction route and lifecycle hooks."""
         self._ctx = context
         return ChannelContribution(
-            routes=[Route("/interactions", self._handle, methods=["POST"])],
+            routes=[Route("/", self._handle, methods=["POST"])],
             commands=self._commands,
             on_startup=[self._on_startup],
             on_shutdown=[self._on_shutdown],

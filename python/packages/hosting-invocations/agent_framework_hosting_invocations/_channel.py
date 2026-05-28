@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Minimal ``POST /invoke`` channel.
+"""Minimal ``POST /invocations`` channel.
 
 Inspired by ``agent-framework-foundry-hosting``'s ``InvocationsHostServer``.
 A framework-agnostic surface for callers that just want to send a message and
@@ -32,7 +32,7 @@ from starlette.routing import Route
 
 
 class InvocationsChannel:
-    """Minimal ``POST /invoke`` surface.
+    """Minimal ``POST /invocations`` surface.
 
     A run hook can rewrite the channel request (e.g. inject a session, add
     options) before the host invokes the agent. A stream-transform hook can
@@ -51,8 +51,8 @@ class InvocationsChannel:
     ) -> None:
         """Configure the invocations endpoint.
 
-        ``path`` is the mount root the host prefixes when registering this
-        channel's routes (the actual handler is ``POST {path}/invoke``).
+        ``path`` is the endpoint path the host uses when registering this
+        channel. Use ``""`` to expose the handler at the app root.
         ``run_hook`` may rewrite the :class:`ChannelRequest` before the host
         invokes the target — typically to attach session metadata or
         translate the wire payload into ``Message`` instances.
@@ -68,12 +68,12 @@ class InvocationsChannel:
         self._ctx: ChannelContext | None = None
 
     def contribute(self, context: ChannelContext) -> ChannelContribution:
-        """Capture the host-supplied context and register ``POST /invoke``."""
+        """Capture the host-supplied context and register the endpoint route."""
         self._ctx = context
-        return ChannelContribution(routes=[Route("/invoke", self._handle, methods=["POST"])])
+        return ChannelContribution(routes=[Route("/", self._handle, methods=["POST"])])
 
     async def _handle(self, request: Request) -> Response:
-        """Handle a single ``POST /invoke`` call.
+        """Handle a single Invocations call.
 
         Validates the JSON body shape, builds a :class:`ChannelRequest`
         (optionally with a ``ChannelSession`` keyed by ``session_id``),

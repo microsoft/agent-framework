@@ -15,7 +15,7 @@ of the workflow.
   `Workflow` target and dispatches to `workflow.run(...)` (no
   `Agent.create_session(...)`).
 - Two channels are mounted side-by-side (`ResponsesChannel` at
-  `/responses`, `InvocationsChannel` at `/invocations/invoke`). Both
+  `/responses`, `InvocationsChannel` at `/invocations`). Both
   share the **same `brief_hook`** that **adapts the channel-native
   input into the workflow start executor's typed input** — Responses
   delivers a `list[Message]`, Invocations delivers a `str`, but the

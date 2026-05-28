@@ -710,7 +710,7 @@ class Channel(Protocol):
     """
 
     name: str
-    path: str  # default mount path (e.g. "/responses"); use "" to mount routes at the app root
+    path: str  # default endpoint path (e.g. "/responses"); use "" to mount contributed routes at the app root
 
     def contribute(self, context: ChannelContext) -> ChannelContribution: ...
 

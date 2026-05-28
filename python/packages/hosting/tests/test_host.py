@@ -96,7 +96,7 @@ class _RecordingChannel:
         self.pushes: list[tuple[ChannelIdentity, HostedRunResult[Any]]] = []
         self._push_raises: Exception | None = None
         self._supports_push = supports_push
-        # Provide a single trivial route so contribute() exercises the mount path.
+        # Provide a single trivial route so contribute() exercises the endpoint path.
         self._routes: Sequence[BaseRoute] = (Route("/ping", _ping),)
 
     def contribute(self, context: ChannelContext) -> ChannelContribution:
@@ -238,6 +238,18 @@ class TestHostWiring:
             r = client.get("/fake/ping")
             assert r.status_code == 200
             assert r.json() == {"ok": True}
+
+    def test_app_mounts_root_route_at_exact_channel_path(self) -> None:
+        agent = _FakeAgent()
+        ch = _RecordingChannel(path="/fake")
+        ch._routes = (Route("/", _ping),)
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+
+        with TestClient(host.app, follow_redirects=False) as client:
+            r = client.get("/fake")
+            assert r.status_code == 200
+            assert r.json() == {"ok": True}
+            assert client.get("/fake/").status_code == 200
 
     def test_app_mounts_at_root_when_path_is_empty(self) -> None:
         agent = _FakeAgent()

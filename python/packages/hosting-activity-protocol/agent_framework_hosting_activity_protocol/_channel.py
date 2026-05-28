@@ -176,7 +176,7 @@ class ActivityProtocolChannel:
     def __init__(
         self,
         *,
-        path: str = "/activity",
+        path: str = "/activity/messages",
         app_id: str | None = None,
         app_password: str | None = None,
         certificate_path: str | None = None,
@@ -196,7 +196,8 @@ class ActivityProtocolChannel:
         """Configure the Teams channel.
 
         Keyword Args:
-            path: Mount path. The webhook lives at ``{path}/messages``.
+            path: Messages endpoint path on the host. Use ``""`` to expose the
+                webhook at the app root.
             app_id: Bot Framework / Entra application (client) id. Required
                 whenever any credential is supplied.
             app_password: Application secret for OAuth2 client credentials.
@@ -292,10 +293,10 @@ class ActivityProtocolChannel:
             self._credential = None  # dev mode
 
     def contribute(self, context: ChannelContext) -> ChannelContribution:
-        """Capture the host context and register the ``POST /messages`` webhook."""
+        """Capture the host context and register the messages webhook."""
         self._ctx = context
         return ChannelContribution(
-            routes=[Route("/messages", self._handle, methods=["POST"])],
+            routes=[Route("/", self._handle, methods=["POST"])],
             on_startup=[self._on_startup],
             on_shutdown=[self._on_shutdown],
         )
@@ -326,14 +327,14 @@ class ActivityProtocolChannel:
         else:
             cred_kind = type(self._credential).__name__
             logger.info(
-                "ActivityProtocolChannel listening on %s/messages (auth=%s, tenant=%s)",
+                "ActivityProtocolChannel listening on %s (auth=%s, tenant=%s)",
                 self.path,
                 cred_kind,
                 self._tenant_id,
             )
         if self._inbound_auth_validator is None:
             logger.warning(
-                "ActivityProtocolChannel %s/messages has no inbound_auth_validator — "
+                "ActivityProtocolChannel %s has no inbound_auth_validator — "
                 "the webhook will accept ANY caller. Plug an inbound_auth_validator "
                 "or terminate auth in front of the channel before exposing this "
                 "endpoint to a public network.",
