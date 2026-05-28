@@ -558,28 +558,27 @@ actions:
 
 
 @_requires_powerfx
-class TestWorkflowFactorySwitch:
-    """Tests for Switch/Case action."""
+class TestWorkflowFactoryConditionGroup:
+    """Tests for ConditionGroup action."""
 
     @pytest.mark.asyncio
-    async def test_switch_with_matching_case(self):
-        """Test ConditionGroup with a matching case."""
+    async def test_condition_group_with_matching_condition(self):
+        """Test ConditionGroup with a matching condition."""
         factory = WorkflowFactory()
         workflow = factory.create_workflow_from_yaml("""
-name: switch-test
+name: condition-group-test
 actions:
   - kind: SetValue
     path: Local.color
     value: red
   - kind: ConditionGroup
-    value: =Local.color
-    cases:
-      - match: red
+    conditions:
+      - condition: =Local.color = "red"
         actions:
           - kind: SendActivity
             activity:
               text: Color is red
-      - match: blue
+      - condition: =Local.color = "blue"
         actions:
           - kind: SendActivity
             activity:
@@ -592,29 +591,28 @@ actions:
         assert any("Color is red" in str(o) for o in outputs)
 
     @pytest.mark.asyncio
-    async def test_switch_with_default(self):
-        """Test ConditionGroup falling through to default."""
+    async def test_condition_group_with_else_actions(self):
+        """Test ConditionGroup falling through to elseActions when no condition matches."""
         factory = WorkflowFactory()
         workflow = factory.create_workflow_from_yaml("""
-name: switch-default-test
+name: condition-group-else-test
 actions:
   - kind: SetValue
     path: Local.color
     value: green
   - kind: ConditionGroup
-    value: =Local.color
-    cases:
-      - match: red
+    conditions:
+      - condition: =Local.color = "red"
         actions:
           - kind: SendActivity
             activity:
               text: Red
-      - match: blue
+      - condition: =Local.color = "blue"
         actions:
           - kind: SendActivity
             activity:
               text: Blue
-    default:
+    elseActions:
       - kind: SendActivity
         activity:
           text: Unknown color
@@ -657,13 +655,11 @@ actions:
 
 
 class TestRenamedAliasKindsAreUnknown:
-    """Tests that previously-accepted Switch/Goto aliases are now unknown kinds.
+    """Tests that the previously-accepted ``Switch``/``Goto`` kind names are now unknown.
 
-    The aliases were removed in favour of the canonical C# names
-    ``ConditionGroup`` and ``GotoAction``. YAML that still uses ``Switch``
-    or ``Goto`` must fall through the existing unknown-kind warning path
-    (the action is silently skipped) instead of being routed to the
-    canonical executor.
+    YAML that still names one of these kinds falls through the existing
+    unknown-kind warning path (the action is silently skipped) instead
+    of being routed to ``ConditionGroup``/``GotoAction``.
     """
 
     @pytest.mark.asyncio
@@ -722,6 +718,162 @@ actions:
         # The first SendActivity still emits its output.
         outputs = result.get_outputs()
         assert any("Arrived" in str(o) for o in outputs)
+
+
+class TestDroppedShapesAreRejected:
+    """Tests that previously-accepted alternate YAML shapes are now rejected at validation.
+
+    ``ConditionGroup`` no longer accepts the ``value``/``cases`` shape and
+    ``Foreach`` no longer accepts the ``items`` field. Both kinds raise a
+    ``ValueError`` from the builder when the required field is missing.
+    """
+
+    def test_condition_group_with_cases_raises(self):
+        """ConditionGroup using value/cases (no conditions) must fail validation."""
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "cg-cases-rejected",
+            "actions": [
+                {
+                    "kind": "ConditionGroup",
+                    "value": "=Local.color",
+                    "cases": [
+                        {"match": "red", "actions": [{"kind": "SendActivity", "activity": {"text": "Red"}}]},
+                    ],
+                }
+            ],
+        }
+        builder = DeclarativeWorkflowBuilder(yaml_def)
+        with pytest.raises(ValueError, match="conditions"):
+            builder.build()
+
+    def test_foreach_with_items_raises(self):
+        """Foreach using items (no source) must fail validation."""
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "fe-items-rejected",
+            "actions": [
+                {
+                    "kind": "Foreach",
+                    "items": "=Local.list",
+                    "actions": [{"kind": "SendActivity", "activity": {"text": "hi"}}],
+                }
+            ],
+        }
+        builder = DeclarativeWorkflowBuilder(yaml_def)
+        with pytest.raises(ValueError, match="source"):
+            builder.build()
+
+
+class TestQuestionAndRequestExternalInputShapes:
+    """Tests for accepted YAML shapes of ``Question`` and ``RequestExternalInput``.
+
+    Both kinds accept either a nested ``{question|prompt: {text: ...}}`` form
+    or a top-level alternate (``text``/``message``) for the prompt content,
+    and either ``variable`` or top-level ``property`` for the destination path.
+    Missing both spellings of a required field raises during validation.
+    """
+
+    def test_question_nested_question_text_builds(self):
+        """A workflow whose Question uses nested ``question.text`` builds without error."""
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: question-nested
+actions:
+  - kind: Question
+    question:
+      text: "What is your name?"
+    variable: Local.userName
+    default: "Guest"
+""")
+        assert workflow is not None
+
+    def test_request_external_input_nested_prompt_text_builds(self):
+        """A workflow whose RequestExternalInput uses nested ``prompt.text`` builds without error."""
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: rei-nested
+actions:
+  - kind: RequestExternalInput
+    prompt:
+      text: "Please approve"
+    variable: Local.approved
+    default: pending
+""")
+        assert workflow is not None
+
+    def test_question_missing_question_raises(self):
+        """A Question action missing both `question` and the `text` alternate must fail validation."""
+        factory = WorkflowFactory()
+        with pytest.raises((ValueError, DeclarativeWorkflowError), match="question"):
+            factory.create_workflow_from_yaml("""
+name: question-missing-question
+actions:
+  - kind: Question
+    variable: Local.x
+""")
+
+    def test_question_missing_variable_raises(self):
+        """A Question action missing both `variable` and the `property` alternate must fail validation."""
+        factory = WorkflowFactory()
+        with pytest.raises((ValueError, DeclarativeWorkflowError), match="variable"):
+            factory.create_workflow_from_yaml("""
+name: question-missing-variable
+actions:
+  - kind: Question
+    question:
+      text: "Hi"
+""")
+
+    def test_request_external_input_missing_prompt_raises(self):
+        """RequestExternalInput missing both `prompt` and the `message` alternate must fail validation."""
+        factory = WorkflowFactory()
+        with pytest.raises((ValueError, DeclarativeWorkflowError), match="prompt"):
+            factory.create_workflow_from_yaml("""
+name: rei-missing-prompt
+actions:
+  - kind: RequestExternalInput
+    variable: Local.x
+""")
+
+    def test_request_external_input_missing_variable_raises(self):
+        """RequestExternalInput missing both `variable` and the `property` alternate must fail validation."""
+        factory = WorkflowFactory()
+        with pytest.raises((ValueError, DeclarativeWorkflowError), match="variable"):
+            factory.create_workflow_from_yaml("""
+name: rei-missing-variable
+actions:
+  - kind: RequestExternalInput
+    prompt:
+      text: "Hi"
+""")
+
+    def test_question_top_level_field_names_accepted(self):
+        """Top-level ``text`` + ``property`` + ``defaultValue`` are accepted on Question."""
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: question-legacy
+actions:
+  - kind: Question
+    text: "What is your name?"
+    property: Local.userName
+    defaultValue: "Guest"
+""")
+        assert workflow is not None
+
+    def test_request_external_input_top_level_field_names_accepted(self):
+        """Top-level ``message`` + ``property`` are accepted on RequestExternalInput."""
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: rei-legacy
+actions:
+  - kind: RequestExternalInput
+    message: "Please approve"
+    property: Local.approved
+""")
+        assert workflow is not None
 
 
 class TestWorkflowFactoryYamlErrors:

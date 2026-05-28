@@ -100,8 +100,8 @@ class TestGraphBasedWorkflowExecution:
                 {
                     "kind": "Foreach",
                     "id": "process_items",
-                    "itemsSource": "=Local.items",
-                    "iteratorVariable": "Local.item",
+                    "source": "=Local.items",
+                    "itemName": "item",
                     "actions": [
                         {"kind": "SendActivity", "id": "show_item", "activity": {"text": "=Local.item"}},
                     ],
@@ -131,8 +131,8 @@ class TestGraphBasedWorkflowExecution:
                 {
                     "kind": "Foreach",
                     "id": "loop",
-                    "itemsSource": "=Local.items",
-                    "iteratorVariable": "Local.item",
+                    "source": "=Local.items",
+                    "itemName": "item",
                     "actions": [
                         {"kind": "SendActivity", "id": "step_1", "activity": {"text": '="1-" & Local.item'}},
                         {"kind": "SendActivity", "id": "step_2", "activity": {"text": '="2-" & Local.item'}},

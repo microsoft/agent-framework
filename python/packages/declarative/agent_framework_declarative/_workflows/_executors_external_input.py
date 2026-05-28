@@ -9,7 +9,7 @@ and wait for responses.
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import (
     WorkflowContext,
@@ -21,6 +21,32 @@ from ._declarative_base import (
     ActionComplete,
     DeclarativeActionExecutor,
 )
+
+
+def _get_prompt_text(action_def: dict[str, Any], primary_key: str, fallback_key: str) -> Any:
+    """Return the prompt text from an action definition.
+
+    Accepts a nested ``{primary_key: {"text": ...}}`` mapping, a bare
+    string under ``primary_key``, or a top-level ``fallback_key`` value.
+    """
+    match action_def.get(primary_key):
+        case {"text": text}:
+            return text
+        case str() as text:
+            return text
+        case _:
+            return action_def.get(fallback_key, "")
+
+
+def _get_output_path(action_def: dict[str, Any], default: str) -> str:
+    """Return the state path where the action result should be written.
+
+    Looks at ``variable``, then ``output.property``, then top-level
+    ``property``, falling back to ``default``.
+    """
+    output = action_def.get("output")
+    nested = cast(dict[str, Any], output).get("property") if isinstance(output, dict) else None
+    return action_def.get("variable") or nested or action_def.get("property") or default
 
 
 @dataclass
@@ -75,15 +101,12 @@ class QuestionExecutor(DeclarativeActionExecutor):
         """Ask the question and wait for a response."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
-        question_text = self._action_def.get("text") or self._action_def.get("question", "")
-        output_property = self._action_def.get("output", {}).get("property") or self._action_def.get(
-            "property", "Local.answer"
-        )
+        question_text = _get_prompt_text(self._action_def, primary_key="question", fallback_key="text")
+        output_property = _get_output_path(self._action_def, default="Local.answer")
+        default_value = self._action_def.get("default", self._action_def.get("defaultValue"))
         choices = self._action_def.get("choices", [])
-        default_value = self._action_def.get("defaultValue")
         allow_free_text = self._action_def.get("allowFreeText", True)
 
-        # Evaluate the question text if it's an expression
         evaluated_question = state.eval_if_expression(question_text)
 
         # Build choices metadata
@@ -155,16 +178,15 @@ class RequestExternalInputExecutor(DeclarativeActionExecutor):
         """Request external input."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
+        message = _get_prompt_text(self._action_def, primary_key="prompt", fallback_key="message")
+        output_property = _get_output_path(self._action_def, default="Local.externalInput")
+        default_value = self._action_def.get("default")
+
         request_type = self._action_def.get("requestType", "external")
-        message = self._action_def.get("message", "")
-        output_property = self._action_def.get("output", {}).get("property") or self._action_def.get(
-            "property", "Local.externalInput"
-        )
         timeout_seconds = self._action_def.get("timeout")
         required_fields = self._action_def.get("requiredFields", [])
         metadata = self._action_def.get("metadata", {})
 
-        # Evaluate the message if it's an expression
         evaluated_message = state.eval_if_expression(message)
 
         # Build request metadata
@@ -172,6 +194,7 @@ class RequestExternalInputExecutor(DeclarativeActionExecutor):
             **metadata,
             "output_property": output_property,
             "required_fields": required_fields,
+            "default_value": default_value,
         }
 
         if timeout_seconds:

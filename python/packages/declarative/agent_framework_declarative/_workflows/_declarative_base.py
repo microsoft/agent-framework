@@ -915,9 +915,9 @@ class ActionComplete:
 
 @dataclass
 class ConditionResult:
-    """Result of evaluating a condition (If/Switch).
+    """Result of evaluating a condition (If/ConditionGroup).
 
-    This message is output by ConditionEvaluatorExecutor and SwitchEvaluatorExecutor
+    This message is output by ConditionEvaluatorExecutor and ConditionGroupEvaluatorExecutor
     to indicate which branch should be taken.
     """
 

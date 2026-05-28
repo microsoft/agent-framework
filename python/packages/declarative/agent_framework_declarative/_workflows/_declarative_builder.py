@@ -7,7 +7,7 @@ This module provides the DeclarativeWorkflowBuilder which is analogous to
 action definitions and creates a proper workflow graph with:
 - Executor nodes for each action
 - Edges for sequential flow
-- Condition evaluator executors for If/Switch that ensure first-match semantics
+- Condition evaluator executors for If/ConditionGroup that ensure first-match semantics
 - Loop edges for foreach
 """
 
@@ -38,7 +38,6 @@ from ._executors_control_flow import (
     ForeachNextExecutor,
     IfConditionEvaluatorExecutor,
     JoinExecutor,
-    SwitchEvaluatorExecutor,
 )
 from ._executors_external_input import EXTERNAL_INPUT_EXECUTORS
 from ._executors_http import HTTP_ACTION_EXECUTORS, HttpRequestActionExecutor
@@ -82,9 +81,11 @@ ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "SendActivity": ["activity"],
     "InvokeAzureAgent": ["agent"],
     "GotoAction": ["actionId"],
-    "Foreach": ["items", "actions"],
+    "Foreach": ["source", "actions"],
     "If": ["condition"],
     "ConditionGroup": ["conditions"],
+    "Question": ["question", "variable"],
+    "RequestExternalInput": ["prompt", "variable"],
     "RequestHumanInput": ["variable"],
     "WaitForHumanInput": ["variable"],
     "InvokeFunctionTool": ["functionName"],
@@ -98,10 +99,12 @@ ACTION_ALTERNATE_FIELDS: dict[str, list[str]] = {
     "SetValue.path": ["variable"],
     "GotoAction.actionId": ["target"],
     "InvokeAzureAgent.agent": ["agentName"],
-    "Foreach.items": ["itemsSource", "source"],  # source is used in some schemas
-    # ConditionGroup accepts either the canonical "conditions" form or the
-    # legacy "value"/"cases" form (Category 2 schema variant - deferred).
-    "ConditionGroup.conditions": ["value", "cases"],
+    # Top-level alternates that satisfy the nested-shape requirements without forcing
+    # callers to spell every field in its long form.
+    "Question.question": ["text"],
+    "Question.variable": ["property"],
+    "RequestExternalInput.prompt": ["message"],
+    "RequestExternalInput.variable": ["property"],
 }
 
 
@@ -310,12 +313,12 @@ class DeclarativeWorkflowBuilder:
                     self._validate_actions_recursive(else_actions, seen_ids, goto_targets, defined_ids)
 
             elif kind == "ConditionGroup":
-                cases = action_def.get("cases", action_def.get("conditions", []))
-                for case in cases:
-                    case_actions = case.get("actions", [])
-                    if case_actions:
-                        self._validate_actions_recursive(case_actions, seen_ids, goto_targets, defined_ids)
-                else_actions = action_def.get("elseActions", action_def.get("else", action_def.get("default", [])))
+                conditions = action_def.get("conditions", [])
+                for condition_branch in conditions:
+                    branch_actions = condition_branch.get("actions", [])
+                    if branch_actions:
+                        self._validate_actions_recursive(branch_actions, seen_ids, goto_targets, defined_ids)
+                else_actions = action_def.get("elseActions", [])
                 if else_actions:
                     self._validate_actions_recursive(else_actions, seen_ids, goto_targets, defined_ids)
 
@@ -358,7 +361,8 @@ class DeclarativeWorkflowBuilder:
             # Check for direct self-reference
             if source_id and target_id == source_id:
                 raise ValueError(
-                    f"Action '{source_id}' has a direct self-referencing GotoAction, which would cause an infinite loop."
+                    f"Action '{source_id}' has a direct self-referencing GotoAction, "
+                    "which would cause an infinite loop."
                 )
 
     def _resolve_pending_gotos(self, builder: WorkflowBuilder) -> None:
@@ -450,7 +454,7 @@ class DeclarativeWorkflowBuilder:
         if kind == "If":
             return self._create_if_structure(action_def, builder, parent_context)
         if kind == "ConditionGroup":
-            return self._create_switch_structure(action_def, builder, parent_context)
+            return self._create_condition_group_structure(action_def, builder, parent_context)
         if kind == "Foreach":
             return self._create_foreach_structure(action_def, builder, parent_context)
         if kind == "GotoAction":
@@ -584,7 +588,7 @@ class DeclarativeWorkflowBuilder:
 
         # Wire evaluator to branches with conditions that check ConditionResult.branch_index
         # branch_index=0 means "then" branch, branch_index=-1 (ELSE_BRANCH_INDEX) means "else"
-        # For nested If/Switch structures, wire to the evaluator (entry point)
+        # For nested If/ConditionGroup structures, wire to the evaluator (entry point)
         if then_entry:
             then_target = self._get_structure_entry(then_entry)
             builder.add_edge(
@@ -630,66 +634,42 @@ class DeclarativeWorkflowBuilder:
 
         return IfStructure()
 
-    def _create_switch_structure(
+    def _create_condition_group_structure(
         self,
         action_def: dict[str, Any],
         builder: WorkflowBuilder,
         parent_context: dict[str, Any] | None = None,
     ) -> Any:
-        """Create the graph structure for a Switch/ConditionGroup action.
+        """Create the graph structure for a ConditionGroup action.
 
-        Supports two schema formats:
-        1. ConditionGroup schema (matches .NET):
-           - conditions: list of {condition: expr, actions: [...]}
-           - elseActions: default actions
-
-        2. Switch schema (interpreter style):
-           - value: expression to match
-           - cases: list of {match: value, actions: [...]}
-           - default: default actions
-
-        Both use evaluator executors that output ConditionResult with branch_index
-        for first-match semantics.
+        Evaluates the action's ``conditions`` in order; the first match
+        selects its ``actions`` branch. If none match, ``elseActions`` runs.
+        The structure exposes an evaluator entry point and the per-branch
+        entry/exit pairs used by the caller to wire downstream edges.
 
         Args:
-            action_def: The Switch/ConditionGroup action definition
+            action_def: The ConditionGroup action definition
             builder: The workflow builder
             parent_context: Context from parent
 
         Returns:
-            A SwitchStructure containing branch info for wiring
+            A ConditionGroupStructure containing branch info for wiring
         """
-        action_id = action_def.get("id") or f"Switch_{self._action_index}"
+        action_id = action_def.get("id") or f"ConditionGroup_{self._action_index}"
         self._action_index += 1
 
-        # Pass the Switch's ID as context for child action naming
+        # Pass the ConditionGroup's ID as context for child action naming
         branch_context = {
             **(parent_context or {}),
             "parent_id": action_id,
         }
 
-        # Detect schema type:
-        # - If "cases" present: interpreter Switch schema (value/cases/default)
-        # - If "conditions" present: ConditionGroup schema (conditions/elseActions)
-        cases = action_def.get("cases", [])
         conditions = action_def.get("conditions", [])
-
-        if cases:
-            # Interpreter Switch schema: value/cases/default
-            evaluator: DeclarativeActionExecutor = SwitchEvaluatorExecutor(
-                action_def,
-                cases,
-                id=f"{action_id}_eval",
-            )
-            branch_items = cases
-        else:
-            # ConditionGroup schema: conditions/elseActions
-            evaluator = ConditionGroupEvaluatorExecutor(
-                action_def,
-                conditions,
-                id=f"{action_id}_eval",
-            )
-            branch_items = conditions
+        evaluator: DeclarativeActionExecutor = ConditionGroupEvaluatorExecutor(
+            action_def,
+            conditions,
+            id=f"{action_id}_eval",
+        )
 
         self._executors[evaluator.id] = evaluator
 
@@ -697,7 +677,7 @@ class DeclarativeWorkflowBuilder:
         branch_entries: list[tuple[int, Any]] = []  # (branch_index, entry_executor)
         branch_exits: list[Any] = []  # All exits that need wiring to successor
 
-        for i, item in enumerate(branch_items):
+        for i, item in enumerate(conditions):
             branch_actions = item.get("actions", [])
             # Use branch-specific context
             case_context = {**branch_context, "parent_id": f"{action_id}_case{i}"}
@@ -710,9 +690,7 @@ class DeclarativeWorkflowBuilder:
                 if branch_exit:
                     branch_exits.append(branch_exit)
 
-        # Handle else/default branch
-        # .NET uses "elseActions", interpreter uses "else" or "default"
-        else_actions = action_def.get("elseActions", action_def.get("else", action_def.get("default", [])))
+        else_actions = action_def.get("elseActions", [])
         default_entry = None
         default_passthrough = None
         if else_actions:
@@ -730,7 +708,7 @@ class DeclarativeWorkflowBuilder:
             branch_exits.append(default_passthrough)
 
         # Wire evaluator to branches with conditions that check ConditionResult.branch_index
-        # For nested If/Switch structures, wire to the evaluator (entry point)
+        # For nested If/ConditionGroup structures, wire to the evaluator (entry point)
         for branch_index, branch_entry in branch_entries:
             # Capture branch_index in closure properly using a factory function for type inference
             def make_branch_condition(expected: int) -> Any:
@@ -758,8 +736,8 @@ class DeclarativeWorkflowBuilder:
                 condition=lambda msg: isinstance(msg, ConditionResult) and msg.branch_index == ELSE_BRANCH_INDEX,
             )
 
-        # Create a SwitchStructure to hold all the info needed for wiring
-        class SwitchStructure:
+        # Create a ConditionGroupStructure to hold all the info needed for wiring
+        class ConditionGroupStructure:
             def __init__(self) -> None:
                 self.id = action_id
                 self.evaluator = evaluator  # The entry point for this structure
@@ -767,9 +745,9 @@ class DeclarativeWorkflowBuilder:
                 self.default_entry = default_entry
                 self.default_passthrough = default_passthrough
                 self.branch_exits = branch_exits  # All exits that need wiring to successor
-                self._is_switch_structure = True
+                self._is_condition_group_structure = True
 
-        return SwitchStructure()
+        return ConditionGroupStructure()
 
     def _create_foreach_structure(
         self,
@@ -819,7 +797,7 @@ class DeclarativeWorkflowBuilder:
         body_entry = self._create_executors_for_actions(body_actions, builder, loop_context)
 
         if body_entry:
-            # For nested If/Switch structures, wire to the evaluator (entry point)
+            # For nested If/ConditionGroup structures, wire to the evaluator (entry point)
             body_target = self._get_structure_entry(body_entry)
 
             # Init -> body (when has_next=True)
@@ -831,7 +809,7 @@ class DeclarativeWorkflowBuilder:
 
             # Wire from the LAST body action so the loop only advances after the
             # whole body completes. _get_branch_exit walks the chain, skips
-            # terminators (Break/Continue), and returns nested If/Switch
+            # terminators (Break/Continue), and returns nested If/ConditionGroup
             # structures so _get_source_exits can flatten their branch exits.
             body_exit = self._get_branch_exit(body_entry)
             if body_exit is not None:
@@ -959,8 +937,8 @@ class DeclarativeWorkflowBuilder:
         """Add a sequential edge between two executors.
 
         Handles control flow structures:
-        - If source is a structure (If/Switch), wire from all branch exits
-        - If target is a structure (If/Switch), wire with conditional edges to branches
+        - If source is a structure (If/ConditionGroup), wire from all branch exits
+        - If target is a structure (If/ConditionGroup), wire with conditional edges to branches
         """
         # Get all source exit points
         source_exits = self._get_source_exits(source)
@@ -995,12 +973,12 @@ class DeclarativeWorkflowBuilder:
     ) -> None:
         """Wire a single source executor to a target (which may be a structure).
 
-        For If/Switch structures, wire to the evaluator executor. The evaluator
+        For If/ConditionGroup structures, wire to the evaluator executor. The evaluator
         handles condition evaluation and outputs ConditionResult, which is then
         routed to the appropriate branch by edges created in _create_*_structure.
         """
-        # Check if target is an IfStructure or SwitchStructure (wire to evaluator)
-        if getattr(target, "_is_if_structure", False) or getattr(target, "_is_switch_structure", False):
+        # Check if target is an IfStructure or ConditionGroupStructure (wire to evaluator)
+        if getattr(target, "_is_if_structure", False) or getattr(target, "_is_condition_group_structure", False):
             # Wire from source to the evaluator - the evaluator then routes to branches
             builder.add_edge(source=source, target=target.evaluator)
 
@@ -1011,7 +989,7 @@ class DeclarativeWorkflowBuilder:
     def _get_structure_entry(self, entry: Any) -> Any:
         """Get the entry point executor for a structure or regular executor.
 
-        For If/Switch structures, returns the evaluator. For regular executors,
+        For If/ConditionGroup structures, returns the evaluator. For regular executors,
         returns the executor itself.
 
         Args:
@@ -1020,14 +998,16 @@ class DeclarativeWorkflowBuilder:
         Returns:
             The entry point executor
         """
-        is_structure = getattr(entry, "_is_if_structure", False) or getattr(entry, "_is_switch_structure", False)
+        is_structure = getattr(entry, "_is_if_structure", False) or getattr(
+            entry, "_is_condition_group_structure", False
+        )
         return entry.evaluator if is_structure else entry
 
     def _get_branch_exit(self, branch_entry: Any) -> Any | None:
         """Get the exit point of a branch for downstream wiring.
 
         Returns the last executor (or its ``_exit_executor``) for a linear chain,
-        the nested If/Switch structure itself when the chain ends in one (so
+        the nested If/ConditionGroup structure itself when the chain ends in one (so
         callers can flatten ``branch_exits`` via :meth:`_get_source_exits`), or
         ``None`` when the branch is empty or ends in a terminator action.
         """
