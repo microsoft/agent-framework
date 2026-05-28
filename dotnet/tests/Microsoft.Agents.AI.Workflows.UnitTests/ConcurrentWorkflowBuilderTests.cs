@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.UnitTests.Futures;
 using Microsoft.Extensions.AI;
-using Xunit;
 
 #pragma warning disable SYSLIB1045 // Use GeneratedRegex
 #pragma warning disable RCS1186 // Use Regex instance instead of static method

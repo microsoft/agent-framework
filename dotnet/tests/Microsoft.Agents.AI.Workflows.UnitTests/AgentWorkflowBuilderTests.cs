@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -16,8 +16,8 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 /// <summary>
 /// Tests targeting the static <see cref="AgentWorkflowBuilder"/> helper surface —
-/// <see cref="AgentWorkflowBuilder.BuildSequential(System.Collections.Generic.IEnumerable{AIAgent})"/>,
-/// <see cref="AgentWorkflowBuilder.BuildConcurrent(System.Collections.Generic.IEnumerable{AIAgent}, System.Func{System.Collections.Generic.IList{System.Collections.Generic.List{ChatMessage}}, System.Collections.Generic.List{ChatMessage}})"/>,
+/// <see cref="AgentWorkflowBuilder.BuildSequential(IEnumerable{AIAgent})"/>,
+/// <see cref="AgentWorkflowBuilder.BuildConcurrent(IEnumerable{AIAgent}, Func{IList{List{ChatMessage}}, List{ChatMessage}})"/>,
 /// and the various <c>Create*BuilderWith</c> factories. Per-builder unit tests live in their own
 /// files (<see cref="SequentialWorkflowBuilderTests"/>, <see cref="ConcurrentWorkflowBuilderTests"/>, etc.).
 /// </summary>

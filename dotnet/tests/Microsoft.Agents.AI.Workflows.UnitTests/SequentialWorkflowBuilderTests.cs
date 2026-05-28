@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.UnitTests.Futures;
 using Microsoft.Extensions.AI;
-using Xunit;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 

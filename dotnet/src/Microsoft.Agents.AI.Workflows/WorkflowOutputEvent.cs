@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows;
 [JsonDerivedType(typeof(AgentResponseUpdateEvent))]
 public class WorkflowOutputEvent : WorkflowEvent
 {
-    private HashSet<OutputTag> _tags;
+    private readonly HashSet<OutputTag> _tags;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WorkflowOutputEvent"/> class with no tags.
