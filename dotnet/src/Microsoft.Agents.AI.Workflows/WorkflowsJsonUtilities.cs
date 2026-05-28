@@ -101,6 +101,8 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(MagenticPlanReviewRequest))]
     [JsonSerializable(typeof(MagenticPlanReviewResponse))]
     [JsonSerializable(typeof(MagenticTaskState))]
+    [JsonSerializable(typeof(GroupChatManagerState))]
+    [JsonSerializable(typeof(RoundRobinGroupChatManagerState))]
     [JsonSerializable(typeof(ResetChatSignal))]
 
     // Event Types

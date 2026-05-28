@@ -788,6 +788,34 @@ public class JsonSerializationTests
         result.IsTakingTurn.Should().Be(prototype.IsTakingTurn);
     }
 
+    [Fact]
+    public void Test_GroupChatManagerState_JsonRoundtrip()
+    {
+        // Arrange
+        GroupChatManagerState prototype = new(IterationCount: 7);
+
+        // Act
+        GroupChatManagerState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.Should().Be(prototype);
+        result.IterationCount.Should().Be(prototype.IterationCount);
+    }
+
+    [Fact]
+    public void Test_RoundRobinGroupChatManagerState_JsonRoundtrip()
+    {
+        // Arrange
+        RoundRobinGroupChatManagerState prototype = new(NextIndex: 3);
+
+        // Act
+        RoundRobinGroupChatManagerState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.Should().Be(prototype);
+        result.NextIndex.Should().Be(prototype.NextIndex);
+    }
+
     /// <summary>
     /// Verifies that the default behavior (without AllowOutOfOrderMetadataProperties) fails
     /// when $type metadata is not the first property, demonstrating the PostgreSQL jsonb issue.
