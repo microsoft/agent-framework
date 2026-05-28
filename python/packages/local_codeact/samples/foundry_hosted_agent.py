@@ -1,41 +1,110 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""This sample demonstrates wiring Local CodeAct into a Foundry hosted agent.
+"""Hosts an Agent Framework agent with Local CodeAct behind the Foundry Responses protocol.
 
-Local CodeAct executes LLM-generated Python in the local agent environment. Use
-it only when the deployment environment supplies the real sandbox, such as a
-Foundry hosted-agent container.
+Local CodeAct runs LLM-generated Python in the agent process. Run this only
+inside an externally sandboxed environment (Foundry hosted-agent container,
+disposable VM, or similar). Two host tools (``compute``, ``fetch_data``) are
+registered on ``LocalCodeActProvider`` and are reachable from inside the
+generated code via ``call_tool(...)``; the model itself only sees a single
+``execute_code`` tool.
+
+Required environment variables:
+
+- ``FOUNDRY_PROJECT_ENDPOINT`` -- Azure AI Foundry project endpoint.
+- ``AZURE_AI_MODEL_DEPLOYMENT_NAME`` -- Model deployment name.
+
+See ``samples/README.md`` for run and request instructions.
 """
 
-from typing import Any
+from __future__ import annotations
 
-from agent_framework import Agent
+import asyncio
+import os
+from typing import Annotated, Any, Literal
+
+from agent_framework import Agent, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
 
 from agent_framework_local_codeact import LocalCodeActProvider, ProcessExecutionLimits
 
-
-def create_model_client() -> Any:
-    """Return the model client configured for your hosted agent."""
-    raise RuntimeError("Configure and return your model client here.")
+load_dotenv()
 
 
-def create_server() -> ResponsesHostServer:
-    """Create a Foundry Responses host server with Local CodeAct enabled."""
-    # 1. Create the local agent and add Local CodeAct as a context provider.
-    agent = Agent(
-        client=create_model_client(),
-        instructions="Use execute_code for Python calculations and controlled host-tool fan-out.",
-        context_providers=[
-            LocalCodeActProvider(
-                execution_limits=ProcessExecutionLimits(timeout_seconds=5),
-            )
+@tool(approval_mode="never_require")
+def compute(
+    operation: Annotated[
+        Literal["add", "subtract", "multiply", "divide"],
+        "Math operation: add, subtract, multiply, or divide.",
+    ],
+    a: Annotated[float, "First numeric operand."],
+    b: Annotated[float, "Second numeric operand."],
+) -> float:
+    """Perform a math operation for sandboxed code."""
+    operations = {
+        "add": a + b,
+        "subtract": a - b,
+        "multiply": a * b,
+        "divide": a / b if b else float("inf"),
+    }
+    return operations[operation]
+
+
+@tool(approval_mode="never_require")
+async def fetch_data(
+    table: Annotated[str, "Name of the simulated table to query."],
+) -> list[dict[str, Any]]:
+    """Fetch records from a named table."""
+    await asyncio.sleep(0.5)
+    data: dict[str, list[dict[str, Any]]] = {
+        "users": [
+            {"id": 1, "name": "Alice", "role": "admin"},
+            {"id": 2, "name": "Bob", "role": "user"},
+            {"id": 3, "name": "Charlie", "role": "admin"},
         ],
+        "products": [
+            {"id": 101, "name": "Widget", "price": 9.99},
+            {"id": 102, "name": "Gadget", "price": 19.99},
+        ],
+    }
+    return data.get(table, [])
+
+
+def main() -> None:
+    """Run the Local CodeAct agent behind a Foundry Responses host server."""
+    # 1. Create the Foundry chat client.
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=DefaultAzureCredential(),
+        function_invocation_configuration={"include_detailed_errors": True},
     )
 
-    # 2. Wrap the local agent for Foundry Agent Server hosting.
-    return ResponsesHostServer(agent)
+    # 2. Register sandbox tools on a Local CodeAct provider. The model only sees
+    #    `execute_code`; `compute` and `fetch_data` are reachable from inside
+    #    the generated Python via `call_tool(...)`.
+    codeact = LocalCodeActProvider(
+        tools=[compute, fetch_data],
+        approval_mode="never_require",
+        execution_limits=ProcessExecutionLimits(timeout_seconds=5),
+    )
+
+    # 3. Build the agent. History is managed by the hosting infrastructure, so
+    #    request the model not to persist server-side conversation state.
+    agent = Agent(
+        client=client,
+        instructions="You are a helpful assistant. Keep your answers brief.",
+        context_providers=[codeact],
+        default_options={"store": False},
+    )
+
+    # 4. Serve the agent over the Foundry Responses protocol.
+    server = ResponsesHostServer(agent)
+    server.run()
 
 
 if __name__ == "__main__":
-    create_server()
+    main()
