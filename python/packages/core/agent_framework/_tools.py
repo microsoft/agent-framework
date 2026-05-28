@@ -1856,6 +1856,33 @@ def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse
     return response
 
 
+_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT = (
+    "Function invocation stopped because the configured limit was reached before the model returned a final answer."
+)
+
+
+def _response_has_final_assistant_content(response: ChatResponse[Any]) -> bool:
+    return bool(
+        response.messages
+        and response.messages[-1].role == "assistant"
+        and response.messages[-1].contents
+    )
+
+
+def _ensure_limit_fallback_response(response: ChatResponse[Any]) -> ChatResponse[Any]:
+    if _response_has_final_assistant_content(response):
+        return response
+
+    from ._types import Content, Message
+
+    fallback = Content.from_text(_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT)
+    if response.messages and response.messages[-1].role == "assistant":
+        response.messages[-1].contents.append(fallback)
+    else:
+        response.messages.append(Message(role="assistant", contents=[fallback]))
+    return response
+
+
 def _extract_tools(
     options: dict[str, Any] | None,
 ) -> ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None:
@@ -2314,6 +2341,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         from ._types import (
             ChatResponse,
             ChatResponseUpdate,
+            Content,
             ResponseStream,
             add_usage_details,
         )
@@ -2383,6 +2411,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 fcc_messages: list[Message] = []
                 response: ChatResponse[Any] | None = None
                 aggregated_usage: UsageDetails | None = None
+                limit_fallback_requested = False
 
                 loop_enabled = self.function_invocation_configuration.get("enabled", True)
                 max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
@@ -2436,6 +2465,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         execute_function_calls=execute_function_calls,
                     )
                     if result.get("action") == "return":
+                        if limit_fallback_requested:
+                            response = _ensure_limit_fallback_response(response)
                         response.usage_details = aggregated_usage
                         return _clear_internal_conversation_id(response)
                     total_function_calls += result.get("function_call_count", 0)
@@ -2443,6 +2474,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         # Error threshold reached: force a final non-tool turn so
                         # function_call_output items are submitted before exit.
                         mutable_options["tool_choice"] = "none"
+                        limit_fallback_requested = True
                     elif max_function_calls is not None and total_function_calls >= max_function_calls:
                         # Best-effort limit: checked after each batch of parallel calls completes,
                         # so the current batch always runs to completion even if it overshoots.
@@ -2452,6 +2484,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                             max_function_calls,
                         )
                         mutable_options["tool_choice"] = "none"
+                        limit_fallback_requested = True
                     errors_in_a_row = result.get("errors_in_a_row", errors_in_a_row)
 
                     # When tool_choice is 'required', reset tool_choice after one iteration to avoid infinite loops
@@ -2481,6 +2514,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
                     )
                 mutable_options["tool_choice"] = "none"
+                limit_fallback_requested = True
                 response = cast(
                     ChatResponse[Any],
                     await super_get_response(
@@ -2493,6 +2527,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     ),
                 )
                 aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
+                if limit_fallback_requested:
+                    response = _ensure_limit_fallback_response(response)
                 _update_continuation_state(
                     filtered_kwargs,
                     response,
@@ -2520,6 +2556,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             prepped_messages = list(messages)
             fcc_messages: list[Message] = []
             response: ChatResponse[Any] | None = None
+            limit_fallback_requested = False
 
             loop_enabled = self.function_invocation_configuration.get("enabled", True)
             max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
@@ -2538,6 +2575,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 total_function_calls += approval_result.get("function_call_count", 0)
                 if approval_result.get("action") == "stop":
                     mutable_options["tool_choice"] = "none"
+                    limit_fallback_requested = True
                     return
 
                 inner_stream = cast(
@@ -2574,6 +2612,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     for msg in response.messages
                     for item in msg.contents
                 ):
+                    if limit_fallback_requested and not _response_has_final_assistant_content(response):
+                        yield ChatResponseUpdate(
+                            contents=[Content.from_text(_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT)],
+                            role="assistant",
+                            finish_reason="stop",
+                        )
                     return
 
                 if response.conversation_id is not None:
@@ -2600,6 +2644,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     # Error threshold reached: submit collected function_call_output
                     # items once more with tools disabled.
                     mutable_options["tool_choice"] = "none"
+                    limit_fallback_requested = True
                 elif result.get("action") != "continue":
                     return
                 elif max_function_calls is not None and total_function_calls >= max_function_calls:
@@ -2611,6 +2656,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         max_function_calls,
                     )
                     mutable_options["tool_choice"] = "none"
+                    limit_fallback_requested = True
 
                 # When tool_choice is 'required', reset the tool_choice after one iteration to avoid infinite loops
                 if mutable_options.get("tool_choice") == "required" or (
@@ -2639,6 +2685,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
                 )
             mutable_options["tool_choice"] = "none"
+            limit_fallback_requested = True
             final_inner_stream = cast(
                 ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
                 super_get_response(
@@ -2661,6 +2708,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 session=invocation_session,
                 options=mutable_options,
             )
+            if limit_fallback_requested and not _response_has_final_assistant_content(final_response):
+                yield ChatResponseUpdate(
+                    contents=[Content.from_text(_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT)],
+                    role="assistant",
+                    finish_reason="stop",
+                )
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             # Note: stream_result_hooks are already run via inner stream's get_final_response()

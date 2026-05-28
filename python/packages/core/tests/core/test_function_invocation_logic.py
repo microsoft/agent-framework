@@ -12,6 +12,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
+    ResponseStream,
     SupportsChatGetResponse,
     chat_middleware,
     tool,
@@ -1150,6 +1151,73 @@ async def test_max_iterations_makes_final_toolchoice_none_call(chat_client_base:
     assert last_msg.text == "I broke out of the function invocation loop...", (
         f"Expected failsafe text response, got: {last_msg.text!r}"
     )
+
+
+async def test_max_iterations_empty_final_response_uses_limit_fallback(chat_client_base: SupportsChatGetResponse):
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        return f"Processed {arg1}"
+
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def empty_final_response(*, messages, options, **kwargs):  # type: ignore[no-untyped-def]
+        if options.get("tool_choice") == "none":
+            return ChatResponse(messages=Message(role="assistant", contents=[]))
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = empty_final_response  # type: ignore[attr-defined,method-assign]
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
+                ],
+            )
+        )
+    ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+    )
+
+    assert "configured limit was reached" in response.messages[-1].text
+
+
+async def test_max_function_calls_empty_final_response_uses_limit_fallback(chat_client_base: SupportsChatGetResponse):
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        return f"Processed {arg1}"
+
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def empty_final_response(*, messages, options, **kwargs):  # type: ignore[no-untyped-def]
+        if options.get("tool_choice") == "none":
+            return ChatResponse(messages=Message(role="assistant", contents=[]))
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = empty_final_response  # type: ignore[attr-defined,method-assign]
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
+                ],
+            )
+        )
+    ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+    )
+
+    assert "configured limit was reached" in response.messages[-1].text
 
 
 async def test_max_iterations_preserves_all_fcc_messages(chat_client_base: SupportsChatGetResponse):
@@ -2879,6 +2947,46 @@ async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetR
     # Should have the failsafe message
     last_text = "".join(u.text or "" for u in updates if u.text)
     assert "I broke out of the function invocation loop..." in last_text
+
+
+async def test_streaming_max_iterations_empty_final_response_uses_limit_fallback(
+    chat_client_base: SupportsChatGetResponse,
+):
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        return f"Processed {arg1}"
+
+    original = chat_client_base._get_streaming_response  # type: ignore[attr-defined]
+
+    def empty_final_stream(*, messages, options, **kwargs):  # type: ignore[no-untyped-def]
+        if options.get("tool_choice") == "none":
+
+            async def stream_empty():  # type: ignore[no-untyped-def]
+                for update in ():
+                    yield update
+
+            return ResponseStream(stream_empty(), finalizer=ChatResponse.from_updates)
+        return original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_streaming_response = empty_final_stream  # type: ignore[attr-defined,method-assign]
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "v1"}')],
+                role="assistant",
+            )
+        ]
+    ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1
+
+    updates = []
+    async for update in chat_client_base.get_response(
+        "hello", options={"tool_choice": "auto", "tools": [ai_func]}, stream=True
+    ):
+        updates.append(update)
+
+    last_text = "".join(u.text or "" for u in updates if u.text)
+    assert "configured limit was reached" in last_text
 
 
 async def test_streaming_function_invocation_config_enabled_false(chat_client_base: SupportsChatGetResponse):
