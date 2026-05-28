@@ -10,7 +10,7 @@ import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Callable, Collection, Coroutine, Sequence
+from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
@@ -1327,7 +1327,7 @@ class MCPTool:
         if raw_user_meta is not None and not isinstance(raw_user_meta, dict):
             raise ToolExecutionException("MCP tool metadata provided via _meta must be a dict.")
         if isinstance(raw_user_meta, dict):
-            raw_user_meta_dict: dict[Any, Any] = raw_user_meta
+            raw_user_meta_dict = cast(Mapping[object, object], raw_user_meta)
             user_meta = {}
             for key, value in raw_user_meta_dict.items():
                 if not isinstance(key, str):
