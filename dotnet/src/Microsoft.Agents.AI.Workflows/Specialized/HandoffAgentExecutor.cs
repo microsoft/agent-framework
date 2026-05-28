@@ -334,7 +334,7 @@ internal sealed class HandoffAgentExecutor :
         bool isTerminated = false;
         if (conversationSnapshot is not null)
         {
-            isTerminated = await this._options.TerminationCondition!((IReadOnlyList<ChatMessage>)conversationSnapshot).ConfigureAwait(false);
+            isTerminated = await this._options.TerminationCondition!(conversationSnapshot).ConfigureAwait(false);
         }
 
         HandoffState outgoingState = new(state.IncomingState.TurnToken, result.HandoffTargetId, this._agent.Id, isTerminated);

@@ -1266,7 +1266,7 @@ public class HandoffOrchestrationTests
             .WithAutonomousMode()
             .Build();
 
-        (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "go"), ]);
+        (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "go"),]);
 
         Assert.Equal(TargetIterations, agentACallCount);
         Assert.NotNull(result);
