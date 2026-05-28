@@ -72,6 +72,7 @@ from azure.ai.agentserver.responses.models import (
     MessageContentOutputTextContent,
     MessageContentReasoningTextContent,
     MessageContentRefusalContent,
+    MessageRole,
     OAuthConsentRequestOutputItem,
     OutputItem,
     OutputItemApplyPatchToolCall,
@@ -115,6 +116,8 @@ from mcp import McpError
 from typing_extensions import Any
 
 logger = logging.getLogger(__name__)
+
+_AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
 
 
 # region Approval Storage
@@ -249,7 +252,12 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
     storage_path = (root_path / context_id).resolve()
     if not storage_path.is_relative_to(root_path):
         raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
-    return FileCheckpointStorage(storage_path)
+    return FileCheckpointStorage(
+        storage_path,
+        # Keep this provider-specific allowlist narrow. Hosted workflow
+        # checkpoints can persist Azure's role enum inside Message objects.
+        allowed_checkpoint_types=[_AZURE_RESPONSES_MESSAGE_ROLE_TYPE],
+    )
 
 
 # endregion Approval Storage

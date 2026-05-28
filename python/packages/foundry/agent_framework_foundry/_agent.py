@@ -610,6 +610,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         credential: AzureCredentialTypes | None = None,
         project_client: AIProjectClient | None = None,
         allow_preview: bool | None = None,
+        default_headers: Mapping[str, str] | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
@@ -639,6 +640,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             credential: Azure credential for authentication.
             project_client: An existing AIProjectClient to use.
             allow_preview: Enables preview opt-in on internally-created AIProjectClient.
+            default_headers: Additional HTTP headers for requests made through the OpenAI client.
             tools: Function tools to provide to the agent. Only ``FunctionTool`` objects are accepted.
             context_providers: Optional context providers for injecting dynamic context.
             middleware: Optional agent-level middleware.
@@ -672,6 +674,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             "credential": credential,
             "project_client": project_client,
             "allow_preview": allow_preview,
+            "default_headers": default_headers,
             "env_file_path": env_file_path,
             "env_file_encoding": env_file_encoding,
         }
@@ -894,6 +897,7 @@ class FoundryAgent(  # type: ignore[misc]
         credential: AzureCredentialTypes | None = None,
         project_client: AIProjectClient | None = None,
         allow_preview: bool | None = None,
+        default_headers: Mapping[str, str] | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
@@ -936,6 +940,7 @@ class FoundryAgent(  # type: ignore[misc]
                 Set this to ``True`` for HostedAgents that need preview-only
                 session APIs, including lazy service session creation from
                 ``isolation_key``.
+            default_headers: Additional HTTP headers for requests made through the OpenAI client.
             tools: Function tools to provide to the agent. Only ``FunctionTool`` objects are accepted.
             context_providers: Optional context providers.
             middleware: Optional agent-level middleware.
@@ -963,6 +968,7 @@ class FoundryAgent(  # type: ignore[misc]
             credential=credential,
             project_client=project_client,
             allow_preview=allow_preview,
+            default_headers=default_headers,
             tools=tools,
             context_providers=context_providers,
             middleware=middleware,

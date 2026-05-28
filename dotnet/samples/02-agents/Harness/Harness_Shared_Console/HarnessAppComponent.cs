@@ -28,6 +28,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
     private int _scrollRegionBottom;
     private bool _resizedSinceLastRender = true;
     private bool _deactivated;
+    private BottomPanelMode _lastRenderedBottomPanelMode;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HarnessAppComponent"/> class.
@@ -341,7 +342,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
         }
 
         // Calculate queued items panel height
-        int queuedPanelHeight = TextPanel.CalculateHeight(state.QueuedItems);
+        int queuedPanelHeight = TextPanel.CalculateHeight(state.QueuedItems, state.ConsoleWidth);
 
         // Build the bottom panel child based on mode
         ConsoleReactiveComponent bottomChild;
@@ -404,6 +405,14 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             textInputProps = textInputProps with { Width = state.ConsoleWidth, Height = bottomChildHeight };
             this._textInput.Props = textInputProps;
             bottomChild = this._textInput;
+        }
+
+        // When the bottom panel mode changes, the new child must repaint even if its
+        // props haven't changed — the screen area was overwritten by the previous child.
+        if (state.Mode != this._lastRenderedBottomPanelMode)
+        {
+            bottomChild.Invalidate();
+            this._lastRenderedBottomPanelMode = state.Mode;
         }
 
         var ruleProps = new TopBottomRuleProps
