@@ -10,6 +10,14 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 /// <summary>Executor used at the end of a handoff workflow to raise a final completed event,
 /// and in autonomous mode to loop control back to the source agent.</summary>
+/// <remarks>
+/// Autonomous-turn counters are tracked per source agent in <see cref="HandoffSharedState.AutonomousTurnsByAgent"/>.
+/// On each invocation where the source agent did not request a handoff and termination has not fired,
+/// the counter for that agent is incremented and control is sent back to that agent (via the
+/// autonomous-return switch wired downstream of this executor). When the counter reaches the per-agent
+/// turn limit — or when termination fires, or when autonomous mode is disabled for that agent — the
+/// counter is reset to zero and the conversation is yielded as workflow output.
+/// </remarks>
 internal sealed class HandoffEndExecutor : Executor, IResettableExecutor
 {
     public const string ExecutorId = "HandoffEnd";
@@ -18,6 +26,9 @@ internal sealed class HandoffEndExecutor : Executor, IResettableExecutor
     private readonly bool _autonomousMode;
     private readonly int _autonomousTurnLimit;
     private readonly string _autonomousContinuationPrompt;
+    private readonly HashSet<string>? _autonomousEnabledAgentIds;
+    private readonly IReadOnlyDictionary<string, int> _autonomousTurnLimitsByAgentId;
+    private readonly IReadOnlyDictionary<string, string> _autonomousContinuationPromptsByAgentId;
 
     private readonly StateRef<HandoffSharedState> _sharedStateRef = new(HandoffConstants.HandoffSharedStateKey,
                                                                         HandoffConstants.HandoffSharedStateScope);
@@ -26,14 +37,30 @@ internal sealed class HandoffEndExecutor : Executor, IResettableExecutor
         bool returnToPrevious,
         bool autonomousMode = false,
         int autonomousTurnLimit = HandoffWorkflowBuilderDefaults.DefaultAutonomousTurnLimit,
-        string autonomousContinuationPrompt = HandoffWorkflowBuilderDefaults.DefaultAutonomousContinuationPrompt)
+        string autonomousContinuationPrompt = HandoffWorkflowBuilderDefaults.DefaultAutonomousContinuationPrompt,
+        HashSet<string>? autonomousEnabledAgentIds = null,
+        IReadOnlyDictionary<string, int>? autonomousTurnLimitsByAgentId = null,
+        IReadOnlyDictionary<string, string>? autonomousContinuationPromptsByAgentId = null)
         : base(ExecutorId, declareCrossRunShareable: true)
     {
         this._returnToPrevious = returnToPrevious;
         this._autonomousMode = autonomousMode;
         this._autonomousTurnLimit = autonomousTurnLimit;
         this._autonomousContinuationPrompt = autonomousContinuationPrompt;
+        this._autonomousEnabledAgentIds = autonomousEnabledAgentIds;
+        this._autonomousTurnLimitsByAgentId = autonomousTurnLimitsByAgentId ?? new Dictionary<string, int>();
+        this._autonomousContinuationPromptsByAgentId = autonomousContinuationPromptsByAgentId ?? new Dictionary<string, string>();
     }
+
+    private bool IsAutonomousEnabledFor(string agentId) =>
+        // Null allow-list means every participant has autonomous mode enabled.
+        this._autonomousEnabledAgentIds?.Contains(agentId) ?? true;
+
+    private int TurnLimitFor(string agentId) =>
+        this._autonomousTurnLimitsByAgentId.TryGetValue(agentId, out int limit) ? limit : this._autonomousTurnLimit;
+
+    private string ContinuationPromptFor(string agentId) =>
+        this._autonomousContinuationPromptsByAgentId.TryGetValue(agentId, out string? prompt) ? prompt : this._autonomousContinuationPrompt;
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
@@ -63,26 +90,27 @@ internal sealed class HandoffEndExecutor : Executor, IResettableExecutor
                 }
 
                 // Autonomous mode: when the agent did not request a handoff and termination has not fired,
-                // loop control back to the same agent (up to the configured turn limit per autonomous run).
-                // Termination is decided at the per-agent HandoffEdgeExecutor and propagated through the
-                // IsTerminated flag on HandoffState.
+                // loop control back to the same agent (up to that agent's turn limit). Per-agent overrides
+                // (enabled-agents allow-list, turn limit, continuation prompt) are honored here.
                 bool canContinueAutonomously = this._autonomousMode
                                             && !handoff.IsTerminated
                                             && handoff.RequestedHandoffTargetAgentId is null
-                                            && handoff.PreviousAgentId is not null;
+                                            && handoff.PreviousAgentId is not null
+                                            && this.IsAutonomousEnabledFor(handoff.PreviousAgentId!);
 
                 if (canContinueAutonomously)
                 {
                     string agentId = handoff.PreviousAgentId!;
                     int turns = sharedState.AutonomousTurnsByAgent.TryGetValue(agentId, out int existing) ? existing : 0;
+                    int limit = this.TurnLimitFor(agentId);
 
-                    if (turns < this._autonomousTurnLimit)
+                    if (turns < limit)
                     {
                         sharedState.AutonomousTurnsByAgent[agentId] = turns + 1;
 
                         // Append a synthetic user message containing the continuation prompt so the agent
                         // has fresh input to act on for the next autonomous iteration.
-                        sharedState.Conversation.AddMessage(new ChatMessage(ChatRole.User, this._autonomousContinuationPrompt)
+                        sharedState.Conversation.AddMessage(new ChatMessage(ChatRole.User, this.ContinuationPromptFor(agentId))
                         {
                             CreatedAt = DateTimeOffset.UtcNow,
                             MessageId = Guid.NewGuid().ToString("N"),

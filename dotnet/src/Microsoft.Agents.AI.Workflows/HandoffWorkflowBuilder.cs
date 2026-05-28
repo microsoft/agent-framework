@@ -60,10 +60,15 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
 
     // Autonomous mode configuration. When enabled, an agent's response that doesn't include a
     // handoff triggers another invocation of that same agent with the continuation prompt, up to
-    // the configured turn limit per workflow turn.
+    // the configured turn limit per workflow turn. Optional per-agent overrides may further restrict
+    // which agents have autonomous mode enabled, or override the turn limit / continuation prompt
+    // on a per-agent basis.
     private bool _autonomousMode;
     private int _autonomousTurnLimit = HandoffWorkflowBuilderDefaults.DefaultAutonomousTurnLimit;
     private string _autonomousContinuationPrompt = HandoffWorkflowBuilderDefaults.DefaultAutonomousContinuationPrompt;
+    private HashSet<string>? _autonomousEnabledAgentIds;
+    private readonly Dictionary<string, int> _autonomousTurnLimitsByAgentId = [];
+    private readonly Dictionary<string, string> _autonomousContinuationPromptsByAgentId = [];
 
     // Termination condition. Evaluated after an agent response that does not request a handoff;
     // if true, the workflow ends (and the autonomous loop, if any, terminates).
@@ -300,21 +305,61 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     }
 
     /// <summary>
-    /// Enables autonomous mode for the handoff workflow. In autonomous mode, an agent whose response
-    /// does not include a handoff is invoked again with a continuation prompt, up to the configured
-    /// turn limit per workflow turn. The loop ends when the agent invokes a handoff tool, the
-    /// configured termination condition fires, or the turn limit is reached.
+    /// Enables autonomous mode for the handoff workflow.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// In autonomous mode, an agent whose response does not include a handoff is invoked again with
+    /// a continuation prompt, up to a configured turn limit. The autonomous loop for a given agent
+    /// ends when the agent invokes a handoff tool, the configured termination condition fires, or
+    /// the per-agent turn limit is reached — at which point the workflow yields control back to the
+    /// caller.
+    /// </para>
+    /// <para>
+    /// <b>Per-agent turn counting.</b> Autonomous-turn counters are tracked independently per agent
+    /// in the shared handoff state. A counter is incremented each time the End executor loops
+    /// control back to its source agent, and reset to zero in three cases: (1) when that agent
+    /// requests a handoff, (2) when its autonomous loop terminates (limit reached, termination
+    /// fires, or autonomous mode disabled for that agent), and (3) at the start of every fresh user
+    /// turn. As a consequence, if agent A loops twice and then hands off to B, A's counter resets
+    /// to zero; should control later return to A within the same user turn, A starts a new
+    /// autonomous run from zero.
+    /// </para>
+    /// </remarks>
     /// <param name="turnLimit">
-    /// The maximum number of autonomous continuation iterations per workflow turn. If <see langword="null"/>,
-    /// defaults to <see cref="HandoffWorkflowBuilderDefaults.DefaultAutonomousTurnLimit"/> (50).
+    /// The default maximum number of autonomous continuation iterations per agent per workflow
+    /// turn. Applies to agents not listed in <paramref name="agentTurnLimits"/>. If
+    /// <see langword="null"/>, defaults to
+    /// <see cref="HandoffWorkflowBuilderDefaults.DefaultAutonomousTurnLimit"/> (50).
     /// </param>
     /// <param name="continuationPrompt">
-    /// The user-role prompt fed to the agent on each autonomous continuation. If <see langword="null"/>,
+    /// The default user-role prompt fed to an agent on each autonomous continuation. Applies to
+    /// agents not listed in <paramref name="agentContinuationPrompts"/>. If <see langword="null"/>,
     /// defaults to <see cref="HandoffWorkflowBuilderDefaults.DefaultAutonomousContinuationPrompt"/>.
     /// </param>
+    /// <param name="agents">
+    /// Optional allow-list restricting autonomous mode to a specific subset of agents. If
+    /// <see langword="null"/> or empty, autonomous mode is enabled for <i>every</i> participant.
+    /// Agents not in the allow-list always yield control back to the caller after a single
+    /// invocation (when they do not request a handoff).
+    /// </param>
+    /// <param name="agentTurnLimits">
+    /// Optional per-agent turn-limit overrides. Each entry's key is the agent and its value the
+    /// turn limit that overrides <paramref name="turnLimit"/> for that agent. Agents not present
+    /// fall back to the default.
+    /// </param>
+    /// <param name="agentContinuationPrompts">
+    /// Optional per-agent continuation-prompt overrides. Each entry's key is the agent and its
+    /// value the continuation prompt used for that agent. Agents not present fall back to the
+    /// default.
+    /// </param>
     /// <returns>The updated builder instance.</returns>
-    public TBuilder WithAutonomousMode(int? turnLimit = null, string? continuationPrompt = null)
+    public TBuilder WithAutonomousMode(
+        int? turnLimit = null,
+        string? continuationPrompt = null,
+        IEnumerable<AIAgent>? agents = null,
+        IReadOnlyDictionary<AIAgent, int>? agentTurnLimits = null,
+        IReadOnlyDictionary<AIAgent, string>? agentContinuationPrompts = null)
     {
         if (turnLimit is { } limit && limit <= 0)
         {
@@ -324,6 +369,54 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
         this._autonomousMode = true;
         this._autonomousTurnLimit = turnLimit ?? HandoffWorkflowBuilderDefaults.DefaultAutonomousTurnLimit;
         this._autonomousContinuationPrompt = continuationPrompt ?? HandoffWorkflowBuilderDefaults.DefaultAutonomousContinuationPrompt;
+
+        // Allow-list: null or empty means every participant has autonomous mode enabled. A non-empty
+        // list restricts autonomous mode to exactly those agents.
+        this._autonomousEnabledAgentIds = null;
+        if (agents is not null)
+        {
+            HashSet<string> ids = [];
+            foreach (AIAgent agent in agents)
+            {
+                Throw.IfNull(agent, $"{nameof(agents)} element");
+                ids.Add(agent.Id);
+            }
+
+            if (ids.Count > 0)
+            {
+                this._autonomousEnabledAgentIds = ids;
+            }
+        }
+
+        this._autonomousTurnLimitsByAgentId.Clear();
+        if (agentTurnLimits is not null)
+        {
+            foreach (KeyValuePair<AIAgent, int> kvp in agentTurnLimits)
+            {
+                Throw.IfNull(kvp.Key, $"{nameof(agentTurnLimits)} key");
+                if (kvp.Value <= 0)
+                {
+                    Throw.ArgumentOutOfRangeException(
+                        nameof(agentTurnLimits),
+                        $"Turn limit for agent '{kvp.Key.Name ?? kvp.Key.Id}' must be greater than zero.");
+                }
+
+                this._autonomousTurnLimitsByAgentId[kvp.Key.Id] = kvp.Value;
+            }
+        }
+
+        this._autonomousContinuationPromptsByAgentId.Clear();
+        if (agentContinuationPrompts is not null)
+        {
+            foreach (KeyValuePair<AIAgent, string> kvp in agentContinuationPrompts)
+            {
+                Throw.IfNull(kvp.Key, $"{nameof(agentContinuationPrompts)} key");
+                Throw.IfNullOrEmpty(kvp.Value, $"{nameof(agentContinuationPrompts)} value");
+
+                this._autonomousContinuationPromptsByAgentId[kvp.Key.Id] = kvp.Value;
+            }
+        }
+
         return (TBuilder)this;
     }
 
@@ -484,7 +577,10 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
             returnToPrevious: this._returnToPrevious,
             autonomousMode: this._autonomousMode,
             autonomousTurnLimit: this._autonomousTurnLimit,
-            autonomousContinuationPrompt: this._autonomousContinuationPrompt);
+            autonomousContinuationPrompt: this._autonomousContinuationPrompt,
+            autonomousEnabledAgentIds: this._autonomousEnabledAgentIds,
+            autonomousTurnLimitsByAgentId: this._autonomousTurnLimitsByAgentId,
+            autonomousContinuationPromptsByAgentId: this._autonomousContinuationPromptsByAgentId);
         WorkflowBuilder builder = new(start);
 
         // Default handoffs: when the caller has not explicitly registered any handoffs via
