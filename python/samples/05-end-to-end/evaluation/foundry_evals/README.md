@@ -61,6 +61,10 @@ Quality gates on rubric output use the standard `EvalResults` helpers,
 including `assert_dimension_score_at_least(...)` for per-dimension
 thresholds.
 
+See [`evaluate_with_rubric_sample.py`](./evaluate_with_rubric_sample.py)
+for a runnable end-to-end example that combines a rubric evaluator with
+built-in evaluators and gates a per-dimension threshold.
+
 ## Setup
 
 Create a `.env` file with configuration as in the `.env.example` file in this folder.
@@ -70,4 +74,4 @@ Create a `.env` file with configuration as in the `.env.example` file in this fo
 - **"I want to test my agent during development"** → `evaluate_agent_sample.py`, Pattern 1
 - **"I want to evaluate past agent runs"** → `evaluate_traces_sample.py`
 - **"I want to inspect/modify eval data before submitting"** → `evaluate_agent_sample.py`, Pattern 2
-- **"I want to score against a custom rubric I created in Foundry"** → pass a `GeneratedEvaluatorRef` (see snippet above)
+- **"I want to score against a custom rubric I created in Foundry"** → `evaluate_with_rubric_sample.py`
