@@ -34,7 +34,7 @@ from typing import Any, cast
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
-from .._tools import tool
+from .._tools import ApprovalMode, tool
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +209,16 @@ class FileSearchMatch(SerializationMixin):
         self.line = line
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
-        """Serialize this match to a JSON-compatible dictionary."""
+        """Serialize this match to a JSON-compatible dictionary.
+
+        Overrides :meth:`SerializationMixin.to_dict` because this DTO is
+        declared with ``__slots__``: the base implementation iterates
+        ``self.__dict__`` which is empty for slotted classes and would emit
+        only the auto-injected ``type`` field. The ``exclude`` /
+        ``exclude_none`` arguments are accepted (and discarded) so the
+        signature remains drop-in compatible with the mixin — callers like
+        :meth:`SerializationMixin.to_json` always forward them.
+        """
         del exclude, exclude_none
         return {"line_number": self.line_number, "line": self.line}
 
@@ -263,7 +272,14 @@ class FileSearchResult(SerializationMixin):
         self.matching_lines = list(matching_lines) if matching_lines is not None else []
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
-        """Serialize this result to a JSON-compatible dictionary."""
+        """Serialize this result to a JSON-compatible dictionary.
+
+        Overrides :meth:`SerializationMixin.to_dict` for the same reason as
+        :meth:`FileSearchMatch.to_dict`: this DTO uses ``__slots__`` so the
+        base implementation cannot introspect the payload. The ``exclude`` /
+        ``exclude_none`` arguments are accepted and ignored to preserve
+        signature compatibility with the mixin.
+        """
         del exclude, exclude_none
         return {
             "file_name": self.file_name,
@@ -318,10 +334,10 @@ def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -
     first_snippet: str | None = None
     line_start_offset = 0
 
-    for index, line in enumerate(lines):
+    for line_number, line in enumerate(lines, start=1):
         match = regex.search(line)
         if match is not None:
-            matching_lines.append(FileSearchMatch(line_number=index + 1, line=line.rstrip("\r")))
+            matching_lines.append(FileSearchMatch(line_number=line_number, line=line.rstrip("\r")))
             if first_snippet is None:
                 char_index = line_start_offset + match.start()
                 snippet_start = max(0, char_index - _SEARCH_SNIPPET_RADIUS)
@@ -873,6 +889,7 @@ class FileAccessProvider(ContextProvider):
         *,
         source_id: str = DEFAULT_FILE_ACCESS_SOURCE_ID,
         instructions: str | None = None,
+        require_delete_approval: bool = False,
     ) -> None:
         """Initialize the file access provider.
 
@@ -885,10 +902,18 @@ class FileAccessProvider(ContextProvider):
             source_id: Unique source ID for the provider.
             instructions: Optional instruction override. When ``None`` the
                 default file-access instructions are used.
+            require_delete_approval: When ``True`` the ``file_access_delete_file``
+                tool is registered with ``approval_mode="always_require"`` so the
+                host must approve every delete the model proposes. Defaults to
+                ``False`` to match the historical behaviour (and the .NET
+                ``FileAccessProvider``, which has no approval mechanism), but
+                deployments that want a safer-by-default posture for destructive
+                operations should enable it.
         """
         super().__init__(source_id)
         self.store = store
         self.instructions = instructions or DEFAULT_FILE_ACCESS_INSTRUCTIONS
+        self.require_delete_approval = require_delete_approval
 
     async def before_run(
         self,
@@ -927,7 +952,9 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not read file '{file_name}': {exc.strerror or exc}"
             return content if content is not None else f"File '{file_name}' not found."
 
-        @tool(name="file_access_delete_file", approval_mode="never_require")
+        delete_approval_mode: ApprovalMode = "always_require" if self.require_delete_approval else "never_require"
+
+        @tool(name="file_access_delete_file", approval_mode=delete_approval_mode)
         async def file_access_delete_file(file_name: str) -> str:
             """Delete a file by name."""
             try:

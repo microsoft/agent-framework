@@ -332,6 +332,50 @@ async def test_file_access_provider_registers_tools_and_instructions(
         assert any(DEFAULT_FILE_ACCESS_INSTRUCTIONS in chunk for chunk in (instructions or []))
 
 
+async def test_file_access_provider_delete_approval_defaults_to_never_require(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """By default ``file_access_delete_file`` matches the other tools and runs without approval."""
+    session = AgentSession(session_id="session-1")
+    provider = FileAccessProvider(store=InMemoryAgentFileStore())
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["work with files"])],
+    )
+
+    delete_file = _tool_by_name(options["tools"], "file_access_delete_file")  # type: ignore[arg-type]
+    assert delete_file.approval_mode == "never_require"
+
+
+async def test_file_access_provider_delete_approval_opt_in(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """``require_delete_approval=True`` should register the delete tool with ``always_require``."""
+    session = AgentSession(session_id="session-1")
+    provider = FileAccessProvider(store=InMemoryAgentFileStore(), require_delete_approval=True)
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["work with files"])],
+    )
+
+    tools = options["tools"]
+    assert isinstance(tools, list)
+    delete_file = _tool_by_name(tools, "file_access_delete_file")
+    assert delete_file.approval_mode == "always_require"
+    # The other tools should still default to never_require — only delete is gated.
+    for name in (
+        "file_access_save_file",
+        "file_access_read_file",
+        "file_access_list_files",
+        "file_access_search_files",
+    ):
+        assert _tool_by_name(tools, name).approval_mode == "never_require"
+
+
 async def test_file_access_provider_tools_round_trip_files(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
