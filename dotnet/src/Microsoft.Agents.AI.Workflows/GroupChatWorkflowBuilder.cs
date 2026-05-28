@@ -75,10 +75,14 @@ public sealed class GroupChatWorkflowBuilder
     {
         AIAgent[] agents = this._participants.ToArray();
 
+        // GroupChatHost owns the canonical conversation and broadcasts messages directly to every
+        // participant. Participants therefore must not echo their incoming messages back to the host
+        // (which would cause duplicates), but must still reframe other agents' assistant messages as
+        // user messages so each agent's own session reads coherently.
         AIAgentHostOptions options = new()
         {
             ReassignOtherAgentsAsUsers = true,
-            ForwardIncomingMessages = true
+            ForwardIncomingMessages = false
         };
 
         Dictionary<AIAgent, ExecutorBinding> agentMap = agents.ToDictionary(a => a, a => a.BindAsExecutor(options));
