@@ -9,9 +9,9 @@
 //   2. uploads the extracted markdown to a Foundry vector store,
 //   3. surfaces the file_search tool on the agent's context for token-efficient RAG.
 //
-// The vector store is created up-front and deleted at app shutdown. The CU
-// provider's DisposeAsync deletes the per-file uploads it owned (the store
-// stays under caller ownership).
+// The vector store is auto-expiring (`expires_after = 1 day, last_active_at`) so
+// inactive sample sessions are cleaned up automatically. The CU provider's
+// DisposeAsync deletes the per-file uploads at app shutdown.
 //
 // Environment variables:
 //   AZURE_AI_PROJECT_ENDPOINT              — Azure AI Foundry project endpoint
@@ -31,6 +31,7 @@ using Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Extensions.AI;
+using OpenAI.VectorStores;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -44,12 +45,17 @@ string cuEndpoint = builder.Configuration["AZURE_CONTENTUNDERSTANDING_ENDPOINT"]
 var credential = new DefaultAzureCredential();
 var aiProjectClient = new AIProjectClient(new Uri(projectEndpoint), credential);
 
-// 1. Create a Foundry vector store up-front. The CU provider uploads each
-//    analyzed document into this store; the file_search tool reads from it.
+// 1. Create a Foundry vector store up-front (auto-expires after 1 day idle so abandoned
+//    DevUI sessions don't accumulate storage cost). The CU provider uploads each analyzed
+//    document into this store; the file_search tool reads from it.
 var projectOpenAIClient = aiProjectClient.GetProjectOpenAIClient();
 var vectorStoresClient = projectOpenAIClient.GetProjectVectorStoresClient();
 var vectorStoreResult = await vectorStoresClient.CreateVectorStoreAsync(
-    options: new() { Name = "devui_cu_foundry_file_search" });
+    new VectorStoreCreationOptions
+    {
+        Name = "devui_cu_foundry_file_search",
+        ExpirationPolicy = new VectorStoreExpirationPolicy(VectorStoreExpirationAnchor.LastActiveAt, days: 1),
+    });
 string vectorStoreId = vectorStoreResult.Value.Id;
 
 // 2. Build the file_search tool that the agent will use to query the vector store.
@@ -63,10 +69,13 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
     credential,
     options =>
     {
-        // Foreground budget per turn for CU analysis + vector store upload.
-        // PDFs typically need ~15 s end-to-end; longer-running media (audio/video) get
-        // a rehydration token stored on the DocumentEntry and resume on the next turn.
-        options.MaxWait = TimeSpan.FromSeconds(5);
+        // Foreground budget for both CU analysis polling AND vector-store upload polling.
+        // Sample workloads (multi-page PDFs) typically need 10–20 s CU + 5–15 s vector-store
+        // ingestion, so a 60 s budget covers the common case in a single turn. Longer media
+        // (audio/video) that exceeds this budget gets a rehydration token stored on the entry
+        // and resumes on the next turn; the upload then runs in that follow-up turn against a
+        // fresh budget.
+        options.MaxWait = TimeSpan.FromSeconds(60);
 
         // DevUI's HostedAgentResponseExecutor creates a fresh AgentSession every
         // turn, so per-session state would be lost. PerAgent keys state on the
@@ -99,8 +108,6 @@ builder.AddAIAgent(AgentName, (sp, key) =>
                 + "You can process PDFs, scanned documents, handwritten images, audio recordings, and video files. "
                 + "Multiple files can be uploaded and queried in the same conversation. "
                 + "When answering, cite specific content from the documents. "
-                + "Whenever you mention a file name to the user, wrap it in backticks "
-                + "(for example, `report_q1.pdf`) so the UI renders underscores correctly. "
                 + "Format all responses as GitHub-flavored Markdown. When presenting tabular data, "
                 + "use Markdown table syntax (| col1 | col2 |\\n|---|---|\\n| val1 | val2 |) — "
                 + "never emit raw HTML tags like <table>, <tr>, or <td>, since the chat UI does not render HTML.",
@@ -152,20 +159,6 @@ if (builder.Environment.IsDevelopment())
 {
     app.MapDevUI();
 }
-
-// Delete the vector store at app shutdown (the CU provider's DisposeAsync
-// already cleans up the per-file uploads).
-app.Lifetime.ApplicationStopping.Register(() =>
-{
-    try
-    {
-        vectorStoresClient.DeleteVectorStore(vectorStoreId);
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"Vector store cleanup failed: {ex.Message}");
-    }
-});
 
 Console.WriteLine($"DevUI is available at: https://localhost:50524/devui (vector store: {vectorStoreId})");
 Console.WriteLine("OpenAI Responses API is available at: https://localhost:50524/v1/responses");

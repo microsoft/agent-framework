@@ -36,6 +36,25 @@ This is the **Foundry** variant. For the Azure OpenAI Responses API variant, see
 
 4. Open <https://localhost:50524/devui> in a browser and start uploading files.
 
+## Supported File Types
+
+| Type | Formats | CU Analyzer (auto-detected) |
+|------|---------|-----------------------------|
+| Documents | PDF, DOCX, XLSX, PPTX, HTML, TXT, Markdown | `prebuilt-documentSearch` |
+| Images | JPEG, PNG, TIFF, BMP | `prebuilt-documentSearch` |
+| Audio | WAV, MP3, FLAC, OGG, M4A | `prebuilt-audioSearch` |
+| Video | MP4, MOV, AVI, WebM | `prebuilt-videoSearch` |
+
+## vs. Step 06 (Multi-Modal Agent)
+
+| Feature | Step 06 | Step 07 / Step 08 |
+|---------|---------|-------------------|
+| CU extraction | Full content injected | Content indexed in vector store |
+| RAG | No | `file_search` retrieves top-k chunks |
+| Large docs (100+ pages) | May exceed context window | Token-efficient |
+| Multiple large files | Context overflow risk | All indexed, searchable |
+| Best for | Small docs, quick inspection | Large docs, multi-file Q&A |
+
 ## Cleanup
 
-A Foundry vector store is created at startup and deleted on `Ctrl+C` (via `IHostApplicationLifetime.ApplicationStopping`). The CU provider's `DisposeAsync` (triggered at app shutdown) deletes the per-file uploads it owned.
+The Foundry vector store is created with a 1-day idle expiration policy, so abandoned DevUI sessions are auto-cleaned. The CU provider's `DisposeAsync` (triggered at app shutdown) deletes the per-file uploads it owned; the vector store itself is left to the auto-expiration policy.
