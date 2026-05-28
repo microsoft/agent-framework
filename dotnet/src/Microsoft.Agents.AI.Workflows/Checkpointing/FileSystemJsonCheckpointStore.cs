@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -184,6 +185,6 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     {
         this.CheckDisposed();
 
-        return new(this.CheckpointIndex);
+        return new(this.CheckpointIndex.Where(checkpoint => checkpoint.SessionId == sessionId).ToArray());
     }
 }
