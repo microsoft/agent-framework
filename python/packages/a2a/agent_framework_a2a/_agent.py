@@ -117,8 +117,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
                 10.0s write, 5.0s pool - optimized for A2A operations).
             supported_protocol_bindings: List of protocol bindings to use for transport negotiation.
-                Defaults to ["JSONRPC"]. Specify alternative transports (e.g., ["GRPC", "JSONRPC"])
-                when supported by the target agent.
+                Known values: "JSONRPC", "GRPC", "HTTP+JSON". Defaults to ["JSONRPC"].
+                The A2A spec treats this as an open-form string, so custom bindings are also accepted.
             kwargs: any additional properties, passed to BaseAgent.
         """
         # Default name/description from agent_card when not explicitly provided
