@@ -3202,6 +3202,33 @@ async def test_load_tools_pagination_with_duplicates():
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3"]
 
 
+async def test_load_tools_serializes_concurrent_loads():
+    tool = MCPTool(name="test_tool")
+    tool.session = AsyncMock()
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="tool_1",
+            description="First tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page.nextCursor = None
+
+    async def list_tools(params=None):
+        await asyncio.sleep(0)
+        return page
+
+    tool.session.list_tools = AsyncMock(side_effect=list_tools)
+
+    await asyncio.gather(tool.load_tools(), tool.load_tools())
+
+    assert tool.session.list_tools.call_count == 2
+    assert [f.name for f in tool._functions] == ["tool_1"]
+
+
 async def test_load_prompts_pagination_with_duplicates():
     """Test that load_prompts prevents duplicates across paginated results."""
     from unittest.mock import AsyncMock, MagicMock
@@ -3258,6 +3285,33 @@ async def test_load_prompts_pagination_with_duplicates():
     assert mock_session.list_prompts.call_count == 2
     assert len(tool._functions) == 2
     assert [f.name for f in tool._functions] == ["prompt_1", "prompt_2"]
+
+
+async def test_load_prompts_serializes_concurrent_loads():
+    tool = MCPTool(name="test_tool")
+    tool.session = AsyncMock()
+    tool.load_prompts_flag = True
+
+    page = Mock()
+    page.prompts = [
+        types.Prompt(
+            name="prompt_1",
+            description="First prompt",
+            arguments=[types.PromptArgument(name="arg1", description="Arg 1", required=True)],
+        ),
+    ]
+    page.nextCursor = None
+
+    async def list_prompts(params=None):
+        await asyncio.sleep(0)
+        return page
+
+    tool.session.list_prompts = AsyncMock(side_effect=list_prompts)
+
+    await asyncio.gather(tool.load_prompts(), tool.load_prompts())
+
+    assert tool.session.list_prompts.call_count == 2
+    assert [f.name for f in tool._functions] == ["prompt_1"]
 
 
 async def test_load_tools_pagination_exception_handling():

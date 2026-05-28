@@ -255,6 +255,8 @@ class MCPTool:
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
+        self._load_tools_lock = asyncio.Lock()
+        self._load_prompts_lock = asyncio.Lock()
         self._lifecycle_queue: asyncio.Queue[tuple[str, bool, bool, asyncio.Future[None]]] | None = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
@@ -1010,6 +1012,11 @@ class MCPTool:
         return self.approval_mode  # type: ignore[return-value]
 
     async def load_prompts(self) -> None:
+        """Load prompts from the MCP server."""
+        async with self._load_prompts_lock:
+            await self._load_prompts_locked()
+
+    async def _load_prompts_locked(self) -> None:
         """Load prompts from the MCP server.
 
         Retrieves available prompts from the connected MCP server and converts
@@ -1092,6 +1099,11 @@ class MCPTool:
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
 
     async def load_tools(self) -> None:
+        """Load tools from the MCP server."""
+        async with self._load_tools_lock:
+            await self._load_tools_locked()
+
+    async def _load_tools_locked(self) -> None:
         """Load tools from the MCP server.
 
         Retrieves available tools from the connected MCP server and converts
