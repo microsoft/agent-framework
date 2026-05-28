@@ -889,7 +889,7 @@ class FileAccessProvider(ContextProvider):
         *,
         source_id: str = DEFAULT_FILE_ACCESS_SOURCE_ID,
         instructions: str | None = None,
-        require_delete_approval: bool = False,
+        require_delete_approval: bool = True,
     ) -> None:
         """Initialize the file access provider.
 
@@ -902,13 +902,12 @@ class FileAccessProvider(ContextProvider):
             source_id: Unique source ID for the provider.
             instructions: Optional instruction override. When ``None`` the
                 default file-access instructions are used.
-            require_delete_approval: When ``True`` the ``file_access_delete_file``
-                tool is registered with ``approval_mode="always_require"`` so the
-                host must approve every delete the model proposes. Defaults to
-                ``False`` to match the historical behaviour (and the .NET
-                ``FileAccessProvider``, which has no approval mechanism), but
-                deployments that want a safer-by-default posture for destructive
-                operations should enable it.
+            require_delete_approval: When ``True`` (the default) the
+                ``file_access_delete_file`` tool is registered with
+                ``approval_mode="always_require"`` so the host must approve every
+                delete the model proposes. Set to ``False`` to opt out and allow
+                the agent to delete files autonomously (matching the .NET
+                ``FileAccessProvider``, which has no approval mechanism).
         """
         super().__init__(source_id)
         self.store = store
