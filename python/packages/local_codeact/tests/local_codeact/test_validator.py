@@ -257,6 +257,32 @@ entries = os.listdir('/tmp')"""
     assert "os.environ" in str(exc_info.value)
 
 
+def test_validate_blocks_from_os_import_system() -> None:
+    """`from os import system` must be rejected — the os.* allow-list applies to from-imports too."""
+    with pytest.raises(CodeValidationError) as exc_info:
+        validate_code("from os import system")
+    assert "Import from 'os' of 'system'" in str(exc_info.value)
+
+
+def test_validate_blocks_from_os_import_mixed() -> None:
+    """When `from os import` lists multiple names, only disallowed names are rejected."""
+    with pytest.raises(CodeValidationError) as exc_info:
+        validate_code("from os import environ, system")
+    msg = str(exc_info.value)
+    assert "Import from 'os' of 'system'" in msg
+    assert "of 'environ'" not in msg
+
+
+def test_validate_allows_from_os_import_allowed_names() -> None:
+    """Allowed names (environ, path) can still be from-imported."""
+    validate_code("from os import environ, path\nx = environ.get('HOME')")
+
+
+def test_validate_custom_allowed_os_attrs_applies_to_from_import() -> None:
+    """An expanded allowed_os_attrs lets a name be imported via `from os import ...`."""
+    validate_code("from os import listdir", allowed_os_attrs={"environ", "path", "listdir"})
+
+
 def test_validate_blocks_globals() -> None:
     """globals() should be blocked."""
     code = "g = globals()"

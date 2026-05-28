@@ -316,6 +316,12 @@ class _CodeValidator(ast.NodeVisitor):
             self._errors.append(f"Import from '{node.module}' is not allowed (blocked: {module_name})")
         elif module_name not in self._allowed_imports:
             self._errors.append(f"Import from '{node.module}' is not allowed (not in allow-list)")
+        elif module_name == "os":
+            # Mirror the os.* attribute allow-list for ``from os import X``,
+            # otherwise ``from os import system`` would bypass visit_Attribute.
+            for alias_node in node.names:
+                if alias_node.name not in self._allowed_os_attrs:
+                    self._errors.append(f"Import from 'os' of '{alias_node.name}' is not allowed")
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
