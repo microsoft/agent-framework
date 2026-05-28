@@ -1322,13 +1322,14 @@ class MCPTool:
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
 
-        raw_user_meta: Any = kwargs.get("_meta")
+        raw_user_meta: object | None = kwargs.get("_meta")
         user_meta: dict[str, Any] | None = None
         if raw_user_meta is not None and not isinstance(raw_user_meta, dict):
             raise ToolExecutionException("MCP tool metadata provided via _meta must be a dict.")
         if isinstance(raw_user_meta, dict):
+            raw_user_meta_dict: dict[Any, Any] = raw_user_meta
             user_meta = {}
-            for key, value in cast(dict[Any, Any], raw_user_meta).items():
+            for key, value in raw_user_meta_dict.items():
                 if not isinstance(key, str):
                     raise ToolExecutionException("MCP tool metadata provided via _meta must use string keys.")
                 user_meta[key] = value
