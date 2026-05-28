@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI.LocalCodeAct;
 
@@ -42,8 +42,8 @@ public sealed class FileMount
     /// </param>
     public FileMount(string hostPath, string mountPath, FileMountMode mode = FileMountMode.ReadWrite, long? writeBytesLimit = null)
     {
-        Microsoft.Shared.Diagnostics.Throw.IfNull(hostPath);
-        Microsoft.Shared.Diagnostics.Throw.IfNull(mountPath);
+        Shared.Diagnostics.Throw.IfNull(hostPath);
+        Shared.Diagnostics.Throw.IfNull(mountPath);
         if (string.IsNullOrWhiteSpace(hostPath))
         {
             throw new System.ArgumentException("Host path must not be empty.", nameof(hostPath));

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -35,7 +35,6 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
     private static readonly IReadOnlyList<string> s_stateKeys = [FixedStateKey];
 
     private readonly object _gate = new();
-    private readonly LocalCodeActProviderOptions _options;
     private readonly CodeExecutor _executor;
 
     private readonly Dictionary<string, AIFunction> _tools = new(StringComparer.Ordinal);
@@ -51,8 +50,6 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
         {
             throw new ArgumentException("PythonExecutablePath must not be empty.", nameof(options));
         }
-
-        this._options = options;
 
         var limits = options.ExecutionLimits ?? new ProcessExecutionLimits();
         var runnerScript = options.RunnerScriptPath ?? EmbeddedScripts.GetRunnerScriptPath();

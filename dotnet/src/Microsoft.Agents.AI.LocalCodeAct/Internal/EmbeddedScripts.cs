@@ -1,8 +1,7 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.IO;
-using System.Reflection;
 
 namespace Microsoft.Agents.AI.LocalCodeAct.Internal;
 
@@ -12,7 +11,7 @@ namespace Microsoft.Agents.AI.LocalCodeAct.Internal;
 /// </summary>
 internal static class EmbeddedScripts
 {
-    private static readonly object SyncRoot = new();
+    private static readonly object s_syncRoot = new();
     private static string? s_runnerPath;
     private static string? s_validatorPath;
 
@@ -29,7 +28,7 @@ internal static class EmbeddedScripts
             return cached;
         }
 
-        lock (SyncRoot)
+        lock (s_syncRoot)
         {
             if (cached is not null && File.Exists(cached))
             {

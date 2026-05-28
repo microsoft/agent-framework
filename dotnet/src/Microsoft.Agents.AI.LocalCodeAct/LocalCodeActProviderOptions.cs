@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using Microsoft.Extensions.AI;
@@ -16,7 +16,7 @@ public sealed class LocalCodeActProviderOptions
     /// <param name="pythonExecutablePath">Path to the Python interpreter used for execution and validation.</param>
     public LocalCodeActProviderOptions(string pythonExecutablePath)
     {
-        Microsoft.Shared.Diagnostics.Throw.IfNull(pythonExecutablePath);
+        Shared.Diagnostics.Throw.IfNull(pythonExecutablePath);
         if (string.IsNullOrWhiteSpace(pythonExecutablePath))
         {
             throw new System.ArgumentException("Python executable path must not be empty.", nameof(pythonExecutablePath));

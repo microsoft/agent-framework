@@ -1,8 +1,7 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.LocalCodeAct;
 using Microsoft.Extensions.AI;
 using Moq;
 
@@ -109,7 +108,7 @@ public sealed class LocalCodeActProviderTests
 
         public override string Description => "test tool";
 
-        protected override System.Threading.Tasks.ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, System.Threading.CancellationToken cancellationToken) =>
+        protected override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, System.Threading.CancellationToken cancellationToken) =>
             new((object?)null);
     }
 }

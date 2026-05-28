@@ -1,7 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using Microsoft.Agents.AI.LocalCodeAct;
 using Microsoft.Agents.AI.LocalCodeAct.Internal;
 using Microsoft.Extensions.AI;
 
@@ -28,7 +27,7 @@ public sealed class InstructionBuilderTests
     [Fact]
     public void BuildExecuteCodeDescription_MentionsMountsWhenProvided()
     {
-        var mounts = new List<FileMount> { new FileMount("/host/data", "/app/data") };
+        var mounts = new List<FileMount> { new("/host/data", "/app/data") };
         var description = InstructionBuilder.BuildExecuteCodeDescription(new List<AIFunction>(), mounts);
 
         Assert.Contains("/app/data", description);

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI.LocalCodeAct.Internal;
 /// </summary>
 internal sealed class ProcessBridge
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
     {
         WriteIndented = false,
     };
@@ -78,7 +78,7 @@ internal sealed class ProcessBridge
             startInfo.WorkingDirectory = this._workingDirectory;
         }
 
-        ConfigureEnvironment(startInfo);
+        this.ConfigureEnvironment(startInfo);
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start Python runner process.");
@@ -90,7 +90,7 @@ internal sealed class ProcessBridge
 
         try
         {
-            return await CommunicateAsync(process, code, stderrTask, timeoutCts.Token).ConfigureAwait(false);
+            return await this.CommunicateAsync(process, code, stderrTask, timeoutCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -151,7 +151,7 @@ internal sealed class ProcessBridge
             ["max_stderr_bytes"] = this._limits.MaxStderrBytes,
         };
 
-        await process.StandardInput.WriteLineAsync(request.ToJsonString(JsonOptions).AsMemory(), cancellationToken).ConfigureAwait(false);
+        await process.StandardInput.WriteLineAsync(request.ToJsonString(s_jsonOptions).AsMemory(), cancellationToken).ConfigureAwait(false);
         await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
 
         while (true)
@@ -179,7 +179,7 @@ internal sealed class ProcessBridge
             switch ((string?)message["type"])
             {
                 case "complete":
-                    return ParseComplete(message);
+                    return this.ParseComplete(message);
 
                 case "error":
                     var excType = (string?)message["exc_type"] ?? "Error";
@@ -189,7 +189,7 @@ internal sealed class ProcessBridge
                         string.IsNullOrEmpty(tb) ? $"{excType}: {msg}" : $"{excType}: {msg}\n{tb}");
 
                 case "tool_call":
-                    await HandleToolCallAsync(process, message, cancellationToken).ConfigureAwait(false);
+                    await this.HandleToolCallAsync(process, message, cancellationToken).ConfigureAwait(false);
                     break;
 
                 default:
@@ -297,7 +297,7 @@ internal sealed class ProcessBridge
             response["message"] = excMessage;
         }
 
-        await process.StandardInput.WriteLineAsync(response.ToJsonString(JsonOptions).AsMemory(), cancellationToken).ConfigureAwait(false);
+        await process.StandardInput.WriteLineAsync(response.ToJsonString(s_jsonOptions).AsMemory(), cancellationToken).ConfigureAwait(false);
         await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 

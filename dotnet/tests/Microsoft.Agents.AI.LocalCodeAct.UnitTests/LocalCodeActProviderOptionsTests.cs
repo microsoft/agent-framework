@@ -1,7 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Agents.AI.LocalCodeAct;
 
 namespace Microsoft.Agents.AI.LocalCodeAct.UnitTests;
 

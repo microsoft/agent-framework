@@ -1,9 +1,7 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using Microsoft.Agents.AI.LocalCodeAct;
 using Microsoft.Agents.AI.LocalCodeAct.Internal;
 using Microsoft.Extensions.AI;
 

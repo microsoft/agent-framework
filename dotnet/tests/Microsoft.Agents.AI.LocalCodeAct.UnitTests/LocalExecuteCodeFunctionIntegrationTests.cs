@@ -1,11 +1,10 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.LocalCodeAct;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.LocalCodeAct.UnitTests;
