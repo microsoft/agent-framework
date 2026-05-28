@@ -533,7 +533,7 @@ public class AgentWorkflowBuilderTests
 
         // Sanity: at least one agent was actually invoked after the resume; otherwise the test
         // would trivially pass even if the host stopped scheduling turns after restore.
-        int totalPost = (baseline.AgentA.Invocations.Count - aPreCount)
+        int totalPost = baseline.AgentA.Invocations.Count - aPreCount
                       + (baseline.AgentB.Invocations.Count - bPreCount)
                       + (baseline.AgentC.Invocations.Count - cPreCount);
         Assert.True(totalPost > 0, "at least one agent should be invoked after resuming from the mid-conversation checkpoint");
