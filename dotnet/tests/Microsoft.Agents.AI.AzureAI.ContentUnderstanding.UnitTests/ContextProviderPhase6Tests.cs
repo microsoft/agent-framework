@@ -12,10 +12,11 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 
 /// <summary>
-/// Phase 6 — background continuation and cross-turn promotion. When the foreground attempt
-/// exceeds <c>MaxWait</c>, the provider hands the LRO off to a background runner; subsequent
-/// turns scan the registry and inject any newly-Ready document exactly once. Tests substitute
-/// the analyze pipeline via <c>AnalyzeOverride</c>; no test in this file hits the network.
+/// Phase 6 — timeout-then-resume promotion. When the foreground attempt exceeds
+/// <c>MaxWait</c>, the provider stores a rehydration token on the <see cref="DocumentEntry"/>;
+/// the next <c>InvokingAsync</c> call replays it via the resume path and promotes the entry
+/// in place. Tests substitute the foreground call via <c>AnalyzeOverride</c> and the resume
+/// call via <c>ResumeOverride</c>; no test in this file hits the network.
 /// </summary>
 public sealed class ContextProviderPhase6Tests
 {
@@ -25,25 +26,33 @@ public sealed class ContextProviderPhase6Tests
     public async Task InvokingAsync_TimeoutThenResume_PromotesOnNextTurn()
     {
         AnalysisResult readyResult = SharedTestFixtures.MakeInvoiceResult();
-        TaskCompletionSource<AnalysisOutcome> continuationGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        AnalysisOutcome timeoutOutcome = new(
+            Completed: false,
+            Result: null,
+            OperationId: "op-123",
+            Error: null,
+            Duration: TimeSpan.FromMilliseconds(10))
+        {
+            RehydrationTokenJson = "rt-json-stub",
+        };
 
-        AnalysisAttempt timeoutAttempt = new(
-            Outcome: new AnalysisOutcome(
-                Completed: false,
-                Result: null,
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", timeoutOutcome);
+        FakeResumer resumer = new FakeResumer().Returns(
+            "op-123",
+            new AnalysisOutcome(
+                Completed: true,
+                Result: readyResult,
                 OperationId: "op-123",
                 Error: null,
-                Duration: TimeSpan.FromMilliseconds(10)),
-            Continuation: _ => continuationGate.Task);
+                Duration: TimeSpan.FromMilliseconds(200)));
 
-        FakeAnalyzer analyzer = new FakeAnalyzer().ReturnsAttempt("invoice.pdf", timeoutAttempt);
-        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
+        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer, resumer);
 
         AgentSessionFake session = new();
         TestAIAgentStub agent = new();
         DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
 
-        // Turn 1 — attempt times out. Document tracked as Analyzing; binary stripped but no system note.
+        // Turn 1 — attempt times out. Document tracked as Analyzing with a rehydration token.
         ChatMessage turn1User = new(ChatRole.User, [new TextContent("Read this."), pdf]);
         AIContext turn1 = await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(
@@ -56,26 +65,16 @@ public sealed class ContextProviderPhase6Tests
         Assert.Single(turn1Messages);
         Assert.DoesNotContain(turn1Messages[0].Contents, c => c is DataContent);
         Assert.Equal(1, analyzer.CallCount);
+        Assert.Equal(0, resumer.CallCount);
 
         ContentUnderstandingProviderState state = provider.GetStateForTesting(session);
         Assert.Equal(DocumentStatus.Analyzing, state.Documents["invoice.pdf"].Status);
         Assert.Equal("op-123", state.Documents["invoice.pdf"].OperationId);
+        Assert.Equal("rt-json-stub", state.Documents["invoice.pdf"].RehydrationTokenJson);
         Assert.Empty(state.InjectedKeys);
 
-        // Unblock the background runner: completion arrives.
-        continuationGate.SetResult(new AnalysisOutcome(
-            Completed: true,
-            Result: readyResult,
-            OperationId: "op-123",
-            Error: null,
-            Duration: TimeSpan.FromMilliseconds(200)));
-        await provider.WaitForBackgroundTasksAsync();
-
-        // Runner should have promoted the doc in place.
-        Assert.Equal(DocumentStatus.Ready, state.Documents["invoice.pdf"].Status);
-        Assert.NotNull(state.Documents["invoice.pdf"].Result);
-
-        // Turn 2 — user asks something else, no new attachment. Provider should inject the ready doc.
+        // Turn 2 — user asks something else, no new attachment. Provider should resume the
+        // pending LRO via ResumeOverride, promote the doc, then inject it.
         ChatMessage turn2User = new(ChatRole.User, [new TextContent("Now summarize it.")]);
         AIContext turn2 = await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(
@@ -84,6 +83,11 @@ public sealed class ContextProviderPhase6Tests
                 new AIContext { Messages = new List<ChatMessage> { turn2User } }),
             CancellationToken.None);
 
+        Assert.Equal(1, resumer.CallCount);
+        Assert.Equal(DocumentStatus.Ready, state.Documents["invoice.pdf"].Status);
+        Assert.NotNull(state.Documents["invoice.pdf"].Result);
+        Assert.Null(state.Documents["invoice.pdf"].RehydrationTokenJson);
+
         List<ChatMessage> turn2Messages = turn2.Messages!.ToList();
         Assert.Equal(2, turn2Messages.Count);
         Assert.Equal(ChatRole.System, turn2Messages[1].Role);
@@ -91,7 +95,7 @@ public sealed class ContextProviderPhase6Tests
         Assert.Contains("CONTOSO LTD.", injectedText, StringComparison.Ordinal);
 
         Assert.Contains("invoice.pdf", state.InjectedKeys);
-        // Background runner ran exactly once; foreground analyzer was only called turn 1.
+        // Foreground analyzer was only called turn 1.
         Assert.Equal(1, analyzer.CallCount);
     }
 
@@ -99,13 +103,22 @@ public sealed class ContextProviderPhase6Tests
     public async Task InvokingAsync_PromotedDocument_NotReinjectedOnSubsequentTurn()
     {
         AnalysisResult readyResult = SharedTestFixtures.MakeInvoiceResult();
-        TaskCompletionSource<AnalysisOutcome> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        AnalysisAttempt timeoutAttempt = new(
-            Outcome: new AnalysisOutcome(false, null, "op-1", null, TimeSpan.FromMilliseconds(5)),
-            Continuation: _ => gate.Task);
+        AnalysisOutcome timeoutOutcome = new(
+            Completed: false,
+            Result: null,
+            OperationId: "op-1",
+            Error: null,
+            Duration: TimeSpan.FromMilliseconds(5))
+        {
+            RehydrationTokenJson = "rt-json-stub",
+        };
 
-        FakeAnalyzer analyzer = new FakeAnalyzer().ReturnsAttempt("invoice.pdf", timeoutAttempt);
-        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", timeoutOutcome);
+        FakeResumer resumer = new FakeResumer().Returns(
+            "op-1",
+            new AnalysisOutcome(true, readyResult, "op-1", null, TimeSpan.FromMilliseconds(50)));
+
+        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer, resumer);
 
         AgentSessionFake session = new();
         TestAIAgentStub agent = new();
@@ -117,10 +130,7 @@ public sealed class ContextProviderPhase6Tests
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Read."), pdf]) } }),
             CancellationToken.None);
 
-        gate.SetResult(new AnalysisOutcome(true, readyResult, "op-1", null, TimeSpan.FromMilliseconds(50)));
-        await provider.WaitForBackgroundTasksAsync();
-
-        // Turn 2 — injection happens once.
+        // Turn 2 — resume completes, injection happens once.
         AIContext turn2 = await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(agent, session,
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Summary?")]) } }),
@@ -138,60 +148,62 @@ public sealed class ContextProviderPhase6Tests
     }
 
     [Fact]
-    public async Task InvokingAsync_BackgroundRunner_HandlesFailure_StoresError()
+    public async Task InvokingAsync_ResumeFails_StoresErrorAndDropsToken()
     {
         InvalidOperationException expected = new("simulated server failure");
-        AnalysisAttempt failingAttempt = new(
-            Outcome: new AnalysisOutcome(false, null, "op-fail", null, TimeSpan.FromMilliseconds(5)),
-            Continuation: _ => Task.FromException<AnalysisOutcome>(expected));
+        AnalysisOutcome timeoutOutcome = new(false, null, "op-fail", null, TimeSpan.FromMilliseconds(5))
+        {
+            RehydrationTokenJson = "rt-json-stub",
+        };
 
-        FakeAnalyzer analyzer = new FakeAnalyzer().ReturnsAttempt("invoice.pdf", failingAttempt);
-        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", timeoutOutcome);
+        FakeResumer resumer = new FakeResumer().Returns(
+            "op-fail",
+            () => throw expected);
+
+        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer, resumer);
 
         AgentSessionFake session = new();
         DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
         ChatMessage user = new(ChatRole.User, [new TextContent("Read."), pdf]);
 
+        // Turn 1 — timeout, entry stored as Analyzing.
         await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(new TestAIAgentStub(), session,
                 new AIContext { Messages = new List<ChatMessage> { user } }),
             CancellationToken.None);
 
-        // Runner promoted to Failed in place; awaiting it must not throw (runner swallows).
-        await provider.WaitForBackgroundTasksAsync();
+        // Turn 2 — resume throws; provider should mark the entry Failed without rethrowing.
+        AIContext next = await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(new TestAIAgentStub(), session,
+                new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Still?")]) } }),
+            CancellationToken.None);
 
         ContentUnderstandingProviderState state = provider.GetStateForTesting(session);
         DocumentEntry entry = state.Documents["invoice.pdf"];
         Assert.Equal(DocumentStatus.Failed, entry.Status);
         Assert.Equal("simulated server failure", entry.Error);
+        Assert.Null(entry.RehydrationTokenJson);
 
-        // Failed docs are NOT injected on the next turn (only Ready docs are).
-        AIContext next = await provider.InvokingAsync(
-            new AIContextProvider.InvokingContext(new TestAIAgentStub(), session,
-                new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Still?")]) } }),
-            CancellationToken.None);
+        // Failed docs are NOT injected (only Ready docs are).
         List<ChatMessage> nextMessages = next.Messages!.ToList();
         Assert.Single(nextMessages);
         Assert.Equal(ChatRole.User, nextMessages[0].Role);
     }
 
     [Fact]
-    public async Task DisposeAsync_CancelsInflightRunner_LeavesStatusAnalyzing()
+    public async Task DisposeAsync_WithPendingAnalyzingEntry_ReturnsPromptly()
     {
-        // Continuation that never completes on its own, but honors the cancellation token from
-        // the provider's _disposeCts. We use TaskCompletionSource + ct.Register so cancel propagates.
-        TaskCompletionSource<AnalysisOutcome> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // With the Plan-C rewrite there is no background runner to cancel. DisposeAsync
+        // should simply return and leave the entry as Analyzing (the rehydration token can
+        // be picked up by a future provider instance if it shares the same session state).
+        AnalysisOutcome timeoutOutcome = new(false, null, "op-disposed", null, TimeSpan.FromMilliseconds(5))
+        {
+            RehydrationTokenJson = "rt-json-stub",
+        };
 
-        AnalysisAttempt blockingAttempt = new(
-            Outcome: new AnalysisOutcome(false, null, "op-disposed", null, TimeSpan.FromMilliseconds(5)),
-            Continuation: ct =>
-            {
-                ct.Register(() => tcs.TrySetCanceled(ct));
-                return tcs.Task;
-            });
-
-        FakeAnalyzer analyzer = new FakeAnalyzer().ReturnsAttempt("invoice.pdf", blockingAttempt);
-        ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", timeoutOutcome);
+        ContentUnderstandingContextProvider provider = CreateProvider(analyzer, resumer: null);
 
         AgentSessionFake session = new();
         DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
@@ -202,22 +214,25 @@ public sealed class ContextProviderPhase6Tests
                 new AIContext { Messages = new List<ChatMessage> { user } }),
             CancellationToken.None);
 
-        // Dispose should cancel the runner and return well within the 2-second bound.
         Stopwatch sw = Stopwatch.StartNew();
         await provider.DisposeAsync();
         sw.Stop();
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3),
-            $"DisposeAsync took {sw.Elapsed} — runner cancellation did not propagate.");
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2),
+            $"DisposeAsync took {sw.Elapsed} — expected near-instant return.");
 
-        // Status untouched: runner saw OCE and left the entry as Analyzing.
+        // Status untouched.
         ContentUnderstandingProviderState state = provider.GetStateForTesting(session);
         Assert.Equal(DocumentStatus.Analyzing, state.Documents["invoice.pdf"].Status);
+        Assert.Equal("rt-json-stub", state.Documents["invoice.pdf"].RehydrationTokenJson);
     }
 
-    private static ContentUnderstandingContextProvider CreateProvider(FakeAnalyzer analyzer) =>
+    private static ContentUnderstandingContextProvider CreateProvider(
+        FakeAnalyzer analyzer,
+        FakeResumer? resumer = null) =>
         new(SharedTestFixtures.TestEndpoint, new FakeTokenCredential())
         {
             ClientFactoryOverride = new CountingClientFactory(),
             AnalyzeOverride = analyzer.AnalyzeAsync,
+            ResumeOverride = resumer is null ? null : resumer.ResumeAsync,
         };
 }

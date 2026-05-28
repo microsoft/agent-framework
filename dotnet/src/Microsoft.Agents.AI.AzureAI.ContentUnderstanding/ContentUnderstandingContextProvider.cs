@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel.Primitives;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
@@ -15,12 +16,13 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// Understanding and injects the structured result into the agent's context.
 /// </summary>
 /// <remarks>
-/// Phase 5 ships the single-document happy path: detect attachments, submit them to Content
-/// Understanding, wait up to <see cref="ContentUnderstandingContextProviderOptions.MaxWait"/>
-/// for completion, strip the binary content out of the message stream (Strategy C from the
-/// Phase 0 spike), and append the rendered markdown so the LLM only sees text. Background
-/// continuation, multi-document tools, and FileSearch are implemented in Phases 6–9. See
-/// <c>features/sdk/dotnet-cu-context-provider/design-doc-dotnet-cu-context-provider.md</c>.
+/// Detects file attachments on each user turn, submits them to Content Understanding, waits
+/// up to <see cref="ContentUnderstandingContextProviderOptions.MaxWait"/> for completion,
+/// strips the binary content out of the message stream (so the LLM only sees text), and
+/// appends the rendered markdown. When the inline wait times out the provider stores a
+/// rehydration token and re-polls the operation at the start of the next turn via
+/// <c>Operation.Rehydrate&lt;AnalysisResult&gt;</c> — there is no background task, so all
+/// state is fully JSON-serializable.
 /// </remarks>
 public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAsyncDisposable
 {
@@ -42,24 +44,22 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
     private readonly ContentUnderstandingContextProviderOptions _options;
     private readonly ProviderSessionState<ContentUnderstandingProviderState> _state;
 
-    // Fallback document cache for when context.Session is null. Hosting layers that
-    // construct a fresh AgentSession per HTTP call (e.g. OpenAI Responses without
-    // server-side conversations) would otherwise lose all analysis state across turns.
-    // Keyed by Agent.Id ?? Name so multiple agents sharing one provider instance still
-    // get isolated state. When a stable session IS provided, _state above takes
+    // Used when StateScope.PerAgent is selected or when context.Session is null. Keyed by
+    // Agent.Id ?? Name so multiple agents sharing one provider instance still get isolated
+    // state. With the default StateScope.PerSession + a non-null session, _state above takes
     // precedence and persists via AgentSession.StateBag.
     private readonly ConcurrentDictionary<string, ContentUnderstandingProviderState> _instanceStates =
         new(StringComparer.Ordinal);
 
     private readonly IContentUnderstandingClientFactory _clientFactory;
     private readonly SemaphoreSlim _clientInitLock = new(1, 1);
-    private readonly BackgroundAnalysisRunner _runner = new();
-    private readonly ConcurrentBag<Task> _runnerTasks = new();
-    private readonly CancellationTokenSource _disposeCts = new();
     private readonly AITool[] _tools;
     private readonly ConcurrentBag<string> _uploadedFileIds = new();
     private ContentUnderstandingProviderState? _activeState;
     private ContentUnderstandingClient? _client;
+    // Cached default options instance reused by Operation.Rehydrate. Azure.Core's static
+    // Rehydrate factory requires a non-null ClientOptions to seed the pipeline / retry / etc.
+    private readonly ContentUnderstandingClientOptions _rehydrateOptions = new();
     private int _disposed;
 
     /// <summary>
@@ -119,11 +119,20 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
     /// <summary>
     /// Internal seam: when set, replaces the default analyze pipeline (lazy CU client plus
     /// <c>AnalyzeBinaryAsync</c> / <c>AnalyzeAsync</c> plus LRO polling) entirely. Tests use
-    /// this to avoid live network calls. Returns an <see cref="AnalysisAttempt"/> whose
-    /// <c>Continuation</c> is non-null only when the outer attempt timed out before reaching a
-    /// terminal state and the background runner should resume polling.
+    /// this to avoid live network calls. The returned <see cref="AnalysisOutcome"/> may carry
+    /// a <see cref="AnalysisOutcome.RehydrationTokenJson"/> when the inline attempt timed out
+    /// so the next turn's resume path can pick the operation back up.
     /// </summary>
-    internal Func<DetectedAttachment, string, TimeSpan, CancellationToken, Task<AnalysisAttempt>>? AnalyzeOverride { get; init; }
+    internal Func<DetectedAttachment, string, TimeSpan, CancellationToken, Task<AnalysisOutcome>>? AnalyzeOverride { get; init; }
+
+    /// <summary>
+    /// Internal seam: when set, replaces the resume-existing-operation pipeline that the
+    /// provider runs at the start of every turn for entries that are still
+    /// <see cref="DocumentStatus.Analyzing"/>. The override receives the cached
+    /// <c>(operationId, rehydrationTokenJson, analyzerId)</c> triple plus the per-attempt
+    /// budget. Tests use this to assert cross-turn promotion without a live CU service.
+    /// </summary>
+    internal Func<string, string, string, TimeSpan, CancellationToken, Task<AnalysisOutcome>>? ResumeOverride { get; init; }
 
     /// <inheritdoc/>
     protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
@@ -133,26 +142,27 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
 
         AIContext input = context.AIContext;
         ContentUnderstandingProviderState providerState;
-        if (context.Session is not null)
+        if (this._options.StateScope == StateScope.PerAgent || context.Session is null)
         {
-            providerState = this._state.GetOrInitializeState(context.Session);
+            // PerAgent (or fallback when no session was supplied) — registry is keyed by the
+            // agent identity so it survives the host creating a fresh AgentSession per turn.
+            string instanceKey = context.Agent.Id ?? context.Agent.Name ?? "__default__";
+            providerState = this._instanceStates.GetOrAdd(instanceKey, static _ => new ContentUnderstandingProviderState());
         }
         else
         {
-            // No session in context -> fall back to provider-instance state so attachment
-            // caches survive across turns even when the hosting layer doesn't supply a
-            // stable session. See README "Limitations (Preview)".
-            string instanceKey = context.Agent.Id ?? context.Agent.Name ?? "__default__";
-            providerState = this._instanceStates.GetOrAdd(instanceKey, static _ => new ContentUnderstandingProviderState());
+            providerState = this._state.GetOrInitializeState(context.Session);
         }
         // Refresh the tool's view of the live state. Tools constructed in the ctor close over
         // this field via Func<...> so they see whichever session most recently invoked us.
         this._activeState = providerState;
 
-        // Phase 6 cross-turn promotion: surface every Ready document not yet injected. The
-        // background runner already mutated state.Documents in place (the StateBag caches the
-        // live object), so a simple scan picks up the latest status without any explicit
-        // rehydrate call.
+        // Resume any in-flight CU operations from previous turns BEFORE deciding what to
+        // promote. The resume step may flip an Analyzing entry to Ready (or Failed), which
+        // the promotion scan below then picks up.
+        await this.ResolvePendingResultsAsync(providerState, cancellationToken).ConfigureAwait(false);
+
+        // Cross-turn promotion: surface every Ready document not yet injected.
         List<DocumentEntry> readyForPromotion = new();
         foreach (KeyValuePair<string, DocumentEntry> kvp in providerState.Documents)
         {
@@ -180,30 +190,58 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         List<DocumentEntry> newlyReady = new();
         List<string> duplicateRejectionNotes = new();
 
+        // Snapshot keys that already existed before this turn so we can distinguish
+        // cross-turn duplicates (e.g. DevUI's conversation history re-includes the
+        // original input_file every turn) from same-turn duplicates (the user attached
+        // two files with the same name in a single message). Only the latter should
+        // surface an LLM-visible note.
+        HashSet<string> preExistingKeys = new(providerState.Documents.Keys, StringComparer.Ordinal);
+
         foreach (DetectedAttachment att in detected)
         {
             toStrip.Add(att.OriginalContent);
 
-            // Same filename → reject. A second upload under an already-tracked name would
-            // orphan vector store entries and confuse retrieval. We surface an LLM-visible
-            // note instructing the model to ask the user to rename; the original binary is
-            // still stripped (see toStrip above). Failed prior attempts are allowed to retry.
+            // Same filename → do NOT re-analyze. A second upload under an already-tracked
+            // name would orphan vector store entries and confuse retrieval. The original
+            // binary is still stripped (see toStrip above). Failed prior attempts fall
+            // through and are allowed to retry.
             if (providerState.Documents.TryGetValue(att.Filename, out DocumentEntry? existingEntry)
                 && existingEntry.Status != DocumentStatus.Failed)
             {
-                duplicateRejectionNotes.Add(
-                    $"The user tried to upload '{att.Filename}', but a file with that name was " +
-                    "already uploaded earlier in this session. The new upload was rejected and " +
-                    "was not analyzed. Tell the user that a file with the same name already " +
-                    "exists and they need to rename the file before uploading again.");
+                if (!preExistingKeys.Contains(att.Filename))
+                {
+                    // Same-turn duplicate: the user attached two files with the same name in
+                    // one message. Tell the LLM so it can ask the user to rename.
+                    duplicateRejectionNotes.Add(
+                        $"The user tried to upload '{DocumentEntry.SanitizeForMarkdown(att.Filename)}', but a file with that name was " +
+                        "already uploaded earlier in this session. The new upload was rejected and " +
+                        "was not analyzed. Tell the user that a file with the same name already " +
+                        "exists and they need to rename the file before uploading again.");
+                    continue;
+                }
+
+                // Cross-turn duplicate: hosted UIs (e.g. DevUI) replay the original
+                // attachment on every turn through conversation history. The provider's
+                // previous System note (with the rendered markdown) is NOT preserved in
+                // that history, so for a Ready entry we re-inject it on this turn so the
+                // LLM still has the document content to answer from. Analyzing/Uploading
+                // entries are silently skipped — they will surface via the normal promotion
+                // path once they reach Ready. No rejection note in either branch — the user
+                // didn't intentionally re-upload, so nagging them to rename would be wrong.
+                if (existingEntry.Status == DocumentStatus.Ready
+                    && existingEntry.Result is not null
+                    && !readyForPromotion.Any(d => string.Equals(d.DocumentKey, att.Filename, StringComparison.Ordinal)))
+                {
+                    readyForPromotion.Add(existingEntry);
+                }
                 continue;
             }
 
             string analyzerId = AnalyzerSelector.Select(att.ResolvedMediaType, this._options.AnalyzerId);
-            AnalysisAttempt attempt;
+            AnalysisOutcome outcome;
             try
             {
-                attempt = this.AnalyzeOverride is not null
+                outcome = this.AnalyzeOverride is not null
                     ? await this.AnalyzeOverride(att, analyzerId, this._options.MaxWait, cancellationToken).ConfigureAwait(false)
                     : await this.AnalyzeWithCUClientAsync(att, analyzerId, this._options.MaxWait, cancellationToken).ConfigureAwait(false);
             }
@@ -227,7 +265,6 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                 continue;
             }
 
-            AnalysisOutcome outcome = attempt.Outcome;
             DocumentEntry entry;
             if (outcome.Completed && outcome.Result is not null)
             {
@@ -283,25 +320,12 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                     AnalyzerId = analyzerId,
                     Status = DocumentStatus.Analyzing,
                     OperationId = outcome.OperationId,
+                    RehydrationTokenJson = outcome.RehydrationTokenJson,
                     SizeBytes = att.Data?.Length,
                 };
             }
 
             providerState.Documents[att.Filename] = entry;
-
-            // If the foreground attempt timed out and the caller produced a continuation,
-            // resume polling on a background task scoped to disposal.
-            if (entry.Status == DocumentStatus.Analyzing && attempt.Continuation is not null)
-            {
-                Task runner = this._runner.StartAsync(
-                    att.Filename,
-                    attempt.Continuation,
-                    providerState,
-                    this._options.OutputSections,
-                    this._options.FileSearchConfig,
-                    this._disposeCts.Token);
-                this._runnerTasks.Add(runner);
-            }
         }
 
         this._state.SaveState(context.Session, providerState);
@@ -363,7 +387,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                     // FileSearch mode: do NOT inject the full document body. Emit a short
                     // per-document note describing where the LLM can find the content.
                     string note = uploadResults[i].Outcome.NoteText
-                        ?? $"Document `{doc.Filename}`: indexed in vector store.";
+                        ?? $"Document `{doc.MarkdownSafeName}`: indexed in vector store.";
                     noteContents.Add(new TextContent(note));
                 }
                 else
@@ -448,39 +472,6 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             return;
         }
 
-        // Signal background runners to stop. They observe _disposeCts.Token and swallow OCE.
-        try
-        {
-            this._disposeCts.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-            // Already disposed elsewhere — safe to ignore.
-        }
-
-        // Snapshot in-flight runners; bounded wait so a stuck poll cannot block disposal forever.
-        Task[] snapshot = this._runnerTasks.ToArray();
-        if (snapshot.Length > 0)
-        {
-            Task all = Task.WhenAll(snapshot);
-            Task completed = await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
-            if (ReferenceEquals(completed, all))
-            {
-                try
-                {
-                    await all.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Expected on cancellation.
-                }
-                catch
-                {
-                    // Runners are documented to never let exceptions escape; defensive swallow.
-                }
-            }
-        }
-
         // Phase 9 — best-effort cleanup of files this provider uploaded into the caller's
         // vector store. The vector store itself is caller-owned and is intentionally NOT
         // deleted. Failures are swallowed because disposal must always complete cleanly.
@@ -500,7 +491,6 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             }
         }
 
-        this._disposeCts.Dispose();
         this._clientInitLock.Dispose();
 
         if (this._client is IDisposable disposableClient)
@@ -524,22 +514,22 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         => this.EnsureClientAsync(cancellationToken);
 
     /// <summary>
-    /// Internal test seam: awaits every background analysis runner spawned so far, in order
-    /// to make Phase 6 cross-turn promotion tests deterministic without polling.
-    /// </summary>
-    internal Task WaitForBackgroundTasksAsync()
-    {
-        Task[] snapshot = this._runnerTasks.ToArray();
-        return snapshot.Length == 0 ? Task.CompletedTask : Task.WhenAll(snapshot);
-    }
-
-    /// <summary>
     /// Internal test seam: reads the provider state for a session without going through
     /// <see cref="InvokingCoreAsync"/> and without the disposal check, so tests can inspect
     /// state both before and after <see cref="DisposeAsync"/>.
     /// </summary>
     internal ContentUnderstandingProviderState GetStateForTesting(AgentSession? session)
-        => this._state.GetOrInitializeState(session);
+    {
+        if (this._options.StateScope == StateScope.PerAgent || session is null)
+        {
+            // Tests that pass a non-null session here while in PerAgent mode are still asking
+            // "what state would this session see" — but in PerAgent there is only one bucket
+            // per agent id. With no agent context available from this seam we use the same
+            // "__default__" key the production path falls back to.
+            return this._instanceStates.GetOrAdd("__default__", static _ => new ContentUnderstandingProviderState());
+        }
+        return this._state.GetOrInitializeState(session);
+    }
 
     private async ValueTask<ContentUnderstandingClient> EnsureClientAsync(CancellationToken cancellationToken)
     {
@@ -595,7 +585,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             // re-promotion after the runner re-completed) must not double-upload.
             return FileSearchOutcome.Skip(
                 entry,
-                $"Document `{entry.Filename}`: indexed in vector store — call `file_search` to query its contents.");
+                $"Document `{entry.MarkdownSafeName}`: indexed in vector store — call `file_search` to query its contents.");
         }
 
         string? payload = entry.SearchPayload;
@@ -605,7 +595,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             // Skip the upload but keep the entry Ready so list_documents reflects truth.
             return FileSearchOutcome.Skip(
                 entry,
-                $"Document `{entry.Filename}`: no searchable text after analysis (skipped vector-store upload).");
+                $"Document `{entry.MarkdownSafeName}`: no searchable text after analysis (skipped vector-store upload).");
         }
 
         if (budget <= TimeSpan.Zero)
@@ -619,7 +609,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             };
             return FileSearchOutcome.Fail(
                 timeoutEntry,
-                $"Document `{entry.Filename}`: failed to upload (foreground time budget exhausted).");
+                $"Document `{entry.MarkdownSafeName}`: failed to upload (foreground time budget exhausted).");
         }
 
         Stopwatch sw = Stopwatch.StartNew();
@@ -627,8 +617,10 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         linked.CancelAfter(budget);
         try
         {
+            // Sanitized upload name (no Markdown-special chars) → file_search results carry a
+            // safe filename that the LLM can echo back verbatim without breaking the chat UI.
             string fileId = await config.Backend
-                .UploadAsync(config.VectorStoreId, entry.Filename + ".md", payload!, linked.Token)
+                .UploadAsync(config.VectorStoreId, entry.MarkdownSafeName + ".md", payload!, linked.Token)
                 .ConfigureAwait(false);
             sw.Stop();
             this._uploadedFileIds.Add(fileId);
@@ -639,7 +631,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             };
             return FileSearchOutcome.Success(
                 uploaded,
-                $"Document `{entry.Filename}`: indexed in vector store — call `file_search` (and pass the filename when asking content questions) to retrieve passages.");
+                $"Document `{entry.MarkdownSafeName}`: indexed in vector store — call `file_search` (and pass the filename when asking content questions) to retrieve passages.");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -655,7 +647,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             };
             return FileSearchOutcome.Fail(
                 timeoutEntry,
-                $"Document `{entry.Filename}`: failed to upload (timed out after {sw.Elapsed.TotalSeconds:F1}s).");
+                $"Document `{entry.MarkdownSafeName}`: failed to upload (timed out after {sw.Elapsed.TotalSeconds:F1}s).");
         }
         catch (Exception ex)
         {
@@ -670,7 +662,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             };
             return FileSearchOutcome.Fail(
                 failed,
-                $"Document `{entry.Filename}`: failed to upload — {ex.Message}");
+                $"Document `{entry.MarkdownSafeName}`: failed to upload — {ex.Message}");
         }
     }
 
@@ -694,7 +686,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
     private static TimeSpan ClampPositive(TimeSpan span)
         => span <= TimeSpan.Zero ? TimeSpan.Zero : span;
 
-    private async Task<AnalysisAttempt> AnalyzeWithCUClientAsync(
+    private async Task<AnalysisOutcome> AnalyzeWithCUClientAsync(
         DetectedAttachment attachment,
         string analyzerId,
         TimeSpan maxWait,
@@ -749,43 +741,222 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         {
             Response<AnalysisResult> response = await op.WaitForCompletionAsync(linkedCts.Token).ConfigureAwait(false);
             stopwatch.Stop();
-            return new AnalysisAttempt(
-                new AnalysisOutcome(
-                    Completed: true,
-                    Result: response.Value,
-                    OperationId: op.Id,
-                    Error: null,
-                    Duration: stopwatch.Elapsed),
-                Continuation: null);
+            return new AnalysisOutcome(
+                Completed: true,
+                Result: response.Value,
+                OperationId: op.Id,
+                Error: null,
+                Duration: stopwatch.Elapsed);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // Caller's CT not cancelled → the MaxWait timer fired. Hand the still-running
-            // operation off to the background runner.
+            // Caller's CT not cancelled → the MaxWait timer fired. Capture a rehydration
+            // token so the next turn can resume this same LRO instead of resubmitting.
             stopwatch.Stop();
-            TimeSpan elapsed = stopwatch.Elapsed;
-            Operation<AnalysisResult> capturedOp = op;
-            return new AnalysisAttempt(
-                new AnalysisOutcome(
-                    Completed: false,
-                    Result: null,
-                    OperationId: capturedOp.Id,
-                    Error: null,
-                    Duration: elapsed),
-                Continuation: async ct =>
-                {
-                    Stopwatch innerSw = Stopwatch.StartNew();
-                    Response<AnalysisResult> r = await capturedOp.WaitForCompletionAsync(ct).ConfigureAwait(false);
-                    innerSw.Stop();
-                    return new AnalysisOutcome(
-                        Completed: true,
-                        Result: r.Value,
-                        OperationId: capturedOp.Id,
-                        Error: null,
-                        Duration: elapsed + innerSw.Elapsed);
-                });
+            string? tokenJson = TrySerializeRehydrationToken(op);
+            return new AnalysisOutcome(
+                Completed: false,
+                Result: null,
+                OperationId: op.Id,
+                Error: null,
+                Duration: stopwatch.Elapsed)
+            {
+                RehydrationTokenJson = tokenJson,
+            };
         }
     }
+
+    private async Task ResolvePendingResultsAsync(
+        ContentUnderstandingProviderState providerState,
+        CancellationToken cancellationToken)
+    {
+        // Snapshot keys we need to revisit so we can mutate Documents in place without
+        // invalidating an enumerator.
+        List<DocumentEntry> pending = new();
+        foreach (KeyValuePair<string, DocumentEntry> kvp in providerState.Documents)
+        {
+            DocumentEntry entry = kvp.Value;
+            if (entry.Status == DocumentStatus.Analyzing
+                && !string.IsNullOrEmpty(entry.OperationId)
+                && !string.IsNullOrEmpty(entry.RehydrationTokenJson))
+            {
+                pending.Add(entry);
+            }
+        }
+
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        foreach (DocumentEntry entry in pending)
+        {
+            AnalysisOutcome outcome;
+            try
+            {
+                outcome = this.ResumeOverride is not null
+                    ? await this.ResumeOverride(
+                            entry.OperationId!,
+                            entry.RehydrationTokenJson!,
+                            entry.AnalyzerId,
+                            this._options.MaxWait,
+                            cancellationToken)
+                        .ConfigureAwait(false)
+                    : await this.ResumeWithCUClientAsync(
+                            entry.OperationId!,
+                            entry.RehydrationTokenJson!,
+                            this._options.MaxWait,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                providerState.Documents[entry.DocumentKey] = entry with
+                {
+                    Status = DocumentStatus.Failed,
+                    Error = ex.Message,
+                    RehydrationTokenJson = null,
+                };
+                continue;
+            }
+
+            if (outcome.Completed && outcome.Result is not null)
+            {
+                string rendered = AnalysisRenderer.Render(
+                    outcome.Result, entry.Filename, this._options.OutputSections);
+                string markdownOnly = AnalysisRenderer.Render(
+                    outcome.Result, entry.Filename, AnalysisSection.Markdown);
+                string? searchPayload = AnalysisRenderer.RenderSearchPayload(
+                    outcome.Result, entry.Filename, AnalysisSection.Markdown, this._options.FileSearchConfig);
+
+                providerState.Documents[entry.DocumentKey] = entry with
+                {
+                    Status = DocumentStatus.Ready,
+                    Result = rendered,
+                    MarkdownResult = markdownOnly,
+                    SearchPayload = searchPayload,
+                    AnalyzedAt = DateTimeOffset.UtcNow,
+                    AnalysisDuration = (entry.AnalysisDuration ?? TimeSpan.Zero) + outcome.Duration,
+                    RehydrationTokenJson = null,
+                    Error = null,
+                };
+            }
+            else if (outcome.Error is not null)
+            {
+                providerState.Documents[entry.DocumentKey] = entry with
+                {
+                    Status = DocumentStatus.Failed,
+                    Error = outcome.Error.Message,
+                    RehydrationTokenJson = null,
+                };
+            }
+            else
+            {
+                // Still running on the service — keep entry Analyzing, refresh the token in
+                // case the resume path emitted a new one.
+                if (!string.IsNullOrEmpty(outcome.RehydrationTokenJson)
+                    && outcome.RehydrationTokenJson != entry.RehydrationTokenJson)
+                {
+                    providerState.Documents[entry.DocumentKey] = entry with
+                    {
+                        RehydrationTokenJson = outcome.RehydrationTokenJson,
+                    };
+                }
+            }
+        }
+    }
+
+    // RehydrationToken / ModelReaderWriter / Operation.Rehydrate are flagged as requiring
+    // unreferenced code / dynamic code because they go through the System.ClientModel JSON
+    // model reader. RehydrationToken has a source-generated IJsonModel implementation in
+    // Azure.Core, so trimming/AOT cannot strip it.
+#pragma warning disable IL2026 // RequiresUnreferencedCode
+#pragma warning disable IL3050 // RequiresDynamicCode
+    private async Task<AnalysisOutcome> ResumeWithCUClientAsync(
+        string operationId,
+        string rehydrationTokenJson,
+        TimeSpan maxWait,
+        CancellationToken cancellationToken)
+    {
+        ContentUnderstandingClient client = await this.EnsureClientAsync(cancellationToken).ConfigureAwait(false);
+        RehydrationToken token;
+        try
+        {
+            token = ModelReaderWriter.Read<RehydrationToken>(
+                BinaryData.FromString(rehydrationTokenJson),
+                ModelReaderWriterOptions.Json);
+        }
+        catch (Exception ex)
+        {
+            return new AnalysisOutcome(
+                Completed: false,
+                Result: null,
+                OperationId: operationId,
+                Error: ex,
+                Duration: TimeSpan.Zero);
+        }
+
+        Operation<AnalysisResult> op = Operation.Rehydrate<AnalysisResult>(
+            client.Pipeline,
+            token,
+            this._rehydrateOptions);
+
+        Stopwatch sw = Stopwatch.StartNew();
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        linked.CancelAfter(maxWait);
+        try
+        {
+            Response<AnalysisResult> response = await op.WaitForCompletionAsync(linked.Token).ConfigureAwait(false);
+            sw.Stop();
+            return new AnalysisOutcome(
+                Completed: true,
+                Result: response.Value,
+                OperationId: op.Id,
+                Error: null,
+                Duration: sw.Elapsed);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Per-turn budget expired; keep the entry Analyzing and reuse the same token next turn.
+            sw.Stop();
+            return new AnalysisOutcome(
+                Completed: false,
+                Result: null,
+                OperationId: op.Id,
+                Error: null,
+                Duration: sw.Elapsed)
+            {
+                RehydrationTokenJson = TrySerializeRehydrationToken(op) ?? rehydrationTokenJson,
+            };
+        }
+    }
+
+    private static string? TrySerializeRehydrationToken<T>(Operation<T> op) where T : notnull
+    {
+        RehydrationToken? token = op.GetRehydrationToken();
+        if (token is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            BinaryData data = ModelReaderWriter.Write(token.Value, ModelReaderWriterOptions.Json);
+            return data.ToString();
+        }
+        catch
+        {
+            // If the token can't be serialized the operation simply cannot be resumed; the
+            // entry will stay Analyzing forever (or until the user re-uploads the file).
+            return null;
+        }
+    }
+#pragma warning restore IL3050
+#pragma warning restore IL2026
 
 #pragma warning disable CA1513 // ObjectDisposedException.ThrowIf is .NET 7+ only; this project multi-targets netstandard2.0 and net472.
     private void ThrowIfDisposed()

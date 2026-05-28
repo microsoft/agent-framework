@@ -52,6 +52,12 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
         // the agent tells the user the file is still being analyzed and resolves
         // it on the next turn.
         options.MaxWait = TimeSpan.FromSeconds(5);
+
+        // DevUI's HostedAgentResponseExecutor creates a fresh AgentSession every
+        // turn, so per-session state would be lost. PerAgent keys state on the
+        // agent instance instead — fine here because each DevUI agent is single-
+        // user. Production multi-tenant hosts MUST keep the default PerSession.
+        options.StateScope = StateScope.PerAgent;
     }));
 
 const string AgentName = "MultiModalDocAgent";

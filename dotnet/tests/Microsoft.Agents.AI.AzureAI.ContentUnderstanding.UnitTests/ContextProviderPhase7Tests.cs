@@ -87,13 +87,21 @@ public sealed class ContextProviderPhase7Tests
     public async Task ListDocumentsTool_ReflectsPostPromotionState()
     {
         AnalysisResult readyResult = SharedTestFixtures.MakeInvoiceResult();
-        TaskCompletionSource<AnalysisOutcome> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        AnalysisAttempt attempt = new(
-            Outcome: new AnalysisOutcome(false, null, "op-1", null, TimeSpan.FromMilliseconds(5)),
-            Continuation: _ => gate.Task);
+        AnalysisOutcome timeoutOutcome = new(
+            Completed: false,
+            Result: null,
+            OperationId: "op-1",
+            Error: null,
+            Duration: TimeSpan.FromMilliseconds(5))
+        {
+            RehydrationTokenJson = "rt-json-stub",
+        };
 
-        FakeAnalyzer analyzer = new FakeAnalyzer().ReturnsAttempt("invoice.pdf", attempt);
-        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", timeoutOutcome);
+        FakeResumer resumer = new FakeResumer().Returns(
+            "op-1",
+            new AnalysisOutcome(true, readyResult, "op-1", null, TimeSpan.FromMilliseconds(100)));
+        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer, resumer);
         AgentSessionFake session = new();
         DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
 
@@ -110,9 +118,11 @@ public sealed class ContextProviderPhase7Tests
         Assert.Contains("Analyzing", snapshot1!.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("Ready", snapshot1!.ToString(), StringComparison.Ordinal);
 
-        // Promote in the background.
-        gate.SetResult(new AnalysisOutcome(true, readyResult, "op-1", null, TimeSpan.FromMilliseconds(100)));
-        await provider.WaitForBackgroundTasksAsync();
+        // Turn 2 — resume promotes the entry in place.
+        await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(new TestAIAgentStub(), session,
+                new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Done?")]) } }),
+            CancellationToken.None);
 
         // Same AIFunction instance now sees Ready.
         object? snapshot2 = await list.InvokeAsync(noArgs, CancellationToken.None);
@@ -173,17 +183,15 @@ public sealed class ContextProviderPhase7Tests
     [Fact]
     public async Task GetAnalyzedDocumentTool_StillAnalyzing_ReturnsStatusErrorString()
     {
-        // Continuation never completes during the test → entry stays Analyzing forever.
-        TaskCompletionSource<AnalysisOutcome> never = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        AnalysisAttempt attempt = new(
-            Outcome: new AnalysisOutcome(false, null, "op-1", null, TimeSpan.FromMilliseconds(5)),
-            Continuation: ct =>
-            {
-                ct.Register(() => never.TrySetCanceled(ct));
-                return never.Task;
-            });
+        // Turn 1 records the entry as Analyzing with a token. With no ResumeOverride the
+        // get_analyzed_document tool should still observe the Analyzing status before any
+        // subsequent InvokingAsync triggers a resume attempt.
+        AnalysisOutcome timeoutOutcome = new(false, null, "op-1", null, TimeSpan.FromMilliseconds(5))
+        {
+            RehydrationTokenJson = "rt-json-stub",
+        };
 
-        FakeAnalyzer analyzer = new FakeAnalyzer().ReturnsAttempt("invoice.pdf", attempt);
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", timeoutOutcome);
         ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
         DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
 
@@ -197,14 +205,16 @@ public sealed class ContextProviderPhase7Tests
         string response = (await get.InvokeAsync(args, CancellationToken.None))!.ToString()!;
         Assert.Equal("Document 'invoice.pdf' is still Analyzing", response);
 
-        // Clean up so DisposeAsync can complete the background runner.
         await provider.DisposeAsync();
     }
 
-    private static ContentUnderstandingContextProvider CreateProvider(FakeAnalyzer analyzer) =>
+    private static ContentUnderstandingContextProvider CreateProvider(
+        FakeAnalyzer analyzer,
+        FakeResumer? resumer = null) =>
         new(SharedTestFixtures.TestEndpoint, new FakeTokenCredential())
         {
             ClientFactoryOverride = new CountingClientFactory(),
             AnalyzeOverride = analyzer.AnalyzeAsync,
+            ResumeOverride = resumer is null ? null : resumer.ResumeAsync,
         };
 }

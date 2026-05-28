@@ -59,7 +59,9 @@ public sealed class ContentUnderstandingContextProviderOptions
 
     /// <summary>
     /// Maximum wall-clock time to wait for a Content Understanding analysis to complete inline
-    /// before falling back to background continuation. Default: 5 seconds.
+    /// before deferring to the next turn. When the inline attempt times out, the provider
+    /// stores a rehydration token and re-polls the operation at the start of the next call to
+    /// the same provider instance. Default: 5 seconds.
     /// </summary>
     public TimeSpan MaxWait { get; set; } = TimeSpan.FromSeconds(5);
 
@@ -68,6 +70,17 @@ public sealed class ContentUnderstandingContextProviderOptions
     /// Default: <see cref="AnalysisSection.Default"/> (markdown + fields).
     /// </summary>
     public AnalysisSection OutputSections { get; set; } = AnalysisSection.Default;
+
+    /// <summary>
+    /// How the provider's per-document registry is scoped. Default
+    /// <see cref="StateScope.PerSession"/> isolates state per <c>AgentSession</c> and is the
+    /// correct choice when a single provider instance serves multiple users. Set to
+    /// <see cref="StateScope.PerAgent"/> in hosting scenarios where the layer creates a fresh
+    /// <c>AgentSession</c> per HTTP request (e.g. the OpenAI Responses host without server-side
+    /// conversation storage) — without it the provider would lose its document cache between
+    /// turns.
+    /// </summary>
+    public StateScope StateScope { get; set; } = StateScope.PerSession;
 
     /// <summary>
     /// Optional vector-store / file_search integration. When set, ready documents are uploaded

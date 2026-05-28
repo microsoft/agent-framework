@@ -46,8 +46,15 @@ string cuEndpoint = builder.Configuration["AZURE_CONTENTUNDERSTANDING_ENDPOINT"]
 var credential = new DefaultAzureCredential();
 
 // 1. Build the Azure OpenAI client used both for chat and for vector store ops.
+//    NOTE: We MUST route the chat client through Azure OpenAI's Responses API
+//    (GetResponsesClient), not Chat Completions (GetChatClient), because the
+//    server-side `file_search` hosted tool only exists on the Responses endpoint.
+//    Going through Chat Completions silently drops the HostedFileSearchTool and
+//    the model has no way to retrieve indexed content.
 var azureOpenAIClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credential);
-var chatClient = azureOpenAIClient.GetChatClient(deploymentName).AsIChatClient();
+#pragma warning disable OPENAI001 // ResponsesClient/AsIChatClient are evaluation-only in OpenAI 2.10 — required for hosted file_search on Azure OpenAI.
+var chatClient = azureOpenAIClient.GetResponsesClient().AsIChatClient(deploymentName);
+#pragma warning restore OPENAI001
 builder.Services.AddChatClient(chatClient);
 
 // 2. Create a vector store up-front (auto-expires after 1 day idle so abandoned
@@ -73,11 +80,20 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
     credential,
     options =>
     {
-        // Foreground budget per turn for CU analysis + vector store upload.
-        // PDFs typically need ~15 s end-to-end; audio/video can take longer and will
-        // still defer to the background runner. Larger values trade UI latency on the
-        // first turn for fewer "still analyzing" round-trips.
+        // Foreground budget for both CU analysis polling AND vector-store upload polling.
+        // Sample workloads (multi-page PDFs) typically need 10–20 s CU + 5–15 s vector-store
+        // ingestion, so a 60 s budget covers the common case in a single turn. Longer media
+        // (audio/video) that exceeds this budget gets a rehydration token stored on the entry
+        // and resumes on the next turn; the upload then runs in that follow-up turn against a
+        // fresh budget.
         options.MaxWait = TimeSpan.FromSeconds(60);
+
+        // DevUI's HostedAgentResponseExecutor creates a fresh AgentSession every
+        // turn, so per-session state would be lost. PerAgent keys state on the
+        // agent instance instead — fine here because each DevUI agent is single-
+        // user. Production multi-tenant hosts MUST keep the default PerSession.
+        options.StateScope = StateScope.PerAgent;
+
         // NOTE: We cannot use FileSearchConfig.FromOpenAI(...) here because the default
         // OpenAIFileSearchBackend uploads files with purpose=user_data, which Azure OpenAI
         // rejects with `Invalid value for "purpose"`. Azure OpenAI's vector-store ingestion
@@ -111,8 +127,6 @@ builder.AddAIAgent(AgentName, (sp, key) =>
                 + "You can process PDFs, scanned documents, handwritten images, audio recordings, and video files. "
                 + "Multiple files can be uploaded and queried in the same conversation. "
                 + "When answering, cite specific content from the documents. "
-                + "Whenever you mention a file name to the user, wrap it in backticks "
-                + "(for example, `report_q1.pdf`) so the UI renders underscores correctly. "
                 + "Format all responses as GitHub-flavored Markdown. When presenting tabular data, "
                 + "use Markdown table syntax (| col1 | col2 |\\n|---|---|\\n| val1 | val2 |) — "
                 + "never emit raw HTML tags like <table>, <tr>, or <td>, since the chat UI does not render HTML.",

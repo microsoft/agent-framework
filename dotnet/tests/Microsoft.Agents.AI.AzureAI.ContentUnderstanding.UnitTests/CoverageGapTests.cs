@@ -177,35 +177,57 @@ public sealed class CoverageGapTests
     public async Task BackgroundCompletion_ResolvesAgainstTheOriginatingSessionOnly()
     {
         AnalysisResult ready = SharedTestFixtures.MakeInvoiceResult();
-        TaskCompletionSource<AnalysisOutcome> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        AnalysisAttempt timeoutAttempt = new(
-            Outcome: new AnalysisOutcome(false, null, "op-1", null, TimeSpan.FromMilliseconds(5)),
-            Continuation: _ => gate.Task);
+        AnalysisOutcome timeoutOutcome = new(
+            Completed: false,
+            Result: null,
+            OperationId: "op-1",
+            Error: null,
+            Duration: TimeSpan.FromMilliseconds(5))
+        {
+            RehydrationTokenJson = "rt-json-stub",
+        };
 
-        FakeAnalyzer analyzer = new FakeAnalyzer().ReturnsAttempt("invoice.pdf", timeoutAttempt);
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", timeoutOutcome);
+        FakeResumer resumer = new FakeResumer().Returns(
+            "op-1",
+            new AnalysisOutcome(true, ready, "op-1", null, TimeSpan.FromMilliseconds(80)));
 
-        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
+        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer, resumer);
 
         AgentSessionFake sessionA = new();
         AgentSessionFake sessionB = new();
         DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
 
-        // Session A starts the analysis; it times out and goes to background.
+        // Session A starts the analysis; it times out, entry stored under sessionA only.
         await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(
                 new TestAIAgentStub(), sessionA,
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Read."), pdf]) } }),
             CancellationToken.None);
 
-        // Unblock the background runner — promotion happens in session A's registry.
-        gate.SetResult(new AnalysisOutcome(true, ready, "op-1", null, TimeSpan.FromMilliseconds(80)));
-        await provider.WaitForBackgroundTasksAsync();
+        ContentUnderstandingProviderState stateAfterTurn1 = provider.GetStateForTesting(sessionA);
+        Assert.Equal(DocumentStatus.Analyzing, stateAfterTurn1.Documents["invoice.pdf"].Status);
+
+        // Session A turn 2: resume completes → entry promoted to Ready under sessionA.
+        await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(
+                new TestAIAgentStub(), sessionA,
+                new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Done?")]) } }),
+            CancellationToken.None);
+
+        // Session B never sees the document, even after sessionA promoted it.
+        await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(
+                new TestAIAgentStub(), sessionB,
+                new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Hello.")]) } }),
+            CancellationToken.None);
 
         ContentUnderstandingProviderState stateA = provider.GetStateForTesting(sessionA);
         ContentUnderstandingProviderState stateB = provider.GetStateForTesting(sessionB);
 
         Assert.Equal(DocumentStatus.Ready, stateA.Documents["invoice.pdf"].Status);
         Assert.False(stateB.Documents.ContainsKey("invoice.pdf"));
+        Assert.Equal(1, resumer.CallCount);
     }
 
     [Fact]
@@ -250,10 +272,13 @@ public sealed class CoverageGapTests
         Assert.Contains("b.pdf.md", uploadedNames);
     }
 
-    private static ContentUnderstandingContextProvider CreateProvider(FakeAnalyzer analyzer) =>
+    private static ContentUnderstandingContextProvider CreateProvider(
+        FakeAnalyzer analyzer,
+        FakeResumer? resumer = null) =>
         new(s_testEndpoint, new FakeTokenCredential())
         {
             ClientFactoryOverride = new CountingClientFactory(),
             AnalyzeOverride = analyzer.AnalyzeAsync,
+            ResumeOverride = resumer is null ? null : resumer.ResumeAsync,
         };
 }

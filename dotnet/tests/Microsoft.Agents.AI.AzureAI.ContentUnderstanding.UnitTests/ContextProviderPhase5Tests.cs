@@ -70,15 +70,21 @@ public sealed class ContextProviderPhase5Tests
     }
 
     [Fact]
-    public async Task InvokingAsync_DuplicateFilenameInSameSession_RejectedWithSystemNote()
+    public async Task InvokingAsync_DuplicateFilenameInSameSession_SilentlySkippedAcrossTurns()
     {
+        // Cross-turn duplicate filename (e.g. DevUI conversation history re-includes
+        // the original input_file on every subsequent request). Expected behavior: the
+        // binary is stripped, the analyzer is NOT invoked again, the existing Ready entry
+        // is re-injected into the LLM context (because hosted UIs do not preserve the
+        // provider's previously-injected System note across turns), and NO rejection note
+        // is surfaced (which would otherwise cause the LLM to nag the user to rename a
+        // file they didn't intentionally re-upload).
         AnalysisOutcome success = new(true, MakeInvoiceResult(), "op-1", null, TimeSpan.Zero);
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", success);
 
         await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
         AgentSessionFake session = new();
 
-        // First turn → registers invoice.pdf in state.
         DataContent first = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
         _ = await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(
@@ -86,8 +92,6 @@ public sealed class ContextProviderPhase5Tests
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [first]) } }),
             CancellationToken.None);
 
-        // Second turn → same filename → rejected: analyzer is NOT invoked again and a
-        // System note is appended instructing the LLM to ask the user to rename.
         DataContent second = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
         AIContext result = await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(
@@ -95,20 +99,26 @@ public sealed class ContextProviderPhase5Tests
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [second]) } }),
             CancellationToken.None);
 
-        // Analyzer only ran once: the second call short-circuits on the duplicate-key check.
         Assert.Equal(1, analyzer.CallCount);
 
         List<ChatMessage> messages = result.Messages!.ToList();
-
-        // Binary stripped from the LLM view (provider always strips the original DataContent).
         Assert.DoesNotContain(messages.SelectMany(m => m.Contents), c => c is DataContent);
 
-        // A System note carrying the rejection text is emitted.
-        Assert.Contains(messages, m =>
+        Assert.DoesNotContain(messages, m =>
             m.Role == ChatRole.System
             && m.Contents.OfType<TextContent>().Any(t =>
                 t.Text.Contains("already uploaded", StringComparison.Ordinal)
                 && t.Text.Contains("rename", StringComparison.Ordinal)));
+
+        // The Ready document was re-injected so the LLM can answer from it this turn.
+        Assert.Contains(messages, m =>
+            m.Role == ChatRole.System
+            && m.Contents.OfType<TextContent>().Any(t =>
+                t.Text.Contains("CONTOSO LTD.", StringComparison.Ordinal)));
+
+        ContentUnderstandingProviderState state = provider.GetStateForTesting(session);
+        Assert.Single(state.Documents);
+        Assert.Equal(DocumentStatus.Ready, state.Documents["invoice.pdf"].Status);
     }
 
     [Fact]

@@ -63,9 +63,17 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
     credential,
     options =>
     {
-        // 60 s combined budget for CU analysis + vector store upload.
-        // Larger files (audio, video) will defer to background and resolve on the next turn.
-        options.MaxWait = TimeSpan.FromSeconds(60);
+        // Foreground budget per turn for CU analysis + vector store upload.
+        // PDFs typically need ~15 s end-to-end; longer-running media (audio/video) get
+        // a rehydration token stored on the DocumentEntry and resume on the next turn.
+        options.MaxWait = TimeSpan.FromSeconds(5);
+
+        // DevUI's HostedAgentResponseExecutor creates a fresh AgentSession every
+        // turn, so per-session state would be lost. PerAgent keys state on the
+        // agent instance instead — fine here because each DevUI agent is single-
+        // user. Production multi-tenant hosts MUST keep the default PerSession.
+        options.StateScope = StateScope.PerAgent;
+
         options.FileSearchConfig = FileSearchConfig.FromFoundry(
             aiProjectClient,
             vectorStoreId,

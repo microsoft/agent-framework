@@ -104,6 +104,50 @@ public sealed class ContextProviderPhase9Tests
     }
 
     [Fact]
+    public async Task InvokingAsync_FilenameWithMarkdownSpecialChars_SanitizedOnUploadAndInNote()
+    {
+        // Filenames containing CommonMark-significant characters (especially `_`) render as
+        // italics in chat UIs whenever the model emits the name without wrapping it in
+        // backticks. The provider must replace those characters with `-` BEFORE the name
+        // surfaces in either the vector-store registration or the per-document System note,
+        // so the model can never echo back a name that breaks rendering. Original Filename
+        // is preserved for state keys.
+        FakeFileSearchBackend backend = new();
+        FakeAITool fileSearchTool = new();
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
+            "mixed_financial_invoices.pdf",
+            new AnalysisOutcome(true, SharedTestFixtures.MakeInvoiceResult(), "op-1", null, TimeSpan.FromMilliseconds(20)));
+
+        AgentSessionFake session = new();
+        await using ContentUnderstandingContextProvider provider = CreateProvider(
+            analyzer, backend, fileSearchTool);
+
+        DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "mixed_financial_invoices.pdf" };
+        AIContext result = await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(
+                new TestAIAgentStub(), session,
+                new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Read."), pdf]) } }),
+            CancellationToken.None);
+
+        // Upload registers the sanitized name (no underscores).
+        FakeFileSearchBackend.UploadCall upload = Assert.Single(backend.UploadCalls);
+        Assert.Equal("mixed-financial-invoices.pdf.md", upload.Filename);
+
+        // Injected System note uses the sanitized name as well — model can echo verbatim
+        // without breaking the chat-UI markdown renderer.
+        string combinedMessageText = string.Join(
+            "\n",
+            result.Messages!.SelectMany(m => m.Contents).OfType<TextContent>().Select(t => t.Text));
+        Assert.Contains("mixed-financial-invoices.pdf", combinedMessageText, StringComparison.Ordinal);
+        Assert.DoesNotContain("mixed_financial_invoices.pdf", combinedMessageText, StringComparison.Ordinal);
+
+        // State still keys on the original filename so cross-turn dedup keeps working.
+        ContentUnderstandingProviderState st = provider.GetStateForTesting(session);
+        Assert.True(st.Documents.ContainsKey("mixed_financial_invoices.pdf"));
+        Assert.Equal("mixed_financial_invoices.pdf", st.Documents["mixed_financial_invoices.pdf"].Filename);
+    }
+
+    [Fact]
     public async Task InvokingAsync_WithIncludeFieldsTrue_UploadPayloadContainsFieldsBlock()
     {
         FakeFileSearchBackend backend = new();
@@ -254,15 +298,23 @@ public sealed class ContextProviderPhase9Tests
     public async Task InvokingAsync_BackgroundPromoted_UploadHappensOnNextTurn()
     {
         AnalysisResult readyResult = SharedTestFixtures.MakeInvoiceResult();
-        TaskCompletionSource<AnalysisOutcome> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        AnalysisAttempt attempt = new(
-            Outcome: new AnalysisOutcome(false, null, "op-1", null, TimeSpan.FromMilliseconds(5)),
-            Continuation: _ => gate.Task);
+        AnalysisOutcome timeoutOutcome = new(
+            Completed: false,
+            Result: null,
+            OperationId: "op-1",
+            Error: null,
+            Duration: TimeSpan.FromMilliseconds(5))
+        {
+            RehydrationTokenJson = "rt-json-stub",
+        };
 
         FakeFileSearchBackend backend = new();
         FakeAITool fileSearchTool = new();
-        FakeAnalyzer analyzer = new FakeAnalyzer().ReturnsAttempt("invoice.pdf", attempt);
-        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer, backend, fileSearchTool);
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns("invoice.pdf", timeoutOutcome);
+        FakeResumer resumer = new FakeResumer().Returns(
+            "op-1",
+            new AnalysisOutcome(true, readyResult, "op-1", null, TimeSpan.FromMilliseconds(100)));
+        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer, backend, fileSearchTool, resumer: resumer);
         AgentSessionFake session = new();
         DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
 
@@ -273,11 +325,7 @@ public sealed class ContextProviderPhase9Tests
             CancellationToken.None);
         Assert.Empty(backend.UploadCalls);
 
-        // Background completion → entry becomes Ready, SearchPayload populated.
-        gate.SetResult(new AnalysisOutcome(true, readyResult, "op-1", null, TimeSpan.FromMilliseconds(100)));
-        await provider.WaitForBackgroundTasksAsync();
-
-        // Turn 2 — cross-turn promotion should now upload.
+        // Turn 2 — resume completes mid-turn → entry becomes Ready → cross-turn promotion uploads.
         await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(new TestAIAgentStub(), session,
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Anything?")]) } }),
@@ -296,7 +344,8 @@ public sealed class ContextProviderPhase9Tests
         FakeFileSearchBackend backend,
         FakeAITool fileSearchTool,
         string vectorStoreId = "vs-abc",
-        bool includeFields = false) =>
+        bool includeFields = false,
+        FakeResumer? resumer = null) =>
         new(SharedTestFixtures.TestEndpoint,
             new FakeTokenCredential(),
             opt =>
@@ -312,5 +361,6 @@ public sealed class ContextProviderPhase9Tests
         {
             ClientFactoryOverride = new CountingClientFactory(),
             AnalyzeOverride = analyzer.AnalyzeAsync,
+            ResumeOverride = resumer is null ? null : resumer.ResumeAsync,
         };
 }

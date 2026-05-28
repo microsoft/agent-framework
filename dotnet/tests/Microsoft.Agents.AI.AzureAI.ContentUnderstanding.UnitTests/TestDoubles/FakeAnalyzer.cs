@@ -8,51 +8,34 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests;
 
 /// <summary>
-/// Returns canned <see cref="AnalysisAttempt"/>s keyed on the detected filename. Counts how
+/// Returns canned <see cref="AnalysisOutcome"/>s keyed on the detected filename. Counts how
 /// many times the analyze pipeline was invoked so unsupported-attachment / no-call assertions
-/// can be made.
+/// can be made. Pair with <see cref="FakeResumer"/> when a test needs to drive the cross-turn
+/// resume path.
 /// </summary>
-/// <remarks>
-/// Each per-filename setup is a factory of <see cref="AnalysisAttempt"/>, which lets a test
-/// freshly construct continuation tasks if the same filename is configured for multiple
-/// invocations (rare in practice since duplicate filename uploads in a session are rejected
-/// rather than re-analyzed).
-/// </remarks>
 internal sealed class FakeAnalyzer
 {
-    private readonly Dictionary<string, Func<DetectedAttachment, AnalysisAttempt>> _byFilename = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Func<DetectedAttachment, AnalysisOutcome>> _byFilename = new(StringComparer.Ordinal);
 
     public int CallCount { get; private set; }
 
     public List<(string Filename, string AnalyzerId)> Calls { get; } = new();
 
-    /// <summary>Shorthand: foreground attempt with no background continuation.</summary>
+    /// <summary>Pin a fixed outcome to the given filename.</summary>
     public FakeAnalyzer Returns(string filename, AnalysisOutcome outcome)
     {
-        this._byFilename[filename] = _ => new AnalysisAttempt(outcome, Continuation: null);
+        this._byFilename[filename] = _ => outcome;
         return this;
     }
 
+    /// <summary>Factory variant so each invocation can synthesize a fresh outcome.</summary>
     public FakeAnalyzer Returns(string filename, Func<DetectedAttachment, AnalysisOutcome> factory)
-    {
-        this._byFilename[filename] = att => new AnalysisAttempt(factory(att), Continuation: null);
-        return this;
-    }
-
-    /// <summary>Configure both the foreground outcome and the background continuation.</summary>
-    public FakeAnalyzer ReturnsAttempt(string filename, AnalysisAttempt attempt)
-    {
-        this._byFilename[filename] = _ => attempt;
-        return this;
-    }
-
-    public FakeAnalyzer ReturnsAttempt(string filename, Func<DetectedAttachment, AnalysisAttempt> factory)
     {
         this._byFilename[filename] = factory;
         return this;
     }
 
-    public Task<AnalysisAttempt> AnalyzeAsync(
+    public Task<AnalysisOutcome> AnalyzeAsync(
         DetectedAttachment attachment,
         string analyzerId,
         TimeSpan maxWait,
@@ -64,7 +47,7 @@ internal sealed class FakeAnalyzer
         this.CallCount++;
         this.Calls.Add((attachment.Filename, analyzerId));
 
-        if (!this._byFilename.TryGetValue(attachment.Filename, out Func<DetectedAttachment, AnalysisAttempt>? factory))
+        if (!this._byFilename.TryGetValue(attachment.Filename, out Func<DetectedAttachment, AnalysisOutcome>? factory))
         {
             throw new InvalidOperationException(
                 $"FakeAnalyzer was not configured for filename '{attachment.Filename}'.");
