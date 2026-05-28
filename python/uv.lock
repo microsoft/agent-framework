@@ -55,6 +55,7 @@ members = [
     "agent-framework-hosting-invocations",
     "agent-framework-hosting-telegram",
     "agent-framework-hosting-activity-protocol",
+    "agent-framework-hosting-entra",
     "agent-framework-hyperlight",
     "agent-framework-lab",
     "agent-framework-mem0",
@@ -662,6 +663,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-framework-hosting-entra"
+version = "1.0.0a260424"
+source = { editable = "packages/hosting-entra" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "cryptography", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "msal", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[package]]
 name = "agent-framework-hosting-responses"
 version = "1.0.0a260424"
 source = { editable = "packages/hosting-responses" }
@@ -669,6 +682,7 @@ dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+
 
 [package.metadata]
 requires-dist = [
@@ -697,6 +711,9 @@ dependencies = [
     { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-identity", specifier = ">=1.20,<2" },
     { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "cryptography", specifier = ">=42" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "msal", specifier = ">=1.28,<2" },
 ]
 
 [[package]]
