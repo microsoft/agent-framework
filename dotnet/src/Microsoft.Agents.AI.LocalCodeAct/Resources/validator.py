@@ -54,6 +54,12 @@ BLOCKED_IMPORTS: set[str] = {
     "__builtin__",
 }
 
+# Allowed `os` attribute names. Generated code may only touch `os.environ` and
+# `os.path`; everything else (file I/O, process control, mutating helpers, etc.)
+# is rejected by default. Users may pass a custom allow-list via
+# ``allowed_os_attrs`` on the validator entry points.
+ALLOWED_OS_ATTRS: set[str] = {"environ", "path"}
+
 # Allowed builtin function names that generated code may call.
 # Note: getattr/setattr/hasattr/delattr are NOT included because they can bypass
 # AST attribute restrictions (e.g., getattr(os, 'system')('...') avoids os.system check).
@@ -252,6 +258,7 @@ class _CodeValidator(ast.NodeVisitor):
         blocked_imports: set[str] | None = None,
         allowed_builtins: set[str] | None = None,
         blocked_builtins: set[str] | None = None,
+        allowed_os_attrs: set[str] | None = None,
     ) -> None:
         super().__init__()
         self._errors: list[str] = []
@@ -259,6 +266,7 @@ class _CodeValidator(ast.NodeVisitor):
         self._blocked_imports = blocked_imports if blocked_imports is not None else BLOCKED_IMPORTS
         self._allowed_builtins = allowed_builtins if allowed_builtins is not None else ALLOWED_BUILTINS
         self._blocked_builtins = blocked_builtins if blocked_builtins is not None else BLOCKED_BUILTINS
+        self._allowed_os_attrs = allowed_os_attrs if allowed_os_attrs is not None else ALLOWED_OS_ATTRS
 
     def validate(self, code: str) -> None:
         """Validate code and raise CodeValidationError if it violates policy."""
@@ -337,62 +345,8 @@ class _CodeValidator(ast.NodeVisitor):
     def visit_Attribute(self, node: ast.Attribute) -> None:
         """Validate attribute access."""
         # Check for dangerous os module operations
-        if isinstance(node.value, ast.Name) and node.value.id == "os":
-            # Block dangerous os operations
-            dangerous_os_attrs = {
-                "system",
-                "exec",
-                "execl",
-                "execle",
-                "execlp",
-                "execlpe",
-                "execv",
-                "execve",
-                "execvp",
-                "execvpe",
-                "spawn",
-                "spawnl",
-                "spawnle",
-                "spawnlp",
-                "spawnlpe",
-                "spawnv",
-                "spawnve",
-                "spawnvp",
-                "spawnvpe",
-                "popen",
-                "popen2",
-                "popen3",
-                "popen4",
-                "fork",
-                "forkpty",
-                "kill",
-                "killpg",
-                "abort",
-                "chdir",
-                "fchdir",
-                "chroot",
-                "chmod",
-                "chown",
-                "lchown",
-                "fchmod",
-                "fchown",
-                "remove",
-                "unlink",
-                "rmdir",
-                "removedirs",
-                "rename",
-                "renames",
-                "replace",
-                "link",
-                "symlink",
-                "mkdir",
-                "makedirs",
-                "access",
-                "putenv",
-                "unsetenv",
-            }
-            if node.attr in dangerous_os_attrs:
-                self._errors.append(f"Access to os.{node.attr} is not allowed")
+        if isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr not in self._allowed_os_attrs:
+            self._errors.append(f"Access to os.{node.attr} is not allowed")
 
         # Block access to certain dangerous attributes
         if (
@@ -432,6 +386,7 @@ def validate_code(
     blocked_imports: set[str] | None = None,
     allowed_builtins: set[str] | None = None,
     blocked_builtins: set[str] | None = None,
+    allowed_os_attrs: set[str] | None = None,
 ) -> None:
     """Validate generated code against AST allow-lists.
 
@@ -441,6 +396,8 @@ def validate_code(
         blocked_imports: Custom set of blocked module names (replaces defaults).
         allowed_builtins: Custom set of allowed builtin names (replaces defaults).
         blocked_builtins: Custom set of blocked builtin names (replaces defaults).
+        allowed_os_attrs: Custom set of allowed ``os`` attribute names
+            (replaces the default ``{"environ", "path"}`` allow-list).
 
     Raises:
         CodeValidationError: If the code violates the allow-list policy.
@@ -450,6 +407,7 @@ def validate_code(
         blocked_imports=blocked_imports,
         allowed_builtins=allowed_builtins,
         blocked_builtins=blocked_builtins,
+        allowed_os_attrs=allowed_os_attrs,
     )
     validator.validate(code)
 
@@ -463,7 +421,8 @@ def _main() -> int:
             "allowed_imports": [...]?,
             "blocked_imports": [...]?,
             "allowed_builtins": [...]?,
-            "blocked_builtins": [...]?
+            "blocked_builtins": [...]?,
+            "allowed_os_attrs": [...]?
         }
 
     On success: exit code 0, no output required.
@@ -499,6 +458,7 @@ def _main() -> int:
             blocked_imports=_as_set(request.get("blocked_imports")),
             allowed_builtins=_as_set(request.get("allowed_builtins")),
             blocked_builtins=_as_set(request.get("blocked_builtins")),
+            allowed_os_attrs=_as_set(request.get("allowed_os_attrs")),
         )
     except CodeValidationError as exc:
         message = str(exc)
