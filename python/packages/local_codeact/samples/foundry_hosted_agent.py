@@ -2,6 +2,10 @@
 
 """Hosts an Agent Framework agent with Local CodeAct behind the Foundry Responses protocol.
 
+Use this sample alongside the shared Foundry hosted-agent setup documented in
+[`python/samples/04-hosting/foundry-hosted-agents/responses`](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents/responses)
+for the surrounding environment, Dockerfile, manifest, and deployment steps.
+
 Local CodeAct runs LLM-generated Python in the agent process. Run this only
 inside an externally sandboxed environment (Foundry hosted-agent container,
 disposable VM, or similar). Two host tools (``compute``, ``fetch_data``) are
