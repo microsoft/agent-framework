@@ -305,6 +305,91 @@ public class HandoffOrchestrationTests
     }
 
     [Fact]
+    public async Task Handoffs_MultipleTransfers_MergedMessagesPreserveStepOrderAsync()
+    {
+        // Regression test for https://github.com/microsoft/agent-framework/issues/4544
+        //
+        // Scenario: a multi-step handoff (A -> B -> C) is run through a workflow
+        // exposed as an AIAgent. When invoked via the non-streaming RunAsync
+        // entry-point, the merged AgentResponse.Messages must keep each step's
+        // messages contiguous — in particular, the "Transferred." tool result
+        // synthesized for a handoff function call must appear immediately after
+        // the function call that triggered it, before any messages from later
+        // steps. Streaming output already preserves this order; the bug
+        // manifested only after merging, where the synthesized tool results were
+        // bunched at the end of the response, far from their originating function
+        // calls (and consequently corrupted ChatHistory order).
+        //
+        // Each underlying agent response sets a real ResponseId — that is what
+        // causes MessageMerger to group its updates under that key. If the
+        // synthesized Tool update is emitted without that ResponseId, the merger
+        // routes it to the global "dangling" bucket and flushes it last,
+        // breaking per-step grouping.
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new TextContent("Routing to second agent"), new FunctionCallContent("call1", transferFuncName)]) { MessageId = "msg-initial" }) { ResponseId = "resp-initial" };
+        }), name: "initialAgent");
+
+        var secondAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new TextContent("Routing to third agent"), new FunctionCallContent("call2", transferFuncName)]) { MessageId = "msg-second" }) { ResponseId = "resp-second" };
+        }), name: "secondAgent", description: "The second agent");
+
+        var thirdAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "Hello from agent3") { MessageId = "msg-third" }) { ResponseId = "resp-third" }),
+            name: "thirdAgent",
+            description: "The third / final agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, secondAgent)
+            .WithHandoff(secondAgent, thirdAgent)
+            .Build();
+
+        AIAgent hostAgent = workflow.AsAIAgent(name: "HandoffWorkflow");
+
+        AgentResponse response = await hostAgent.RunAsync("abc");
+
+        List<ChatMessage> result = response.Messages.ToList();
+
+        // Expected merged sequence keeps each step contiguous:
+        //   [0] Assistant (initialAgent): text + FunctionCall(call1)
+        //   [1] Tool (initialAgent): FunctionResult(call1, "Transferred.")
+        //   [2] Assistant (secondAgent): text + FunctionCall(call2)
+        //   [3] Tool (secondAgent): FunctionResult(call2, "Transferred.")
+        //   [4] Assistant (thirdAgent): "Hello from agent3"
+        //
+        // The bug surfaced as the two Tool messages being moved to the end of the
+        // list — after thirdAgent's reply — which broke chat-history ordering.
+        Assert.Equal(5, result.Count);
+
+        Assert.Equal(ChatRole.Assistant, result[0].Role);
+        Assert.Contains("initialAgent", result[0].AuthorName);
+        Assert.Contains(result[0].Contents, c => c is FunctionCallContent fcc && fcc.CallId == "call1");
+
+        Assert.Equal(ChatRole.Tool, result[1].Role);
+        Assert.Contains("initialAgent", result[1].AuthorName);
+        Assert.Contains(result[1].Contents, c => c is FunctionResultContent frc && frc.CallId == "call1");
+
+        Assert.Equal(ChatRole.Assistant, result[2].Role);
+        Assert.Contains("secondAgent", result[2].AuthorName);
+        Assert.Contains(result[2].Contents, c => c is FunctionCallContent fcc && fcc.CallId == "call2");
+
+        Assert.Equal(ChatRole.Tool, result[3].Role);
+        Assert.Contains("secondAgent", result[3].AuthorName);
+        Assert.Contains(result[3].Contents, c => c is FunctionResultContent frc && frc.CallId == "call2");
+
+        Assert.Equal(ChatRole.Assistant, result[4].Role);
+        Assert.Contains("thirdAgent", result[4].AuthorName);
+        Assert.Equal("Hello from agent3", result[4].Text);
+    }
+
+    [Fact]
     public async Task Handoffs_FilteringNone_HandoffTargetReceivesAllMessagesIncludingToolCallsAsync()
     {
         // With filtering set to None, the target agent should see everything including

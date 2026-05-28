@@ -433,6 +433,18 @@ internal sealed class HandoffAgentExecutor :
             FunctionCallContent handoffRequest = candidateRequests[candidateRequests.Count - 1];
             requestedHandoff = handoffRequest.Name;
 
+            // Stamp the synthetic "Transferred." tool-result update with the same
+            // ResponseId as the agent's preceding updates so it groups with the
+            // rest of this agent's step in MessageMerger (and therefore in
+            // RunAsync's merged AgentResponse and in chat history). Without this,
+            // the synthetic update goes to MessageMerger's null-ResponseId
+            // "dangling" bucket and surfaces after every keyed response, which
+            // re-orders multi-step handoff transcripts versus streaming output
+            // (issue #4544).
+            string? syntheticResponseId = updates
+                .Select(u => u.ResponseId)
+                .LastOrDefault(id => id is not null);
+
             await AddUpdateAsync(
                     new AgentResponseUpdate
                     {
@@ -441,6 +453,7 @@ internal sealed class HandoffAgentExecutor :
                         Contents = [CreateHandoffResult(handoffRequest.CallId)],
                         CreatedAt = DateTimeOffset.UtcNow,
                         MessageId = Guid.NewGuid().ToString("N"),
+                        ResponseId = syntheticResponseId,
                         Role = ChatRole.Tool,
                     },
                     cancellationToken
