@@ -362,7 +362,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
             {
                 if (this._logger.IsEnabled(LogLevel.Debug))
                 {
-                    LogResourceSkippedExtension(this._logger, skillName, SanitizePathForLog(filePath), extension);
+                    LogResourceSkippedExtension(this._logger, skillName, SanitizePathForLog(filePath), string.IsNullOrEmpty(extension) ? "(none)" : extension);
                 }
 
                 continue;
