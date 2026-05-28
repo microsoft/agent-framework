@@ -97,7 +97,7 @@ class DiscordChannel:
         agent_command_description: str = "Ask the agent",
         agent_command_option: str = "prompt",
         register_commands: bool = True,
-        commands: Sequence[ChannelCommand] = (),
+        commands: Sequence[ChannelCommand] | None = None,
         run_hook: ChannelRunHook | None = None,
         response_hook: ChannelResponseHook | None = None,
         stream_transform_hook: ChannelStreamTransformHook | None = None,
@@ -159,7 +159,7 @@ class DiscordChannel:
         self.agent_command_description = agent_command_description
         self.agent_command_option = agent_command_option
         self.register_commands = register_commands
-        self._commands = tuple(commands)
+        self._commands: set[ChannelCommand] = set(commands) or {}  # type: ignore
         self._command_by_name = {command.name: command for command in self._commands}
         self._run_hook = run_hook
         self.response_hook = response_hook
