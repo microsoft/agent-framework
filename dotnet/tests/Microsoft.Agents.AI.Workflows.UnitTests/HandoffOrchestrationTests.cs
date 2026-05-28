@@ -411,6 +411,7 @@ public class HandoffOrchestrationTests
         // at the very end, breaking the contiguity of each step's block.
 
         int coordCallCount = 0;
+        int specCallCount = 0;
         var coord = new ChatClientAgent(new MockChatClient((messages, options) =>
         {
             coordCallCount++;
@@ -424,6 +425,9 @@ public class HandoffOrchestrationTests
                 };
             }
 
+            // Second (final) Coord turn: emit only assistant text - no tool call.
+            // The test asserts this turn does NOT emit a handoff_to_* FunctionCallContent
+            // and that the workflow terminates here (coordCallCount stays at 2).
             return new(new ChatMessage(ChatRole.Assistant, "Here are two fake Excel course recommendations") { MessageId = "coord-msg-2" })
             {
                 ResponseId = "resp-coord-2",
@@ -432,6 +436,7 @@ public class HandoffOrchestrationTests
 
         var spec = new ChatClientAgent(new MockChatClient((messages, options) =>
         {
+            specCallCount++;
             string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
             Assert.NotNull(transferFuncName);
 
@@ -492,6 +497,13 @@ public class HandoffOrchestrationTests
         Assert.Equal(ChatRole.Assistant, result[5].Role);
         Assert.Contains("Coord", result[5].AuthorName);
         Assert.Equal("Here are two fake Excel course recommendations", result[5].Text);
+
+        // Final Coord turn must emit ONLY assistant text - no further handoff/tool call.
+        Assert.DoesNotContain(result[5].Contents, c => c is FunctionCallContent);
+
+        // And the workflow must have terminated after that turn - no extra Coord/Spec re-invocations.
+        Assert.Equal(2, coordCallCount);
+        Assert.Equal(1, specCallCount);
     }
 
     [Fact]
