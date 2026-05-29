@@ -14,11 +14,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from agent_framework_hosting import AgentFrameworkHost, HostedRunResult
+from agent_framework_hosting import AgentFrameworkHost, ChannelIdentity, ChannelRequest, HostedRunResult
 from starlette.testclient import TestClient
 
 from agent_framework_hosting_activity_protocol import ActivityProtocolChannel, activity_protocol_isolation_key
-from agent_framework_hosting_activity_protocol._channel import _parse_activity
+from agent_framework_hosting_activity_protocol._channel import _parse_activity, _text_result
 
 
 def test_activity_protocol_isolation_key_format() -> None:
@@ -106,6 +106,11 @@ _VALID_ACTIVITY: dict[str, Any] = {
     "channelId": "msteams",
     "serviceUrl": "https://smba.trafficmanager.net/amer/",
 }
+
+# Minimal request envelope for direct ``_stream_to_conversation`` calls. The
+# channel only consults it for cross-channel fan-out, which is skipped when
+# ``_ctx`` is unset (as in these unit tests).
+_VALID_REQUEST = ChannelRequest(channel="activity", operation="message.create", input=[])
 
 
 class TestTeamsWebhook:
@@ -201,6 +206,83 @@ class TestOutbound:
         assert "/v3/conversations/" in url
         body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
         assert body["text"] == "hi"
+
+
+class TestPush:
+    """The channel implements ``host.ChannelPush`` so it can be a
+    non-originating destination for cross-channel fan-out / echo replay."""
+
+    def test_is_channel_push_instance(self) -> None:
+        from agent_framework_hosting import ChannelPush
+
+        ch, _agent = _make_teams()
+        assert isinstance(ch, ChannelPush)
+
+    def _identity(self) -> ChannelIdentity:
+        return ChannelIdentity(
+            channel="activity",
+            native_id="19:meeting_xyz@thread.v2",
+            attributes={
+                "service_url": "https://smba.trafficmanager.net/amer/",
+                "conversation": {"id": "19:meeting_xyz@thread.v2"},
+                "bot": {"id": "bot-1"},
+                "user": {"id": "user-1"},
+                "channel_id": "msteams",
+                "locale": "en-US",
+            },
+        )
+
+    async def test_push_posts_proactive_activity(self) -> None:
+        ch, _agent = _make_teams()
+        await ch.push(self._identity(), _text_result("broadcast hello"))
+        assert ch._http is not None
+        ch._http.post.assert_called()  # type: ignore[attr-defined]
+        url = ch._http.post.call_args[0][0]  # type: ignore[attr-defined]
+        assert url == ("https://smba.trafficmanager.net/amer/v3/conversations/19:meeting_xyz@thread.v2/activities")
+        body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert body["text"] == "broadcast hello"
+        # Outbound activity speaks AS the bot: inbound recipient -> from,
+        # inbound from -> recipient.
+        assert body["from"] == {"id": "bot-1"}
+        assert body["recipient"] == {"id": "user-1"}
+        assert body["conversation"] == {"id": "19:meeting_xyz@thread.v2"}
+
+    async def test_push_requires_service_url(self) -> None:
+        ch, _agent = _make_teams()
+        identity = ChannelIdentity(
+            channel="activity",
+            native_id="conv-x",
+            attributes={"conversation": {"id": "conv-x"}},
+        )
+        with pytest.raises(ValueError, match="service_url"):
+            await ch.push(identity, _text_result("hi"))
+
+
+class TestIdentityRecording:
+    """``_process_activity`` must stamp the inbound conversation reference
+    onto ``ChannelRequest.identity`` so the host can record it for fan-out."""
+
+    async def test_inbound_sets_request_identity(self) -> None:
+        ch, agent = _make_teams()
+        captured: dict[str, Any] = {}
+
+        async def hook(req: ChannelRequest, **_: Any) -> ChannelRequest:
+            captured["request"] = req
+            return req
+
+        ch._hook = hook  # type: ignore[assignment]
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=_VALID_ACTIVITY)
+        assert r.status_code == 200
+        request = captured["request"]
+        assert request.identity is not None
+        assert request.identity.channel == "activity"
+        assert request.identity.native_id == "19:meeting_xyz@thread.v2"
+        attrs = request.identity.attributes
+        assert attrs["service_url"] == "https://smba.trafficmanager.net/amer/"
+        assert attrs["bot"] == {"id": "bot-1"}
+        assert attrs["user"] == {"id": "user-1"}
 
 
 class TestConfig:
@@ -381,7 +463,7 @@ class TestStreaming:
 
         # Use a tight throttle so the test doesn't sit on `wait_for`.
         ch._stream_edit_min_interval = 0.0
-        await ch._stream_to_conversation(_VALID_ACTIVITY, _Stream())  # type: ignore[arg-type]
+        await ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _Stream())  # type: ignore[arg-type]
         assert ch._http is not None
         # Placeholder POST + at least one final PUT.
         ch._http.post.assert_called()  # type: ignore[attr-defined]
@@ -430,7 +512,7 @@ class TestStreaming:
         import asyncio as _asyncio
 
         await _asyncio.wait_for(
-            ch._stream_to_conversation(_VALID_ACTIVITY, _Stream()),  # type: ignore[arg-type]
+            ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _Stream()),  # type: ignore[arg-type]
             timeout=2.0,
         )
         # Two POSTs total: placeholder (failed) + fallback final.
@@ -454,7 +536,7 @@ class TestStreaming:
                 return _FakeAgentResponse(text="")
 
         ch._stream_edit_min_interval = 0.0
-        await ch._stream_to_conversation(_VALID_ACTIVITY, _EmptyStream())  # type: ignore[arg-type]
+        await ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
         # The placeholder PUT-replaces with "(no response)" so the user
         # isn't left staring at "…".
         assert ch._http is not None

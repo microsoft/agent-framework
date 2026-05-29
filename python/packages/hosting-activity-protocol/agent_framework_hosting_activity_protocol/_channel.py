@@ -82,6 +82,7 @@ from agent_framework import (
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
+    ChannelIdentity,
     ChannelRequest,
     ChannelResponseContext,
     ChannelResponseHook,
@@ -132,6 +133,11 @@ def activity_protocol_isolation_key(conversation_id: Any) -> str:
 
 class _OutboundError(RuntimeError):
     """Marker for transient outbound failures that should produce 502/retry."""
+
+
+def _text_result(text: str) -> HostedRunResult[AgentResponse]:
+    """Wrap plain text in a ``HostedRunResult`` for streaming fan-out delivery."""
+    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
 def _parse_activity(activity: Mapping[str, Any]) -> Message:
@@ -466,11 +472,31 @@ class ActivityProtocolChannel:
             return
 
         parsed = _parse_activity(activity)
+        # Store a Bot Framework conversation reference on the identity so the
+        # host can proactively ``push`` to this conversation later (fan-out
+        # from another channel). Recording the identity also registers this
+        # channel under the isolation key so ``ResponseTarget.all_linked`` /
+        # ``.active`` can resolve it.
+        identity = ChannelIdentity(
+            channel=self.name,
+            native_id=conversation_id,
+            attributes={
+                "service_url": service_url,
+                "conversation": dict(conversation),
+                # Inbound recipient is the bot → outbound ``from``; inbound
+                # ``from`` is the user → outbound ``recipient``.
+                "bot": dict(activity.get("recipient") or {}),
+                "user": dict(activity.get("from") or {}),
+                "channel_id": activity.get("channelId"),
+                "locale": activity.get("locale"),
+            },
+        )
         channel_request = ChannelRequest(
             channel=self.name,
             operation="message.create",
             input=[parsed],
             session=ChannelSession(isolation_key=activity_protocol_isolation_key(conversation_id)),
+            identity=identity,
             attributes={
                 "conversation_id": conversation_id,
                 "service_url": service_url,
@@ -514,7 +540,7 @@ class ActivityProtocolChannel:
             return
 
         stream = self._ctx.run_stream(request)
-        await self._stream_to_conversation(inbound, stream)
+        await self._stream_to_conversation(inbound, request, stream)
 
     async def _apply_response_hook(
         self,
@@ -536,6 +562,7 @@ class ActivityProtocolChannel:
     async def _stream_to_conversation(
         self,
         inbound: Mapping[str, Any],
+        request: ChannelRequest,
         stream: ResponseStream[AgentResponseUpdate, AgentResponse],
     ) -> None:
         """Iterate the stream and progressively edit a single Teams activity.
@@ -627,6 +654,16 @@ class ActivityProtocolChannel:
             await stream.get_final_response()
         except Exception:  # pragma: no cover
             logger.exception("Stream finalize failed")
+
+        # Fan the final reply out to any non-originating linked destinations
+        # (e.g. ``ResponseTarget.all_linked``) and learn whether this channel
+        # should still render on its own wire. For the default
+        # ``ResponseTarget.originating`` this is a no-op that returns True.
+        include_originating = True
+        if self._ctx is not None and accumulated:
+            include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
+        if not include_originating:
+            return
 
         # Final flush — make sure the user sees everything that arrived after
         # the worker's last edit. If the placeholder failed we POST a fresh
@@ -730,6 +767,51 @@ class ActivityProtocolChannel:
             )
         except Exception:  # pragma: no cover - non-critical UX
             logger.exception("Teams typing send failed")
+
+    # -- ChannelPush -------------------------------------------------------- #
+
+    async def push(self, identity: ChannelIdentity, payload: HostedRunResult[Any]) -> None:
+        """Proactively deliver an out-of-band message into a Bot Framework conversation.
+
+        Implements :class:`host.ChannelPush` so this channel can be a
+        non-originating destination for ``ChannelRequest.response_target``
+        (e.g. ``ResponseTarget.all_linked`` fan-out from Telegram/Discord, or
+        ``echo_input`` replay). The conversation reference is reconstructed
+        from ``identity.attributes`` captured on the inbound activity:
+        ``service_url``, ``conversation``, ``bot`` (outbound ``from``),
+        ``user`` (outbound ``recipient``), and ``channel_id``.
+
+        Echo payloads (the user's mirrored input) carry ``role="user"``
+        messages; Bot Service channels can only send AS the bot, so the text
+        is delivered as a normal bot message.
+        """
+        if self._http is None:
+            raise RuntimeError("ActivityProtocolChannel.push called before startup")
+        attrs = identity.attributes
+        service_url = str(attrs.get("service_url") or "").rstrip("/")
+        conversation = dict(attrs.get("conversation") or {"id": identity.native_id})
+        conversation_id = conversation.get("id") or identity.native_id
+        if not service_url:
+            raise ValueError("ActivityProtocolChannel.push requires 'service_url' in identity attributes")
+
+        text = getattr(payload.result, "text", None) or "(no response)"
+        activity = {
+            "type": "message",
+            "from": dict(attrs.get("bot") or {}),
+            "recipient": dict(attrs.get("user") or {}),
+            "conversation": conversation,
+            "channelId": attrs.get("channel_id"),
+            "serviceUrl": attrs.get("service_url"),
+            "text": text,
+            "textFormat": "plain",
+        }
+        if attrs.get("locale"):
+            activity["locale"] = attrs["locale"]
+
+        url = f"{service_url}/v3/conversations/{conversation_id}/activities"
+        token = await self._get_token()
+        response = await self._http.post(url, json=activity, headers=self._auth_headers(token))
+        response.raise_for_status()
 
 
 __all__ = ["ActivityProtocolChannel", "activity_protocol_isolation_key"]
