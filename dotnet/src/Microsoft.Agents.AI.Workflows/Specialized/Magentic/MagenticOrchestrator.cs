@@ -195,7 +195,15 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         }
         else
         {
-            // Subsequent turns: agent returned control, go directly to coordination (progress ledger only, no replan)
+            // Subsequent turns: agent returned control. The accumulated messages are the
+            // participant's response(s); add them to ChatHistory so the next coordination
+            // round (and the manager's progress ledger) can observe what was produced.
+            // See https://github.com/microsoft/agent-framework/issues/6173.
+            if (messages.Count > 0)
+            {
+                this._taskContext.ChatHistory.AddRange(messages);
+            }
+
             await this.RunCoordinationRoundAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
         }
     }
