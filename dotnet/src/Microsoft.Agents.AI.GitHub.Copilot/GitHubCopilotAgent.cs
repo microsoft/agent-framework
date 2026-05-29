@@ -181,6 +181,14 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
                         break;
 
+                    case ToolExecutionStartEvent toolStart:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolStart));
+                        break;
+
+                    case ToolExecutionCompleteEvent toolComplete:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolComplete));
+                        break;
+
                     case AssistantUsageEvent usageEvent:
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(usageEvent));
                         break;
@@ -362,6 +370,41 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionStartEvent toolStart)
+    {
+        Dictionary<string, object?>? arguments = ParseToolArguments(toolStart.Data?.Arguments as string);
+
+        FunctionCallContent content = new(toolStart.Data?.ToolCallId ?? string.Empty, toolStart.Data?.ToolName ?? string.Empty)
+        {
+            Arguments = arguments,
+            RawRepresentation = toolStart
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolStart.Timestamp
+        };
+    }
+
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionCompleteEvent toolComplete)
+    {
+        string? result = toolComplete.Data?.Success == true
+            ? toolComplete.Data?.Result?.Content
+            : toolComplete.Data?.Error?.Message;
+
+        FunctionResultContent content = new(toolComplete.Data?.ToolCallId ?? string.Empty, result)
+        {
+            RawRepresentation = toolComplete
+        };
+
+        return new AgentResponseUpdate(ChatRole.Tool, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolComplete.Timestamp
+        };
+    }
+
     private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantUsageEvent usageEvent)
     {
         UsageDetails usageDetails = new()
@@ -413,6 +456,38 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         }
 
         return additionalCounts;
+    }
+
+    private static Dictionary<string, object?>? ParseToolArguments(string? argumentsJson)
+    {
+        if (string.IsNullOrEmpty(argumentsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(argumentsJson);
+            var result = new Dictionary<string, object?>();
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                result[property.Name] = property.Value.ValueKind switch
+                {
+                    JsonValueKind.String => property.Value.GetString(),
+                    JsonValueKind.Number => property.Value.GetDouble(),
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Null => null,
+                    _ => property.Value.GetRawText()
+                };
+            }
+
+            return result;
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<string, object?> { ["_raw"] = argumentsJson };
+        }
     }
 
     private AgentResponseUpdate ConvertToAgentResponseUpdate(SessionEvent sessionEvent)
