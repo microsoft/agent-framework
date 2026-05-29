@@ -60,8 +60,7 @@ async def main() -> None:
         if response.continuation_token is None:
             # Task completed immediately — no polling needed.
             print("Task completed immediately:")
-            text = "".join(msg.text for msg in response.messages if msg.role == "assistant" and msg.text)
-            print(f"  {text}")
+            print(f"  {response.text}")
             return
 
         # 4. Poll until the task completes.
@@ -72,13 +71,12 @@ async def main() -> None:
             print(f"  Poll #{poll_count} — task still in progress, waiting 2s...")
             await asyncio.sleep(2)
 
-            response = await agent.poll_task(token) # type: ignore
+            response = await agent.poll_task(token)  # type: ignore[arg-type]
             token = response.continuation_token
 
         # 5. Task is done — print the final response.
         print(f"\nTask completed after {poll_count} poll(s):")
-        text = "".join(msg.text for msg in response.messages if msg.role == "assistant" and msg.text)
-        print(f"  {text[:200]}...")
+        print(f"  {response.text[:200]}...")
 
 
 if __name__ == "__main__":

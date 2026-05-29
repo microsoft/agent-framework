@@ -65,8 +65,7 @@ async def main() -> None:
     ) as agent:
         print("\nConfigured bindings: ['HTTP+JSON', 'JSONRPC']")
         response = await agent.run("Tell me a short joke")
-        text = "".join(msg.text for msg in response.messages if msg.role == "assistant" and msg.text)
-        print(f"Response: {text}")
+        print(f"Response: {response.text}")
 
 
 if __name__ == "__main__":

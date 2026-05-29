@@ -70,9 +70,7 @@ async def main():
         print("\n--- Non-streaming response ---")
         response = await agent.run("What are your capabilities?")
 
-        print("Agent Response:")
-        text = "".join(msg.text for msg in response.messages if msg.role == "assistant" and msg.text)
-        print(f"  {text}")
+        print(f"Agent Response:\n  {response.text}")
 
         # 5. Stream a response — the natural model for A2A.
         #    Updates arrive as Server-Sent Events, letting you observe
@@ -86,9 +84,7 @@ async def main():
         print()  # newline after streaming completes
 
         response = await stream.get_final_response()
-        print(f"\nFinal response:")
-        text = "".join(msg.text for msg in response.messages if msg.role == "assistant" and msg.text)
-        print(f"  {text}")
+        print(f"\nFinal response:\n  {response.text}")
 
 
 if __name__ == "__main__":

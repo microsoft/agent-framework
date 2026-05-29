@@ -80,10 +80,13 @@ async def main() -> None:
             return
 
         # 4. Reconnect using the saved continuation token.
+        #    background=True is required so that in-progress task updates
+        #    surface continuation tokens (matching the A2AAgent contract).
         print(f"Reconnecting with continuation token (task_id={saved_token['task_id']})...")
         resumed_stream = agent.run(
             continuation_token=saved_token,
             stream=True,
+            background=True,
         )
 
         # 5. Continue receiving updates from where we left off.
