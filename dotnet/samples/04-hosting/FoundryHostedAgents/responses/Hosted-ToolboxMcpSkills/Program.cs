@@ -67,8 +67,6 @@ var skillsProvider = new AgentSkillsProviderBuilder()
     .UseMcpSkills(mcpClient)
     .Build();
 
-Console.WriteLine("MCP skills provider configured.");
-
 // ── Create the agent ─────────────────────────────────────────────────────────
 AIAgent agent = new AIProjectClient(new Uri(projectEndpoint), credential)
     .AsAIAgent(new ChatClientAgentOptions
