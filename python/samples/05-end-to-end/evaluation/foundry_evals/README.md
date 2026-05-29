@@ -38,10 +38,8 @@ uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_traces_sample.py
 ### Referencing a rubric evaluator created in Foundry
 
 Foundry users can create rubric evaluators in the Foundry portal (or
-through the dedicated SDK / REST surface) — see
-[Rubric evaluators](https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-evaluators/rubric-evaluators)
-for the authoring flow. Once an evaluator exists, agent-framework
-consumes it like any other evaluator: pass a
+through the dedicated SDK / REST surface). Once an evaluator exists,
+agent-framework consumes it like any other evaluator: pass a
 `GeneratedEvaluatorRef(name=..., version=...)` in the `evaluators=`
 list and pin the version for reproducible runs.
 
