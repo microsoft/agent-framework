@@ -62,12 +62,12 @@ await using var mcpClient = await McpClient.CreateAsync(
         },
         httpClient));
 
-// ── Discover MCP-based skills ────────────────────────────────────────────────
+// ── Configure MCP-based skills provider ──────────────────────────────────────
 var skillsProvider = new AgentSkillsProviderBuilder()
     .UseMcpSkills(mcpClient)
     .Build();
 
-Console.WriteLine("MCP skills discovered and ready.");
+Console.WriteLine("MCP skills provider configured.");
 
 // ── Create the agent ─────────────────────────────────────────────────────────
 AIAgent agent = new AIProjectClient(new Uri(projectEndpoint), credential)
