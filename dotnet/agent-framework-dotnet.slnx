@@ -174,6 +174,7 @@
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step23_LocalMCP/Agent_Step23_LocalMCP.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step24_CodeInterpreterFileDownload/Agent_Step24_CodeInterpreterFileDownload.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step25_FoundryToolboxMcp/Agent_Step25_FoundryToolboxMcp.csproj" />
+    <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step26_FoundryToolboxMcpSkills/Agent_Step26_FoundryToolboxMcpSkills.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/Evaluation/">
     <Project Path="samples/02-agents/Evaluation/Evaluation_CustomEvals/Evaluation_CustomEvals.csproj" />
@@ -604,6 +605,7 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AzureFunctions/Microsoft.Agents.AI.Hosting.AzureFunctions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.OpenAI/Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Hosting.AspNetCore/Microsoft.Agents.AI.Hosting.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hyperlight/Microsoft.Agents.AI.Hyperlight.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Mcp/Microsoft.Agents.AI.Mcp.csproj" />
