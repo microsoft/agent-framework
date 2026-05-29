@@ -15,11 +15,6 @@ using ExecutorFactoryFunc = System.Func<Microsoft.Agents.AI.Workflows.ExecutorCo
 
 namespace Microsoft.Agents.AI.Workflows;
 
-internal static class DiagnosticConstants
-{
-    public const string ExperimentalFeatureDiagnostic = "MAAIW001";
-}
-
 /// <inheritdoc/>
 [ExcludeFromCodeCoverage] // This is obsolete, and 1:1 equivalent to HandoffWorkflowBuilder (no "s")
 [Obsolete("Prefer HandoffWorkflowBuilder (no 's') instead, which has the same API but the preferred name. This will be removed in a future release before GA.")]
@@ -30,7 +25,6 @@ public sealed class HandoffsWorkflowBuilder(AIAgent initialAgent) : HandoffWorkf
 }
 
 /// <inheritdoc/>
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public sealed class HandoffWorkflowBuilder(AIAgent initialAgent) : HandoffWorkflowBuilderCore<HandoffWorkflowBuilder>(initialAgent)
 {
 }
@@ -38,7 +32,6 @@ public sealed class HandoffWorkflowBuilder(AIAgent initialAgent) : HandoffWorkfl
 /// <summary>
 /// Provides a builder for specifying the handoff relationships between agents and building the resulting workflow.
 /// </summary>
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public class HandoffWorkflowBuilderCore<TBuilder> : OrchestrationBuilderBase<TBuilder>
     where TBuilder : HandoffWorkflowBuilderCore<TBuilder>
 {
