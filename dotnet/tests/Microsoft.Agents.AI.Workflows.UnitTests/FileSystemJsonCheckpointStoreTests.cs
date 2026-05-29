@@ -230,4 +230,39 @@ public sealed class FileSystemJsonCheckpointStoreTests
             secondSessionIndex.Should().NotContain(firstCheckpoint);
         }
     }
+
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldFilterByParentCheckpointAsync()
+    {
+        // Arrange
+        using TempDirectory tempDirectory = new();
+        string sessionId = Guid.NewGuid().ToString("N");
+        CheckpointInfo parentCheckpoint;
+        CheckpointInfo childCheckpoint;
+        CheckpointInfo unrelatedCheckpoint;
+
+        using (FileSystemJsonCheckpointStore store = new(tempDirectory))
+        {
+            parentCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+            childCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData, parentCheckpoint);
+            unrelatedCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+
+            // Act
+            CheckpointInfo[] childIndex = (await store.RetrieveIndexAsync(sessionId, parentCheckpoint)).ToArray();
+
+            // Assert
+            childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
+            childIndex.Should().NotContain(parentCheckpoint);
+            childIndex.Should().NotContain(unrelatedCheckpoint);
+        }
+
+        using (FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory))
+        {
+            CheckpointInfo[] childIndex = (await reopenedStore.RetrieveIndexAsync(sessionId, parentCheckpoint)).ToArray();
+
+            childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
+            childIndex.Should().NotContain(parentCheckpoint);
+            childIndex.Should().NotContain(unrelatedCheckpoint);
+        }
+    }
 }
