@@ -2,12 +2,10 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 internal sealed class HandoffMessagesFilter
 {
     private readonly HandoffToolCallFilteringBehavior _filteringBehavior;
@@ -17,7 +15,6 @@ internal sealed class HandoffMessagesFilter
         this._filteringBehavior = filteringBehavior;
     }
 
-    [Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
     internal static bool IsHandoffFunctionName(string name)
     {
         return name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);

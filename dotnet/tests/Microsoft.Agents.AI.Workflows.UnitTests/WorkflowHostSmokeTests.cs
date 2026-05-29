@@ -824,4 +824,130 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         Workflow handoffWorkflow = new HandoffWorkflowBuilder(agent).Build();
         return this.Run_AsAgent_OutgoingMessagesInHistoryAsync(handoffWorkflow, runAsync);
     }
+
+    // ----- Phase 5: Workflow-as-Agent intermediate forwarding -----------------
+
+    [Collection(Futures.FuturesSerialCollection.Name)]
+    public class IntermediateForwarding
+    {
+        private const string InterText = "progress";
+        private const string FinalText = "final";
+
+        private static async Task<List<AgentResponseUpdate>> RunStreamingAsync(
+            Workflow workflow,
+            bool includeWorkflowOutputsInResponse = false)
+        {
+            return await workflow
+                .AsAIAgent("WorkflowAgent", includeWorkflowOutputsInResponse: includeWorkflowOutputsInResponse)
+                .RunStreamingAsync(new ChatMessage(ChatRole.User, "hi"))
+                .ToListAsync();
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_IntermediateAgentResponseForwardedInStreamingAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(InterText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding)
+                .WithIntermediateOutputFrom([binding])
+                .Build();
+
+            // Under Futures-on, AgentResponseEvent mirrors AgentResponseUpdateEvent: always
+            // forwarded regardless of the include flag. The intermediate tag is observable on
+            // the surfaced event for consumers that care to distinguish.
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
+
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent are && are.IsIntermediate() && u.Text == InterText)
+                .Should().BeTrue("AgentResponseEvent is forwarded under Futures-on regardless of the include flag");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_TerminalAgentResponseForwardedUnconditionallyWhenFuturesOnAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(FinalText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding)
+                .WithOutputFrom(binding)
+                .Build();
+
+            // Even a terminal-only designation surfaces without the include flag — the gating
+            // asymmetry between AgentResponse and AgentResponseUpdate is gone under Futures-on.
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
+
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("terminal AgentResponseEvent is forwarded under Futures-on regardless of the include flag");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_TerminalAgentResponseGatedWhenFuturesOffAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+
+            static Workflow Build()
+            {
+                TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(FinalText));
+                ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+                return new WorkflowBuilder(binding).WithOutputFrom(binding).Build();
+            }
+
+            // Legacy semantics: AgentResponseEvent stays behind the include flag when Futures
+            // is off. Two fresh workflows because in-process runs aren't reentrant.
+            List<AgentResponseUpdate> gated = await RunStreamingAsync(Build(), includeWorkflowOutputsInResponse: false);
+            gated.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeFalse("terminal AgentResponseEvent stays gated under Futures-off");
+
+            List<AgentResponseUpdate> included = await RunStreamingAsync(Build(), includeWorkflowOutputsInResponse: true);
+            included.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("opting in via includeWorkflowOutputsInResponse surfaces it");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_UndesignatedExecutorEmitsNoAgentResponseEventWhenFuturesOnAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(InterText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            // No designation — under Futures-on, the AgentResponse is dropped by the filter.
+            Workflow workflow = new WorkflowBuilder(binding).Build();
+
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent)
+                .Should().BeFalse("an undesignated AIAgent executor produces no AgentResponseEvent under Futures-on");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_UndesignatedAgentResponseSurfacesWhenFuturesOffAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(InterText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding).Build();
+
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == InterText)
+                .Should().BeTrue("legacy bypass still emits AgentResponseEvent regardless of designation");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_IntermediateTagAvailableViaRawRepresentationAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(InterText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding)
+                .WithIntermediateOutputFrom([binding])
+                .Build();
+
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow);
+
+            AgentResponseUpdate progress = updates.First(u => u.RawRepresentation is AgentResponseEvent && u.Text == InterText);
+            AgentResponseEvent raw = (AgentResponseEvent)progress.RawRepresentation!;
+            raw.IsIntermediate().Should().BeTrue();
+            raw.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        }
+    }
 }

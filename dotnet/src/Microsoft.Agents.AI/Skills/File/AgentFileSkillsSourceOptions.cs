@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Shared.DiagnosticIds;
@@ -32,28 +33,31 @@ public sealed class AgentFileSkillsSourceOptions
     public IEnumerable<string>? AllowedScriptExtensions { get; set; }
 
     /// <summary>
-    /// Gets or sets relative directory paths to scan for script files within each skill directory.
-    /// Values may be single-segment names (e.g., <c>"scripts"</c>) or multi-segment relative
-    /// paths (e.g., <c>"sub/scripts"</c>). Use <c>"."</c> to include files directly at the
-    /// skill root. Leading <c>"./"</c> prefixes, trailing separators, and backslashes are
-    /// normalized automatically; paths containing <c>".."</c> segments or absolute paths are
-    /// rejected.
-    /// When <see langword="null"/>, defaults to <c>scripts</c> (per the
-    /// <see href="https://agentskills.io/specification">Agent Skills specification</see>).
-    /// When set, replaces the defaults entirely.
+    /// Gets or sets the maximum depth to search for script and resource files within each skill directory.
+    /// A value of <c>1</c> searches only the skill root directory. A value of <c>2</c> searches the root
+    /// and one level of subdirectories.
+    /// When <see langword="null"/>, the source uses the default depth of <c>2</c>.
     /// </summary>
-    public IEnumerable<string>? ScriptDirectories { get; set; }
+    /// <remarks>
+    /// Must be greater than or equal to <c>1</c>; lower values are rejected by the constructor.
+    /// </remarks>
+    public int? SearchDepth { get; set; }
 
     /// <summary>
-    /// Gets or sets relative directory paths to scan for resource files within each skill directory.
-    /// Values may be single-segment names (e.g., <c>"references"</c>) or multi-segment relative
-    /// paths (e.g., <c>"sub/resources"</c>). Use <c>"."</c> to include files directly at the
-    /// skill root. Leading <c>"./"</c> prefixes, trailing separators, and backslashes are
-    /// normalized automatically; paths containing <c>".."</c> segments or absolute paths are
-    /// rejected.
-    /// When <see langword="null"/>, defaults to <c>references</c> and <c>assets</c> (per the
-    /// <see href="https://agentskills.io/specification">Agent Skills specification</see>).
-    /// When set, replaces the defaults entirely.
+    /// Gets or sets a predicate that filters discovered script files.
+    /// The predicate receives an <see cref="AgentFileSkillFilterContext"/> containing the skill's name
+    /// and the file's path relative to the skill directory.
+    /// Return <see langword="true"/> to include the file or <see langword="false"/> to exclude it.
+    /// When <see langword="null"/>, all scripts matching the allowed extensions are included.
     /// </summary>
-    public IEnumerable<string>? ResourceDirectories { get; set; }
+    public Func<AgentFileSkillFilterContext, bool>? ScriptFilter { get; set; }
+
+    /// <summary>
+    /// Gets or sets a predicate that filters discovered resource files.
+    /// The predicate receives an <see cref="AgentFileSkillFilterContext"/> containing the skill's name
+    /// and the file's path relative to the skill directory.
+    /// Return <see langword="true"/> to include the file or <see langword="false"/> to exclude it.
+    /// When <see langword="null"/>, all resources matching the allowed extensions are included.
+    /// </summary>
+    public Func<AgentFileSkillFilterContext, bool>? ResourceFilter { get; set; }
 }
