@@ -3449,6 +3449,140 @@ def test_capture_response_with_error_type(span_exporter: InMemorySpanExporter):
     assert spans[0].attributes.get(OtelAttr.ERROR_TYPE) == "ValueError"
 
 
+def test_backfill_request_model_when_unknown(span_exporter: InMemorySpanExporter):
+    """_backfill_request_model updates the span name and REQUEST_MODEL attribute when unknown."""
+    from agent_framework.observability import OtelAttr, get_tracer
+
+    span_exporter.clear()
+    tracer = get_tracer()
+
+    attrs: dict[str, Any] = {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.REQUEST_MODEL: "unknown",
+        OtelAttr.RESPONSE_MODEL: "gpt-4o-mini",
+    }
+
+    with tracer.start_as_current_span("chat unknown") as span:
+        ChatTelemetryLayer._backfill_request_model(span, attrs)
+
+    assert attrs[OtelAttr.REQUEST_MODEL] == "gpt-4o-mini"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].name == "chat gpt-4o-mini"
+
+
+def test_backfill_request_model_noop_when_request_model_known(span_exporter: InMemorySpanExporter):
+    """_backfill_request_model leaves a known REQUEST_MODEL and span name untouched."""
+    from agent_framework.observability import OtelAttr, get_tracer
+
+    span_exporter.clear()
+    tracer = get_tracer()
+
+    attrs: dict[str, Any] = {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.REQUEST_MODEL: "gpt-4o",
+        OtelAttr.RESPONSE_MODEL: "gpt-4o-mini",
+    }
+
+    with tracer.start_as_current_span("chat gpt-4o") as span:
+        ChatTelemetryLayer._backfill_request_model(span, attrs)
+
+    assert attrs[OtelAttr.REQUEST_MODEL] == "gpt-4o"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].name == "chat gpt-4o"
+
+
+def test_backfill_request_model_noop_when_response_model_missing(span_exporter: InMemorySpanExporter):
+    """_backfill_request_model is a no-op when no RESPONSE_MODEL is available."""
+    from agent_framework.observability import OtelAttr, get_tracer
+
+    span_exporter.clear()
+    tracer = get_tracer()
+
+    attrs: dict[str, Any] = {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.REQUEST_MODEL: "unknown",
+    }
+
+    with tracer.start_as_current_span("chat unknown") as span:
+        ChatTelemetryLayer._backfill_request_model(span, attrs)
+
+    assert attrs[OtelAttr.REQUEST_MODEL] == "unknown"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].name == "chat unknown"
+
+
+async def test_chat_client_backfills_request_model_from_response(span_exporter: InMemorySpanExporter):
+    """Non-streaming chat: when REQUEST_MODEL is unknown, the response model backfills it."""
+
+    class BackfillingChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _get() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message("assistant", ["Test response"])],
+                    model="resolved-model",
+                )
+
+            return _get()
+
+    client = BackfillingChatClient()
+    span_exporter.clear()
+    # Note: no "model" in options, so REQUEST_MODEL starts as "unknown".
+    await client.get_response(messages=[Message(role="user", contents=["Hi"])], options={})
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "chat resolved-model"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "resolved-model"
+    assert span.attributes[OtelAttr.RESPONSE_MODEL] == "resolved-model"
+
+
+async def test_chat_client_streaming_backfills_request_model_from_response(
+    span_exporter: InMemorySpanExporter,
+):
+    """Streaming chat: when REQUEST_MODEL is unknown, the response model backfills it."""
+
+    class BackfillingStreamingChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text(" world")], role="assistant", finish_reason="stop")
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response = ChatResponse.from_updates(updates)
+                response.model = "resolved-stream-model"
+                return response
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+    client = BackfillingStreamingChatClient()
+    span_exporter.clear()
+    stream = client.get_response(stream=True, messages=[Message(role="user", contents=["Hi"])], options={})
+    async for _ in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "chat resolved-stream-model"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "resolved-stream-model"
+    assert span.attributes[OtelAttr.RESPONSE_MODEL] == "resolved-stream-model"
+
+
 def test_configure_otel_providers_with_env_file_path(monkeypatch, tmp_path):
     """Test configure_otel_providers with env_file_path creates new settings."""
     import importlib
