@@ -402,3 +402,39 @@ class TestShutdownDrainsWorkers:
         await ch._on_shutdown()
         assert not ch._chat_workers
         assert not ch._update_tasks
+
+
+def _deletewebhook_called(http_mock: MagicMock) -> bool:
+    return any(
+        call.args and str(call.args[0]).endswith("/deleteWebhook") for call in http_mock.post.call_args_list
+    )
+
+
+class TestWebhookShutdownTeardown:
+    async def test_shutdown_keeps_webhook_by_default(self) -> None:
+        """Default: shutdown must NOT delete the webhook (avoids redeploy races)."""
+        ch, _ = _make_telegram()
+        assert ch._transport == "webhook"
+        await ch._on_shutdown()
+        assert not _deletewebhook_called(ch._http)  # type: ignore[arg-type]
+        ch._http.aclose.assert_awaited()  # type: ignore[union-attr]
+
+    async def test_shutdown_deletes_webhook_when_opted_in(self) -> None:
+        """Opt-in: ``delete_webhook_on_shutdown=True`` performs best-effort teardown."""
+        ch = TelegramChannel(
+            bot_token="123:abc",
+            webhook_url="https://example.com/hook",
+            secret_token="s3cr3t",
+            delete_webhook_on_shutdown=True,
+            stream=False,
+        )
+        fake_http = MagicMock()
+        response_mock = MagicMock()
+        response_mock.json = MagicMock(return_value={"ok": True, "result": {}})
+        fake_http.post = AsyncMock(return_value=response_mock)
+        fake_http.get = AsyncMock(return_value=response_mock)
+        fake_http.aclose = AsyncMock()
+        ch._http = fake_http
+        await ch._on_shutdown()
+        assert _deletewebhook_called(fake_http)
+        fake_http.aclose.assert_awaited()

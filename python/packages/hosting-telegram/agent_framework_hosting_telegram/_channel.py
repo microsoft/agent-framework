@@ -159,6 +159,7 @@ class TelegramChannel:
         api_base: str = "https://api.telegram.org",
         webhook_url: str | None = None,
         secret_token: str | None = None,
+        delete_webhook_on_shutdown: bool = False,
         parse_mode: str | None = None,
         send_typing_action: bool = True,
         transport: Literal["auto", "polling", "webhook"] = "auto",
@@ -179,6 +180,7 @@ class TelegramChannel:
         self._api = f"{api_base}/bot{bot_token}"
         self._webhook_url = webhook_url
         self._secret_token = secret_token
+        self._delete_webhook_on_shutdown = delete_webhook_on_shutdown
         self._parse_mode = parse_mode
         self._send_typing_action = send_typing_action
         if transport == "auto":
@@ -258,7 +260,7 @@ class TelegramChannel:
             logger.info("Telegram polling started (long-poll timeout=%ss)", self._polling_timeout)
 
     async def _on_shutdown(self) -> None:
-        """Stop the polling task, drain in-flight workers, drop the webhook, close HTTP.
+        """Stop the polling task, drain in-flight workers, close HTTP.
 
         Drain order:
         1. Cancel the poll task so no new updates are admitted.
@@ -269,10 +271,17 @@ class TelegramChannel:
            ``_update_tasks`` (the webhook handler returns 200 immediately
            and runs the agent in a background task, which the previous
            shutdown ignored entirely).
-        4. Best-effort `deleteWebhook` and HTTP client close.
+        4. Close the HTTP client.
 
-        Webhook teardown is best-effort — failures (e.g. revoked token at
-        shutdown) are logged but never raised so app shutdown can complete.
+        The webhook registration is intentionally **left in place** on
+        shutdown. A Telegram webhook is a single global resource, so
+        deleting it here races rolling redeploys: the new revision calls
+        ``setWebhook`` on startup, then the old revision's shutdown would
+        delete it, silently breaking inbound delivery until the next boot.
+        ``setWebhook`` is overwriting/idempotent, so the next startup
+        re-asserts it anyway. Set ``delete_webhook_on_shutdown=True`` to opt
+        into best-effort teardown (e.g. for a one-off/ephemeral deployment);
+        failures are logged but never raised so app shutdown can complete.
         """
         if self._poll_task is not None:
             self._poll_task.cancel()
@@ -296,7 +305,7 @@ class TelegramChannel:
                 await task
         self._update_tasks.clear()
         if self._http is not None:
-            if self._transport == "webhook":
+            if self._transport == "webhook" and self._delete_webhook_on_shutdown:
                 try:
                     await self._http.post(f"{self._api}/deleteWebhook")
                 except Exception:  # pragma: no cover - best-effort cleanup
