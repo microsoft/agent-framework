@@ -211,4 +211,28 @@ public static class WorkflowBuilderExtensions
 
         return switchBuilder.ReduceToFanOut(builder, source);
     }
+
+    /// <summary>
+    /// Register executors as a source of <b>intermediate</b> workflow outputs. The resulting
+    /// <see cref="WorkflowOutputEvent"/>s carry <see cref="OutputTag.Intermediate"/> in their
+    /// <see cref="WorkflowOutputEvent.Tags"/> set, and
+    /// <see cref="WorkflowOutputEventExtensions.IsIntermediate(WorkflowOutputEvent)"/> returns
+    /// <see langword="true"/>. Use this for progress updates, partial results, and other
+    /// non-terminal emissions that downstream consumers (DevUI, logging, Workflow-as-Agent
+    /// surfaces) should see distinctly from the workflow's final output.
+    /// </summary>
+    /// <remarks>
+    /// AIAgent payloads (<see cref="AgentResponse"/> / <see cref="AgentResponseUpdate"/>) only
+    /// participate in this designation when
+    /// <see cref="Futures.EnableAgentResponseOutputTaggingAndFiltering"/> is
+    /// <see langword="true"/>; otherwise they bypass the filter and are emitted untagged.
+    /// </remarks>
+    /// <param name="builder">The workflow builder to register executors on.</param>
+    /// <param name="executors">The executors to register as intermediate output sources.</param>
+    /// <returns>The <paramref name="builder"/>, enabling fluent configuration.</returns>
+    public static WorkflowBuilder WithIntermediateOutputFrom(this WorkflowBuilder builder, IEnumerable<ExecutorBinding> executors)
+    {
+        Throw.IfNull(builder);
+        return builder.WithOutputFrom(executors, OutputTag.Intermediate);
+    }
 }

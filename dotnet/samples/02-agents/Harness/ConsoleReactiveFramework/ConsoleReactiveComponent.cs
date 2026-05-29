@@ -14,6 +14,11 @@ public abstract class ConsoleReactiveComponent
     }
 
     /// <summary>
+    /// Gets the shared render lock across all component types to prevent ANSI escape sequence interleaving.
+    /// </summary>
+    protected static object RenderLock { get; } = new();
+
+    /// <summary>
     /// Gets or sets the component's props as the base <see cref="ConsoleReactiveProps"/> type.
     /// Used by parent components to set layout (X, Y, Width, Height) on children without
     /// knowing the concrete props type.
@@ -40,7 +45,6 @@ public abstract class ConsoleReactiveComponent<TProps, TState> : ConsoleReactive
     where TProps : ConsoleReactiveProps
     where TState : ConsoleReactiveState
 {
-    private readonly object _renderLock = new();
     private TProps? _lastRenderedProps;
     private TState? _lastRenderedState;
 
@@ -74,7 +78,7 @@ public abstract class ConsoleReactiveComponent<TProps, TState> : ConsoleReactive
     /// </summary>
     public override void Render()
     {
-        lock (this._renderLock)
+        lock (RenderLock)
         {
             if (this.Props is null)
             {
@@ -97,7 +101,7 @@ public abstract class ConsoleReactiveComponent<TProps, TState> : ConsoleReactive
     /// <inheritdoc/>
     public override void Invalidate()
     {
-        lock (this._renderLock)
+        lock (RenderLock)
         {
             this._lastRenderedProps = default;
             this._lastRenderedState = default;
