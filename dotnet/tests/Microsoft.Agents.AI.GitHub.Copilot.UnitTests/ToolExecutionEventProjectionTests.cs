@@ -243,6 +243,31 @@ public sealed class ToolExecutionEventProjectionTests
         Assert.Equal("{not valid json", content.Arguments["_raw"]);
     }
 
+    [Fact]
+    public void ToolExecutionStartEvent_OutOfRangeNumber_DoesNotThrow()
+    {
+        // Arrange: number exceeding double range should not break streaming
+        var toolStartEvent = new ToolExecutionStartEvent
+        {
+            Data = new ToolExecutionStartData
+            {
+                ToolCallId = "call_bignum",
+                ToolName = "some_tool",
+                Arguments = "{\"value\": 1e999}"
+            }
+        };
+
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: "test-agent", tools: null);
+
+        // Act - should not throw
+        AgentResponseUpdate result = InvokeConvert(agent, toolStartEvent);
+
+        // Assert
+        var content = Assert.IsType<FunctionCallContent>(result.Contents[0]);
+        Assert.NotNull(content.Arguments);
+    }
+
     /// <summary>
     /// Invokes the appropriate ConvertToAgentResponseUpdate method via reflection.
     /// </summary>

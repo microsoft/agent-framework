@@ -489,8 +489,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
             return result;
         }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
+        catch (Exception)
         {
+            // Gracefully fall back for any parsing failure (malformed JSON, non-object root,
+            // unexpected element types, etc.) to avoid breaking the streaming pipeline.
             return new Dictionary<string, object?> { ["_raw"] = argumentsJson };
         }
     }
