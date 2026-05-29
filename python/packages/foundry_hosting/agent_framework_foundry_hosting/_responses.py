@@ -9,7 +9,7 @@ import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -464,9 +464,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # Run the agent in non-streaming mode
                 response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
 
-                async for item in _to_outputs_for_contents(
+                async for item in _to_outputs_for_messages(
                     response_event_stream,
-                    (content for message in response.messages for content in message.contents),
+                    response.messages,
                     approval_storage=self._approval_storage,
                 ):
                     yield item
@@ -610,10 +610,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 checkpoint_storage=write_storage,
             )
 
-            async for item in _to_outputs_for_contents(
-                response_event_stream,
-                (content for message in response.messages for content in message.contents),
-            ):
+            async for item in _to_outputs_for_messages(response_event_stream, response.messages):
                 yield item
 
             await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
@@ -1681,14 +1678,10 @@ def _stringify_mcp_output(output: Any) -> str:
     if isinstance(output, str):
         return output
     if isinstance(output, Mapping):
-        mapping_output = cast(Mapping[object, object], output)
-        text = cast(Any, mapping_output).get("text")
+        text = cast(Any, output).get("text")
         if isinstance(text, str):
             return text
-        try:
-            return json.dumps(mapping_output, default=str)
-        except TypeError:
-            return str(mapping_output)
+        return json.dumps(output, default=str)
     if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
         parts: list[str] = []
         entries = cast(Sequence[object], output)
@@ -1720,38 +1713,45 @@ def _emit_completed_mcp_call(
     yield mcp_call.emit_done(output=output)
 
 
-async def _to_outputs_for_contents(
+async def _to_outputs_for_messages(
     stream: ResponseEventStream,
-    contents: Iterable[Content],
+    messages: Sequence[Message],
     *,
     approval_storage: ApprovalStorage | None = None,
 ) -> AsyncIterator[ResponseStreamEvent]:
-    """Convert content items to output events with hosted-MCP call/result coalescing."""
+    """Convert messages to output events with hosted-MCP call/result coalescing.
+
+    Parse once in message/content order and emit either:
+    - a single canonical completed ``mcp_call`` when adjacent hosted MCP
+      call/result content are encountered, or
+    - standard output items for all other content types.
+    """
     pending_mcp_call: Content | None = None
 
-    for content in contents:
-        if pending_mcp_call is not None:
-            if content.type == "mcp_server_tool_result" and content.call_id == pending_mcp_call.call_id:
-                for event in _emit_completed_mcp_call(
-                    stream,
-                    pending_mcp_call,
-                    arguments=_arguments_to_str(pending_mcp_call.arguments),
-                    output=_stringify_mcp_output(content.output),
-                ):
+    for message in messages:
+        for content in message.contents:
+            if pending_mcp_call is not None:
+                if content.type == "mcp_server_tool_result" and content.call_id == pending_mcp_call.call_id:
+                    for event in _emit_completed_mcp_call(
+                        stream,
+                        pending_mcp_call,
+                        arguments=_arguments_to_str(pending_mcp_call.arguments),
+                        output=_stringify_mcp_output(content.output),
+                    ):
+                        yield event
+                    pending_mcp_call = None
+                    continue
+
+                async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
                     yield event
                 pending_mcp_call = None
+
+            if content.type == "mcp_server_tool_call" and content.call_id:
+                pending_mcp_call = content
                 continue
 
-            async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
+            async for event in _to_outputs(stream, content, approval_storage=approval_storage):
                 yield event
-            pending_mcp_call = None
-
-        if content.type == "mcp_server_tool_call" and content.call_id:
-            pending_mcp_call = content
-            continue
-
-        async for event in _to_outputs(stream, content, approval_storage=approval_storage):
-            yield event
 
     if pending_mcp_call is not None:
         async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
