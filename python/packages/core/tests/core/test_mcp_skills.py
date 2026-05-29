@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for MCP-based skills (McpSkillsSource, McpSkill, McpSkillResource)."""
+"""Tests for MCP-based skills (MCPSkillsSource, MCPSkill, MCPSkillResource)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from mcp.types import (
 )
 from pydantic import AnyUrl
 
-from agent_framework import McpSkill, McpSkillResource, McpSkillsSource
+from agent_framework import MCPSkill, MCPSkillResource, MCPSkillsSource
 from agent_framework._skills import _parse_mcp_skill_index
 
 # ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ def _make_client(**read_resource_responses: ReadResourceResult) -> AsyncMock:
 # ---------------------------------------------------------------------------
 
 
-class TestParseMcpSkillIndex:
+class TestParseMCPSkillIndex:
     """Tests for the _parse_mcp_skill_index helper."""
 
     def test_parses_valid_index(self) -> None:
@@ -131,17 +131,17 @@ class TestParseMcpSkillIndex:
 
 
 # ---------------------------------------------------------------------------
-# McpSkillResource tests
+# MCPSkillResource tests
 # ---------------------------------------------------------------------------
 
 
-class TestMcpSkillResource:
-    """Tests for McpSkillResource."""
+class TestMCPSkillResource:
+    """Tests for MCPSkillResource."""
 
     @pytest.mark.asyncio
     async def test_read_text_content(self) -> None:
         result = _make_text_result("hello world")
-        resource = McpSkillResource(name="test.md", result=result)
+        resource = MCPSkillResource(name="test.md", result=result)
         content = await resource.read()
         assert content == "hello world"
 
@@ -149,14 +149,14 @@ class TestMcpSkillResource:
     async def test_read_binary_content(self) -> None:
         data = bytes([0x01, 0x02, 0x03, 0x04])
         result = _make_blob_result(data)
-        resource = McpSkillResource(name="icon.bin", result=result)
+        resource = MCPSkillResource(name="icon.bin", result=result)
         content = await resource.read()
         assert content == data
 
     @pytest.mark.asyncio
     async def test_read_empty_returns_none(self) -> None:
         result = _make_empty_result()
-        resource = McpSkillResource(name="empty", result=result)
+        resource = MCPSkillResource(name="empty", result=result)
         content = await resource.read()
         assert content is None
 
@@ -168,7 +168,7 @@ class TestMcpSkillResource:
                 TextResourceContents(uri=AnyUrl("skill://b"), text="line2", mimeType="text/plain"),
             ]
         )
-        resource = McpSkillResource(name="multi", result=result)
+        resource = MCPSkillResource(name="multi", result=result)
         content = await resource.read()
         assert content == "line1\nline2"
 
@@ -185,23 +185,20 @@ class TestMcpSkillResource:
                 ),
             ]
         )
-        resource = McpSkillResource(name="mixed", result=result)
+        resource = MCPSkillResource(name="mixed", result=result)
         content = await resource.read()
-        # Binary content from BlobResourceContents (second item) should NOT take precedence
-        # since the first item is text. The loop finds text first, but the implementation
-        # checks BlobResourceContents first in the iteration order.
-        # Actually: the implementation iterates all contents looking for BlobResourceContents first.
-        # So the text item (first) is not a blob, the blob item (second) IS a blob -> returns bytes.
+        # The implementation iterates all contents checking for BlobResourceContents
+        # first, so when both text and binary are present, binary is returned.
         assert content == data
 
 
 # ---------------------------------------------------------------------------
-# McpSkill tests
+# MCPSkill tests
 # ---------------------------------------------------------------------------
 
 
-class TestMcpSkill:
-    """Tests for McpSkill."""
+class TestMCPSkill:
+    """Tests for MCPSkill."""
 
     @pytest.mark.asyncio
     async def test_get_content_fetches_and_caches(self) -> None:
@@ -209,7 +206,7 @@ class TestMcpSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = McpSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
 
         content1 = await skill.get_content()
         content2 = await skill.get_content()
@@ -225,7 +222,7 @@ class TestMcpSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="empty-skill", description="Empty skill.")
-        skill = McpSkill(frontmatter=fm, skill_md_uri="skill://empty/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://empty/SKILL.md", client=client)
 
         with pytest.raises(ValueError, match="no text content"):
             await skill.get_content()
@@ -241,7 +238,7 @@ class TestMcpSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = McpSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
 
         resource = await skill.get_resource("references/checklist.md")
         assert resource is not None
@@ -260,7 +257,7 @@ class TestMcpSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = McpSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
 
         resource = await skill.get_resource("assets/icon.bin")
         assert resource is not None
@@ -273,7 +270,7 @@ class TestMcpSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = McpSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
 
         resource = await skill.get_resource("references/does-not-exist.md")
         assert resource is None
@@ -300,7 +297,7 @@ class TestMcpSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = McpSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
 
         resource = await skill.get_resource(name)
         assert resource is None
@@ -312,7 +309,7 @@ class TestMcpSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="test-skill", description="Test.")
-        skill = McpSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
 
         assert await skill.get_resource("") is None
         assert await skill.get_resource("   ") is None
@@ -323,27 +320,27 @@ class TestMcpSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="test-skill", description="Test.")
-        skill = McpSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
 
         assert await skill.get_script("anything") is None
 
     def test_compute_skill_root_uri_strips_suffix(self) -> None:
-        assert McpSkill._compute_skill_root_uri("skill://unit-converter/SKILL.md") == "skill://unit-converter/"
+        assert MCPSkill._compute_skill_root_uri("skill://unit-converter/SKILL.md") == "skill://unit-converter/"
 
     def test_compute_skill_root_uri_trailing_slash(self) -> None:
-        assert McpSkill._compute_skill_root_uri("skill://unit-converter/") == "skill://unit-converter/"
+        assert MCPSkill._compute_skill_root_uri("skill://unit-converter/") == "skill://unit-converter/"
 
     def test_compute_skill_root_uri_no_suffix_adds_slash(self) -> None:
-        assert McpSkill._compute_skill_root_uri("skill://unit-converter") == "skill://unit-converter/"
+        assert MCPSkill._compute_skill_root_uri("skill://unit-converter") == "skill://unit-converter/"
 
 
 # ---------------------------------------------------------------------------
-# McpSkillsSource tests
+# MCPSkillsSource tests
 # ---------------------------------------------------------------------------
 
 
-class TestMcpSkillsSource:
-    """Tests for McpSkillsSource."""
+class TestMCPSkillsSource:
+    """Tests for MCPSkillsSource."""
 
     @pytest.mark.asyncio
     async def test_index_based_discovery_returns_skill(self) -> None:
@@ -353,7 +350,7 @@ class TestMcpSkillsSource:
                 "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
             }
         )
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
 
         assert len(skills) == 1
@@ -367,7 +364,7 @@ class TestMcpSkillsSource:
     @pytest.mark.asyncio
     async def test_no_index_returns_empty(self) -> None:
         client = _make_client()  # No resources at all
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
         assert skills == []
 
@@ -378,7 +375,7 @@ class TestMcpSkillsSource:
         client = _make_client(
             **{"skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json")}
         )
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
 
         assert len(skills) == 1
@@ -400,7 +397,7 @@ class TestMcpSkillsSource:
             }
         )
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
         assert skills == []
 
@@ -419,7 +416,7 @@ class TestMcpSkillsSource:
             }
         )
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
         assert skills == []
 
@@ -439,7 +436,7 @@ class TestMcpSkillsSource:
             }
         )
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
         assert skills == []
 
@@ -458,7 +455,7 @@ class TestMcpSkillsSource:
             }
         )
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
         assert skills == []
 
@@ -467,7 +464,7 @@ class TestMcpSkillsSource:
         client = _make_client(
             **{"skill://index.json": _make_text_result('{"skills": []}', uri="skill://index.json")}
         )
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
         assert skills == []
 
@@ -476,7 +473,7 @@ class TestMcpSkillsSource:
         client = _make_client(
             **{"skill://index.json": _make_text_result("not valid json", uri="skill://index.json")}
         )
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
         assert skills == []
 
@@ -489,7 +486,7 @@ class TestMcpSkillsSource:
                 "skill://unit-converter/references/checklist.md": _make_text_result("- check thing 1\n- check thing 2"),
             }
         )
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skill = (await source.get_skills())[0]
         resource = await skill.get_resource("references/checklist.md")
         assert resource is not None
@@ -506,7 +503,7 @@ class TestMcpSkillsSource:
                 "skill://unit-converter/assets/icon.bin": _make_blob_result(data),
             }
         )
-        source = McpSkillsSource(client=client)
+        source = MCPSkillsSource(client=client)
         skill = (await source.get_skills())[0]
         resource = await skill.get_resource("assets/icon.bin")
         assert resource is not None

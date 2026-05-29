@@ -6,7 +6,7 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 
 - Connecting to a remote MCP server (over streamable HTTP) that exposes skill
   resources following the SEP-2640 convention.
-- Building a `SkillsProvider` from an `McpSkillsSource`, which reads
+- Building a `SkillsProvider` from an `MCPSkillsSource`, which reads
   `skill://index.json` (SEP-2640 canonical discovery) and constructs skills from
   the index entries.
 - The progressive disclosure pattern across MCP: advertise → load → read

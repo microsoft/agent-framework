@@ -3390,16 +3390,16 @@ def _parse_mcp_skill_index(text: str) -> _McpSkillIndex:
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
-class McpSkillResource(SkillResource):
+class MCPSkillResource(SkillResource):
     """A :class:`SkillResource` backed by content fetched from an MCP server.
 
     The :class:`~mcp.types.ReadResourceResult` is fetched eagerly by
-    :meth:`McpSkill.get_resource` at construction time; :meth:`read`
+    :meth:`MCPSkill.get_resource` at construction time; :meth:`read`
     extracts text or binary content from the result.
     """
 
     def __init__(self, *, name: str, result: ReadResourceResult) -> None:
-        """Initialize an McpSkillResource.
+        """Initialize an MCPSkillResource.
 
         Args:
             name: The resource name (e.g. a relative path or identifier).
@@ -3420,14 +3420,19 @@ class McpSkillResource(SkillResource):
 
         for content in self._result.contents:
             if isinstance(content, BlobResourceContents):
-                return base64.b64decode(content.blob)
+                blob = content.blob
+                # Strip data-URI prefix if present (some MCP servers send
+                # full data URIs instead of raw base64).
+                if blob.startswith("data:"):
+                    blob = blob.split(",", 1)[-1]
+                return base64.b64decode(blob)
 
         text = "\n".join(c.text for c in self._result.contents if isinstance(c, TextResourceContents))
         return text if text else None
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
-class McpSkill(Skill):
+class MCPSkill(Skill):
     """A :class:`Skill` discovered from an MCP server exposing the Agent Skills convention.
 
     The skill is constructed from ``skill://index.json`` discovery metadata;
@@ -3435,9 +3440,9 @@ class McpSkill(Skill):
     server on demand via ``resources/read``.
 
     Per SEP-2640, resources referenced inside SKILL.md are fetched on demand
-    via the originating MCP server: :meth:`get_resource` resolves a relative
+     via the originating MCP server: :meth:`get_resource` resolves a relative
     resource name against the skill's root URI, issues a ``resources/read``
-    request, and returns an :class:`McpSkillResource` with pre-fetched content.
+     request, and returns an :class:`MCPSkillResource` with pre-fetched content.
     """
 
     _SKILL_MD_SUFFIX: Final[str] = "SKILL.md"
@@ -3448,7 +3453,7 @@ class McpSkill(Skill):
         skill_md_uri: str,
         client: ClientSession,
     ) -> None:
-        """Initialize an McpSkill.
+        """Initialize an MCPSkill.
 
         Args:
             frontmatter: The parsed frontmatter metadata for this skill.
@@ -3498,13 +3503,13 @@ class McpSkill(Skill):
 
         Resolves *name* as a relative path against the skill's root URI,
         issues a ``resources/read`` request to the MCP server, and returns
-        an :class:`McpSkillResource` with the pre-fetched content.
+        an :class:`MCPSkillResource` with the pre-fetched content.
 
         Args:
             name: The resource name (e.g. ``references/checklist.md``).
 
         Returns:
-            An :class:`McpSkillResource`, or ``None`` when the name is empty
+            An :class:`MCPSkillResource`, or ``None`` when the name is empty
             or the resource does not exist on the server.
         """
         if not name or not name.strip():
@@ -3522,10 +3527,9 @@ class McpSkill(Skill):
 
             if isinstance(ex, McpError):
                 return None
-            logger.debug("Unexpected error reading MCP resource '%s'", uri, exc_info=True)
-            return None
+            raise
 
-        return McpSkillResource(name=name, result=result)
+        return MCPSkillResource(name=name, result=result)
 
     @staticmethod
     def _validate_resource_name(name: str) -> str | None:
@@ -3561,20 +3565,20 @@ class McpSkill(Skill):
         If the URI doesn't end with ``SKILL.md``, ensures it ends with a
         trailing slash.
         """
-        if skill_md_uri.endswith(McpSkill._SKILL_MD_SUFFIX):
-            return skill_md_uri[: -len(McpSkill._SKILL_MD_SUFFIX)]
+        if skill_md_uri.endswith(MCPSkill._SKILL_MD_SUFFIX):
+            return skill_md_uri[: -len(MCPSkill._SKILL_MD_SUFFIX)]
         if skill_md_uri.endswith("/"):
             return skill_md_uri
         return skill_md_uri + "/"
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
-class McpSkillsSource(SkillsSource):
+class MCPSkillsSource(SkillsSource):
     """A :class:`SkillsSource` that discovers Agent Skills served over MCP.
 
     Discovery follows the SEP-2640 recommended approach: the source reads
     the well-known ``skill://index.json`` resource and constructs one
-    :class:`McpSkill` per ``skill-md`` entry directly from the entry's
+    :class:`MCPSkill` per ``skill-md`` entry directly from the entry's
     ``name``, ``description``, and ``url`` fields.
 
     The referenced ``SKILL.md`` resource is **not** read during discovery;
@@ -3592,7 +3596,7 @@ class McpSkillsSource(SkillsSource):
 
             from mcp.client.session import ClientSession
 
-            source = McpSkillsSource(client=session)
+            source = MCPSkillsSource(client=session)
             skills = await source.get_skills()
     """
 
@@ -3600,7 +3604,7 @@ class McpSkillsSource(SkillsSource):
     _SKILL_MD_TYPE: Final[str] = "skill-md"
 
     def __init__(self, client: ClientSession) -> None:
-        """Initialize an McpSkillsSource.
+        """Initialize an MCPSkillsSource.
 
         Args:
             client: An MCP client session connected to a server that
@@ -3612,10 +3616,10 @@ class McpSkillsSource(SkillsSource):
         """Discover and return skills from the MCP server.
 
         Reads ``skill://index.json``, parses it, and creates an
-        :class:`McpSkill` for each valid ``skill-md`` entry.
+        :class:`MCPSkill` for each valid ``skill-md`` entry.
 
         Returns:
-            A list of discovered :class:`McpSkill` instances.
+            A list of discovered :class:`MCPSkill` instances.
         """
         index = await self._try_read_index()
         if index is None:
@@ -3665,14 +3669,14 @@ class McpSkillsSource(SkillsSource):
             logger.warning("Failed to parse skill://index.json JSON document.", exc_info=True)
             return None
 
-    def _try_create_skill(self, entry: _McpSkillIndexEntry) -> McpSkill | None:
-        """Attempt to create an :class:`McpSkill` from an index entry.
+    def _try_create_skill(self, entry: _McpSkillIndexEntry) -> MCPSkill | None:
+        """Attempt to create an :class:`MCPSkill` from an index entry.
 
         Args:
             entry: A single entry from the skill index.
 
         Returns:
-            An :class:`McpSkill` if the entry is valid, or ``None`` if the
+            An :class:`MCPSkill` if the entry is valid, or ``None`` if the
             entry should be skipped.
         """
         if entry.type != self._SKILL_MD_TYPE:
@@ -3701,7 +3705,7 @@ class McpSkillsSource(SkillsSource):
             logger.debug("Skipping entry '%s': invalid metadata: %s", entry.name, ex)
             return None
 
-        return McpSkill(frontmatter=fm, skill_md_uri=entry.url, client=self._client)
+        return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, client=self._client)
 
 
 # endregion

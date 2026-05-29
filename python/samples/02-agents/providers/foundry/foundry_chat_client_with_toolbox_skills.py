@@ -5,7 +5,7 @@ import os
 from collections.abc import Generator
 
 import httpx
-from agent_framework import Agent, McpSkillsSource, SkillsProvider
+from agent_framework import Agent, MCPSkillsSource, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import TokenCredential
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -20,7 +20,7 @@ load_dotenv()
 Foundry Chat Client with Toolbox-Hosted Skills
 
 Discover Agent Skills served by a Microsoft Foundry Toolbox MCP endpoint
-and inject them into a ``FoundryChatClient`` agent via ``McpSkillsSource``.
+and inject them into a ``FoundryChatClient`` agent via ``MCPSkillsSource``.
 The toolbox's discovery document (``skill://index.json``) is read once at
 startup; SKILL.md bodies are fetched on demand as the agent uses them.
 
@@ -72,11 +72,11 @@ async def main() -> None:
         await session.initialize()
 
         # Discover skills served by the toolbox and inject them as a context provider.
-        skills_provider = SkillsProvider(McpSkillsSource(client=session))
+        skills_provider = SkillsProvider(MCPSkillsSource(client=session))
 
         async with Agent(
             client=FoundryChatClient(credential=credential),
-            name="ToolboxMcpSkillsAgent",
+            name="ToolboxMCPSkillsAgent",
             instructions="You are a helpful assistant. Use available skills to answer the user.",
             context_providers=[skills_provider],
         ) as agent:

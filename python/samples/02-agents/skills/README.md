@@ -12,7 +12,7 @@ Start with file-based or code-defined skills, then explore combining them and ad
 | [**code_defined_skill**](code_defined_skill/) | Define skills entirely in Python code using `Skill`, `@skill.resource`, and `@skill.script` decorators. Uses a code-defined unit-converter skill. |
 | [**class_based_skill**](class_based_skill/) | Define skills as Python classes using `ClassSkill` with `@ClassSkill.resource` and `@ClassSkill.script` decorators for auto-discovery. Uses a class-based unit-converter skill. |
 | [**mixed_skills**](mixed_skills/) | Combine code-defined, class-based, and file-based skills in a single agent. Uses a code-defined volume-converter, a class-based temperature-converter, and a file-based unit-converter. |
-| [**mcp_based_skill**](mcp_based_skill/) | Discover skills served over the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) via `McpSkillsSource`. Connects to a remote MCP server that exposes skills as `skill://...` resources following the SEP-2640 convention. |
+| [**mcp_based_skill**](mcp_based_skill/) | Discover skills served over the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) via `MCPSkillsSource`. Connects to a remote MCP server that exposes skills as `skill://...` resources following the SEP-2640 convention. |
 | [**script_approval**](script_approval/) | Require human-in-the-loop approval before executing skill scripts |
 
 ## Key Concepts

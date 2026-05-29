@@ -7,7 +7,7 @@ import os
 # using the sample's Skills APIs.
 # import warnings
 # warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
-from agent_framework import Agent, McpSkillsSource, SkillsProvider
+from agent_framework import Agent, MCPSkillsSource, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -18,7 +18,7 @@ from mcp.client.streamable_http import streamable_http_client
 MCP-Based Agent Skills
 
 This sample demonstrates how to discover Agent Skills served over the
-Model Context Protocol (MCP) using :class:`McpSkillsSource`.
+Model Context Protocol (MCP) using :class:`MCPSkillsSource`.
 
 The sample connects to a remote MCP server that exposes skill resources
 under the ``skill://`` URI scheme:
@@ -47,10 +47,10 @@ async def main() -> None:
         await session.initialize()
 
         # 2. Build a SkillsProvider that discovers skills over MCP.
-        #    McpSkillsSource reads skill://index.json and creates one
-        #    McpSkill per skill-md entry; SKILL.md bodies are fetched
+        #    MCPSkillsSource reads skill://index.json and creates one
+        #    MCPSkill per skill-md entry; SKILL.md bodies are fetched
         #    on demand via resources/read.
-        skills_provider = SkillsProvider(McpSkillsSource(client=session))
+        skills_provider = SkillsProvider(MCPSkillsSource(client=session))
 
         # 3. Run the agent.
         client = FoundryChatClient(
@@ -64,25 +64,13 @@ async def main() -> None:
             instructions="You are a helpful assistant. Use available skills to answer the user.",
             context_providers=[skills_provider],
         ) as agent:
-            response = await agent.run(
-                "What skills do you have?"
-            )
+            query = input("User: ").strip()  # noqa: ASYNC250
+            if not query:
+                return
+            response = await agent.run(query)
             print(f"Agent: {response}\n")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
 
-
-"""
-Sample output:
-
-Discovering MCP-based skills
-------------------------------------------------------------
-Agent: Here are your conversions:
-
-1. **26.2 miles -> 42.16 km** (a marathon distance)
-2. **75 kg -> 165.35 lbs**
-
-Conversion factors used: miles * 1.60934 and kilograms * 2.20462.
-"""
