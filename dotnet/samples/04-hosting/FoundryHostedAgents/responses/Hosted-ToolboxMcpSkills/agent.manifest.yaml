@@ -16,6 +16,7 @@ metadata:
     - Model Context Protocol
     - Agent Skills
     - Foundry Toolbox
+    - Foundry Toolbox Skills
 
 template:
   name: hosted-toolbox-mcp-skills
