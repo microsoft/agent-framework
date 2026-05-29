@@ -41,10 +41,7 @@ TokenCredential credential = new ChainedTokenCredential(
 
 // ── Connect to the Foundry Toolbox MCP endpoint ─────────────────────────────
 // Create an HttpClient that attaches a fresh Foundry bearer token to every request.
-using var httpClient = new HttpClient(new BearerTokenHandler(credential, "https://ai.azure.com/.default")
-{
-    InnerHandler = new HttpClientHandler(),
-});
+using var httpClient = new HttpClient(new BearerTokenHandler(credential, "https://ai.azure.com/.default") { CheckCertificateRevocationList = true });
 
 Console.WriteLine($"Connecting to Foundry Toolbox '{toolboxName}' MCP server...");
 
@@ -97,9 +94,9 @@ app.MapDevTemporaryLocalAgentEndpoint();
 app.Run();
 
 // ---------------------------------------------------------------------------
-// DelegatingHandler: attaches a fresh Foundry bearer token to every request
+// HttpClientHandler: attaches a fresh Foundry bearer token to every request
 // ---------------------------------------------------------------------------
-internal sealed class BearerTokenHandler(TokenCredential credential, string scope) : DelegatingHandler
+internal sealed class BearerTokenHandler(TokenCredential credential, string scope) : HttpClientHandler
 {
     private readonly TokenRequestContext _tokenContext = new([scope]);
 
