@@ -3526,6 +3526,7 @@ class MCPSkill(Skill):
             from mcp.shared.exceptions import McpError
 
             if isinstance(ex, McpError):
+                logger.debug("MCP resource '%s' not available: %s", uri, ex)
                 return None
             raise
 
