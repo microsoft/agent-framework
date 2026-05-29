@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Reflection;
+
 namespace Aspire.Hosting.AgentFramework.DevUI.UnitTests;
 
 /// <summary>
@@ -128,6 +130,23 @@ public class AgentEntityInfoTests
 
         // Assert
         Assert.Equal("custom_framework", info.Framework);
+    }
+
+    #endregion
+
+    #region ATS Export Tests
+
+    /// <summary>
+    /// Verifies that AgentEntityInfo is marked as an ATS DTO.
+    /// </summary>
+    [Fact]
+    public void AgentEntityInfo_HasAspireDtoAttribute()
+    {
+        // Arrange & Act
+        var dtoAttribute = typeof(AgentEntityInfo).GetCustomAttribute<AspireDtoAttribute>();
+
+        // Assert
+        Assert.NotNull(dtoAttribute);
     }
 
     #endregion

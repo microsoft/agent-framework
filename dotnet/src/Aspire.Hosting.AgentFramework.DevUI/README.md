@@ -34,6 +34,10 @@ var devui = builder.AddDevUI("devui")
     .WaitFor(editorAgent);
 ```
 
+## Polyglot AppHost support
+
+`AddDevUI` and `WithAgentService` are exported through Aspire ATS, so this integration can also be used from polyglot Aspire AppHosts (for example TypeScript-based AppHosts).
+
 Each agent service only needs to map the standard OpenAI API endpoints — no custom discovery endpoints are required:
 
 ```csharp

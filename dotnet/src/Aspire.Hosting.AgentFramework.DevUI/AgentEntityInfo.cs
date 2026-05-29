@@ -18,6 +18,7 @@ namespace Aspire.Hosting.AgentFramework;
 /// </remarks>
 /// <param name="Id">The unique identifier for the agent, typically matching the name passed to <c>AddAIAgent</c>.</param>
 /// <param name="Description">A short description of the agent's capabilities.</param>
+[AspireDto]
 public record AgentEntityInfo(string Id, string? Description = null)
 {
     /// <summary>

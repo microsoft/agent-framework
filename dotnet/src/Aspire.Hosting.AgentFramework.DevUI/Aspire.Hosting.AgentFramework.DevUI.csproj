@@ -5,7 +5,7 @@
     <VersionSuffix>preview</VersionSuffix>
     <!-- Suppress analyzer warnings for Aspire integration code -->
     <!-- IL2026/IL3050: Suppress trimming/AOT warnings - DevUI is a dev-only tool not intended for AOT -->
-    <NoWarn>$(NoWarn);CA1873;RCS1061;VSTHRD002;IL2026;IL3050</NoWarn>
+    <NoWarn>$(NoWarn);CA1873;RCS1061;VSTHRD002;IL2026;IL3050;ASPIREATS001</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

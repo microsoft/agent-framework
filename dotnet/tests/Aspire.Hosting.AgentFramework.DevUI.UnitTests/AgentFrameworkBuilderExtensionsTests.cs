@@ -2,6 +2,8 @@
 
 using System;
 using System.Linq;
+using System.Reflection;
+using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Moq;
 
@@ -537,6 +539,67 @@ public class AgentFrameworkBuilderExtensionsTests
         var annotation2 = devui2.Resource.Annotations.OfType<AgentServiceAnnotation>().Single();
         Assert.Equal("prefix1", annotation1.EntityIdPrefix);
         Assert.Equal("prefix2", annotation2.EntityIdPrefix);
+    }
+
+    #endregion
+
+    #region ATS Export Tests
+
+    /// <summary>
+    /// Verifies that AddDevUI is exported for Aspire Type System (ATS) usage.
+    /// </summary>
+    [Fact]
+    public void AddDevUI_HasAspireExportAttribute()
+    {
+        // Arrange
+        var method = typeof(AgentFrameworkBuilderExtensions)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(AgentFrameworkBuilderExtensions.AddDevUI));
+
+        // Act
+        var exportAttribute = method.GetCustomAttribute<AspireExportAttribute>();
+
+        // Assert
+        Assert.NotNull(exportAttribute);
+    }
+
+    /// <summary>
+    /// Verifies that AddDevUI marks the name parameter as a resource name for ATS tooling.
+    /// </summary>
+    [Fact]
+    public void AddDevUI_NameParameter_HasResourceNameAttribute()
+    {
+        // Arrange
+        var method = typeof(AgentFrameworkBuilderExtensions)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(AgentFrameworkBuilderExtensions.AddDevUI));
+        var nameParameter = method.GetParameters().Single(p => p.Name == "name");
+
+        // Act
+        var resourceNameAttribute = nameParameter.GetCustomAttribute<ResourceNameAttribute>();
+
+        // Assert
+        Assert.NotNull(resourceNameAttribute);
+    }
+
+    /// <summary>
+    /// Verifies that WithAgentService is exported for Aspire Type System (ATS) usage.
+    /// </summary>
+    [Fact]
+    public void WithAgentService_HasAspireExportAttribute()
+    {
+        // Arrange
+        var method = typeof(AgentFrameworkBuilderExtensions)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(AgentFrameworkBuilderExtensions.WithAgentService)
+                && m.IsGenericMethodDefinition
+                && m.GetGenericArguments().Length == 1);
+
+        // Act
+        var exportAttribute = method.GetCustomAttribute<AspireExportAttribute>();
+
+        // Assert
+        Assert.NotNull(exportAttribute);
     }
 
     #endregion

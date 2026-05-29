@@ -14,6 +14,7 @@ namespace Aspire.Hosting.ApplicationModel;
 /// external container image.
 /// </remarks>
 /// <param name="name">The name of the DevUI resource.</param>
+[AspireExport(ExposeProperties = true)]
 public class DevUIResource(string name) : Resource(name), IResourceWithEndpoints, IResourceWithWaitSupport
 {
     internal const string PrimaryEndpointName = "http";

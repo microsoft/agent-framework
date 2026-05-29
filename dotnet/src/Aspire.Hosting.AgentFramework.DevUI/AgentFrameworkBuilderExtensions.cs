@@ -46,9 +46,11 @@ public static class AgentFrameworkBuilderExtensions
     ///     .WithAgentService(pythonAgent);
     /// </code>
     /// </example>
+    /// <ats-returns>The resource builder.</ats-returns>
+    [AspireExport]
     public static IResourceBuilder<DevUIResource> AddDevUI(
         this IDistributedApplicationBuilder builder,
-        string name,
+        [ResourceName] string name,
         int? port = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -164,6 +166,8 @@ public static class AgentFrameworkBuilderExtensions
     ///     .WaitFor(editorAgent);
     /// </code>
     /// </example>
+    /// <ats-returns>The resource builder.</ats-returns>
+    [AspireExport]
     public static IResourceBuilder<DevUIResource> WithAgentService<TSource>(
         this IResourceBuilder<DevUIResource> builder,
         IResourceBuilder<TSource> agentService,

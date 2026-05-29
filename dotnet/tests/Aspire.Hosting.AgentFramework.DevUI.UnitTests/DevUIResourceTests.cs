@@ -2,6 +2,7 @@
 
 using System.Linq;
 using System.Net.Sockets;
+using System.Reflection;
 using Aspire.Hosting.ApplicationModel;
 
 namespace Aspire.Hosting.AgentFramework.DevUI.UnitTests;
@@ -187,6 +188,24 @@ public class DevUIResourceTests
 
         // Assert
         Assert.Same(endpoint1, endpoint2);
+    }
+
+    #endregion
+
+    #region ATS Export Tests
+
+    /// <summary>
+    /// Verifies that DevUIResource is exported for Aspire Type System (ATS) usage.
+    /// </summary>
+    [Fact]
+    public void DevUIResource_HasAspireExportAttributeWithExposedProperties()
+    {
+        // Arrange & Act
+        var exportAttribute = typeof(DevUIResource).GetCustomAttribute<AspireExportAttribute>();
+
+        // Assert
+        Assert.NotNull(exportAttribute);
+        Assert.True(exportAttribute.ExposeProperties);
     }
 
     #endregion
