@@ -320,6 +320,8 @@ async def run_devui_async(*, debug: bool = False) -> None:
 
     async with AsyncExitStack() as stack:
         try:
+            # Wrap the remote MCP URL as local tools so FIDES can label inputs/outputs
+            # and enforce policy checks before tool data is used by the agent.
             secure_github = await stack.enter_async_context(
                 SecureMCPToolProxy(
                     url=MCP_URL,
@@ -339,8 +341,6 @@ async def run_devui_async(*, debug: bool = False) -> None:
             raise
 
         config = SecureAgentConfig(
-            # Keep untrusted content visible for this fact-retrieval sample so
-            # responses stay tightly grounded to raw tool outputs.
             auto_hide_untrusted=True,
             enable_policy_enforcement=True,
             approval_on_violation=True,
