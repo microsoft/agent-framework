@@ -75,17 +75,13 @@ internal sealed class InvokeMcpToolExecutor(
 
         if (requireApproval)
         {
-            // Create tool call content for approval request
+            // Create tool call content for approval request.
+            // Transport headers (e.g. Authorization) are intentionally excluded from the
+            // approval event: they must not cross into the externally-surfaced approval request.
             McpServerToolCallContent toolCall = new(this.Id, toolName, serverLabel ?? serverUrl)
             {
                 Arguments = arguments
             };
-
-            if (headers != null)
-            {
-                toolCall.AdditionalProperties ??= [];
-                toolCall.AdditionalProperties.Add(headers);
-            }
 
             ToolApprovalRequestContent approvalRequest = new(this.Id, toolCall);
 
