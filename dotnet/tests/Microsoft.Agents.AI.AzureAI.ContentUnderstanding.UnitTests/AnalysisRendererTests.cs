@@ -69,22 +69,6 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    public void Render_IncludeFieldsOverride_WinsOverSectionsFlag()
-    {
-        AnalysisResult result = MakeInvoiceResult();
-
-        // Sections has Fields, but override forces it off.
-        string overrideOff = AnalysisRenderer.Render(
-            result, "invoice.pdf", AnalysisSection.Markdown | AnalysisSection.Fields, includeFieldsOverride: false);
-        Assert.DoesNotContain("VendorName", overrideOff, StringComparison.Ordinal);
-
-        // Sections lacks Fields, but override forces it on.
-        string overrideOn = AnalysisRenderer.Render(
-            result, "invoice.pdf", AnalysisSection.Markdown, includeFieldsOverride: true);
-        Assert.Contains("VendorName", overrideOn, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void Render_EmptyContents_ReturnsEmptyString()
     {
         AnalysisResult empty = ContentUnderstandingModelFactory.AnalysisResult(contents: []);
@@ -165,31 +149,31 @@ public sealed class AnalysisRendererTests
     }
 
     [Fact]
-    public void RenderSearchPayload_ConfigDefault_OmitsFieldsRegardlessOfSections()
+    public void RenderSearchPayload_UsesSections_WhenConfigPresent()
     {
         AnalysisResult result = MakeInvoiceResult();
-        FileSearchConfig config = new(); // IncludeFields defaults to false
+        FileSearchConfig config = new();
 
         string? payload = AnalysisRenderer.RenderSearchPayload(
             result, "invoice.pdf", AnalysisSection.Markdown | AnalysisSection.Fields, config);
 
         Assert.NotNull(payload);
-        Assert.DoesNotContain("VendorName", payload!, StringComparison.Ordinal);
+        Assert.Contains("VendorName", payload!, StringComparison.Ordinal);
         Assert.Contains("# INVOICE", payload!, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RenderSearchPayload_ConfigIncludeFieldsTrue_OverridesSections()
+    public void RenderSearchPayload_MarkdownOnly_OmitsFields()
     {
         AnalysisResult result = MakeInvoiceResult();
-        FileSearchConfig config = new() { IncludeFields = true };
+        FileSearchConfig config = new();
 
-        // Sections lacks Fields, but FileSearchConfig.IncludeFields = true forces it on.
         string? payload = AnalysisRenderer.RenderSearchPayload(
             result, "invoice.pdf", AnalysisSection.Markdown, config);
 
         Assert.NotNull(payload);
-        Assert.Contains("VendorName", payload!, StringComparison.Ordinal);
+        Assert.DoesNotContain("VendorName", payload!, StringComparison.Ordinal);
+        Assert.Contains("# INVOICE", payload!, StringComparison.Ordinal);
     }
 
     [Fact]

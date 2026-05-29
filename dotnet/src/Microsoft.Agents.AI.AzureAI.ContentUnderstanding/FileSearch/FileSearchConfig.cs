@@ -47,13 +47,6 @@ public sealed class FileSearchConfig
     public AITool FileSearchTool { get; init; } = default!;
 
     /// <summary>
-    /// Gets or sets whether <see cref="AnalysisSection.Fields"/> data is included in the payload
-    /// uploaded to the file-search vector store. Defaults to <see langword="false"/> (decision D2),
-    /// because the field block is verbose and pollutes vector embeddings.
-    /// </summary>
-    public bool IncludeFields { get; set; }
-
-    /// <summary>
     /// Builds a <see cref="FileSearchConfig"/> backed by a
     /// <see cref="FoundryFileSearchBackend"/>. Convenience wrapper around the object
     /// initializer for the most common Foundry case.
@@ -61,12 +54,10 @@ public sealed class FileSearchConfig
     /// <param name="projectClient">An authenticated Foundry project client.</param>
     /// <param name="vectorStoreId">Id of an existing, caller-owned vector store.</param>
     /// <param name="fileSearchTool">The caller-supplied <c>file_search</c> tool.</param>
-    /// <param name="includeFields">Whether to include the field block in uploaded payloads. Defaults to <see langword="false"/>.</param>
     public static FileSearchConfig FromFoundry(
         AIProjectClient projectClient,
         string vectorStoreId,
-        AITool fileSearchTool,
-        bool includeFields = false)
+        AITool fileSearchTool)
     {
         _ = projectClient ?? throw new ArgumentNullException(nameof(projectClient));
         _ = vectorStoreId ?? throw new ArgumentNullException(nameof(vectorStoreId));
@@ -77,7 +68,6 @@ public sealed class FileSearchConfig
             Backend = new FoundryFileSearchBackend(projectClient),
             VectorStoreId = vectorStoreId,
             FileSearchTool = fileSearchTool,
-            IncludeFields = includeFields,
         };
     }
 
@@ -89,12 +79,10 @@ public sealed class FileSearchConfig
     /// <param name="openAiClient">An authenticated OpenAI client.</param>
     /// <param name="vectorStoreId">Id of an existing, caller-owned vector store.</param>
     /// <param name="fileSearchTool">The caller-supplied <c>file_search</c> tool.</param>
-    /// <param name="includeFields">Whether to include the field block in uploaded payloads. Defaults to <see langword="false"/>.</param>
     public static FileSearchConfig FromOpenAI(
         OpenAIClient openAiClient,
         string vectorStoreId,
-        AITool fileSearchTool,
-        bool includeFields = false)
+        AITool fileSearchTool)
     {
         _ = openAiClient ?? throw new ArgumentNullException(nameof(openAiClient));
         _ = vectorStoreId ?? throw new ArgumentNullException(nameof(vectorStoreId));
@@ -105,7 +93,6 @@ public sealed class FileSearchConfig
             Backend = new OpenAIFileSearchBackend(openAiClient),
             VectorStoreId = vectorStoreId,
             FileSearchTool = fileSearchTool,
-            IncludeFields = includeFields,
         };
     }
 }

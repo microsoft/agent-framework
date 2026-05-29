@@ -279,7 +279,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                 string? searchPayload = AnalysisRenderer.RenderSearchPayload(
                     outcome.Result,
                     att.Filename,
-                    AnalysisSection.Markdown,
+                    this._options.OutputSections,
                     this._options.FileSearchConfig);
                 entry = new DocumentEntry
                 {
@@ -831,7 +831,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                 string markdownOnly = AnalysisRenderer.Render(
                     outcome.Result, entry.Filename, AnalysisSection.Markdown);
                 string? searchPayload = AnalysisRenderer.RenderSearchPayload(
-                    outcome.Result, entry.Filename, AnalysisSection.Markdown, this._options.FileSearchConfig);
+                    outcome.Result, entry.Filename, this._options.OutputSections, this._options.FileSearchConfig);
 
                 providerState.Documents[entry.DocumentKey] = entry with
                 {

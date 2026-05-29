@@ -33,7 +33,7 @@ public sealed class ContextProviderPhase9Tests
             backend,
             fileSearchTool,
             vectorStoreId: "vs-abc",
-            includeFields: false);
+            outputSections: AnalysisSection.Markdown);
 
         DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
         AIContext result = await provider.InvokingAsync(
@@ -52,7 +52,7 @@ public sealed class ContextProviderPhase9Tests
         Assert.Equal("vs-abc", upload.VectorStoreId);
         Assert.Equal("invoice.pdf.md", upload.Filename);
         Assert.Contains("CONTOSO LTD.", upload.Payload, StringComparison.Ordinal);
-        // IncludeFields=false → no fields block in the uploaded payload.
+        // OutputSections=Markdown only → no fields block in the uploaded payload.
         Assert.DoesNotContain("fields:", upload.Payload, StringComparison.Ordinal);
 
         // file_search tool was appended to AIContext.Tools.
@@ -148,7 +148,7 @@ public sealed class ContextProviderPhase9Tests
     }
 
     [Fact]
-    public async Task InvokingAsync_WithIncludeFieldsTrue_UploadPayloadContainsFieldsBlock()
+    public async Task InvokingAsync_WithOutputSectionsIncludingFields_UploadPayloadContainsFieldsBlock()
     {
         FakeFileSearchBackend backend = new();
         FakeAITool fileSearchTool = new();
@@ -157,7 +157,7 @@ public sealed class ContextProviderPhase9Tests
             new AnalysisOutcome(true, SharedTestFixtures.MakeInvoiceResult(), "op-1", null, TimeSpan.FromMilliseconds(50)));
 
         await using ContentUnderstandingContextProvider provider = CreateProvider(
-            analyzer, backend, fileSearchTool, includeFields: true);
+            analyzer, backend, fileSearchTool, outputSections: AnalysisSection.Markdown | AnalysisSection.Fields);
 
         DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
         await provider.InvokingAsync(
@@ -344,18 +344,18 @@ public sealed class ContextProviderPhase9Tests
         FakeFileSearchBackend backend,
         FakeAITool fileSearchTool,
         string vectorStoreId = "vs-abc",
-        bool includeFields = false,
+        AnalysisSection outputSections = AnalysisSection.Default,
         FakeResumer? resumer = null) =>
         new(SharedTestFixtures.TestEndpoint,
             new FakeTokenCredential(),
             opt =>
             {
+                opt.OutputSections = outputSections;
                 opt.FileSearchConfig = new FileSearchConfig
                 {
                     Backend = backend,
                     VectorStoreId = vectorStoreId,
                     FileSearchTool = fileSearchTool,
-                    IncludeFields = includeFields,
                 };
             })
         {

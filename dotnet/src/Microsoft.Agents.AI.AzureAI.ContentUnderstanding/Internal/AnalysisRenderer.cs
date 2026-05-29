@@ -27,8 +27,7 @@ internal static class AnalysisRenderer
     public static string Render(
         AnalysisResult result,
         string filename,
-        AnalysisSection sections,
-        bool? includeFieldsOverride = null)
+        AnalysisSection sections)
     {
         if (result is null)
         {
@@ -48,25 +47,11 @@ internal static class AnalysisRenderer
         LlmInputOptions options = new()
         {
             IncludeMarkdown = (sections & AnalysisSection.Markdown) != 0,
-            IncludeFields = includeFieldsOverride ?? ((sections & AnalysisSection.Fields) != 0),
+            IncludeFields = (sections & AnalysisSection.Fields) != 0,
         };
 
         string rendered = result.ToLlmInput(metadata, options);
         return StripTelemetry(rendered);
-    }
-
-    public static string? RenderSearchPayload(
-        AnalysisResult result,
-        string filename,
-        AnalysisSection sections,
-        FileSearchConfig? config)
-    {
-        if (config is null)
-        {
-            return null;
-        }
-
-        return Render(result, filename, sections, includeFieldsOverride: config.IncludeFields);
     }
 
     /// <summary>

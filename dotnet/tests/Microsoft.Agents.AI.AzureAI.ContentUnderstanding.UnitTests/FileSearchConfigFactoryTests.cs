@@ -15,7 +15,7 @@ public sealed class FileSearchConfigFactoryTests
     private static readonly FakeAITool s_fileSearchTool = new();
 
     [Fact]
-    public void FromOpenAI_BuildsConfigWithOpenAIBackend_AndDefaultIncludeFieldsFalse()
+    public void FromOpenAI_BuildsConfigWithOpenAIBackend()
     {
         OpenAIClient client = new("sk-fake-key");
 
@@ -24,22 +24,10 @@ public sealed class FileSearchConfigFactoryTests
         Assert.IsType<OpenAIFileSearchBackend>(config.Backend);
         Assert.Equal("vs_abc", config.VectorStoreId);
         Assert.Same(s_fileSearchTool, config.FileSearchTool);
-        Assert.False(config.IncludeFields);
     }
 
     [Fact]
-    public void FromOpenAI_PropagatesIncludeFieldsTrue()
-    {
-        OpenAIClient client = new("sk-fake-key");
-
-        FileSearchConfig config = FileSearchConfig.FromOpenAI(client, "vs_abc", s_fileSearchTool, includeFields: true);
-
-        Assert.IsType<OpenAIFileSearchBackend>(config.Backend);
-        Assert.True(config.IncludeFields);
-    }
-
-    [Fact]
-    public void FromFoundry_BuildsConfigWithFoundryBackend_AndDefaultIncludeFieldsFalse()
+    public void FromFoundry_BuildsConfigWithFoundryBackend()
     {
         AIProjectClient project = new(
             new Uri("https://contoso.services.ai.azure.com/api/projects/test"),
@@ -50,19 +38,6 @@ public sealed class FileSearchConfigFactoryTests
         Assert.IsType<FoundryFileSearchBackend>(config.Backend);
         Assert.Equal("vs_xyz", config.VectorStoreId);
         Assert.Same(s_fileSearchTool, config.FileSearchTool);
-        Assert.False(config.IncludeFields);
-    }
-
-    [Fact]
-    public void FromFoundry_PropagatesIncludeFieldsTrue()
-    {
-        AIProjectClient project = new(
-            new Uri("https://contoso.services.ai.azure.com/api/projects/test"),
-            new FakeTokenCredential());
-
-        FileSearchConfig config = FileSearchConfig.FromFoundry(project, "vs_xyz", s_fileSearchTool, includeFields: true);
-
-        Assert.True(config.IncludeFields);
     }
 
     [Fact]
