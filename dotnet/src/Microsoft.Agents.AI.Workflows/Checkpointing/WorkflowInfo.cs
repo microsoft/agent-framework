@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
@@ -15,14 +16,14 @@ internal sealed class WorkflowInfo
         Dictionary<string, List<EdgeInfo>> edges,
         HashSet<RequestPortInfo> requestPorts,
         string startExecutorId,
-        HashSet<string>? outputExecutorIds)
+        Dictionary<string, HashSet<OutputTag>>? outputExecutorIds)
     {
         this.Executors = Throw.IfNull(executors);
         this.Edges = Throw.IfNull(edges);
         this.RequestPorts = Throw.IfNull(requestPorts);
 
         this.StartExecutorId = Throw.IfNullOrEmpty(startExecutorId);
-        this.OutputExecutorIds = outputExecutorIds ?? [];
+        this.OutputExecutorIds = outputExecutorIds ?? new Dictionary<string, HashSet<OutputTag>>(StringComparer.Ordinal);
     }
 
     public Dictionary<string, ExecutorInfo> Executors { get; }
@@ -32,7 +33,15 @@ internal sealed class WorkflowInfo
     public TypeId? InputType { get; }
     public string StartExecutorId { get; }
 
-    public HashSet<string> OutputExecutorIds { get; }
+    /// <summary>
+    /// Map of executor id to the set of <see cref="OutputTag"/>s under which the executor is registered.
+    /// An empty set means the executor is registered as a regular (untagged) output source.
+    /// JSON shape: <c>{ "executorId": ["intermediate"], ... }</c>. Legacy payloads using the
+    /// older <c>string[]</c> shape are read by <see cref="WorkflowInfoOutputExecutorsConverter"/> and
+    /// each id is treated as registered with an empty tag set.
+    /// </summary>
+    [JsonConverter(typeof(WorkflowInfoOutputExecutorsConverter))]
+    public Dictionary<string, HashSet<OutputTag>> OutputExecutorIds { get; }
 
     public bool IsMatch(Workflow workflow)
     {
@@ -80,9 +89,12 @@ internal sealed class WorkflowInfo
             return false;
         }
 
-        // Validate the outputs
+        // Validate the outputs (key set + tag set per id must match)
         if (workflow.OutputExecutors.Count != this.OutputExecutorIds.Count ||
-            this.OutputExecutorIds.Any(id => !workflow.OutputExecutors.Contains(id)))
+            this.OutputExecutorIds.Any(kvp =>
+                !workflow.OutputExecutors.TryGetValue(kvp.Key, out HashSet<OutputTag>? tags) ||
+                tags.Count != kvp.Value.Count ||
+                !tags.SetEquals(kvp.Value)))
         {
             return false;
         }

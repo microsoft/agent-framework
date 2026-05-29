@@ -49,6 +49,10 @@ var agent = new AzureOpenAIClient(
                 AGUIServerSerializerContext.Default.Options)
         ]);
 
+// When running in production, make sure to use an SessionIsolationKeyProvider, e.g. ClaimsIdentity-based
+// if using Claims-based Identity for Authentication/Authorization
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+
 // Register the agent with the host and configure it to use an in-memory session store
 // so that conversation state is maintained across requests. In production, you may want to use a persistent session store.
 builder

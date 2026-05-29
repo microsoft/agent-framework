@@ -507,10 +507,10 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
         .. code-block:: python
 
             from agent_framework import Agent
-            from agent_framework.foundry import FoundryAgentClient
+            from agent_framework.foundry import FoundryAgent
             from azure.identity import AzureCliCredential
 
-            client = FoundryAgentClient(
+            client = FoundryAgent(
                 project_endpoint="https://your-project.services.ai.azure.com",
                 agent_name="my-prompt-agent",
                 agent_version="1",

@@ -76,6 +76,14 @@ agent_framework/
 - **`SkillScriptRunner`** - Protocol for file-based script execution. Any callable matching `(skill, script, args) -> Any` satisfies it. Code-defined scripts do not use a runner.
 - **`SkillsProvider`** - Context provider (extends `ContextProvider`) that discovers file-based skills from `SKILL.md` files and/or accepts code-defined `Skill` instances. Follows progressive disclosure: advertise → load → read resources / run scripts.
 
+### File Access Harness (`_harness/_file_access.py`)
+
+- **`AgentFileStore`** - Abstract async store backing the file-access harness. Implementations expose `write_file`, `read_file`, `delete_file`, `list_files`, `file_exists`, `search_files`, and `create_directory` over forward-slash relative paths.
+- **`InMemoryAgentFileStore`** - Dict-backed store suitable for tests and lightweight scenarios.
+- **`FileSystemAgentFileStore`** - Disk-backed store rooted under a configurable directory. Enforces relative-path normalization, root containment, and rejects symlink/reparse-point segments to prevent escape.
+- **`FileSearchResult`** / **`FileSearchMatch`** - `SerializationMixin` DTOs returned by `search_files`, carrying the matching file name, a context snippet, and the matching lines with 1-based line numbers.
+- **`FileAccessProvider`** - `ContextProvider` that adds shared file-access tools (`file_access_save_file`, `file_access_read_file`, `file_access_delete_file`, `file_access_list_files`, `file_access_search_files`) plus default usage instructions to each invocation. Unlike `MemoryContextProvider`, the store is intentionally shared across sessions and agents.
+
 ### Workflows (`_workflows/`)
 
 - **`Workflow`** - Graph-based workflow definition
