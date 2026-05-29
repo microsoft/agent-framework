@@ -361,7 +361,6 @@ class TestBeforeRunPendingResolution:
                     "analysis_duration_s": None,
                     "upload_duration_s": None,
                     "result": None,
-                    "search_payload": None,
                     "error": None,
                 },
             },
@@ -401,7 +400,6 @@ class TestBeforeRunPendingFailure:
                     "analysis_duration_s": None,
                     "upload_duration_s": None,
                     "result": None,
-                    "search_payload": None,
                     "error": None,
                 },
             },
@@ -510,11 +508,10 @@ class TestListDocumentsTool:
 class TestOutputFiltering:
     """Validate that output_sections controls what `_render_for_llm` emits.
 
-    Decisions baked in (see design-doc-llm-input-adoption.Zh-CN.md):
-      - Rendering is delegated to ``azure.ai.contentunderstanding.to_llm_input``.
+    Rendering is delegated to ``azure.ai.contentunderstanding.to_llm_input``:
       - ``"markdown" in output_sections`` -> ``include_markdown=True``.
       - ``"fields"   in output_sections`` -> ``include_fields=True``.
-      - ``metadata={"source": <filename>}`` is always supplied (decision E1).
+      - ``metadata={"source": <filename>}`` is always supplied.
 
     Note: detailed field/JSON shape is owned by the SDK and exercised in the
     SDK's own ``to_llm_input`` tests. We only assert MAF-level wiring here.
@@ -524,7 +521,7 @@ class TestOutputFiltering:
         provider = _make_provider()
         rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
 
-        # YAML front matter with source key (decision E1).
+        # YAML front matter with source key.
         assert "source: report.pdf" in rendered
         # PDF fixture contains "Contoso" in its markdown body.
         assert "Contoso" in rendered
@@ -558,7 +555,7 @@ class TestOutputFiltering:
         assert "Consulting Services" in rendered
 
     def test_source_metadata_uses_filename(self, pdf_analysis_result: AnalysisResult) -> None:
-        """Decision E1: per-document ``source`` key carries the original filename."""
+        """Per-document ``source`` key carries the original filename."""
         provider = _make_provider()
         rendered = provider._render_for_llm(pdf_analysis_result, "custom_name.pdf")
         assert "source: custom_name.pdf" in rendered
@@ -1378,7 +1375,6 @@ class TestFileSearchIntegration:
                     "analysis_duration_s": None,
                     "upload_duration_s": None,
                     "result": None,
-                    "search_payload": None,
                     "error": None,
                 },
             },
@@ -1483,7 +1479,6 @@ class TestSessionIsolation:
                     "analysis_duration_s": None,
                     "upload_duration_s": None,
                     "result": None,
-                    "search_payload": None,
                     "error": None,
                 },
             },

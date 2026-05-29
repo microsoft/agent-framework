@@ -329,8 +329,8 @@ class ContentUnderstandingContextProvider(ContextProvider):
         pending_tokens: dict[str, dict[str, str]] = state.setdefault("_pending_tokens", {})
         pending_uploads: list[tuple[str, DocumentEntry]] = state.setdefault("_pending_uploads", [])
 
-        # 1. Resolve pending background analyses via continuation tokens
-        await self._resolve_pending_tokens(pending_tokens, pending_uploads, documents, context)
+        # Resolve pending Content Understanding analysis from its continuation tokens
+        await self._resolve_pending_analysis(pending_tokens, pending_uploads, documents, context)
 
         # 1b. Upload any documents that completed in the background (file_search mode)
         if pending_uploads:
@@ -622,14 +622,12 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     analysis_duration_s=None,
                     upload_duration_s=None,
                     result=None,
-                    search_payload=None,
                     error=None,
                 )
 
             # Analysis completed within timeout
             analysis_duration = round(time.monotonic() - t0, 2)
             rendered = self._render_for_llm(result, filename)
-            search_payload = self._render_search_payload(result, filename)
             logger.info("Analyzed '%s' with analyzer '%s' in %.1fs.", filename, resolved_analyzer, analysis_duration)
             return DocumentEntry(
                 status=DocumentStatus.READY,
@@ -640,7 +638,6 @@ class ContentUnderstandingContextProvider(ContextProvider):
                 analysis_duration_s=analysis_duration,
                 upload_duration_s=None,
                 result=rendered,
-                search_payload=search_payload,
                 error=None,
             )
 
@@ -661,15 +658,14 @@ class ContentUnderstandingContextProvider(ContextProvider):
                 analysis_duration_s=round(time.monotonic() - t0, 2),
                 upload_duration_s=None,
                 result=None,
-                search_payload=None,
                 error=str(e),
             )
 
     # ------------------------------------------------------------------
-    # Pending Token Resolution
+    # Pending Analysis Resolution
     # ------------------------------------------------------------------
 
-    async def _resolve_pending_tokens(
+    async def _resolve_pending_analysis(
         self,
         pending_tokens: dict[str, dict[str, str]],
         pending_uploads: list[tuple[str, DocumentEntry]],
@@ -729,11 +725,9 @@ class ContentUnderstandingContextProvider(ContextProvider):
 
                 completed_keys.append(doc_key)
                 rendered = self._render_for_llm(result, entry["filename"])  # pyright: ignore[reportUnknownArgumentType]
-                search_payload = self._render_search_payload(result, entry["filename"])  # pyright: ignore[reportUnknownArgumentType]
                 entry["status"] = DocumentStatus.READY
                 entry["analyzed_at"] = datetime.now(tz=timezone.utc).isoformat()
                 entry["result"] = rendered
-                entry["search_payload"] = search_payload
                 entry["error"] = None
                 logger.info("Background analysis of '%s' completed.", entry["filename"])
 
@@ -787,8 +781,6 @@ class ContentUnderstandingContextProvider(ContextProvider):
         self,
         result: AnalysisResult,
         filename: str,
-        *,
-        include_fields: bool | None = None,
     ) -> str:
         """Render a CU ``AnalysisResult`` into LLM-friendly text.
 
@@ -801,9 +793,6 @@ class ContentUnderstandingContextProvider(ContextProvider):
             result: The CU analysis result.
             filename: Document filename, surfaced to the LLM via the
                 ``source`` front matter key.
-            include_fields: When set, overrides the ``output_sections``-derived
-                ``include_fields`` value. Used by the ``file_search`` upload
-                path which renders an alternate payload without fields.
 
         Returns:
             A YAML-front-matter-prefixed text block ready for direct LLM
@@ -812,7 +801,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
         rendered: str = to_llm_input(
             result,
             include_markdown="markdown" in self.output_sections,
-            include_fields=(include_fields if include_fields is not None else "fields" in self.output_sections),
+            include_fields="fields" in self.output_sections,
             metadata={"source": filename},
         )
         # Defensive filter for telemetry strings emitted into rai_warnings.
@@ -820,25 +809,6 @@ class ContentUnderstandingContextProvider(ContextProvider):
         # start with ``- LLMStats:`` are preserved. See decision C1; tracked
         # as an SDK follow-up (decision C2).
         return _strip_rai_telemetry(rendered)
-
-    def _render_search_payload(
-        self,
-        result: AnalysisResult,
-        filename: str,
-    ) -> str | None:
-        """Render the alternate payload uploaded to the ``file_search`` vector store.
-
-        Returns ``None`` when ``file_search`` is not configured so callers can
-        skip the extra rendering work. When configured, the rendering honors
-        ``FileSearchConfig.include_fields`` (default ``False`` per decision D2).
-        """
-        if self.file_search is None:
-            return None
-        return self._render_for_llm(
-            result,
-            filename,
-            include_fields=self.file_search.include_fields,
-        )
 
     # ------------------------------------------------------------------
     # Tool Registration
@@ -927,11 +897,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
         if not result:
             return False
 
-        # Prefer the pre-rendered search payload (default: fields stripped for
-        # chunking-friendly text). Fall back to the LLM-injection rendering on
-        # the rare path where it was not pre-rendered (e.g. legacy state).
-        formatted = entry.get("search_payload") or result
-        if not formatted or not _has_renderable_body(formatted):
+        if not _has_renderable_body(result):
             # Empty CU result (e.g. blank markdown, no fields) — skip the
             # upload so the vector store stays clean. The DocumentEntry still
             # records the front-matter-only ``result`` so callers can introspect.
@@ -942,7 +908,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
 
         try:
             upload_coro = self.file_search.backend.upload_file(
-                self.file_search.vector_store_id, f"{doc_key}.md", formatted.encode("utf-8")
+                self.file_search.vector_store_id, f"{doc_key}.md", result.encode("utf-8")
             )
             file_id = await asyncio.wait_for(upload_coro, timeout=timeout)
             upload_duration = round(time.monotonic() - t0, 2)
@@ -952,7 +918,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             self._all_uploaded_file_ids.append(file_id)
             entry["status"] = DocumentStatus.READY
             entry["upload_duration_s"] = upload_duration
-            logger.info("Uploaded '%s' to vector store in %.1fs (%s bytes).", doc_key, upload_duration, len(formatted))
+            logger.info("Uploaded '%s' to vector store in %.1fs (%s bytes).", doc_key, upload_duration, len(result))
             return True
 
         except asyncio.TimeoutError:
