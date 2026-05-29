@@ -79,6 +79,8 @@ _POST_SEND_DELAY_S = 1.0
 _SAMPLE_INTERVAL_S = 0.5
 _SAMPLE_WINDOW_S = 12.0
 _MAX_RENDERER_GROWTH_MB = 500.0
+_MAX_STREAMING_STATE_STORAGE_BYTES = 64 * 1024
+_MAX_DEBUG_EVENT_DOM_ITEMS = 1000
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,13 @@ class _BrowserProcessRow:
     parent_pid: int
     rss_kb: int
     command: str
+
+
+@dataclass(frozen=True)
+class _BrowserMemoryProbe:
+    streaming_state_storage_bytes: int
+    debug_event_dom_items: int
+    js_heap_bytes: int | None
 
 
 class MemoryStressAgent(BaseAgent):
@@ -430,6 +439,52 @@ def _sample_peak_renderer_rss_mb(root_pid: int, profile_dir: str) -> float:
     return round((max(renderer_rss_kb, default=0)) / 1024, 2)
 
 
+async def _sample_browser_memory_probe(client: _CDPClient, *, session_id: str) -> _BrowserMemoryProbe:
+    value = await client.evaluate(
+        """
+        (() => {
+          const storagePrefix = "devui_streaming_state_";
+          const textEncoder = new TextEncoder();
+          let streamingStateStorageBytes = 0;
+          for (let index = 0; index < localStorage.length; index += 1) {
+            const key = localStorage.key(index);
+            if (!key || !key.startsWith(storagePrefix)) {
+              continue;
+            }
+
+            const item = localStorage.getItem(key) || "";
+            streamingStateStorageBytes += textEncoder.encode(key).length + textEncoder.encode(item).length;
+          }
+
+          return {
+            streamingStateStorageBytes,
+            debugEventDomItems: document.querySelectorAll("[data-devui-debug-event]").length,
+            jsHeapBytes: performance.memory ? performance.memory.usedJSHeapSize : null,
+          };
+        })()
+        """,
+        session_id=session_id,
+    )
+    if not isinstance(value, dict):
+        raise AssertionError(f"Expected browser memory probe object, got: {type(value).__name__}")
+
+    streaming_state_storage_bytes = value.get("streamingStateStorageBytes")
+    debug_event_dom_items = value.get("debugEventDomItems")
+    js_heap_bytes = value.get("jsHeapBytes")
+    if not isinstance(streaming_state_storage_bytes, int):
+        raise AssertionError("Browser memory probe did not return streamingStateStorageBytes")
+    if not isinstance(debug_event_dom_items, int):
+        raise AssertionError("Browser memory probe did not return debugEventDomItems")
+    if js_heap_bytes is not None and not isinstance(js_heap_bytes, int):
+        raise AssertionError("Browser memory probe returned invalid jsHeapBytes")
+
+    return _BrowserMemoryProbe(
+        streaming_state_storage_bytes=streaming_state_storage_bytes,
+        debug_event_dom_items=debug_event_dom_items,
+        js_heap_bytes=js_heap_bytes,
+    )
+
+
 def _terminate_browser_processes(root_pid: int, profile_dir: str) -> None:
     browser_rows = _collect_browser_process_rows(root_pid, profile_dir)
     browser_pids = sorted({row.pid for row in browser_rows} | {root_pid}, reverse=True)
@@ -727,6 +782,7 @@ async def test_devui_streaming_renderer_memory_is_bounded(
 
                 peak_renderer_rss_mb = start_renderer_rss_mb
                 samples: list[tuple[float, float]] = [(0.0, start_renderer_rss_mb)]
+                probe_samples: list[tuple[float, _BrowserMemoryProbe]] = []
                 start_time = time.monotonic()
 
                 while time.monotonic() - start_time < _SAMPLE_WINDOW_S:
@@ -737,6 +793,10 @@ async def test_devui_streaming_renderer_memory_is_bounded(
                     elapsed_s = round(time.monotonic() - start_time, 2)
                     samples.append((elapsed_s, current_sample))
                     peak_renderer_rss_mb = max(peak_renderer_rss_mb, current_sample)
+                    probe_samples.append((
+                        elapsed_s,
+                        await _sample_browser_memory_probe(client, session_id=session_id),
+                    ))
 
                     if peak_renderer_rss_mb - start_renderer_rss_mb > _MAX_RENDERER_GROWTH_MB:
                         break
@@ -744,13 +804,44 @@ async def test_devui_streaming_renderer_memory_is_bounded(
                     await asyncio.sleep(_SAMPLE_INTERVAL_S)
 
                 renderer_growth_mb = round(peak_renderer_rss_mb - start_renderer_rss_mb, 2)
+                max_streaming_state_storage_bytes = max(
+                    (probe.streaming_state_storage_bytes for _, probe in probe_samples),
+                    default=0,
+                )
+                max_debug_event_dom_items = max(
+                    (probe.debug_event_dom_items for _, probe in probe_samples),
+                    default=0,
+                )
                 assert renderer_growth_mb <= _MAX_RENDERER_GROWTH_MB, (
                     "DevUI renderer memory grew too much during a ~1.5 MB streaming response. "
                     f"start={start_renderer_rss_mb:.2f}MB "
                     f"peak={peak_renderer_rss_mb:.2f}MB "
                     f"growth={renderer_growth_mb:.2f}MB "
                     f"budget={_MAX_RENDERER_GROWTH_MB:.2f}MB "
-                    f"samples={samples}"
+                    f"samples={samples} "
+                    f"probe_samples={probe_samples}"
+                )
+                assert max_streaming_state_storage_bytes <= _MAX_STREAMING_STATE_STORAGE_BYTES, (
+                    "DevUI streaming resume state retained too much text in browser storage. "
+                    f"peak={max_streaming_state_storage_bytes} bytes "
+                    f"budget={_MAX_STREAMING_STATE_STORAGE_BYTES} bytes "
+                    f"probe_samples={probe_samples}"
+                )
+                assert max_streaming_state_storage_bytes > 0, (
+                    "DevUI streaming state storage was never written during the stress run "
+                    "(cap assertion would be vacuous). "
+                    f"probe_samples={probe_samples}"
+                )
+                assert max_debug_event_dom_items <= _MAX_DEBUG_EVENT_DOM_ITEMS, (
+                    "DevUI debug panel rendered too many retained streaming events. "
+                    f"peak={max_debug_event_dom_items} "
+                    f"budget={_MAX_DEBUG_EVENT_DOM_ITEMS} "
+                    f"probe_samples={probe_samples}"
+                )
+                assert max_debug_event_dom_items > 0, (
+                    "DevUI debug panel rendered zero events during the stress run "
+                    "(cap assertion would be vacuous). "
+                    f"probe_samples={probe_samples}"
                 )
         finally:
             _shutdown_browser_process(browser_process, profile_dir=profile_dir)

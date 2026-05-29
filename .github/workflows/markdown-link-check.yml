@@ -23,6 +23,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Chrome for Puppeteer
+        run: npx puppeteer browsers install chrome
+
       # Checks the status of hyperlinks in all files
       - name: Run linkspector
         uses: umbrelladocs/action-linkspector@963b6264d7de32c904942a70b488d3407453049e # v1

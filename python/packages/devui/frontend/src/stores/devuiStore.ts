@@ -18,6 +18,26 @@ import type {
 import type { ConversationItem } from "@/types/openai";
 import type { AttachmentItem } from "@/components/ui/attachment-gallery";
 
+const MAX_DEBUG_EVENTS = 1000;
+const MAX_DEBUG_TEXT_DELTA_CHARS = 2048;
+
+function prepareDebugEvent(event: ExtendedResponseStreamEvent): ExtendedResponseStreamEvent {
+  if (
+    event.type !== "response.output_text.delta" ||
+    !("delta" in event) ||
+    typeof event.delta !== "string" ||
+    event.delta.length <= MAX_DEBUG_TEXT_DELTA_CHARS
+  ) {
+    return event;
+  }
+
+  const omittedChars = event.delta.length - MAX_DEBUG_TEXT_DELTA_CHARS;
+  return {
+    ...event,
+    delta: `${event.delta.slice(0, MAX_DEBUG_TEXT_DELTA_CHARS)}\n...[${omittedChars} chars omitted from debug view]`,
+  };
+}
+
 // ========================================
 // State Interface
 // ========================================
@@ -395,6 +415,7 @@ export const useDevUIStore = create<DevUIStore>()(
         setStreamingEnabled: (enabled) => set({ streamingEnabled: enabled }),
         addDebugEvent: (event) =>
           set((state) => {
+            const eventForStorage = prepareDebugEvent(event);
             // Generate unique timestamp for each event
             // Use current time + small increment to ensure uniqueness even for rapid events
             const baseTimestamp = Math.floor(Date.now() / 1000);
@@ -404,16 +425,19 @@ export const useDevUIStore = create<DevUIStore>()(
             const lastTimestamp = lastEvent?._uiTimestamp ?? 0;
             // Ensure new timestamp is always greater than the last one
             const uniqueTimestamp = Math.max(baseTimestamp, lastTimestamp + 1);
+            const retainedEvents = state.debugEvents.length >= MAX_DEBUG_EVENTS
+              ? state.debugEvents.slice(-(MAX_DEBUG_EVENTS - 1))
+              : state.debugEvents;
 
             return {
               debugEvents: [
-                ...state.debugEvents,
+                ...retainedEvents,
                 {
-                  ...event,
+                  ...eventForStorage,
                   // Add UI display timestamp when event is received (Unix seconds)
                   // Each event gets a unique timestamp to preserve chronological order
-                  _uiTimestamp: ('created_at' in event && event.created_at)
-                    ? event.created_at
+                  _uiTimestamp: ('created_at' in eventForStorage && eventForStorage.created_at)
+                    ? eventForStorage.created_at
                     : uniqueTimestamp,
                 } as ExtendedResponseStreamEvent & { _uiTimestamp: number },
               ],

@@ -441,15 +441,6 @@ internal static class WorkflowSamples
 
         new SampleDefinition
         {
-            Name = "Workflow_Declarative_GenerateCode",
-            ProjectPath = "samples/03-workflows/Declarative/GenerateCode",
-            IsDeterministic = true,
-            MustContain = ["WORKFLOW: Parsing", "WORKFLOW: Defined"],
-            ExpectedOutputDescription = ["The output should show a YAML workflow being parsed and C# code being generated from it."],
-        },
-
-        new SampleDefinition
-        {
             Name = "Workflow_Declarative_HostedWorkflow",
             ProjectPath = "samples/03-workflows/Declarative/HostedWorkflow",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
