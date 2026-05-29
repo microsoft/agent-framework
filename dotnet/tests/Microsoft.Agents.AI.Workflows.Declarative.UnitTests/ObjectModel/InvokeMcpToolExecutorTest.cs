@@ -387,6 +387,57 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     }
 
     [Fact]
+    public async Task InvokeMcpToolApprovedCaptureResponseForwardsHeadersToTransportAsync()
+    {
+        // Arrange - exercises the post-approval CaptureResponseAsync resume path to prove the
+        // fix did not regress header forwarding on the path that the vulnerability actually targets.
+        this.State.InitializeSystem();
+        const string HeaderKey = "Authorization";
+        const string HeaderValue = "Bearer super-secret-token";
+        InvokeMcpTool model = this.CreateModel(
+            displayName: nameof(InvokeMcpToolApprovedCaptureResponseForwardsHeadersToTransportAsync),
+            serverUrl: TestServerUrl,
+            serverLabel: TestServerLabel,
+            toolName: TestToolName,
+            requireApproval: true,
+            headerKey: HeaderKey,
+            headerValue: HeaderValue);
+
+        IDictionary<string, string>? capturedHeaders = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider
+            .Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaders = headers)
+            .ReturnsAsync(new McpServerToolResultContent("mock-call-id") { Outputs = [new TextContent("ok")] });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        Mock<IWorkflowContext> mockContext = new(MockBehavior.Loose);
+
+        // Build an approved response matching this action's request id.
+        McpServerToolCallContent toolCall = new(action.Id, TestToolName, TestServerLabel);
+        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
+
+        // Act - call CaptureResponseAsync directly so the post-approval branch actually executes.
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert - headers reach the transport invocation on the approved path.
+        Assert.NotNull(capturedHeaders);
+        Assert.True(capturedHeaders!.TryGetValue(HeaderKey, out string? forwardedValue));
+        Assert.Equal(HeaderValue, forwardedValue);
+    }
+
+    [Fact]
     public async Task InvokeMcpToolExecuteWithEmptyHeaderValueAsync()
     {
         // Arrange
