@@ -188,6 +188,61 @@ public sealed class ToolExecutionEventProjectionTests
         Assert.Null(content.Result);
     }
 
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[1, 2, 3]")]
+    [InlineData("\"just a string\"")]
+    public void ToolExecutionStartEvent_NonObjectArguments_FallsBackToRawDictionary(string arguments)
+    {
+        // Arrange
+        var toolStartEvent = new ToolExecutionStartEvent
+        {
+            Data = new ToolExecutionStartData
+            {
+                ToolCallId = "call_nonobj",
+                ToolName = "some_tool",
+                Arguments = arguments
+            }
+        };
+
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: "test-agent", tools: null);
+
+        // Act
+        AgentResponseUpdate result = InvokeConvert(agent, toolStartEvent);
+
+        // Assert
+        var content = Assert.IsType<FunctionCallContent>(result.Contents[0]);
+        Assert.NotNull(content.Arguments);
+        Assert.Equal(arguments, content.Arguments["_raw"]);
+    }
+
+    [Fact]
+    public void ToolExecutionStartEvent_MalformedJson_FallsBackToRawDictionary()
+    {
+        // Arrange
+        var toolStartEvent = new ToolExecutionStartEvent
+        {
+            Data = new ToolExecutionStartData
+            {
+                ToolCallId = "call_malformed",
+                ToolName = "some_tool",
+                Arguments = "{not valid json"
+            }
+        };
+
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: "test-agent", tools: null);
+
+        // Act
+        AgentResponseUpdate result = InvokeConvert(agent, toolStartEvent);
+
+        // Assert
+        var content = Assert.IsType<FunctionCallContent>(result.Contents[0]);
+        Assert.NotNull(content.Arguments);
+        Assert.Equal("{not valid json", content.Arguments["_raw"]);
+    }
+
     /// <summary>
     /// Invokes the appropriate ConvertToAgentResponseUpdate method via reflection.
     /// </summary>

@@ -468,13 +468,18 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         try
         {
             using var doc = JsonDocument.Parse(argumentsJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return new Dictionary<string, object?> { ["_raw"] = argumentsJson };
+            }
+
             var result = new Dictionary<string, object?>();
             foreach (var property in doc.RootElement.EnumerateObject())
             {
                 result[property.Name] = property.Value.ValueKind switch
                 {
                     JsonValueKind.String => property.Value.GetString(),
-                    JsonValueKind.Number => property.Value.GetDouble(),
+                    JsonValueKind.Number => property.Value.GetRawText() is string raw && double.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double d) ? d : (object)property.Value.GetRawText(),
                     JsonValueKind.True => true,
                     JsonValueKind.False => false,
                     JsonValueKind.Null => null,
@@ -484,7 +489,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
             return result;
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
         {
             return new Dictionary<string, object?> { ["_raw"] = argumentsJson };
         }
