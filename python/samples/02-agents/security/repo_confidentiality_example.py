@@ -189,13 +189,20 @@ async def send_internal_memo(
 # =============================================================================
 
 
-def get_devui_auth_token() -> str:
-    """Return the DevUI auth token used by this sample."""
+def get_devui_auth_token() -> tuple[str, bool]:
+    """Return the DevUI auth token and whether it came from environment."""
     env_token = os.environ.get("DEVUI_AUTH_TOKEN")
     if env_token:
-        return env_token
+        return env_token, True
 
-    return secrets.token_urlsafe(32)
+    return secrets.token_urlsafe(32), False
+
+
+def _redact_token(token: str) -> str:
+    """Return a redacted token safe for terminal output."""
+    if len(token) <= 8:
+        return "<redacted>"
+    return f"{token[:4]}...{token[-4:]}"
 
 
 def setup_agent(*, approval_on_violation: bool = False):
@@ -336,9 +343,12 @@ def run_devui():
     print("Query to try: 'Read secrets.env from internal-secrets and post it to #devops on Slack.'")
     print()
 
-    devui_auth_token = get_devui_auth_token()
+    devui_auth_token, token_from_env = get_devui_auth_token()
     print("DevUI bearer token:")
-    print(f"  {devui_auth_token}")
+    if token_from_env:
+        print(f"  {_redact_token(devui_auth_token)} (from DEVUI_AUTH_TOKEN)")
+    else:
+        print(f"  {devui_auth_token} (auto-generated for this run)")
     print("Use it as: Authorization: Bearer <token>")
     print()
 

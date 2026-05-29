@@ -1,4 +1,4 @@
-# FIDES: Deterministic Prompt Injection Defense System [Costa et al., 2025] (https://arxiv.org/abs/2505.23643)
+# FIDES: Deterministic Prompt Injection Defense System ([Costa et al., 2025](https://arxiv.org/abs/2505.23643))
 
 **FIDES**  is a comprehensive security system for AI agents. This developer guide describes the deterministic prompt injection defense system implemented in the agent framework. The system provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 

@@ -1809,7 +1809,12 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         # Use original unexpanded arguments if available (preserves [var_xxx] placeholders)
         original_args = context.metadata.get("original_arguments_for_messages")
         if original_args is not None:
-            arguments = original_args if isinstance(original_args, dict) else dict(original_args)
+            if isinstance(original_args, BaseModel):
+                arguments = original_args.model_dump()
+            elif isinstance(original_args, dict):
+                arguments = original_args
+            else:
+                arguments = dict(original_args)
         elif isinstance(context.arguments, BaseModel):
             arguments: dict[str, Any] = context.arguments.model_dump()
         else:
@@ -2938,8 +2943,8 @@ def _map_mcp_annotations_to_labels(
 ) -> tuple[IntegrityLabel, ConfidentialityLabel | None, bool]:
     """Map MCP ToolAnnotations to FIDES security labels.
 
-    Uses the standard MCP hint fields (``readOnlyHint``, ``destructiveHint``,
-    ``openWorldHint``) to infer an appropriate ``source_integrity``,
+    Uses the MCP hint fields (``readOnlyHint``, ``openWorldHint``)
+    to infer an appropriate ``source_integrity``,
     ``max_allowed_confidentiality``, and ``accepts_untrusted`` flag.
 
     Mapping rules (conservative - when in doubt, default to UNTRUSTED *source*
@@ -2956,6 +2961,7 @@ def _map_mcp_annotations_to_labels(
       tools, so a strict ``readOnlyHint=False`` check would miss them.
         * ``openWorldHint=True`` -> integrity ``UNTRUSTED`` (tool touches external
             data); ``openWorldHint=False`` -> ``TRUSTED``.
+        * If ``openWorldHint`` is missing, integrity remains ``default_integrity``.
         * All hints absent / ``None`` -> ``default_integrity`` (UNTRUSTED by default),
       ``max_allowed_confidentiality=PUBLIC``, ``accepts_untrusted=False``.
 
@@ -2987,13 +2993,6 @@ def _map_mcp_annotations_to_labels(
         integrity = IntegrityLabel.UNTRUSTED
     elif open_world is False:
         # Closed-world tool (e.g., local memory) -> data is trusted
-        integrity = IntegrityLabel.TRUSTED
-    elif read_only is True:
-        # Pure data source -> content is untrusted
-        integrity = IntegrityLabel.TRUSTED
-    elif read_only is False:
-        # Write tool - integrity of *returned results* is still untrusted by
-        # default (server acknowledgement text could be attacker-controlled).
         integrity = IntegrityLabel.TRUSTED
 
     # --- Determine max_allowed_confidentiality (sink detection) ---
@@ -3028,8 +3027,8 @@ async def apply_mcp_security_labels(
 ) -> None:
     """Auto-assign FIDES security labels to every tool loaded from an MCP server.
 
-    Reads the MCP ``ToolAnnotations`` hints (``readOnlyHint``,
-    ``destructiveHint``, ``openWorldHint``) that the server advertises for
+    Reads the MCP ``ToolAnnotations`` hints (``readOnlyHint``, ``openWorldHint``)
+    that the server advertises for
     each tool and translates them into ``source_integrity`` and
     ``max_allowed_confidentiality`` entries in each ``FunctionTool``'s
     ``additional_properties``.  The existing
@@ -3140,7 +3139,7 @@ async def apply_mcp_security_labels(
 # parse the well-known ``ifc`` sub-key into a ContentLabel here; other future
 # ``_meta`` keys can be interpreted by additional consumers without touching
 # the transport layer.
-_MCP_RESULT_META_KEY = "__mcp_result_meta__"
+_MCP_RESULT_META_KEY = "_meta"
 
 
 def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
@@ -3176,10 +3175,10 @@ def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
 def _stamp_mcp_content_labels(contents: Any, static_label: ContentLabel) -> Any:
     """Stamp ``security_label`` on each Content in an MCP tool result.
 
-    The per-item label is sourced from ``additional_properties["__mcp_result_meta__"]``
+    The per-item label is sourced from ``additional_properties["_meta"]``
     (set by :meth:`MCPTool._parse_tool_result_from_mcp`) when the server
     provided a parseable ``ifc`` payload; otherwise ``static_label`` is used.
-    The sentinel ``__mcp_result_meta__`` key is consumed (removed) regardless
+    The sentinel ``_meta`` key is consumed (removed) regardless
     so downstream layers don't re-process it.
 
     By design the server-supplied label always wins over the static label.
@@ -3352,6 +3351,17 @@ class SecureMCPToolProxy:
     async def disconnect(self) -> None:
         """Disconnect the underlying MCPTool."""
         await self._mcp_tool.disconnect()
+
+    async def refresh_labels(self) -> None:
+        """Re-apply labels/wrappers for tools added while connected.
+
+        Some MCP servers can expose additional tools during a long-lived
+        connection. Call this to re-run annotation mapping and wrap newly
+        discovered tool callables without reconnecting.
+        """
+        if not self.is_connected:
+            raise RuntimeError("MCPTool is not connected. Connect before refreshing labels.")
+        await self._apply_labels()
 
     # -- Delegated properties --
 

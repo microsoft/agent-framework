@@ -3,6 +3,7 @@
 """Unit tests for prompt injection defense system."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
@@ -2684,6 +2685,60 @@ if __name__ == "__main__":
 
 
 # ---------------------------------------------------------------------------
+# MCP annotation mapping
+# ---------------------------------------------------------------------------
+
+
+class TestMCPAnnotationMapping:
+    """Tests for hint-based mapping from MCP annotations to FIDES labels."""
+
+    @pytest.mark.parametrize(
+        ("read_only", "open_world", "default_integrity", "expected_integrity", "expected_max_conf", "expected_accepts"),
+        [
+            (True, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, None, True),
+            (True, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, None, True),
+            (True, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.TRUSTED, None, True),
+            (False, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (False, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (False, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (None, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (None, None, IntegrityLabel.TRUSTED, IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC, False),
+        ],
+    )
+    def test_map_mcp_annotations_to_labels(
+        self,
+        read_only,
+        open_world,
+        default_integrity,
+        expected_integrity,
+        expected_max_conf,
+        expected_accepts,
+    ):
+        from agent_framework.security import _map_mcp_annotations_to_labels
+
+        annotations = None
+        if read_only is not None or open_world is not None:
+            annotations = SimpleNamespace(readOnlyHint=read_only, openWorldHint=open_world)
+
+        integrity, max_conf, accepts_untrusted = _map_mcp_annotations_to_labels(
+            annotations,
+            default_integrity=default_integrity,
+        )
+
+        assert integrity == expected_integrity
+        assert max_conf == expected_max_conf
+        assert accepts_untrusted is expected_accepts
+
+    def test_map_missing_annotations_defaults_to_sink(self):
+        from agent_framework.security import _map_mcp_annotations_to_labels
+
+        integrity, max_conf, accepts_untrusted = _map_mcp_annotations_to_labels(None)
+        assert integrity == IntegrityLabel.UNTRUSTED
+        assert max_conf == ConfidentialityLabel.PUBLIC
+        assert accepts_untrusted is False
+
+
+# ---------------------------------------------------------------------------
 # IFC labels from MCP _meta payload
 # ---------------------------------------------------------------------------
 
@@ -2694,7 +2749,7 @@ class TestMCPIFCMetaLabels:
     Covers:
       * ``_label_from_mcp_meta`` parsing (well-formed, missing, malformed).
       * ``MCPTool._parse_tool_result_from_mcp`` propagating ``_meta`` onto
-        every Content via the ``__mcp_result_meta__`` sentinel.
+                every Content via the ``_meta`` key.
       * ``_stamp_mcp_content_labels`` enforcing server-wins-over-static with
         a static fallback when the server omits/misformats ``_meta.ifc``.
       * ``SecureMCPToolProxy`` wrapping each ``FunctionTool`` so an MCP tool
@@ -2739,7 +2794,7 @@ class TestMCPIFCMetaLabels:
         assert _label_from_mcp_meta(meta) is None
 
     def test_parse_tool_result_propagates_meta(self):
-        """``_parse_tool_result_from_mcp`` stamps ``__mcp_result_meta__`` on each Content."""
+        """``_parse_tool_result_from_mcp`` stamps ``_meta`` on each Content."""
         from mcp import types as mcp_types
 
         from agent_framework._mcp import MCPTool
@@ -2755,7 +2810,7 @@ class TestMCPIFCMetaLabels:
         contents = helper._parse_tool_result_from_mcp(mcp_result)
         assert len(contents) == 2
         for c in contents:
-            meta = c.additional_properties.get("__mcp_result_meta__")
+            meta = c.additional_properties.get("_meta")
             assert meta == {
                 "ifc": {"integrity": "untrusted", "confidentiality": "public"},
                 "tracing": {"span": "abc"},
@@ -2769,7 +2824,7 @@ class TestMCPIFCMetaLabels:
         helper = MCPTool(name="helper")
         mcp_result = mcp_types.CallToolResult(content=[mcp_types.TextContent(type="text", text="hi")])
         contents = helper._parse_tool_result_from_mcp(mcp_result)
-        assert "__mcp_result_meta__" not in contents[0].additional_properties
+        assert "_meta" not in contents[0].additional_properties
 
     def test_stamp_contents_server_wins_over_static(self):
         from agent_framework.security import _stamp_mcp_content_labels
@@ -2779,7 +2834,7 @@ class TestMCPIFCMetaLabels:
             Content.from_text(
                 "x",
                 additional_properties={
-                    "__mcp_result_meta__": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}
+                    "_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}
                 },
             )
         ]
@@ -2790,7 +2845,7 @@ class TestMCPIFCMetaLabels:
             "confidentiality": "private",
         }
         # Sentinel is consumed.
-        assert "__mcp_result_meta__" not in contents[0].additional_properties
+        assert "_meta" not in contents[0].additional_properties
 
     def test_stamp_contents_missing_meta_falls_back_to_static(self):
         from agent_framework.security import _stamp_mcp_content_labels
@@ -2811,7 +2866,7 @@ class TestMCPIFCMetaLabels:
             Content.from_text(
                 "x",
                 additional_properties={
-                    "__mcp_result_meta__": {"ifc": {"integrity": "bogus", "confidentiality": "public"}}
+                    "_meta": {"ifc": {"integrity": "bogus", "confidentiality": "public"}}
                 },
             )
         ]
@@ -2820,7 +2875,7 @@ class TestMCPIFCMetaLabels:
             "integrity": "trusted",
             "confidentiality": "public",
         }
-        assert "__mcp_result_meta__" not in contents[0].additional_properties
+        assert "_meta" not in contents[0].additional_properties
 
     def test_stamp_contents_non_ifc_meta_falls_back_to_static(self):
         """Generic ``_meta`` keys unrelated to IFC don't accidentally produce a label."""
@@ -2830,7 +2885,7 @@ class TestMCPIFCMetaLabels:
         contents = [
             Content.from_text(
                 "x",
-                additional_properties={"__mcp_result_meta__": {"tracing": {"span": "abc"}}},
+                additional_properties={"_meta": {"tracing": {"span": "abc"}}},
             )
         ]
         _stamp_mcp_content_labels(contents, static)
@@ -2843,7 +2898,7 @@ class TestMCPIFCMetaLabels:
         from agent_framework.security import _stamp_mcp_content_labels
 
         static = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
-        meta = {"__mcp_result_meta__": {"ifc": {"integrity": "untrusted", "confidentiality": "public"}}}
+        meta = {"_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "public"}}}
         contents = [Content.from_text(str(i), additional_properties=dict(meta)) for i in range(3)]
         _stamp_mcp_content_labels(contents, static)
         for c in contents:
@@ -2862,7 +2917,7 @@ class TestMCPIFCMetaLabels:
                 Content.from_text(
                     "payload",
                     additional_properties={
-                        "__mcp_result_meta__": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}
+                        "_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}
                     },
                 )
             ]
@@ -2925,7 +2980,7 @@ class TestMCPIFCMetaLabels:
                 Content.from_text(
                     "wrote item",
                     additional_properties={
-                        "__mcp_result_meta__": {"ifc": {"integrity": "trusted", "confidentiality": "private"}}
+                        "_meta": {"ifc": {"integrity": "trusted", "confidentiality": "private"}}
                     },
                 )
             ]

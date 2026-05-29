@@ -349,9 +349,9 @@ class MCPTool:
         If the server attached a ``_meta`` payload to the tool result (e.g. for
         Information Flow Control labels under the ``ifc`` key), a copy of that
         payload is stamped onto each produced :class:`Content` instance under
-        ``additional_properties["__mcp_result_meta__"]``.  Downstream layers
-        (such as :class:`agent_framework.security.SecureMCPToolProxy`) consume
-        this sentinel to derive per-item security labels and then remove it.
+        ``additional_properties["_meta"]``.  Downstream layers (such as
+        :class:`agent_framework.security.SecureMCPToolProxy`) consume this key
+        to derive per-item security labels.
         The sentinel is intentionally generic so any MCP server's ``_meta``
         keys (current or future) can be interpreted by higher-level code.
         """
@@ -365,7 +365,7 @@ class MCPTool:
                 return content
             content.additional_properties = {
                 **(content.additional_properties or {}),
-                "__mcp_result_meta__": dict(meta),
+                "_meta": dict(meta),
             }
             return content
 
