@@ -598,15 +598,18 @@ async def _fetch_output_items(
             output_text: str | None = None
             response_id: str | None = None
 
-            sample = oi.sample
-            if sample is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                err = sample.error
-                if err is not None and (err.code or err.message):  # pyright: ignore[reportUnnecessaryComparison]
+            # mypy infers oi.sample as dict[str, object] | None, but the
+            # OpenAI SDK actually returns a typed Sample model. Cast to Any so
+            # both type checkers accept the attribute access pattern.
+            oi_sample: Any = oi.sample
+            if oi_sample is not None:
+                err = oi_sample.error
+                if err is not None and (err.code or err.message):
                     error_code = err.code or None
                     error_message = err.message or None
 
-                usage = sample.usage
-                if usage is not None and usage.total_tokens:  # pyright: ignore[reportUnnecessaryComparison]
+                usage = oi_sample.usage
+                if usage is not None and usage.total_tokens:
                     token_usage = {
                         "prompt_tokens": usage.prompt_tokens,
                         "completion_tokens": usage.completion_tokens,
@@ -615,13 +618,13 @@ async def _fetch_output_items(
                     }
 
                 # Extract input/output text
-                if sample.input:
-                    parts = [si.content for si in sample.input if si.role == "user"]
+                if oi_sample.input:
+                    parts = [si.content for si in oi_sample.input if si.role == "user"]
                     if parts:
                         input_text = " ".join(parts)
 
-                if sample.output:
-                    parts = [so.content or "" for so in sample.output if so.role == "assistant"]
+                if oi_sample.output:
+                    parts = [so.content or "" for so in oi_sample.output if so.role == "assistant"]
                     if parts:
                         output_text = " ".join(parts)
 
