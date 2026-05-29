@@ -11,7 +11,6 @@ security model, middleware behavior, and API reference.
 |--------|-------|--------------|
 | `email_security_example.py` | Prompt injection defense | `SecureAgentConfig`, Foundry-backed email handling, `quarantined_llm`, and approval on policy violations |
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
-| `github_mcp_labels_example.py` | GitHub MCP metadata label parsing | `MCPStdioTool`, GitHub MCP label extraction, security label parsing, and post-tool-call policy enforcement |
 | `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
 
 ## Prerequisites
@@ -26,12 +25,6 @@ environment available.
 
 These samples use Azure OpenAI for the main agent and keep the quarantine
 client pinned to `gpt-4o-mini` where applicable.
-
-For `github_mcp_labels_example.py`, set:
-
-- `GITHUB_MCP_SERVER_PATH` (full path to the GitHub MCP server binary)
-- `AZURE_OPENAI_ENDPOINT` or `AZURE_ENDPOINT`
-- GitHub Personal Access Token in `samples/02-agents/security/.github_token`
 
 For `github_mcp_example.py`, set:
 
@@ -94,35 +87,21 @@ What to look for:
 - Reading private content taints the context as private
 - Posting private data to a public destination triggers an approval request
 
-### `github_mcp_labels_example.py`
-
-This sample connects to the local GitHub MCP server binary through
-`MCPStdioTool`, reads security labels returned in MCP metadata, and shows how
-FIDES middleware can enforce policy after tool calls.
-
-Run it with:
-
-```bash
-uv run samples/02-agents/security/github_mcp_labels_example.py
-```
-
-What to look for:
-
-- GitHub MCP responses include per-field security labels in metadata
-- Untrusted fields are parsed and tracked by the security middleware
-- Write attempts from tainted context can be blocked by policy enforcement
-
 ### `github_mcp_example.py`
 
-This sample connects directly to `https://api.githubcopilot.com/mcp/` through
+This sample connects directly to `https://api.githubcopilot.com/mcp/insiders` through
 `MCPStreamableHTTPTool`, then wraps the MCP client in `SecureMCPToolProxy` so
-FIDES middleware can inspect tool results and enforce policy locally.
+FIDES middleware can inspect tool results and enforce policy locally. The github
+MCP with /insiders endpoint is used because it includes security-relevant
+ annotations in the tool metadata and results.
 
 Run it with:
 
 ```bash
-uv run samples/02-agents/security/github_mcp_example.py
-uv run samples/02-agents/security/github_mcp_example.py --attack
+uv run samples/02-agents/security/github_mcp_example.py --cli
+uv run samples/02-agents/security/github_mcp_example.py --cli --attack
+uv run samples/02-agents/security/github_mcp_example.py --devui
+uv run samples/02-agents/security/github_mcp_example.py --devui --debug
 ```
 
 What to look for:
