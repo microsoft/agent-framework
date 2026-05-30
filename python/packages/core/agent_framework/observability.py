@@ -2200,6 +2200,36 @@ def _capture_messages(
         span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions, ensure_ascii=False))
 
 
+def _make_json_safe(obj: Any) -> Any:
+    """Recursively convert an object to a JSON-serializable representation."""
+    from dataclasses import is_dataclass, asdict
+    from datetime import date, datetime
+
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if is_dataclass(obj):
+        return _make_json_safe(asdict(obj))
+    if hasattr(obj, "model_dump"):
+        return _make_json_safe(obj.model_dump())
+    if hasattr(obj, "to_dict"):
+        return _make_json_safe(obj.to_dict())
+    if hasattr(obj, "dict"):
+        return _make_json_safe(obj.dict())
+    if hasattr(obj, "__dict__"):
+        return {key: _make_json_safe(value) for key, value in vars(obj).items()}
+    if isinstance(obj, (list, tuple)):
+        return [_make_json_safe(item) for item in obj]
+    if isinstance(obj, dict):
+        return {key: _make_json_safe(value) for key, value in obj.items()}
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError):
+        return str(obj)
+
+
 def _to_otel_message(message: Message) -> dict[str, Any]:
     """Create a otel representation of a message."""
     return {"role": message.role, "parts": [_to_otel_part(content) for content in message.contents]}
@@ -2229,12 +2259,17 @@ def _to_otel_part(content: Content) -> dict[str, Any] | None:
                 "modality": content.media_type.split("/")[0] if content.media_type else None,
             }
         case "function_call":
-            return {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}
+            return {
+                "type": "tool_call",
+                "id": content.call_id,
+                "name": content.name,
+                "arguments": _make_json_safe(content.arguments),
+            }
         case "function_result":
             return {
                 "type": "tool_call_response",
                 "id": content.call_id,
-                "response": content.result if content.result is not None else "",
+                "response": _make_json_safe(content.result) if content.result is not None else "",
             }
         case _:
             # GenericPart in otel output messages json spec.
