@@ -69,7 +69,7 @@ public abstract class AgentSessionStore
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>
     /// A task that represents the asynchronous retrieval operation.
-    /// The task result contains the serialized session state, or <see langword="null"/> if not found.
+    /// The task result contains the serialized session state. If the session is not found, a new session is created and returned.
     /// </returns>
     public abstract ValueTask<AgentSession> GetSessionAsync(
         AIAgent agent,
