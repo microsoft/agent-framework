@@ -1973,11 +1973,80 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
     contents.extend(coalesced_contents)
 
 
+def _coalesce_code_interpreter_tool_calls(contents: list[Content]) -> None:
+    """Coalesce code_interpreter_tool_call items with the same call_id, keeping the most complete chunk.
+
+    The winning chunk stays at its original position so that relative ordering
+    with non-CI items is preserved.
+    """
+    best_idx: dict[str, int] = {}
+    drop_indices: set[int] = set()
+    for i, content in enumerate(contents):
+        if content.type != "code_interpreter_tool_call" or not content.call_id:
+            continue
+        cid = content.call_id
+        if cid in best_idx:
+            prev = best_idx[cid]
+            if _code_interpreter_chunk_is_more_complete(content, contents[prev]):
+                drop_indices.add(prev)
+                best_idx[cid] = i
+            else:
+                drop_indices.add(i)
+        else:
+            best_idx[cid] = i
+    if not drop_indices:
+        return
+    for idx in sorted(drop_indices, reverse=True):
+        contents.pop(idx)
+
+
+def _get_ci_chunk_content_length(content: Content) -> int:
+    """Return the total text length across all inputs of a code_interpreter_tool_call."""
+    if not content.inputs:
+        return 0
+    total = 0
+    for inp in content.inputs:
+        if inp.type == "text" and inp.text:
+            total += len(inp.text)
+    return total
+
+
+def _code_interpreter_chunk_is_more_complete(a: Content, b: Content) -> bool:
+    """Return True if 'a' is more complete than 'b'.
+
+    Comparison order:
+    1. A chunk with a valid int sequence_number beats one without.
+    2. Higher sequence_number wins when both have one.
+    3. Fallback: longer total input text wins.
+    """
+    seq_a = _try_parse_seq(a)
+    seq_b = _try_parse_seq(b)
+    if seq_a is not None and seq_b is None:
+        return True
+    if seq_b is not None and seq_a is None:
+        return False
+    if seq_a is not None and seq_b is not None:
+        return seq_a > seq_b
+    return _get_ci_chunk_content_length(a) > _get_ci_chunk_content_length(b)
+
+
+def _try_parse_seq(content: Content) -> int | None:
+    """Extract and validate sequence_number from additional_properties."""
+    val = content.additional_properties.get("sequence_number")
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+
 def _finalize_response(response: ChatResponse | AgentResponse) -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
+        _coalesce_code_interpreter_tool_calls(msg.contents)
 
 
 # region ContinuationToken

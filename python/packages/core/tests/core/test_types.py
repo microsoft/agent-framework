@@ -1740,6 +1740,129 @@ def test_coalesce_text_reasoning_with_different_ids():
     assert contents[1].text == "Thinking B1 B2"
 
 
+def test_coalesce_code_interpreter_tool_calls_keeps_most_complete():
+    """Test that code_interpreter_tool_call chunks with same call_id coalesce to the most complete one."""
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    c1 = Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text("import ")])
+    c1.additional_properties["sequence_number"] = 1
+    c2 = Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text("import pandas")])
+    c2.additional_properties["sequence_number"] = 2
+
+    contents = [c1, c2]
+    _coalesce_code_interpreter_tool_calls(contents)
+    assert len(contents) == 1
+    assert contents[0].inputs[0].text == "import pandas"
+
+
+def test_coalesce_code_interpreter_tool_calls_groups_by_call_id():
+    """Test that multiple distinct call_ids each keep their own winning chunk."""
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    c1 = Content.from_code_interpreter_tool_call(call_id="ci_a", inputs=[Content.from_text("a1")])
+    c1.additional_properties["sequence_number"] = 1
+    c2 = Content.from_code_interpreter_tool_call(call_id="ci_a", inputs=[Content.from_text("a2")])
+    c2.additional_properties["sequence_number"] = 2
+    c3 = Content.from_code_interpreter_tool_call(call_id="ci_b", inputs=[Content.from_text("b1")])
+    c3.additional_properties["sequence_number"] = 1
+
+    contents = [c1, c2, c3]
+    _coalesce_code_interpreter_tool_calls(contents)
+    assert len(contents) == 2
+    assert contents[0].inputs[0].text == "a2"
+    assert contents[1].inputs[0].text == "b1"
+
+
+def test_coalesce_code_interpreter_tool_calls_preserves_non_ci_items():
+    """Test that non-CI items are preserved during coalescing."""
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    text_before = Content.from_text("before")
+    ci1 = Content.from_code_interpreter_tool_call(call_id="ci_x", inputs=[Content.from_text("short")])
+    ci1.additional_properties["sequence_number"] = 1
+    ci2 = Content.from_code_interpreter_tool_call(call_id="ci_x", inputs=[Content.from_text("longer_code")])
+    ci2.additional_properties["sequence_number"] = 2
+    text_after = Content.from_text("after")
+
+    contents = [text_before, ci1, ci2, text_after]
+    _coalesce_code_interpreter_tool_calls(contents)
+    assert len(contents) == 3
+    assert contents[0].text == "before"
+    assert contents[2].text == "after"
+
+
+def test_coalesce_code_interpreter_tool_calls_no_sequence_number():
+    """Test fallback to longest text when sequence_number is absent."""
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    c1 = Content.from_code_interpreter_tool_call(call_id="ci_y", inputs=[Content.from_text("short")])
+    c2 = Content.from_code_interpreter_tool_call(call_id="ci_y", inputs=[Content.from_text("longer_script")])
+
+    contents = [c1, c2]
+    _coalesce_code_interpreter_tool_calls(contents)
+    assert len(contents) == 1
+    assert contents[0].inputs[0].text == "longer_script"
+
+
+def test_coalesce_code_interpreter_tool_calls_single_call_is_noop():
+    """Test that a single CI call is unchanged."""
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    c1 = Content.from_code_interpreter_tool_call(call_id="ci_z", inputs=[Content.from_text("print(1)")])
+    c1.additional_properties["sequence_number"] = 1
+
+    contents = [c1]
+    _coalesce_code_interpreter_tool_calls(contents)
+    assert len(contents) == 1
+    assert contents[0].inputs[0].text == "print(1)"
+
+
+def test_coalesce_code_interpreter_tool_calls_non_contiguous():
+    """Test that non-contiguous CI chunks with the same call_id are coalesced and ordering preserved."""
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    ci1 = Content.from_code_interpreter_tool_call(call_id="ci_x", inputs=[Content.from_text("short")])
+    ci1.additional_properties["sequence_number"] = 1
+    other = Content.from_text("interleaved")
+    ci2 = Content.from_code_interpreter_tool_call(call_id="ci_x", inputs=[Content.from_text("longer_code")])
+    ci2.additional_properties["sequence_number"] = 2
+
+    contents = [ci1, other, ci2]
+    _coalesce_code_interpreter_tool_calls(contents)
+    assert len(contents) == 2
+    assert contents[0].text == "interleaved"
+    assert contents[1].inputs[0].text == "longer_code"
+
+
+def test_coalesce_code_interpreter_tool_calls_mixed_seq_presence():
+    """Test that a chunk with sequence_number beats one without, regardless of text length."""
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    no_seq = Content.from_code_interpreter_tool_call(call_id="ci_y", inputs=[Content.from_text("longer_text_without_seq")])
+    has_seq = Content.from_code_interpreter_tool_call(call_id="ci_y", inputs=[Content.from_text("short")])
+    has_seq.additional_properties["sequence_number"] = 5
+
+    contents = [no_seq, has_seq]
+    _coalesce_code_interpreter_tool_calls(contents)
+    assert len(contents) == 1
+    assert contents[0].inputs[0].text == "short"
+
+
+def test_coalesce_code_interpreter_tool_calls_string_sequence_number():
+    """Test that string-typed sequence_number values are handled correctly."""
+    from agent_framework._types import _coalesce_code_interpreter_tool_calls
+
+    c1 = Content.from_code_interpreter_tool_call(call_id="ci_z", inputs=[Content.from_text("first")])
+    c1.additional_properties["sequence_number"] = "1"
+    c2 = Content.from_code_interpreter_tool_call(call_id="ci_z", inputs=[Content.from_text("second")])
+    c2.additional_properties["sequence_number"] = "2"
+
+    contents = [c1, c2]
+    _coalesce_code_interpreter_tool_calls(contents)
+    assert len(contents) == 1
+    assert contents[0].inputs[0].text == "second"
+
+
 def test_comprehensive_to_dict_exclude_options():
     """Test to_dict methods with various exclude options for better coverage."""
 
