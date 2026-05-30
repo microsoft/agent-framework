@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.6.0"
+version = "1.7.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.6.0",
+    "agent-framework-core[all]==1.7.0",
 ]
 
 [dependency-groups]
@@ -54,7 +54,9 @@ package = false
 prerelease = "if-necessary-or-explicit"
 # Security floors for transitive deps; overrides bypass litellm[proxy]'s strict pins.
 constraint-dependencies = ["litellm>=1.83.7", "fastapi-sso>=0.19.0"]
-override-dependencies = ["mcp[ws]>=1.27.0", "uvicorn[standard]>=0.34.0"]
+# Allow opentelemetry-semantic-conventions 0.61b0 for mistralai compatibility
+# (mistralai pins <0.61 but 0.61b0 is compatible at runtime).
+override-dependencies = ["mcp[ws]>=1.27.0", "uvicorn[standard]>=0.34.0", "opentelemetry-semantic-conventions>=0.60b1"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -88,6 +90,7 @@ agent-framework-github-copilot = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
+agent-framework-mistral = { workspace = true }
 agent-framework-monty = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-openai = { workspace = true }
@@ -211,6 +214,7 @@ executionEnvironments = [
     { root = "packages/lab/lightning/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/tau2/tests", reportPrivateUsage = "none" },
     { root = "packages/mem0/tests", reportPrivateUsage = "none" },
+    { root = "packages/mistral/tests", reportPrivateUsage = "none" },
     { root = "packages/ollama/tests", reportPrivateUsage = "none" },
     { root = "packages/orchestrations/tests", reportPrivateUsage = "none" },
     { root = "packages/purview/tests", reportPrivateUsage = "none" },

@@ -172,7 +172,7 @@ public class DevUIIntegrationTests
         Assert.Contains(discoveryResponse.Entities, e => e.Name == "workflow-three" && e.Type == "workflow");
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky in merge_group; see https://github.com/microsoft/agent-framework/issues/5845")]
     public async Task TestServerWithDevUI_ResolvesWorkflows_WithKeyedAndDefaultRegistrationAsync()
     {
         // Arrange

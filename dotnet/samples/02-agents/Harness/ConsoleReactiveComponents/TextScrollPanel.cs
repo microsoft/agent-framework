@@ -17,16 +17,19 @@ public record TextScrollPanelProps : ConsoleReactiveProps
 /// <summary>
 /// State for <see cref="TextScrollPanel"/>.
 /// </summary>
-/// <param name="RenderedCount">The number of items already rendered.</param>
-public record TextScrollPanelState(int RenderedCount = 0) : ConsoleReactiveState;
+public record TextScrollPanelState : ConsoleReactiveState;
 
 /// <summary>
 /// A component that renders pre-rendered string items within a scroll area.
-/// All items are considered finalized — only new items since the last render are output.
-/// Use <see cref="Reset"/> to force a full re-render.
+/// The last rendered item is considered dynamic and will be re-rendered on each call.
+/// All prior items are considered finalized and are not re-rendered.
+/// Use <see cref="Invalidate"/> to force a full re-render.
 /// </summary>
 public class TextScrollPanel : ConsoleReactiveComponent<TextScrollPanelProps, TextScrollPanelState>
 {
+    private int _renderedCount;
+    private int _lastItemOffsetFromBottom;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="TextScrollPanel"/> class.
     /// </summary>
@@ -35,12 +38,12 @@ public class TextScrollPanel : ConsoleReactiveComponent<TextScrollPanelProps, Te
         this.State = new TextScrollPanelState();
     }
 
-    /// <summary>
-    /// Resets the panel so all items will be re-rendered on the next Render call.
-    /// </summary>
-    public void Reset()
+    /// <inheritdoc />
+    public override void Invalidate()
     {
-        this.State = new TextScrollPanelState();
+        this._renderedCount = 0;
+        this._lastItemOffsetFromBottom = 0;
+        base.Invalidate();
     }
 
     /// <inheritdoc />
@@ -51,16 +54,35 @@ public class TextScrollPanel : ConsoleReactiveComponent<TextScrollPanelProps, Te
             return;
         }
 
-        // Move cursor to the bottom of the scroll area
-        Console.Write(AnsiEscapes.MoveCursor(props.Y + props.Height - 1, props.X));
+        int bottomRow = props.Y + props.Height - 1;
 
-        // Output only new items since last rendered
-        for (int i = state.RenderedCount; i < props.Items.Count; i++)
+        // Determine the first item to render. If we previously rendered items,
+        // re-render the last one (it may have changed/grown) from its stored position.
+        int startIndex = this._renderedCount > 0 ? this._renderedCount - 1 : 0;
+
+        if (this._renderedCount > 0 && this._lastItemOffsetFromBottom > 0)
+        {
+            // Reposition cursor to where the last rendered item began
+            Console.Write(AnsiEscapes.MoveCursor(bottomRow - this._lastItemOffsetFromBottom, props.X));
+        }
+        else
+        {
+            // First render — position at the bottom of the scroll area
+            Console.Write(AnsiEscapes.MoveCursor(bottomRow, props.X));
+        }
+
+        // Render from startIndex onwards
+        for (int i = startIndex; i < props.Items.Count; i++)
         {
             Console.Write(props.Items[i]);
         }
 
-        // Update state to track what we've rendered
-        this.State = new TextScrollPanelState(props.Items.Count);
+        // Calculate the offset from bottom for the start of the new last item,
+        // accounting for terminal line wrapping at the available width.
+        int lastItemLines = AnsiEscapes.CountPhysicalLines(props.Items[^1], props.Width);
+        this._lastItemOffsetFromBottom = lastItemLines > 0 ? lastItemLines - 1 : 0;
+
+        // Update rendered count
+        this._renderedCount = props.Items.Count;
     }
 }

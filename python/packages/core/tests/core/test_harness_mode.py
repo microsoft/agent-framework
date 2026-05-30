@@ -95,8 +95,10 @@ async def test_agent_mode_context_provider_normalizes_custom_modes(
     )
     instructions = options["instructions"]
     assert isinstance(instructions, str)
-    assert '"Draft": Draft it.' in instructions
-    assert '"Final": Finalize it.' in instructions
+    assert "#### Draft" in instructions
+    assert "Draft it." in instructions
+    assert "#### Final" in instructions
+    assert "Finalize it." in instructions
     assert "You are currently operating in the draft mode." in instructions
 
     assert (
@@ -125,8 +127,8 @@ async def test_agent_mode_context_provider_serializes_tool_outputs_as_json(
     )
     tools = options["tools"]
     assert isinstance(tools, list)
-    get_mode_tool = _tool_by_name(tools, "get_mode")
-    set_mode_tool = _tool_by_name(tools, "set_mode")
+    get_mode_tool = _tool_by_name(tools, "mode_get")
+    set_mode_tool = _tool_by_name(tools, "mode_set")
 
     initial_mode = await get_mode_tool.invoke()
     assert json.loads(initial_mode[0].text) == {"mode": mode_name}
@@ -152,13 +154,13 @@ async def test_agent_mode_context_provider_updates_agent_mode(
     instructions = options["instructions"]
     assert isinstance(instructions, str)
     assert "## Agent Mode" in instructions
-    assert "Use the set_mode tool to switch between modes as your work progresses." in instructions
+    assert "Use the mode_set tool to switch between modes as your work progresses." in instructions
     assert "ask clarifying questions, discuss options, and get user approval before proceeding" in instructions
-    assert "If you encounter ambiguity, choose the most reasonable option and note your choice" in instructions
+    assert "If you encounter ambiguity" in instructions
     assert "You are currently operating in the plan mode." in instructions
 
-    get_mode_tool = _tool_by_name(tools, "get_mode")
-    set_mode_tool = _tool_by_name(tools, "set_mode")
+    get_mode_tool = _tool_by_name(tools, "mode_get")
+    set_mode_tool = _tool_by_name(tools, "mode_set")
 
     initial_mode = await get_mode_tool.invoke()
     assert json.loads(initial_mode[0].text) == {"mode": "plan"}
@@ -218,13 +220,13 @@ async def test_agent_mode_provider_injects_user_message_after_external_change(
     provider = AgentModeProvider()
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    # First run: agent uses set_mode tool to switch to execute. The tool path must NOT queue a
+    # First run: agent uses mode_set tool to switch to execute. The tool path must NOT queue a
     # notification because the agent already saw its own tool call in the chat history.
     _, first_options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Plan first."])],
     )
-    set_mode_tool = _tool_by_name(first_options["tools"], "set_mode")
+    set_mode_tool = _tool_by_name(first_options["tools"], "mode_set")
     await set_mode_tool.invoke(arguments={"mode": "execute"})
     assert "previous_mode_for_notification" not in session.state[provider.source_id]
 

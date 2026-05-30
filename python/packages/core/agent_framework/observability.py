@@ -1332,6 +1332,22 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         self.duration_histogram = _get_duration_histogram()
         self.otel_provider_name = otel_provider_name or getattr(self, "OTEL_PROVIDER_NAME", "unknown")
 
+    @staticmethod
+    def _backfill_request_model(span: trace.Span, attributes: dict[str, Any]) -> None:
+        """Backfill REQUEST_MODEL and the span name from RESPONSE_MODEL when unknown.
+
+        Chat-completion spans use REQUEST_MODEL as part of the span name. If the
+        request model was not known at span creation time (e.g. the client could
+        not resolve it before sending the request), update both the attribute and
+        the span name to the actual model returned in the response. Mutates
+        ``attributes`` in place.
+        """
+        response_model = attributes.get(OtelAttr.RESPONSE_MODEL)
+        if response_model and attributes.get(OtelAttr.REQUEST_MODEL, "unknown") == "unknown":
+            attributes[OtelAttr.REQUEST_MODEL] = response_model
+            operation = attributes.get(OtelAttr.OPERATION, "operation")
+            span.update_name(f"{operation} {response_model}")
+
     @overload
     def get_response(
         self,
@@ -1480,6 +1496,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     response: ChatResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(attributes, response)
+                    self._backfill_request_model(span, response_attributes)
                     _capture_response(
                         span=span,
                         attributes=response_attributes,
@@ -1549,6 +1566,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     raise
                 duration = perf_counter() - start_time_stamp
                 response_attributes = _get_response_attributes(attributes, response)
+                self._backfill_request_model(span, response_attributes)
                 _capture_response(
                     span=span,
                     attributes=response_attributes,

@@ -38,6 +38,7 @@ AIAgent agent = scenario switch
     "memory" => await CreateMemoryAgentAsync(projectClient, deployment).ConfigureAwait(false),
     "azure-search-rag" => CreateAzureSearchRagAgent(projectClient, deployment),
     "session-files" => CreateSessionFilesAgent(projectClient, deployment),
+    "agent-skills" => CreateAgentSkillsAgent(projectClient, deployment),
     _ => throw new InvalidOperationException($"Unknown IT_SCENARIO '{scenario}'.")
 };
 
@@ -208,6 +209,77 @@ static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string
         AIContextProviders = [memoryProvider]
     });
 }
+
+// Agent skills scenario. Uses AgentSkillsProvider with two bundled Contoso Outdoors skills
+// (support-style + escalation-policy). Skills are loaded from embedded SKILL.md files on disk,
+// simulating the download-from-Foundry pattern used by the Hosted-AgentSkills sample. When the
+// container starts, it writes the skills to a temp directory and wires AgentSkillsProvider over it.
+#pragma warning disable MEAI001 // AgentSkillsProvider is experimental
+static AIAgent CreateAgentSkillsAgent(AIProjectClient client, string deployment)
+{
+    string skillsDir = Path.Combine(Path.GetTempPath(), "it-agent-skills-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(skillsDir, "support-style"));
+    Directory.CreateDirectory(Path.Combine(skillsDir, "escalation-policy"));
+
+    File.WriteAllText(Path.Combine(skillsDir, "support-style", "SKILL.md"),
+        """
+        ---
+        name: support-style
+        description: Contoso Outdoors customer-support tone and formatting guidelines.
+        ---
+
+        # Contoso Outdoors Support Style
+
+        You are speaking on behalf of Contoso Outdoors customer support.
+
+        ## Voice
+
+        - Warm, concise, and confident.
+        - Use the customer's name when known.
+        - Sign every response with `— Contoso Outdoors Support`.
+
+        ## Canary
+
+        To prove this skill was loaded, include the token `STYLE-CANARY-3318` on a
+        separate line at the bottom of every response, prefixed with `# `.
+        """);
+
+    File.WriteAllText(Path.Combine(skillsDir, "escalation-policy", "SKILL.md"),
+        """
+        ---
+        name: escalation-policy
+        description: When and how to escalate Contoso Outdoors customer-support tickets.
+        ---
+
+        # Contoso Outdoors Escalation Policy
+
+        ## Escalate immediately when the customer
+
+        - Reports an injury or safety incident.
+        - Mentions legal action, regulators, or the press.
+        - Requests a refund larger than $500.
+
+        ## How to escalate
+
+        1. Acknowledge the issue.
+        2. Tell the customer you are escalating to a senior specialist.
+        3. Provide the escalation reference `ESC-CANARY-7742`.
+        """);
+
+    var skillsProvider = new AgentSkillsProvider(skillsDir, scriptRunner: null);
+
+    return client.AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "agent-skills-agent",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deployment,
+            Instructions = "You are a customer-support assistant for Contoso Outdoors.",
+        },
+        AIContextProviders = [skillsProvider]
+    });
+}
+#pragma warning restore MEAI001
 
 [Description("Returns the current UTC date and time as an ISO 8601 string.")]
 static string GetUtcNow() => DateTime.UtcNow.ToString("o");

@@ -241,30 +241,47 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.CheckEnded();
         Throw.IfNull(output);
 
-        // Special-case AgentResponse and AgentResponseUpdate to create their specific event types
-        // and bypass the output filter (for backwards compatibility - these events were previously
-        // emitted directly via AddEventAsync without filtering)
-        if (output is AgentResponseUpdate update)
+        bool isAgentResponseShaped = output is AgentResponse or AgentResponseUpdate;
+
+        if (isAgentResponseShaped && !Futures.EnableAgentResponseOutputTaggingAndFiltering)
         {
-            await this.AddEventAsync(new AgentResponseUpdateEvent(sourceId, update), cancellationToken).ConfigureAwait(false);
-            return;
-        }
-        else if (output is AgentResponse response)
-        {
-            await this.AddEventAsync(new AgentResponseEvent(sourceId, response), cancellationToken).ConfigureAwait(false);
+            // Legacy bypass: AgentResponse/AgentResponseUpdate skip the output filter and are
+            // emitted as their typed event subclasses with no tags. Preserved verbatim for
+            // back-compat; once Futures.EnableAgentResponseOutputTaggingAndFiltering becomes the
+            // default in v2.0.0, this branch goes away.
+            WorkflowEvent typedEvent = output switch
+            {
+                AgentResponseUpdate u => new AgentResponseUpdateEvent(sourceId, u),
+                AgentResponse r => new AgentResponseEvent(sourceId, r),
+                _ => throw new InvalidOperationException("Unexpected AIAgent-shaped payload type."),
+            };
+            await this.AddEventAsync(typedEvent, cancellationToken).ConfigureAwait(false);
             return;
         }
 
         Executor sourceExecutor = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
-        if (!sourceExecutor.CanOutput(output.GetType()))
+        if (!isAgentResponseShaped && !sourceExecutor.CanOutput(output.GetType()))
         {
+            // AIAgent-shaped payloads bypass the per-executor declared-yield check (matching the
+            // legacy bypass branch above). The AIAgent host executor relays the agent's output
+            // without declaring AgentResponse(Update) in its Yields set, so a CanOutput probe
+            // here would always reject — but those payloads are always a valid output shape.
             throw new InvalidOperationException($"Cannot output object of type {output.GetType().Name}. Expecting one of [{string.Join(", ", sourceExecutor.OutputTypes)}].");
         }
 
-        if (this._outputFilter.CanOutput(sourceId, output))
+        if (!this._outputFilter.TryGetTags(sourceId, out HashSet<OutputTag>? tags))
         {
-            await this.AddEventAsync(new WorkflowOutputEvent(output, sourceId), cancellationToken).ConfigureAwait(false);
+            // Not designated as an output source — drop silently.
+            return;
         }
+
+        WorkflowOutputEvent evt = output switch
+        {
+            AgentResponseUpdate u => new AgentResponseUpdateEvent(sourceId, u, tags),
+            AgentResponse r => new AgentResponseEvent(sourceId, r, tags),
+            _ => new WorkflowOutputEvent(output, sourceId, tags),
+        };
+        await this.AddEventAsync(evt, cancellationToken).ConfigureAwait(false);
     }
 
     public IExternalRequestContext BindExternalRequestContext(string executorId)

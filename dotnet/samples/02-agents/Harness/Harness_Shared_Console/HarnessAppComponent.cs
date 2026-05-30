@@ -19,7 +19,6 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
     private readonly ListSelection _listSelection = new();
     private readonly TextInput _textInput = new();
     private readonly TextScrollPanel _textScrollPanel = new();
-    private readonly TextPanel _textPanel = new();
     private readonly TextPanel _queuedPanel = new();
     private readonly AgentStatus _agentStatus = new();
     private readonly AgentModeAndHelp _modeAndHelp = new();
@@ -29,6 +28,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
     private int _scrollRegionBottom;
     private bool _resizedSinceLastRender = true;
     private bool _deactivated;
+    private BottomPanelMode _lastRenderedBottomPanelMode;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HarnessAppComponent"/> class.
@@ -341,18 +341,8 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             return;
         }
 
-        // Determine the text panel height for the last scroll item
-        IReadOnlyList<string> lastItems = state.ScrollAreaContentItems.Count > 0
-            ? [state.ScrollAreaContentItems[^1]]
-            : [];
-        int textPanelHeight = TextPanel.CalculateHeight(lastItems);
-        if (textPanelHeight > 0)
-        {
-            textPanelHeight++; // Extra line for spacing between text panel and rule
-        }
-
         // Calculate queued items panel height
-        int queuedPanelHeight = TextPanel.CalculateHeight(state.QueuedItems);
+        int queuedPanelHeight = TextPanel.CalculateHeight(state.QueuedItems, state.ConsoleWidth);
 
         // Build the bottom panel child based on mode
         ConsoleReactiveComponent bottomChild;
@@ -417,6 +407,14 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             bottomChild = this._textInput;
         }
 
+        // When the bottom panel mode changes, the new child must repaint even if its
+        // props haven't changed — the screen area was overwritten by the previous child.
+        if (state.Mode != this._lastRenderedBottomPanelMode)
+        {
+            bottomChild.Invalidate();
+            this._lastRenderedBottomPanelMode = state.Mode;
+        }
+
         var ruleProps = new TopBottomRuleProps
         {
             Width = state.ConsoleWidth,
@@ -444,7 +442,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
         int modeAndHelpHeight = showStatusAndHelp ? AgentModeAndHelp.CalculateHeight(modeAndHelpProps) : 0;
 
         int ruleHeight = TopBottomRule.CalculateHeight(ruleProps);
-        int nonScrollHeight = ruleHeight + textPanelHeight + agentStatusHeight + queuedPanelHeight + modeAndHelpHeight + 1; // +1 for bottom padding
+        int nonScrollHeight = ruleHeight + agentStatusHeight + queuedPanelHeight + modeAndHelpHeight + 1; // +1 for bottom padding
         int scrollBottom = Math.Max(1, state.ConsoleHeight - nonScrollHeight);
 
         // If scroll region changed or a clear is needed, reset everything
@@ -455,52 +453,36 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             System.Console.Write(AnsiEscapes.ResetScrollRegion);
             System.Console.Write(AnsiEscapes.EraseEntireScreen);
             System.Console.Write(AnsiEscapes.EraseScrollbackBuffer);
-            this._textScrollPanel.Reset();
-            this._resizedSinceLastRender = false;
 
             // Invalidate all children so they re-render even if props haven't changed
             this._rule.Invalidate();
             this._textScrollPanel.Invalidate();
-            this._textPanel.Invalidate();
             this._queuedPanel.Invalidate();
             this._agentStatus.Invalidate();
             this._modeAndHelp.Invalidate();
             this._textInput.Invalidate();
             this._listSelection.Invalidate();
+
+            this._resizedSinceLastRender = false;
         }
 
         this._scrollRegionBottom = scrollBottom;
 
         System.Console.Write(AnsiEscapes.SetScrollRegion(scrollBottom));
 
-        // Render text scroll panel in the scroll area (all items except the last)
-        IReadOnlyList<string> scrollItems = state.ScrollAreaContentItems.Count > 1
-            ? state.ScrollAreaContentItems.Take(state.ScrollAreaContentItems.Count - 1).ToList()
-            : [];
-
+        // Render text scroll panel in the scroll area
         this._textScrollPanel.Props = new TextScrollPanelProps
         {
             X = 1,
             Y = 1,
             Width = state.ConsoleWidth,
             Height = scrollBottom,
-            Items = scrollItems,
+            Items = state.ScrollAreaContentItems,
         };
         this._textScrollPanel.Render();
 
-        // Render the text panel for the last (dynamic) item just below the scroll region
-        this._textPanel.Props = new TextPanelProps
-        {
-            X = 1,
-            Y = scrollBottom + 1,
-            Width = state.ConsoleWidth,
-            Height = textPanelHeight,
-            Items = lastItems,
-        };
-        this._textPanel.Render();
-
-        // Render queued input items between text panel and agent status
-        int queuedPanelY = scrollBottom + textPanelHeight + 1;
+        // Render queued input items between scroll area and agent status
+        int queuedPanelY = scrollBottom + 1;
         this._queuedPanel.Props = new TextPanelProps
         {
             X = 1,

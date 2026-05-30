@@ -2,6 +2,9 @@
 
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -50,11 +53,12 @@ public sealed class AgentFileSkill : AgentSkill
     /// block is appended with a per-script entry describing the expected argument format.
     /// The result is cached after the first access.
     /// </remarks>
-    public override string Content
+    public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
-        get => this._content ??= this._scripts is { Count: > 0 }
+        var content = this._content ??= this._scripts is { Count: > 0 }
             ? this._originalContent + AgentInlineSkillContentBuilder.BuildScriptsBlock(this._scripts)
             : this._originalContent;
+        return new(content);
     }
 
     /// <summary>
@@ -63,8 +67,16 @@ public sealed class AgentFileSkill : AgentSkill
     public string Path { get; }
 
     /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillResource> Resources => this._resources;
+    public override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
+    {
+        var resource = this._resources.FirstOrDefault(r => r.Name == name);
+        return new(resource);
+    }
 
     /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillScript> Scripts => this._scripts;
+    public override ValueTask<AgentSkillScript?> GetScriptAsync(string name, CancellationToken cancellationToken = default)
+    {
+        var script = this._scripts.FirstOrDefault(s => s.Name == name);
+        return new(script);
+    }
 }

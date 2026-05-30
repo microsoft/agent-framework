@@ -448,24 +448,36 @@ internal static class ChatResponseUpdateAGUIExtensions
         };
 
         string? currentMessageId = null;
-        string? streamingMessageId = null;
+        string? textStreamingFallback = null;
+        bool textInFallback = false;
         string? currentReasoningBaseId = null;
         string? currentReasoningId = null;
         string? currentReasoningMessageId = null;
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            // Generate a fallback MessageId when the provider doesn't supply one.
-            // This ensures all AGUI events have a valid messageId regardless of agent type.
-            if (string.IsNullOrWhiteSpace(chatResponse.MessageId))
+            // The text-event surface (TextMessageStart/Content/End) requires a non-empty
+            // MessageId to be valid AGUI. Generate a fallback scoped to a contiguous run of
+            // null/empty-MessageId chunks (one logical text message). Leave the raw
+            // chatResponse.MessageId untouched so the tool-call surface below uses the raw
+            // provider value — collapsing parallel tool calls under a synthetic shared parent
+            // would make the FE render them as one assistant-message bubble instead of
+            // distinct rows.
+            string? textMessageId = chatResponse.MessageId;
+            if (string.IsNullOrWhiteSpace(textMessageId))
             {
-                chatResponse.MessageId = ContainsToolResult(chatResponse)
-                    ? Guid.NewGuid().ToString("N")
-                    : (streamingMessageId ??= Guid.NewGuid().ToString("N"));
+                textStreamingFallback ??= Guid.NewGuid().ToString("N");
+                textMessageId = textStreamingFallback;
+                textInFallback = true;
+            }
+            else if (textInFallback)
+            {
+                textStreamingFallback = null;
+                textInFallback = false;
             }
 
             if (chatResponse is { Contents.Count: > 0 } &&
                 chatResponse.Contents[0] is TextContent &&
-                !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
+                !string.Equals(currentMessageId, textMessageId, StringComparison.Ordinal))
             {
                 // Close any open reasoning block before opening a text message, so AG-UI
                 // events are properly bracketed. MEAI providers share one MessageId across
@@ -498,11 +510,11 @@ internal static class ChatResponseUpdateAGUIExtensions
                 // Start the new message
                 yield return new TextMessageStartEvent
                 {
-                    MessageId = chatResponse.MessageId!,
+                    MessageId = textMessageId!,
                     Role = chatResponse.Role!.Value.Value
                 };
 
-                currentMessageId = chatResponse.MessageId;
+                currentMessageId = textMessageId;
             }
 
             // Emit text content if present
@@ -577,9 +589,15 @@ internal static class ChatResponseUpdateAGUIExtensions
                             currentReasoningMessageId = null;
                         }
 
+                        // Each tool result is a distinct tool-role message on the AGUI wire.
+                        // MEAI's FunctionInvokingChatClient shares one synthetic MessageId
+                        // across all FunctionResultContent items, but the FE keys messages
+                        // by id, so emitting them with the same id collapses them in React
+                        // reconciliation. Derive a unique, deterministic per-result id from
+                        // the (LLM-assigned) call id.
                         yield return new ToolCallResultEvent
                         {
-                            MessageId = chatResponse.MessageId,
+                            MessageId = $"result-{functionResultContent.CallId}",
                             ToolCallId = functionResultContent.CallId,
                             Content = SerializeResultContent(functionResultContent, jsonSerializerOptions) ?? "",
                             Role = AGUIRoles.Tool
@@ -674,7 +692,7 @@ internal static class ChatResponseUpdateAGUIExtensions
                             // Text content event
                             yield return new TextMessageContentEvent
                             {
-                                MessageId = chatResponse.MessageId!,
+                                MessageId = textMessageId!,
 #if !NET
                                 Delta = Encoding.UTF8.GetString(dataContent.Data.ToArray())
 #else
@@ -725,18 +743,5 @@ internal static class ChatResponseUpdateAGUIExtensions
             JsonElement jsonElement => jsonElement.GetRawText(),
             _ => JsonSerializer.Serialize(functionResultContent.Result, options.GetTypeInfo(functionResultContent.Result.GetType())),
         };
-    }
-
-    private static bool ContainsToolResult(ChatResponseUpdate chatResponse)
-    {
-        foreach (AIContent content in chatResponse.Contents)
-        {
-            if (content is FunctionResultContent)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

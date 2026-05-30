@@ -105,13 +105,13 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_ContainsNameDescriptionAndInstructions()
+    public async Task Content_ContainsNameDescriptionAndInstructionsAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Do the thing.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("<name>my-skill</name>", content);
@@ -120,13 +120,13 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_EscapesXmlCharacters()
+    public async Task Content_EscapesXmlCharactersAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "x<y>z\"w & it's more", "1 & 2 < 3");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("<name>my-skill</name>", content);
@@ -135,28 +135,28 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_IsCachedAcrossAccesses()
+    public async Task Content_IsCachedAcrossAccessesAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act
-        var first = skill.Content;
-        var second = skill.Content;
+        var first = await skill.GetContentAsync();
+        var second = await skill.GetContentAsync();
 
         // Assert
         Assert.Same(first, second);
     }
 
     [Fact]
-    public void Content_IncludesResourcesAddedBeforeFirstAccess()
+    public async Task Content_IncludesResourcesAddedBeforeFirstAccessAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddResource("config", "value1", "A config resource.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("<resources>", content);
@@ -164,14 +164,14 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_IncludesDelegateResourcesAddedBeforeFirstAccess()
+    public async Task Content_IncludesDelegateResourcesAddedBeforeFirstAccessAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddResource("dynamic", () => "hello");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("<resources>", content);
@@ -179,14 +179,14 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_IncludesScriptsAddedBeforeFirstAccess()
+    public async Task Content_IncludesScriptsAddedBeforeFirstAccessAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddScript("run", () => "result", "Runs something.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("<scripts>", content);
@@ -194,22 +194,22 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_IsCachedAndNotRebuilt()
+    public async Task Content_IsCachedAndNotRebuiltAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddResource("r1", "v1");
 
         // Act
-        var first = skill.Content;
-        var second = skill.Content;
+        var first = await skill.GetContentAsync();
+        var second = await skill.GetContentAsync();
 
         // Assert
         Assert.Same(first, second);
     }
 
     [Fact]
-    public void Content_IncludesResourcesAndScriptsAddedBeforeFirstAccess()
+    public async Task Content_IncludesResourcesAndScriptsAddedBeforeFirstAccessAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -217,7 +217,7 @@ public sealed class AgentInlineSkillTests
         skill.AddScript("s1", () => "ok");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("<resources>", content);
@@ -227,14 +227,14 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_ParametersSchema_IsXmlEscaped()
+    public async Task Content_ParametersSchema_IsXmlEscapedAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddScript("search", (string query, int limit) => $"found {limit} results for {query}");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert — JSON schema should be present and XML content chars escaped
         Assert.Contains("parameters_schema", content);
@@ -280,17 +280,103 @@ public sealed class AgentInlineSkillTests
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act & Assert
-        Assert.Null(skill.Resources);
+        Assert.Null(skill.GetTestResources());
     }
 
     [Fact]
-    public void Scripts_WhenNoneAdded_ReturnsNull()
+    public async Task Scripts_WhenNoneAdded_ReturnsNullAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act & Assert
-        Assert.Null(skill.Scripts);
+        Assert.Null(await skill.GetScriptAsync("nonexistent"));
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_ExistingName_ReturnsResourceAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+        skill.AddResource("r1", "v1");
+        skill.AddResource("r2", "v2");
+
+        // Act
+        var resource = await skill.GetResourceAsync("r2");
+
+        // Assert
+        Assert.NotNull(resource);
+        Assert.Equal("r2", resource!.Name);
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_NonExistingName_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+        skill.AddResource("r1", "v1");
+
+        // Act
+        var resource = await skill.GetResourceAsync("missing");
+
+        // Assert
+        Assert.Null(resource);
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_NoResourcesAdded_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+
+        // Act
+        var resource = await skill.GetResourceAsync("missing");
+
+        // Assert
+        Assert.Null(resource);
+    }
+
+    [Fact]
+    public async Task GetScriptAsync_ExistingName_ReturnsScriptAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+        skill.AddScript("s1", () => "first");
+        skill.AddScript("s2", () => "second");
+
+        // Act
+        var script = await skill.GetScriptAsync("s2");
+
+        // Assert
+        Assert.NotNull(script);
+        Assert.Equal("s2", script!.Name);
+    }
+
+    [Fact]
+    public async Task GetScriptAsync_NonExistingName_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+        skill.AddScript("s1", () => "ok");
+
+        // Act
+        var script = await skill.GetScriptAsync("missing");
+
+        // Assert
+        Assert.Null(script);
+    }
+
+    [Fact]
+    public async Task GetScriptAsync_NoScriptsAdded_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+
+        // Act
+        var script = await skill.GetScriptAsync("missing");
+
+        // Assert
+        Assert.Null(script);
     }
 
     [Fact]
@@ -333,13 +419,13 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_NoResourcesOrScripts_DoesNotContainResourcesOrScriptsTags()
+    public async Task Content_NoResourcesOrScripts_DoesNotContainResourcesOrScriptsTagsAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.DoesNotContain("<resources>", content);
@@ -347,58 +433,58 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_ResourcesAddedAfterCaching_AreNotIncluded()
+    public async Task Content_ResourcesAddedAfterCaching_AreNotIncludedAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
-        _ = skill.Content; // trigger caching
+        _ = await skill.GetContentAsync(); // trigger caching
         skill.AddResource("late-resource", "late-value");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert — the late resource should not appear because content was cached
         Assert.DoesNotContain("late-resource", content);
     }
 
     [Fact]
-    public void Content_ScriptsAddedAfterCaching_AreNotIncluded()
+    public async Task Content_ScriptsAddedAfterCaching_AreNotIncludedAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
-        _ = skill.Content; // trigger caching
+        _ = await skill.GetContentAsync(); // trigger caching
         skill.AddScript("late-script", () => "late");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert — the late script should not appear because content was cached
         Assert.DoesNotContain("late-script", content);
     }
 
     [Fact]
-    public void Content_ScriptWithDescription_IncludesDescriptionAttribute()
+    public async Task Content_ScriptWithDescription_IncludesDescriptionAttributeAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddScript("my-script", () => "ok", "Runs something.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("description=\"Runs something.\"", content);
     }
 
     [Fact]
-    public void Content_ScriptWithoutParametersOrDescription_UsesSelfClosingTag()
+    public async Task Content_ScriptWithoutParametersOrDescription_UsesSelfClosingTagAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddScript("simple", () => "ok");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert — parameterless Action delegates still produce a schema, so this
         // verifies the script is at least included in the output
@@ -406,7 +492,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_ResourceWithDescription_IncludesDescriptionAttribute()
+    public async Task Content_ResourceWithDescription_IncludesDescriptionAttributeAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -414,7 +500,7 @@ public sealed class AgentInlineSkillTests
         skill.AddResource("no-desc", "value");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("description=\"A described resource.\"", content);
@@ -437,7 +523,7 @@ public sealed class AgentInlineSkillTests
         var args = argsDoc.RootElement;
 
         // Act
-        var result = await skill.Scripts![0].RunAsync(skill, args, null, CancellationToken.None);
+        var result = await (await skill.GetScriptAsync("lookup"))!.RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert — the custom input was deserialized via skill-level JSO and response was produced
         Assert.NotNull(result);
@@ -461,7 +547,7 @@ public sealed class AgentInlineSkillTests
         var args = argsDoc.RootElement;
 
         // Act
-        var result = await skill.Scripts![0].RunAsync(skill, args, null, CancellationToken.None);
+        var result = await (await skill.GetScriptAsync("lookup"))!.RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert — per-script JSO takes effect and custom types are properly marshaled
         Assert.NotNull(result);
@@ -477,7 +563,7 @@ public sealed class AgentInlineSkillTests
         skill.AddResource("config", () => new SkillConfig { Theme = "dark", Verbose = true });
 
         // Act
-        var result = await skill.Resources![0].ReadAsync();
+        var result = await skill.GetTestResources()![0].ReadAsync();
 
         // Assert — the custom type was returned successfully via skill-level JSO
         Assert.NotNull(result);
@@ -494,7 +580,7 @@ public sealed class AgentInlineSkillTests
         skill.AddResource("config", () => new SkillConfig { Theme = "dark", Verbose = true }, serializerOptions: resourceJso);
 
         // Act
-        var result = await skill.Resources![0].ReadAsync();
+        var result = await skill.GetTestResources()![0].ReadAsync();
 
         // Assert — per-resource JSO takes effect and custom type is properly marshaled
         Assert.NotNull(result);

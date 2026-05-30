@@ -505,6 +505,40 @@ def test_raw_foundry_agent_init_creates_client() -> None:
     assert agent.client.agent_name == "test-agent"
 
 
+def test_raw_foundry_agent_init_passes_default_headers_to_client() -> None:
+    """Test that RawFoundryAgent passes default_headers to the underlying client."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    default_headers = {"x-ms-user-isolation-key": "user-1"}
+
+    RawFoundryAgent(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        default_headers=default_headers,
+    )
+
+    mock_project.get_openai_client.assert_called_once()
+    assert mock_project.get_openai_client.call_args.kwargs["default_headers"] == default_headers
+
+
+def test_foundry_agent_init_passes_default_headers_to_client() -> None:
+    """Test that FoundryAgent passes default_headers to the underlying client."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    default_headers = {"x-ms-user-isolation-key": "user-1"}
+
+    FoundryAgent(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        default_headers=default_headers,
+    )
+
+    mock_project.get_openai_client.assert_called_once()
+    assert mock_project.get_openai_client.call_args.kwargs["default_headers"] == default_headers
+
+
 def test_raw_foundry_agent_init_with_custom_client_type() -> None:
     """Test that client_type parameter is respected."""
 
@@ -523,6 +557,7 @@ def test_raw_foundry_agent_init_with_custom_client_type() -> None:
 def test_raw_foundry_agent_init_uses_explicit_parameters() -> None:
     signature = inspect.signature(RawFoundryAgent.__init__)
 
+    assert "default_headers" in signature.parameters
     assert "instructions" in signature.parameters
     assert "default_options" in signature.parameters
     assert "compaction_strategy" in signature.parameters
@@ -534,6 +569,7 @@ def test_raw_foundry_agent_init_uses_explicit_parameters() -> None:
 def test_foundry_agent_init_uses_explicit_parameters() -> None:
     signature = inspect.signature(FoundryAgent.__init__)
 
+    assert "default_headers" in signature.parameters
     assert "instructions" in signature.parameters
     assert "default_options" in signature.parameters
     assert "compaction_strategy" in signature.parameters

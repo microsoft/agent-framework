@@ -41,6 +41,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "RawFoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
+    "to_prompt_agent": ("agent_framework_foundry", "agent-framework-foundry"),
 }
 
 
