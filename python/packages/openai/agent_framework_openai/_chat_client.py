@@ -1454,10 +1454,21 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         Returns:
             The prepared chat messages for a request.
         """
+        drops_reasoning_without_storage = not request_uses_service_side_storage and any(
+            content.type == "text_reasoning" for message in chat_messages for content in message.contents
+        )
+        drop_mcp_call_ids: set[str] = set()
+        if drops_reasoning_without_storage:
+            for message in chat_messages:
+                for content in message.contents:
+                    if content.type == "mcp_server_tool_call" and content.call_id:
+                        drop_mcp_call_ids.add(content.call_id)
+
         list_of_list = [
             self._prepare_message_for_openai(
                 message,
                 request_uses_service_side_storage=request_uses_service_side_storage,
+                drop_mcp_call_ids=drop_mcp_call_ids,
             )
             for message in chat_messages
         ]
@@ -1472,6 +1483,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         message: Message,
         *,
         request_uses_service_side_storage: bool = True,
+        drop_mcp_call_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
@@ -1491,7 +1503,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # (replays_local_storage) still need stripping when the request also carries a continuation
         # marker, since the server-stored items would otherwise duplicate the inline ones. Without
         # storage, standalone reasoning items are invalid per the API ("reasoning was provided
-        # without its required following item"), so the reasoning branch always drops.
+        # without its required following item"), so the reasoning branch always drops. When that
+        # happens, `_prepare_messages_for_openai` also drops the paired hosted-MCP IDs across
+        # message boundaries rather than replaying bare MCP items.
+        drop_mcp_call_ids = drop_mcp_call_ids or set()
         for content in message.contents:
             match content.type:
                 case "text_reasoning":
@@ -1546,7 +1561,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     # server-side `id`, so under continuation it would duplicate
                     # the prior response's items (#3295). Drop the call here; the
                     # orphan result is dropped by the coalesce step that follows.
-                    if request_uses_service_side_storage:
+                    #
+                    # Without storage, a reasoning + hosted-MCP pair cannot be replayed
+                    # partially: reasoning is stripped above, and a bare mcp_call is rejected.
+                    if request_uses_service_side_storage or content.call_id in drop_mcp_call_ids:
                         continue
                     prepared_mcp = self._prepare_content_for_openai(
                         message.role,
