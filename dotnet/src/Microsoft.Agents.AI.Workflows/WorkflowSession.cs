@@ -165,6 +165,7 @@ internal sealed class WorkflowSession : AgentSession
 
         return new(message.Role, message.Contents)
         {
+            AuthorName = message.AuthorName,
             CreatedAt = message.CreatedAt ?? DateTimeOffset.UtcNow,
             MessageId = message.MessageId ?? Guid.NewGuid().ToString("N"),
             ResponseId = responseId,
@@ -547,19 +548,42 @@ internal sealed class WorkflowSession : AgentSession
                         ChatMessage chatMessage => [chatMessage],
                         _ => null
                     };
+                    IEnumerable<AIContent>? updateContents = output.Data switch
+                    {
+                        string text => [new TextContent(text)],
+                        AIContent content => [content],
+                        IEnumerable<AIContent> contents => contents,
+                        _ => null
+                    };
 
-                    // Same assymetry as with AgentResponseEvent, but there is no EnableFiltering flag
-                    // to consider. If this made it here (and since it is not an AgentResponse[Update]),
-                    // it means it is already been selected as an Output() from the user. Intermediate
-                    // is irrelevant here.
-                    if (updateMessages == null || !this._includeWorkflowOutputsInResponse)
+                    // Workflow outputs with response-compatible payloads are forwarded when the
+                    // host requests all workflow outputs, or when this executor is an explicit
+                    // output source for the workflow.
+                    if (updateMessages == null
+                        && updateContents == null)
                     {
                         goto default;
                     }
 
-                    foreach (ChatMessage message in updateMessages)
+                    bool includeTerminalOutput = this.IsTerminalOutput(output.ExecutorId);
+                    if (!this._includeWorkflowOutputsInResponse
+                        && !includeTerminalOutput)
+                    {
+                        goto default;
+                    }
+
+                    foreach (ChatMessage message in this._includeWorkflowOutputsInResponse ? updateMessages ?? [] : [])
                     {
                         yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    if (updateContents is not null
+                        && (this._includeWorkflowOutputsInResponse || includeTerminalOutput))
+                    {
+                        AIContent[] contents = [.. updateContents];
+                        if (contents.Length > 0)
+                        {
+                            yield return this.CreateUpdate(this.LastResponseId, evt, contents);
+                        }
                     }
                     break;
 
@@ -577,6 +601,10 @@ internal sealed class WorkflowSession : AgentSession
             }
         }
     }
+
+    private bool IsTerminalOutput(string executorId)
+        => this._workflow.OutputExecutors.TryGetValue(executorId, out HashSet<OutputTag>? tags)
+            && !tags.Contains(OutputTag.Intermediate);
 
     public string? LastResponseId { get; set; }
 
