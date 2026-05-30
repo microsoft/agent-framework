@@ -153,6 +153,7 @@ from ._sessions import (
     SessionContext,
     register_state_type,
 )
+ChatMessageStore = HistoryProvider
 from ._settings import SecretString, load_settings
 from ._skills import (
     AggregatingSkillsSource,
@@ -371,6 +372,7 @@ __all__ = [
     "ChatMiddleware",
     "ChatMiddlewareLayer",
     "ChatMiddlewareTypes",
+    "ChatMessageStore",
     "ChatOptions",
     "ChatResponse",
     "ChatResponseUpdate",
