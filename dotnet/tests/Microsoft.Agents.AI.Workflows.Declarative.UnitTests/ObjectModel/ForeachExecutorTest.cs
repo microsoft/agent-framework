@@ -292,6 +292,38 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     }
 
     /// <summary>
+    /// Foreach over a table with multi-field records must preserve all fields in the loop value variable.
+    /// Regression test for GH-6183.
+    /// </summary>
+    [Fact]
+    public async Task ForeachPreservesMultiFieldRecordsAsync()
+    {
+        // Arrange
+        this.SetVariableState("CurrentValue");
+        TableDataValue tableValue = DataValue.TableFromRecords(
+            DataValue.RecordFromFields(
+                new KeyValuePair<string, DataValue>("name", new StringDataValue("Alice")),
+                new KeyValuePair<string, DataValue>("role", new StringDataValue("Engineer"))),
+            DataValue.RecordFromFields(
+                new KeyValuePair<string, DataValue>("name", new StringDataValue("Bob")),
+                new KeyValuePair<string, DataValue>("role", new StringDataValue("Designer"))));
+
+        Foreach model = this.CreateModel(
+            displayName: nameof(ForeachPreservesMultiFieldRecordsAsync),
+            items: ValueExpression.Literal(tableValue),
+            valueName: "CurrentValue",
+            indexName: null);
+
+        ForeachExecutor action = new(model, this.State);
+
+        // Act — execute the initialisation then take the first iteration.
+        await this.ExecuteAsync(action, ForeachExecutor.Steps.Next(action.Id), action.TakeNextAsync);
+
+        // Assert — the value must be present (all fields preserved, not collapsed to first field).
+        Assert.True(action.HasValue);
+    }
+
+    /// <summary>
     /// Checkpoint/restore around a foreach over an empty source must roundtrip cleanly
     /// (zero-length <c>PortableValue[]</c> snapshot).
     /// </summary>
