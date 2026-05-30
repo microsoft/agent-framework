@@ -385,11 +385,11 @@ public class ChatClientAgent_ChatHistoryManagementTests
     }
 
     /// <summary>
-    /// Verify that RunAsync does not throw when no ChatHistoryProvider is configured on options,
-    /// even if the service returns a conversation id (default InMemoryChatHistoryProvider is used but not from options).
+    /// Verify that RunAsync does not persist to the default InMemoryChatHistoryProvider when
+    /// the service returns a conversation id.
     /// </summary>
     [Fact]
-    public async Task RunAsync_DoesNotThrow_WhenNoChatHistoryProviderInOptionsAndConversationIdReturnedAsync()
+    public async Task RunAsync_DoesNotUseDefaultInMemoryChatHistoryProvider_WhenConversationIdReturnedAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -407,8 +407,10 @@ public class ChatClientAgent_ChatHistoryManagementTests
         ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         await agent.RunAsync([new(ChatRole.User, "test")], session);
 
-        // Assert - no exception, session gets the conversation id
+        // Assert
         Assert.Equal("ConvId", session!.ConversationId);
+        var inMemoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider);
+        Assert.Empty(inMemoryProvider.GetMessages(session));
     }
 
     #endregion
