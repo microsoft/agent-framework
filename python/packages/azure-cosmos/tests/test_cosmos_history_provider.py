@@ -10,14 +10,14 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, Message
+from agent_framework import AgentResponse, Content, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 import agent_framework_azure_cosmos._history_provider as history_provider_module
-from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
+from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider, _merge_code_interpreter_chunks
 
 skip_if_cosmos_integration_tests_disabled = pytest.mark.skipif(
     any(
@@ -416,9 +416,6 @@ class TestCodeInterpreterAggregation:
 
     def test_merge_code_interpreter_chunks(self) -> None:
         """_merge_code_interpreter_chunks merges multiple text chunks."""
-        from agent_framework import Content
-        from agent_framework_azure_cosmos._history_provider import _merge_code_interpreter_chunks
-
         chunk1 = Content.from_code_interpreter_tool_call(
             call_id="ci_abc",
             inputs=[Content.from_text("import pandas")],
@@ -437,11 +434,33 @@ class TestCodeInterpreterAggregation:
         assert merged.inputs[0].type == "text"
         assert merged.inputs[0].text == "import pandas as pd"
 
+    def test_merge_skips_sequence_number(self) -> None:
+        """_merge_code_interpreter_chunks drops sequence_number from merged properties."""
+        chunk = Content.from_code_interpreter_tool_call(
+            call_id="ci_abc",
+            inputs=[Content.from_text("hello")],
+            additional_properties={"sequence_number": 5, "item_id": "ci_abc"},
+        )
+        merged = _merge_code_interpreter_chunks([chunk], "ci_abc")
+        assert merged.additional_properties is not None
+        assert "sequence_number" not in merged.additional_properties
+        assert merged.additional_properties.get("item_id") == "ci_abc"
+
+    def test_merge_preserves_non_text_inputs(self) -> None:
+        """Non-text inputs in chunks are preserved in the merged item."""
+        image_input = Content.from_image("https://example.com/img.png")
+        chunk = Content.from_code_interpreter_tool_call(
+            call_id="ci_abc",
+            inputs=[Content.from_text("plot"), image_input],
+        )
+        merged = _merge_code_interpreter_chunks([chunk], "ci_abc")
+        assert merged.inputs is not None
+        assert len(merged.inputs) == 2
+        assert merged.inputs[0].type == "text"
+        assert merged.inputs[1].type == "image"
+
     def test_aggregate_code_interpreter_calls_merges_consecutive_chunks(self) -> None:
         """_aggregate_code_interpreter_calls merges consecutive chunks with same call_id."""
-        from agent_framework import Content
-        from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
-
         contents = [
             Content.from_text_reasoning(text="thinking..."),
             Content.from_code_interpreter_tool_call(
@@ -466,9 +485,6 @@ class TestCodeInterpreterAggregation:
 
     def test_aggregate_preserves_independent_tool_calls(self) -> None:
         """Tool calls with different call_ids are not merged."""
-        from agent_framework import Content
-        from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
-
         contents = [
             Content.from_code_interpreter_tool_call(
                 call_id="ci_abc",
@@ -484,12 +500,9 @@ class TestCodeInterpreterAggregation:
         assert result[0].call_id == "ci_abc"
         assert result[1].call_id == "ci_def"
 
-    def test_save_messages_calls_aggregation(self) -> None:
-        """save_messages aggregates code interpreter chunks before saving."""
-        from unittest.mock import AsyncMock, patch, MagicMock
-        from agent_framework import Content, Message
-        from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
-
+    @pytest.mark.asyncio
+    async def test_save_messages_does_not_mutate_original(self) -> None:
+        """save_messages does not mutate the caller's Message objects."""
         provider = CosmosHistoryProvider(
             endpoint="https://mock.documents.azure.com:443/",
             database_name="test-db",
@@ -514,14 +527,17 @@ class TestCodeInterpreterAggregation:
                 ),
             ],
         )
+        original_contents = list(message.contents)
         with patch.object(CosmosHistoryProvider, "_ensure_container_proxy", new_callable=AsyncMock):
-            import asyncio
-            asyncio.run(provider.save_messages("session-1", [message]))
+            await provider.save_messages("session-1", [message])
+        # Original message contents should be unchanged
+        assert len(message.contents) == 2
+        assert message.contents[0].inputs is not None
+        assert message.contents[0].inputs[0].text == "import "
+        # Saved document should contain aggregated content
         call_kwargs = provider._container_proxy.execute_item_batch.call_args
         assert call_kwargs is not None
         batch_ops = call_kwargs[1]["batch_operations"]
-        assert len(batch_ops) == 1
         saved_msg = batch_ops[0][1][0]["message"]
         assert len(saved_msg["contents"]) == 1
-        assert saved_msg["contents"][0]["type"] == "code_interpreter_tool_call"
         assert saved_msg["contents"][0]["inputs"][0]["text"] == "import pandas"

@@ -25,20 +25,34 @@ logger = logging.getLogger(__name__)
 
 
 def _merge_code_interpreter_chunks(chunks: list[Content], call_id: str | None) -> Content:
-    """Merge code_interpreter_tool_call chunks into a single Content item."""
+    """Merge code_interpreter_tool_call chunks into a single Content item.
+
+    Concatenates text inputs in order and preserves non-text inputs.
+    Drops per-chunk sequence_number from the merged additional_properties
+    since the aggregated item no longer represents a single chunk.
+    """
     all_text_parts: list[str] = []
+    non_text_inputs: list[Content] = []
     merged_additional_properties: MutableMapping[str, Any] = {}
     for chunk in chunks:
         for inp in (chunk.inputs or []):
             if inp.type == "text" and inp.text:
                 all_text_parts.append(inp.text)
+            else:
+                non_text_inputs.append(inp)
         if chunk.additional_properties:
-            merged_additional_properties.update(chunk.additional_properties)
+            for k, v in chunk.additional_properties.items():
+                if k == "sequence_number":
+                    continue
+                merged_additional_properties[k] = v
+    merged_inputs: list[Content] = []
     merged_text = "".join(all_text_parts)
-    merged_inputs = [Content.from_text(merged_text)] if merged_text else None
+    if merged_text:
+        merged_inputs.append(Content.from_text(merged_text))
+    merged_inputs.extend(non_text_inputs)
     return Content.from_code_interpreter_tool_call(
         call_id=call_id,
-        inputs=merged_inputs,
+        inputs=merged_inputs or None,
         additional_properties=merged_additional_properties or None,
     )
 
@@ -236,14 +250,16 @@ class CosmosHistoryProvider(HistoryProvider):
         base_sort_key = time.time_ns()
         operations: list[tuple[str, tuple[dict[str, Any]]]] = []
         for index, message in enumerate(messages):
+            message_dict = message.to_dict()
             if message.contents:
-                message.contents = self._aggregate_code_interpreter_calls(message.contents)
+                aggregated = self._aggregate_code_interpreter_calls(message.contents)
+                message_dict["contents"] = [c.to_dict() for c in aggregated]
             document = {
                 "id": str(uuid.uuid4()),
                 "session_id": session_key,
                 "sort_key": base_sort_key + index,
                 "source_id": self.source_id,
-                "message": message.to_dict(),
+                "message": message_dict,
             }
             operations.append(("upsert", (document,)))
 
