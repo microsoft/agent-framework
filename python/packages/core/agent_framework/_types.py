@@ -1973,11 +1973,35 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
     contents.extend(coalesced_contents)
 
 
+def _coalesce_code_interpreter_content(contents: list[Content]) -> None:
+    """Coalesce code_interpreter_tool_call items with the same call_id into a single item."""
+    if not contents:
+        return
+    seen: dict[str, Content] = {}
+    coalesced: list[Content] = []
+    for content in contents:
+        if content.type == "code_interpreter_tool_call" and content.call_id:
+            if content.call_id in seen:
+                existing = seen[content.call_id]
+                if content.inputs:
+                    if existing.inputs is None:
+                        existing.inputs = []
+                    existing.inputs.extend(content.inputs)
+            else:
+                seen[content.call_id] = content
+                coalesced.append(content)
+        else:
+            coalesced.append(content)
+    contents.clear()
+    contents.extend(coalesced)
+
+
 def _finalize_response(response: ChatResponse | AgentResponse) -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
+        _coalesce_code_interpreter_content(msg.contents)
 
 
 # region ContinuationToken
