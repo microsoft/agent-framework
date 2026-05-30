@@ -696,11 +696,26 @@ class RawAnthropicClient(
 
         This skips the first message if it is a system message,
         as Anthropic expects system instructions as a separate parameter.
+
+        Anthropic's API requires that the conversation ends with a user message.
+        If the last message is from the assistant, its role is changed to user
+        to satisfy this constraint.
         """
         # first system message is passed as instructions
         if messages and isinstance(messages[0], Message) and messages[0].role == "system":
-            return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
-        return [self._prepare_message_for_anthropic(msg) for msg in messages]
+            msgs = list(messages[1:])
+        else:
+            msgs = list(messages)
+
+        result = [self._prepare_message_for_anthropic(msg) for msg in msgs]
+
+        # Anthropic requires the conversation to end with a user message.
+        # Re-role a trailing assistant message as user so chained agent
+        # outputs work as valid context for the next agent.
+        if result and result[-1].get("role") == "assistant":
+            result[-1] = {**result[-1], "role": "user"}
+
+        return result
 
     def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
