@@ -92,18 +92,42 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
             return [];
         }
 
-        if (arguments.Value.ValueKind != JsonValueKind.Object)
+        JsonDocument? parsedStringArguments = null;
+        var argumentElement = arguments.Value;
+
+        if (argumentElement.ValueKind == JsonValueKind.String)
+        {
+            string? rawArguments = argumentElement.GetString();
+            try
+            {
+                parsedStringArguments = JsonDocument.Parse(rawArguments ?? string.Empty);
+                argumentElement = parsedStringArguments.RootElement;
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException("Inline skill scripts received arguments as a JSON string, but the string did not contain valid JSON.", ex);
+            }
+        }
+
+        if (argumentElement.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException(
-                $"Inline skill scripts expect arguments as a JSON object but received a JSON element of kind '{arguments.Value.ValueKind}'.");
+                $"Inline skill scripts expect arguments as a JSON object but received a JSON element of kind '{argumentElement.ValueKind}'.");
         }
 
-        var dict = new Dictionary<string, object?>();
-        foreach (var property in arguments.Value.EnumerateObject())
+        try
         {
-            dict[property.Name] = property.Value;
-        }
+            var dict = new Dictionary<string, object?>();
+            foreach (var property in argumentElement.EnumerateObject())
+            {
+                dict[property.Name] = parsedStringArguments is null ? property.Value : property.Value.Clone();
+            }
 
-        return new AIFunctionArguments(dict);
+            return new AIFunctionArguments(dict);
+        }
+        finally
+        {
+            parsedStringArguments?.Dispose();
+        }
     }
 }

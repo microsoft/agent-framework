@@ -44,6 +44,37 @@ public sealed class AgentInlineSkillScriptTests
     }
 
     [Fact]
+    public async Task RunAsync_WithJsonStringObjectArguments_PassesArgumentsAsync()
+    {
+        // Arrange
+        var script = new AgentInlineSkillScript("add", (int a, int b) => a + b);
+        var skill = new AgentInlineSkill("calc-skill", "Calc.", "Instructions.");
+        using var argsDoc = JsonDocument.Parse("\"{\\\"a\\\":3,\\\"b\\\":7}\"");
+        var args = argsDoc.RootElement;
+
+        // Act
+        var result = await script.RunAsync(skill, args, null, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(10, int.Parse(result?.ToString()!));
+    }
+
+    [Fact]
+    public async Task RunAsync_WithInvalidJsonStringArguments_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var script = new AgentInlineSkillScript("noop", () => "ok");
+        var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
+        using var argsDoc = JsonDocument.Parse("\"not json\"");
+        var args = argsDoc.RootElement;
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => script.RunAsync(skill, args, null, CancellationToken.None));
+        Assert.Contains("did not contain valid JSON", ex.Message);
+    }
+
+    [Fact]
     public void ParametersSchema_NoParameters_ReturnsSchema()
     {
         // Arrange
