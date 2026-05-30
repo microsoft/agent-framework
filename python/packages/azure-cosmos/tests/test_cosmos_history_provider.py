@@ -409,3 +409,119 @@ async def test_cosmos_history_provider_roundtrip_with_emulator() -> None:
         finally:
             with suppress(CosmosResourceNotFoundError):
                 await cosmos_client.delete_database(database_name)
+
+
+class TestCodeInterpreterAggregation:
+    """Tests for code_interpreter_tool_call chunk aggregation."""
+
+    def test_merge_code_interpreter_chunks(self) -> None:
+        """_merge_code_interpreter_chunks merges multiple text chunks."""
+        from agent_framework import Content
+        from agent_framework_azure_cosmos._history_provider import _merge_code_interpreter_chunks
+
+        chunk1 = Content.from_code_interpreter_tool_call(
+            call_id="ci_abc",
+            inputs=[Content.from_text("import pandas")],
+            additional_properties={"sequence_number": 1},
+        )
+        chunk2 = Content.from_code_interpreter_tool_call(
+            call_id="ci_abc",
+            inputs=[Content.from_text(" as pd")],
+            additional_properties={"sequence_number": 2},
+        )
+        merged = _merge_code_interpreter_chunks([chunk1, chunk2], "ci_abc")
+        assert merged.type == "code_interpreter_tool_call"
+        assert merged.call_id == "ci_abc"
+        assert merged.inputs is not None
+        assert len(merged.inputs) == 1
+        assert merged.inputs[0].type == "text"
+        assert merged.inputs[0].text == "import pandas as pd"
+
+    def test_aggregate_code_interpreter_calls_merges_consecutive_chunks(self) -> None:
+        """_aggregate_code_interpreter_calls merges consecutive chunks with same call_id."""
+        from agent_framework import Content
+        from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
+
+        contents = [
+            Content.from_text_reasoning(text="thinking..."),
+            Content.from_code_interpreter_tool_call(
+                call_id="ci_abc",
+                inputs=[Content.from_text("import ")],
+                additional_properties={"sequence_number": 1},
+            ),
+            Content.from_code_interpreter_tool_call(
+                call_id="ci_abc",
+                inputs=[Content.from_text("pandas")],
+                additional_properties={"sequence_number": 2},
+            ),
+            Content.from_text("Final result: 42"),
+        ]
+        result = CosmosHistoryProvider._aggregate_code_interpreter_calls(contents)
+        assert len(result) == 3
+        assert result[0].type == "text_reasoning"
+        assert result[1].type == "code_interpreter_tool_call"
+        assert result[1].inputs is not None
+        assert result[1].inputs[0].text == "import pandas"
+        assert result[2].type == "text"
+
+    def test_aggregate_preserves_independent_tool_calls(self) -> None:
+        """Tool calls with different call_ids are not merged."""
+        from agent_framework import Content
+        from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
+
+        contents = [
+            Content.from_code_interpreter_tool_call(
+                call_id="ci_abc",
+                inputs=[Content.from_text("code a")],
+            ),
+            Content.from_code_interpreter_tool_call(
+                call_id="ci_def",
+                inputs=[Content.from_text("code b")],
+            ),
+        ]
+        result = CosmosHistoryProvider._aggregate_code_interpreter_calls(contents)
+        assert len(result) == 2
+        assert result[0].call_id == "ci_abc"
+        assert result[1].call_id == "ci_def"
+
+    def test_save_messages_calls_aggregation(self) -> None:
+        """save_messages aggregates code interpreter chunks before saving."""
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from agent_framework import Content, Message
+        from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
+
+        provider = CosmosHistoryProvider(
+            endpoint="https://mock.documents.azure.com:443/",
+            database_name="test-db",
+            container_name="test-container",
+            credential="mock-key",
+        )
+        provider._container_proxy = MagicMock()
+        provider._container_proxy.execute_item_batch = AsyncMock()
+
+        message = Message(
+            role="assistant",
+            contents=[
+                Content.from_code_interpreter_tool_call(
+                    call_id="ci_abc",
+                    inputs=[Content.from_text("import ")],
+                    additional_properties={"sequence_number": 1},
+                ),
+                Content.from_code_interpreter_tool_call(
+                    call_id="ci_abc",
+                    inputs=[Content.from_text("pandas")],
+                    additional_properties={"sequence_number": 2},
+                ),
+            ],
+        )
+        with patch.object(CosmosHistoryProvider, "_ensure_container_proxy", new_callable=AsyncMock):
+            import asyncio
+            asyncio.run(provider.save_messages("session-1", [message]))
+        call_kwargs = provider._container_proxy.execute_item_batch.call_args
+        assert call_kwargs is not None
+        batch_ops = call_kwargs[1]["batch_operations"]
+        assert len(batch_ops) == 1
+        saved_msg = batch_ops[0][1][0]["message"]
+        assert len(saved_msg["contents"]) == 1
+        assert saved_msg["contents"][0]["type"] == "code_interpreter_tool_call"
+        assert saved_msg["contents"][0]["inputs"][0]["text"] == "import pandas"

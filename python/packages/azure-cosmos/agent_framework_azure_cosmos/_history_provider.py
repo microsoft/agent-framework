@@ -7,10 +7,10 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import MutableMapping, Sequence
 from typing import Any, ClassVar, TypedDict
 
-from agent_framework import Message
+from agent_framework import Message, Content
 from agent_framework._sessions import HistoryProvider
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
@@ -22,6 +22,25 @@ from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_code_interpreter_chunks(chunks: list[Content], call_id: str | None) -> Content:
+    """Merge code_interpreter_tool_call chunks into a single Content item."""
+    all_text_parts: list[str] = []
+    merged_additional_properties: MutableMapping[str, Any] = {}
+    for chunk in chunks:
+        for inp in (chunk.inputs or []):
+            if inp.type == "text" and inp.text:
+                all_text_parts.append(inp.text)
+        if chunk.additional_properties:
+            merged_additional_properties.update(chunk.additional_properties)
+    merged_text = "".join(all_text_parts)
+    merged_inputs = [Content.from_text(merged_text)] if merged_text else None
+    return Content.from_code_interpreter_tool_call(
+        call_id=call_id,
+        inputs=merged_inputs,
+        additional_properties=merged_additional_properties or None,
+    )
 
 
 class AzureCosmosHistorySettings(TypedDict, total=False):
@@ -167,6 +186,38 @@ class CosmosHistoryProvider(HistoryProvider):
 
         return messages
 
+    @staticmethod
+    def _aggregate_code_interpreter_calls(contents: list[Content]) -> list[Content]:
+        """Merge consecutive code_interpreter_tool_call chunks with the same call_id.
+
+        During streaming, code interpreter output arrives as multiple content items
+        each with the same call_id but different sequence_number values. This method
+        aggregates them into a single item with the complete text.
+        """
+        if not contents:
+            return contents
+        aggregated: list[Content] = []
+        pending: list[Content] = []
+        pending_call_id: str | None = None
+        for item in contents:
+            if item.type != "code_interpreter_tool_call":
+                if pending:
+                    aggregated.append(_merge_code_interpreter_chunks(pending, pending_call_id))
+                    pending = []
+                    pending_call_id = None
+                aggregated.append(item)
+                continue
+            if pending_call_id is not None and item.call_id == pending_call_id:
+                pending.append(item)
+            else:
+                if pending:
+                    aggregated.append(_merge_code_interpreter_chunks(pending, pending_call_id))
+                pending = [item]
+                pending_call_id = item.call_id
+        if pending:
+            aggregated.append(_merge_code_interpreter_chunks(pending, pending_call_id))
+        return aggregated
+
     async def save_messages(
         self,
         session_id: str | None,
@@ -185,6 +236,8 @@ class CosmosHistoryProvider(HistoryProvider):
         base_sort_key = time.time_ns()
         operations: list[tuple[str, tuple[dict[str, Any]]]] = []
         for index, message in enumerate(messages):
+            if message.contents:
+                message.contents = self._aggregate_code_interpreter_calls(message.contents)
             document = {
                 "id": str(uuid.uuid4()),
                 "session_id": session_key,
