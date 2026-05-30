@@ -64,29 +64,6 @@ class ReviewResponse:
     approved: bool
 
 
-def _sanitize_json_text(text: str) -> str:
-    """Sanitize LLM output before JSON parsing.
-
-    Handles common issues with gpt-4.1/gpt-5 structured output:
-    - Markdown code fences (```json ... ```)
-    - Tab characters inside string values
-    - Truncated JSON (missing closing brackets/quotes)
-    """
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
-        if text.endswith("```"):
-            text = text[:-3].rstrip()
-    text = text.replace("\t", " ")
-    open_brackets = text.count("{") - text.count("}")
-    if open_brackets > 0:
-        text += "}" * open_brackets
-    open_braces = text.count("[") - text.count("]")
-    if open_braces > 0:
-        text += "]" * open_braces
-    return text
-
-
 class Reviewer(Executor):
     """Executor that reviews agent responses and provides structured feedback."""
 
@@ -130,9 +107,7 @@ class Reviewer(Executor):
         print("Reviewer: Sending review request to LLM...")
         response = await self._chat_client.get_response(messages=messages, options={"response_format": _Response})
 
-        raw = response.messages[-1].text
-        sanitized = _sanitize_json_text(raw)
-        parsed = _Response.model_validate_json(sanitized)
+        parsed = _Response.model_validate_json(response.messages[-1].text)
 
         print(f"Reviewer: Review complete - Approved: {parsed.approved}")
         print(f"Reviewer: Feedback: {parsed.feedback}")

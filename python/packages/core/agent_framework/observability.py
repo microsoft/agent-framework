@@ -1705,7 +1705,7 @@ class AgentTelemetryLayer:
             agent_id=getattr(self, "id", "unknown"),
             agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
             agent_description=getattr(self, "description", None),
-            thread_id=session.service_session_id if session else None,
+            thread_id=session.telemetry_conversation_id if session else None,
             all_options=dict(merged_options),
             **merged_client_kwargs,
         )

@@ -733,13 +733,37 @@ class AgentSession:
             service_session_id: Optional service-managed session ID.
         """
         self._session_id = session_id or str(uuid.uuid4())
-        self.service_session_id = service_session_id
+        self._service_session_id = service_session_id
+        self._frozen_conversation_id = service_session_id
         self.state: dict[str, Any] = {}
 
     @property
     def session_id(self) -> str:
         """The unique identifier for this session."""
         return self._session_id
+
+    @property
+    def service_session_id(self) -> str | None:
+        """Service-managed session ID (if using service-side storage)."""
+        return self._service_session_id
+
+    @service_session_id.setter
+    def service_session_id(self, value: str | None) -> None:
+        """Set the service session ID, freezing the first non-None value for telemetry."""
+        self._service_session_id = value
+        if self._frozen_conversation_id is None and value is not None:
+            self._frozen_conversation_id = value
+
+    @property
+    def telemetry_conversation_id(self) -> str | None:
+        """A stable conversation ID for telemetry.
+
+        Returns the first non-None ``service_session_id`` ever set on this
+        session, so that ``gen_ai.conversation.id`` remains stable across
+        multi-turn conversations even when the underlying API (e.g. Responses
+        API) rotates the active session ID on every turn.
+        """
+        return self._frozen_conversation_id
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize session to a plain dict for storage/transfer.
@@ -751,7 +775,7 @@ class AgentSession:
         return {
             "type": "session",
             "session_id": self._session_id,
-            "service_session_id": self.service_session_id,
+            "service_session_id": self._service_session_id,
             "state": _serialize_state(self.state),
         }
 
