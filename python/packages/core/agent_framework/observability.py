@@ -2378,12 +2378,15 @@ def _get_response_attributes(
     if model := getattr(response, "model", None):
         attributes[OtelAttr.RESPONSE_MODEL] = model
     if capture_usage and (usage := response.usage_details):
-        input_tokens = usage.get("input_token_count")
-        if input_tokens:
-            attributes[OtelAttr.INPUT_TOKENS] = input_tokens
-        output_tokens = usage.get("output_token_count")
-        if output_tokens:
-            attributes[OtelAttr.OUTPUT_TOKENS] = output_tokens
+        for key, value in usage.items():
+            if not isinstance(value, int):
+                continue
+            if key == "input_token_count":
+                attributes[OtelAttr.INPUT_TOKENS] = value
+            elif key == "output_token_count":
+                attributes[OtelAttr.OUTPUT_TOKENS] = value
+            else:
+                attributes[f"gen_ai.usage.{key}"] = value
     return attributes
 
 
