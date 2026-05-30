@@ -613,6 +613,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
             seen_reasoning_delta_item_ids: set[str] = set()
+            code_interpreter_accumulator: dict[str, str] = {}
             validated_options: dict[str, Any] | None = None
             # Captured once request options are validated/prepared so the streaming finalizer can
             # still parse the aggregated response into structured output after the stream completes.
@@ -648,6 +649,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                     options=validated_options,
                                     function_call_ids=function_call_ids,
                                     seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                    code_interpreter_accumulator=code_interpreter_accumulator,
                                 )
                                 if served_model is not None:
                                     update.model = served_model
@@ -676,6 +678,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
                                         seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                        code_interpreter_accumulator=code_interpreter_accumulator,
                                     )
                         else:
                             raw_create_response = await client.responses.with_raw_response.create(
@@ -690,6 +693,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
                                         seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                        code_interpreter_accumulator=code_interpreter_accumulator,
                                     )
                                     if served_model is not None:
                                         update.model = served_model
@@ -2343,6 +2347,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         options: dict[str, Any],
         function_call_ids: dict[int, tuple[str, str]],
         seen_reasoning_delta_item_ids: set[str] | None = None,
+        code_interpreter_accumulator: dict[str, str] | None = None,
     ) -> ChatResponseUpdate:
         """Parse an OpenAI Responses API streaming event into a ChatResponseUpdate."""
         metadata: dict[str, Any] = {}
@@ -2471,31 +2476,35 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 metadata.update(self._get_metadata_from_response(event))
             case "response.code_interpreter_call_code.delta":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
-                ci_additional_properties = {
-                    "output_index": event.output_index,
-                    "sequence_number": event.sequence_number,
-                    "item_id": event.item_id,
-                }
-                contents.append(
-                    Content.from_code_interpreter_tool_call(
-                        call_id=call_id,
-                        inputs=[
-                            Content.from_text(
-                                text=event.delta,
-                                raw_representation=event,
-                                additional_properties=ci_additional_properties,
-                            )
-                        ],
-                        raw_representation=event,
-                        additional_properties=ci_additional_properties,
+                if code_interpreter_accumulator is not None:
+                    code_interpreter_accumulator[call_id] = code_interpreter_accumulator.get(call_id, "") + event.delta
+                else:
+                    ci_additional_properties = {
+                        "output_index": event.output_index,
+                        "sequence_number": event.sequence_number,
+                        "item_id": event.item_id,
+                    }
+                    contents.append(
+                        Content.from_code_interpreter_tool_call(
+                            call_id=call_id,
+                            inputs=[
+                                Content.from_text(
+                                    text=event.delta,
+                                    raw_representation=event,
+                                    additional_properties=ci_additional_properties,
+                                )
+                            ],
+                            raw_representation=event,
+                            additional_properties=ci_additional_properties,
+                        )
                     )
-                )
                 metadata.update(self._get_metadata_from_response(event))
-                # NOTE: Unlike reasoning done events, code_interpreter done events always
-                # emit content because downstream consumers do not accumulate
-                # code_interpreter deltas the same way.
             case "response.code_interpreter_call_code.done":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
+                if code_interpreter_accumulator is not None and call_id in code_interpreter_accumulator:
+                    text = code_interpreter_accumulator.pop(call_id)
+                else:
+                    text = event.code
                 ci_additional_properties = {
                     "output_index": event.output_index,
                     "sequence_number": event.sequence_number,
@@ -2506,7 +2515,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         call_id=call_id,
                         inputs=[
                             Content.from_text(
-                                text=event.code,
+                                text=text,
                                 raw_representation=event,
                                 additional_properties=ci_additional_properties,
                             )
