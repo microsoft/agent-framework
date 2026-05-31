@@ -1975,6 +1975,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         local_shell_tool_name = self._get_local_shell_tool_name(options.get("tools"))
         conversation_id: str | None = None
         response_id: str | None = None
+        created_at: str | None = None
         continuation_token: OpenAIContinuationToken | None = None
         model = self.model
         match event.type:
@@ -2156,6 +2157,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 model = event.response.model
+                if event.response.created_at is not None:
+                    created_at = datetime.fromtimestamp(event.response.created_at, tz=timezone.utc).strftime(
+                        "%Y-%m-%dT%H:%M:%S.%fZ"
+                    )
                 if event.response.usage:
                     usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:
@@ -2521,6 +2526,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             contents=contents,
             conversation_id=conversation_id,
             response_id=response_id,
+            created_at=created_at,
             role="assistant",
             model=model,
             continuation_token=continuation_token,

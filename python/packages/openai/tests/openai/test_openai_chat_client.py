@@ -2013,6 +2013,53 @@ def test_streaming_chunk_with_usage_only() -> None:
     assert update.contents[0].usage_details["total_token_count"] == 75
 
 
+def test_streaming_response_completed_propagates_created_at() -> None:
+    """response.completed must propagate created_at into ChatResponseUpdate.
+
+    Without the fix, created_at was never set on the streaming update, so the
+    final ChatResponse assembled from updates would have created_at=None —
+    causing the durabletask persistence warning.
+
+    Fixes #5347.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.completed"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_ts"
+    mock_event.response.model = "test-model"
+    mock_event.response.conversation = None
+    mock_event.response.usage = None
+    mock_event.response.created_at = 1000000000  # 2001-09-09T01:46:40.000000Z
+
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert update.created_at == "2001-09-09T01:46:40.000000Z"
+
+
+def test_streaming_response_completed_with_null_created_at_does_not_raise() -> None:
+    """When created_at is None on the event, created_at on the update should stay None."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.completed"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_no_ts"
+    mock_event.response.model = "test-model"
+    mock_event.response.conversation = None
+    mock_event.response.usage = None
+    mock_event.response.created_at = None
+
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert update.created_at is None
+
+
 def test_prepare_tools_for_openai_with_mcp() -> None:
     """Test that MCP tool dict is converted to the correct response tool dict."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
