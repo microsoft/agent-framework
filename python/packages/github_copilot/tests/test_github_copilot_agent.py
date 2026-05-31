@@ -920,6 +920,87 @@ class TestGitHubCopilotAgentRunStreaming:
         assert responses[3].role == "assistant"
         assert responses[3].contents[0].type == "text"
 
+    async def test_run_streaming_multiple_tool_calls_with_json_results(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that multiple tool calls with JSON results are all projected correctly."""
+        json_payloads = [
+            '{"users": [{"id": "u1", "name": "Alice"}, {"id": "u2", "name": "Bob"}]}',
+            '{"tickets": [{"id": "INC001", "state": "open", "short_description": "VPN issue"}]}',
+            '{"groups": [{"id": "g1", "displayName": "IT Admins", "members": 42}]}',
+        ]
+        tool_names = ["msgraph_list_users", "sn_query_table", "msgraph_list_groups"]
+
+        events: list[SessionEvent] = []
+        for i, (name, payload) in enumerate(zip(tool_names, json_payloads)):
+            call_id = f"call_{i:03d}"
+
+            # Tool start
+            start_data = MagicMock()
+            start_data.tool_call_id = call_id
+            start_data.tool_name = name
+            start_data.arguments = {"query": f"test_{i}"}
+            events.append(
+                SessionEvent(
+                    data=start_data,
+                    id=uuid4(),
+                    timestamp=datetime.now(timezone.utc),
+                    type=SessionEventType.TOOL_EXECUTION_START,
+                )
+            )
+
+            # Tool complete
+            complete_data = MagicMock()
+            complete_data.tool_call_id = call_id
+            complete_data.result = ToolExecutionCompleteResult(content=payload)
+            complete_data.success = True
+            complete_data.error = None
+            events.append(
+                SessionEvent(
+                    data=complete_data,
+                    id=uuid4(),
+                    timestamp=datetime.now(timezone.utc),
+                    type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+                )
+            )
+
+        events.append(session_idle_event)
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("List users, tickets, and groups", stream=True):
+            responses.append(update)
+
+        # Should have 3 tool calls + 3 tool results = 6 updates
+        assert len(responses) == 6
+
+        # Verify each pair: function_call followed by function_result
+        for i in range(3):
+            call_update = responses[i * 2]
+            result_update = responses[i * 2 + 1]
+            call_id = f"call_{i:03d}"
+
+            assert call_update.role == "assistant"
+            assert call_update.contents[0].type == "function_call"
+            assert call_update.contents[0].call_id == call_id
+            assert call_update.contents[0].name == tool_names[i]
+
+            assert result_update.role == "tool"
+            assert result_update.contents[0].type == "function_result"
+            assert result_update.contents[0].call_id == call_id
+            assert result_update.contents[0].result == json_payloads[i]
+            assert result_update.contents[0].exception is None
+
 
 class TestGitHubCopilotAgentSessionManagement:
     """Test cases for session management."""
