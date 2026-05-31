@@ -3501,6 +3501,81 @@ async def test_mcp_tool_safe_close_handles_cancelled_error():
     mock_exit_stack.aclose.assert_called_once()
 
 
+async def test_mcp_tool_safe_close_handles_exception_group_non_fatal(caplog: pytest.LogCaptureFixture) -> None:
+    """_safe_close_exit_stack must not crash when the anyio task group raises ExceptionGroup.
+
+    When MCPStreamableHTTPTool's background GET SSE notification stream fails
+    (e.g. 405 on servers like Learn MCP or D365 F&O that only support Streamable HTTP
+    POST), anyio wraps the failure in an ExceptionGroup and raises it from the task
+    group's __aexit__. This propagates through the exit stack's aclose().
+
+    The fix treats ExceptionGroup as a non-fatal cleanup warning rather than a crash,
+    so the rest of agent teardown completes normally.
+
+    Fixes #5317.
+    """
+    import sys
+    from contextlib import AsyncExitStack
+
+    from agent_framework._mcp import MCPStdioTool
+
+    tool = MCPStdioTool(
+        name="test_server",
+        command="test_command",
+        args=["arg1"],
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    # Simulate the ExceptionGroup that anyio raises when a background task fails.
+    # Python 3.11+ has ExceptionGroup as a builtin; on 3.10 use the backport name.
+    if sys.version_info >= (3, 11):
+        exc_group = ExceptionGroup("mcp background", [ConnectionError("405 Method Not Allowed")])
+    else:
+        # Create an object whose __class__.__name__ == "ExceptionGroup" for pre-3.11
+        class _ExceptionGroup(Exception):
+            pass
+
+        _ExceptionGroup.__name__ = "ExceptionGroup"
+        exc_group = _ExceptionGroup("mcp background: 405 Method Not Allowed")
+
+    mock_exit_stack = AsyncMock(spec=AsyncExitStack)
+    mock_exit_stack.aclose = AsyncMock(side_effect=exc_group)
+    tool._exit_stack = mock_exit_stack
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        # Must not raise
+        await tool._safe_close_exit_stack()
+
+    assert any("non-fatal" in record.message or "GET SSE" in record.message for record in caplog.records), (
+        "Expected a warning log about the non-fatal GET SSE failure, got: "
+        + str([r.message for r in caplog.records])
+    )
+    mock_exit_stack.aclose.assert_called_once()
+
+
+async def test_mcp_tool_safe_close_reraises_non_exception_group_exceptions() -> None:
+    """Exceptions that are NOT ExceptionGroup must still propagate from _safe_close_exit_stack."""
+    from contextlib import AsyncExitStack
+
+    from agent_framework._mcp import MCPStdioTool
+
+    tool = MCPStdioTool(
+        name="test_server",
+        command="test_command",
+        args=["arg1"],
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    mock_exit_stack = AsyncMock(spec=AsyncExitStack)
+    mock_exit_stack.aclose = AsyncMock(side_effect=ValueError("unexpected error"))
+    tool._exit_stack = mock_exit_stack
+
+    with pytest.raises(ValueError, match="unexpected error"):
+        await tool._safe_close_exit_stack()
+
+
 async def test_connect_sets_logging_level_when_logger_level_is_set():
     """Test that connect() sets the MCP server logging level when the logger level is not NOTSET."""
 

@@ -626,6 +626,20 @@ class MCPTool:
                 raise
         except asyncio.CancelledError:
             logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
+        except Exception as e:
+            # anyio raises ExceptionGroup when a background task in the transport's task group
+            # fails (e.g. the GET SSE notification stream returns 405 from a server that only
+            # supports Streamable HTTP POST, such as Learn MCP or D365 F&O).  Treat this as
+            # non-fatal: log a warning and continue so the rest of cleanup can proceed.
+            if type(e).__name__ == "ExceptionGroup":
+                logger.warning(
+                    "MCP background task failed during session cleanup (non-fatal). "
+                    "The GET SSE notification stream may not be supported by this server. "
+                    "Error: %s",
+                    e,
+                )
+            else:
+                raise
 
     async def connect(self, *, reset: bool = False) -> None:
         if self._is_lifecycle_owner_task():
