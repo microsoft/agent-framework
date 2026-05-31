@@ -457,6 +457,17 @@ internal sealed class WorkflowSession : AgentSession
         {
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
         }
+
+        AgentResponseUpdate CreateObservabilityUpdate(WorkflowEvent evt)
+            => new(ChatRole.Assistant, [])
+            {
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+                Role = ChatRole.Assistant,
+                ResponseId = this.LastResponseId,
+                RawRepresentation = evt
+            };
+
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
                                                .WithCancellation(cancellationToken))
@@ -513,12 +524,14 @@ internal sealed class WorkflowSession : AgentSession
                         ? executorException.Message
                         : "An error occurred while executing the workflow.";
 
-                    yield return this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    AgentResponseUpdate executorUpdate = this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    yield return executorUpdate;
                     break;
 
                 case SuperStepCompletedEvent stepCompleted:
                     this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
-                    goto default;
+                    yield return CreateObservabilityUpdate(evt);
+                    break;
 
                 case AgentResponseEvent agentResponse:
                     // Under Futures.EnableAgentResponseOutputTaggingAndFiltering=true, mirror
@@ -527,7 +540,8 @@ internal sealed class WorkflowSession : AgentSession
                     // the legacy default, keep today's behavior — gated by the include flag.
                     if (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse)
                     {
-                        goto default;
+                        yield return CreateObservabilityUpdate(evt);
+                        break;
                     }
 
                     // Either EnableAgentResponseOutputTaggingAndFiltering -- so yield the Response
@@ -562,14 +576,16 @@ internal sealed class WorkflowSession : AgentSession
                     if (updateMessages == null
                         && updateContents == null)
                     {
-                        goto default;
+                        yield return CreateObservabilityUpdate(evt);
+                        break;
                     }
 
-                    bool includeTerminalOutput = this.IsTerminalOutput(output.ExecutorId);
+                    bool includeTerminalOutput = this._workflow.IsTerminalOutput(output.ExecutorId);
                     if (!this._includeWorkflowOutputsInResponse
                         && !includeTerminalOutput)
                     {
-                        goto default;
+                        yield return CreateObservabilityUpdate(evt);
+                        break;
                     }
 
                     foreach (ChatMessage message in this._includeWorkflowOutputsInResponse ? updateMessages ?? [] : [])
@@ -589,22 +605,11 @@ internal sealed class WorkflowSession : AgentSession
 
                 default:
                     // Emit all other workflow events for observability (DevUI, logging, etc.)
-                    yield return new AgentResponseUpdate(ChatRole.Assistant, [])
-                    {
-                        CreatedAt = DateTimeOffset.UtcNow,
-                        MessageId = Guid.NewGuid().ToString("N"),
-                        Role = ChatRole.Assistant,
-                        ResponseId = this.LastResponseId,
-                        RawRepresentation = evt
-                    };
+                    yield return CreateObservabilityUpdate(evt);
                     break;
             }
         }
     }
-
-    private bool IsTerminalOutput(string executorId)
-        => this._workflow.OutputExecutors.TryGetValue(executorId, out HashSet<OutputTag>? tags)
-            && !tags.Contains(OutputTag.Intermediate);
 
     public string? LastResponseId { get; set; }
 
