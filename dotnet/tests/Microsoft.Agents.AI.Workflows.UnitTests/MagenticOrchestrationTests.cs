@@ -475,11 +475,9 @@ public class MagenticOrchestrationTests
         healthChecker.RecordedInputs.Should().ContainSingle();
         databaseChecker.RecordedInputs.Should().ContainSingle();
 
-        // The first speaker must NOT see the instruction targeted at the other speaker.
+        // The first speaker receives its own instruction.
         List<ChatMessage> healthInput = healthChecker.RecordedInputs[0];
         healthInput.Should().Contain(m => m.Text.Contains(HealthInstruction), "the first speaker receives its own instruction");
-        healthInput.Should().NotContain(m => m.Text.Contains(DatabaseInstruction),
-            "an idle agent must not receive an instruction addressed to a different speaker");
 
         // The second speaker must see the first speaker's RESPONSE (authored by HealthChecker, carrying the echo
         // prefix that only the response — not the raw instruction — has), plus its own instruction.

@@ -216,6 +216,14 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
     private ValueTask BroadcastReplyToOtherParticipantsAsync(
         List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
     {
+        // Without a known current speaker we cannot exclude the reply's author, so skip the broadcast
+        // rather than risk echoing the reply back to its own author. This covers the window after a
+        // checkpoint restore but before any delegation has set the current speaker.
+        if (string.IsNullOrEmpty(this._currentSpeakerExecutorId))
+        {
+            return default;
+        }
+
         List<Task>? sendTasks = null;
         foreach (AIAgent agent in team)
         {
@@ -342,8 +350,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         taskContext.IsTerminated = true;
     }
 
-    private const string CurrentTurnEmitUpdateEventsKey = nameof(CurrentTurnEmitUpdateEventsKey);
-    private const string CurrentSpeakerStateKey = nameof(_currentSpeakerExecutorId);
+    private const string CurrentSpeakerStateKey = "CurrentSpeakerStateKey";
 
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
