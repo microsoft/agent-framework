@@ -282,6 +282,27 @@ def load_openai_service_settings(
             "Azure OpenAI client requires either an API key or an Azure AD token provider."
             " This can be provided either as a callable api_key or via the credential parameter."
         )
+    # When base_url points to an /openai/v1 endpoint and we are NOT in responses_mode,
+    # AsyncAzureOpenAI would incorrectly prepend /deployments/{model}/ to the path
+    # (e.g. /openai/v1/deployments/model/embeddings). Use AsyncOpenAI instead, which
+    # uses the plain /embeddings path that the OpenAI-compatible endpoint expects.
+    # responses_mode (chat client) already works correctly with AsyncAzureOpenAI.
+    resolved_base_url = client_args.get("base_url", "")
+    if (
+        not responses_mode
+        and isinstance(resolved_base_url, str)
+        and "/openai/v1" in resolved_base_url
+        and "azure_endpoint" not in client_args
+    ):
+        openai_v1_args: dict[str, Any] = {
+            "default_headers": client_args.get("default_headers"),
+            "base_url": resolved_base_url,
+        }
+        if token_provider := client_args.get("azure_ad_token_provider"):
+            openai_v1_args["api_key"] = token_provider
+        elif "api_key" in client_args:
+            openai_v1_args["api_key"] = client_args["api_key"]
+        return azure_settings, AsyncOpenAI(**openai_v1_args), False  # type: ignore[return-value]
     return azure_settings, AsyncAzureOpenAI(**client_args), True  # type: ignore[return-value]
 
 

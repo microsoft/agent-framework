@@ -209,6 +209,60 @@ async def test_openai_empty_values_returns_empty(openai_unit_test_env: dict[str,
     client.client.embeddings.create.assert_not_called()
 
 
+def test_openai_v1_base_url_with_credential_uses_async_openai() -> None:
+    """OpenAIEmbeddingClient with base_url=/openai/v1 + credential must use AsyncOpenAI.
+
+    AsyncAzureOpenAI prepends /deployments/{model}/ to the path, producing
+    /openai/v1/deployments/model/embeddings which the /openai/v1 endpoint does not
+    recognise (404). The fix switches to AsyncOpenAI (plain /embeddings path) when
+    base_url contains '/openai/v1'.
+
+    Fixes #5068.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
+
+    mock_token_provider = MagicMock(return_value="token")
+
+    with patch(
+        "agent_framework_openai._shared._resolve_azure_credential_to_token_provider",
+        return_value=mock_token_provider,
+    ):
+        client = OpenAIEmbeddingClient(
+            model="text-embedding-3-large",
+            base_url="https://myproject.openai.azure.com/openai/v1/",
+            credential=mock_token_provider,
+        )
+
+    assert isinstance(client.client, AsyncOpenAI), (
+        f"Expected AsyncOpenAI but got {type(client.client).__name__} — "
+        "AsyncAzureOpenAI would prepend /deployments/model/ to the path and 404."
+    )
+    assert not isinstance(client.client, AsyncAzureOpenAI)
+
+
+def test_non_openai_v1_base_url_with_credential_keeps_azure_client() -> None:
+    """When base_url does NOT contain /openai/v1, AsyncAzureOpenAI should still be used."""
+    from unittest.mock import MagicMock, patch
+
+    from openai import AsyncAzureOpenAI
+
+    mock_token_provider = MagicMock(return_value="token")
+
+    with patch(
+        "agent_framework_openai._shared._resolve_azure_credential_to_token_provider",
+        return_value=mock_token_provider,
+    ):
+        client = OpenAIEmbeddingClient(
+            model="text-embedding-ada-002",
+            azure_endpoint="https://myresource.openai.azure.com",
+            credential=mock_token_provider,
+        )
+
+    assert isinstance(client.client, AsyncAzureOpenAI)
+
+
 # --- Integration tests ---
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
