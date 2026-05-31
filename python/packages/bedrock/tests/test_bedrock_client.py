@@ -137,3 +137,24 @@ def test_prepare_options_tool_choice_required_includes_any() -> None:
 
     assert "toolConfig" in request
     assert request["toolConfig"]["toolChoice"] == {"any": {}}
+
+
+def test_prepare_options_no_tools_omits_tool_config() -> None:
+    """When no tools are provided, toolConfig must be omitted even if tool_choice is set.
+
+    Bedrock requires toolConfig.tools to be present whenever toolConfig.toolChoice
+    is specified. The Agent always defaults tool_choice='auto', so without this fix
+    a toolless agent would send {"toolChoice": {"auto": {}}} and get a
+    ParamValidationError: Missing required parameter in toolConfig: "tools".
+
+    Fixes #5165.
+    """
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    for tool_choice in ("auto", "required"):
+        request = client._prepare_options(messages, {"tool_choice": tool_choice})
+        assert "toolConfig" not in request, (
+            f"toolConfig should be omitted when tool_choice='{tool_choice}' and no tools are configured, "
+            f"got: {request.get('toolConfig')}"
+        )
