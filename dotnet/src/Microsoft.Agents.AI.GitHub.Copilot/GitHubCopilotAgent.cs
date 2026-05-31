@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -179,6 +180,14 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
                     case AssistantMessageEvent assistantMessage:
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
+                        break;
+
+                    case ToolExecutionStartEvent toolStart:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolStart));
+                        break;
+
+                    case ToolExecutionCompleteEvent toolComplete:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolComplete));
                         break;
 
                     case AssistantUsageEvent usageEvent:
@@ -360,6 +369,86 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             MessageId = assistantMessage.Data?.MessageId,
             CreatedAt = assistantMessage.Timestamp
         };
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionStartEvent toolStart)
+    {
+        IDictionary<string, object?>? arguments = ParseArguments(toolStart.Data?.Arguments);
+
+        FunctionCallContent content = new(
+            toolStart.Data?.ToolCallId ?? string.Empty,
+            toolStart.Data?.ToolName ?? string.Empty,
+            arguments)
+        {
+            RawRepresentation = toolStart
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolStart.Timestamp
+        };
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionCompleteEvent toolComplete)
+    {
+        object? result = toolComplete.Data?.Success == true
+            ? toolComplete.Data?.Result?.Content
+            : toolComplete.Data?.Error?.Message ?? "Tool execution failed";
+
+        FunctionResultContent content = new(
+            toolComplete.Data?.ToolCallId ?? string.Empty,
+            result)
+        {
+            RawRepresentation = toolComplete
+        };
+
+        return new AgentResponseUpdate(ChatRole.Tool, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolComplete.Timestamp
+        };
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing tool-call arguments from Copilot SDK input.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing tool-call arguments from Copilot SDK input.")]
+    private static IDictionary<string, object?>? ParseArguments(object? arguments)
+    {
+        if (arguments is null)
+        {
+            return null;
+        }
+
+        if (arguments is IDictionary<string, object?> dict)
+        {
+            return dict;
+        }
+
+        if (arguments is string jsonString)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<Dictionary<string, object?>>(jsonString);
+            }
+            catch (JsonException)
+            {
+                return new Dictionary<string, object?> { ["value"] = jsonString };
+            }
+        }
+
+        if (arguments is JsonElement jsonElement)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<Dictionary<string, object?>>(jsonElement.GetRawText());
+            }
+            catch (JsonException)
+            {
+                return new Dictionary<string, object?> { ["value"] = jsonElement.ToString() };
+            }
+        }
+
+        return new Dictionary<string, object?> { ["value"] = arguments.ToString() };
     }
 
     private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantUsageEvent usageEvent)
