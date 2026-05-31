@@ -15,6 +15,7 @@ from agent_framework import (
 )
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
+    _auto_invoke_function,
     _parse_annotation,
     _parse_inputs,
     _tools_to_dict,
@@ -181,6 +182,36 @@ async def test_tool_decorator_with_json_schema_invoke_invalid_type():
 
     with pytest.raises(TypeError, match="Invalid type for 'max_results'"):
         await search.invoke(arguments={"query": "hello", "max_results": "three"})
+
+
+async def test_tool_invoke_preserves_required_null_argument():
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle", "unit": None})
+
+    assert result[0].text == "Seattle:None"
+
+
+async def test_auto_function_call_preserves_required_null_argument():
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit}"
+
+    result = await _auto_invoke_function(
+        Content.from_function_call(
+            call_id="call_1",
+            name="get_weather",
+            arguments='{"location": "Seattle", "unit": null}',
+        ),
+        config={},
+        tool_map={"get_weather": get_weather},
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "Seattle:None"
+    assert result.exception is None
 
 
 def test_tool_decorator_with_json_schema_preserves_custom_properties():
