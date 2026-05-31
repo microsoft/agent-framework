@@ -428,7 +428,17 @@ internal static class ChatResponseUpdateAGUIExtensions
     {
         if (!string.IsNullOrEmpty(toolCallResult.Content))
         {
-            return JsonSerializer.Deserialize(toolCallResult.Content, options.GetTypeInfo(typeof(JsonElement)));
+            try
+            {
+                JsonElement result = (JsonElement)JsonSerializer.Deserialize(
+                    toolCallResult.Content,
+                    options.GetTypeInfo(typeof(JsonElement)))!;
+                return result.ValueKind == JsonValueKind.String ? result.GetString() : result;
+            }
+            catch (JsonException)
+            {
+                return toolCallResult.Content;
+            }
         }
 
         return null;
@@ -739,7 +749,7 @@ internal static class ChatResponseUpdateAGUIExtensions
         return functionResultContent.Result switch
         {
             null => null,
-            string str => str,
+            string str => JsonSerializer.Serialize(str, options.GetTypeInfo(typeof(string))),
             JsonElement jsonElement => jsonElement.GetRawText(),
             _ => JsonSerializer.Serialize(functionResultContent.Result, options.GetTypeInfo(functionResultContent.Result.GetType())),
         };
