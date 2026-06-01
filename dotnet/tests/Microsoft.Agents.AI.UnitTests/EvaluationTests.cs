@@ -551,6 +551,68 @@ public sealed class EvaluationTests
     }
 
     // ---------------------------------------------------------------
+    // RubricScore tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void RubricScore_Constructor_SetsAllProperties()
+    {
+        // Arrange & Act
+        var dim = new RubricScore("clarity", Score: 4, Applicable: true, Weight: 2, Reason: "clear");
+
+        // Assert
+        Assert.Equal("clarity", dim.Id);
+        Assert.Equal(4, dim.Score);
+        Assert.True(dim.Applicable);
+        Assert.Equal(2, dim.Weight);
+        Assert.Equal("clear", dim.Reason);
+    }
+
+    [Fact]
+    public void RubricScore_NonApplicable_AllowsNullScore()
+    {
+        // Arrange & Act
+        var dim = new RubricScore("safety", Score: null, Applicable: false, Weight: 1, Reason: "n/a");
+
+        // Assert
+        Assert.Null(dim.Score);
+        Assert.False(dim.Applicable);
+    }
+
+    [Fact]
+    public void EvalScoreResult_Dimensions_DefaultsToNull()
+    {
+        // Arrange & Act
+        var score = new EvalScoreResult("relevance", 0.8, Passed: true);
+
+        // Assert
+        Assert.Null(score.Dimensions);
+    }
+
+    [Fact]
+    public void EvalScoreResult_Dimensions_CanBeInitialized()
+    {
+        // Arrange
+        var dimensions = new List<RubricScore>
+        {
+            new("clarity", 4, true, 1, "ok"),
+            new("safety", null, false, 1, "n/a"),
+        };
+
+        // Act
+        var score = new EvalScoreResult("custom-rubric", 0.75, Passed: true)
+        {
+            Dimensions = dimensions,
+        };
+
+        // Assert
+        Assert.NotNull(score.Dimensions);
+        Assert.Equal(2, score.Dimensions.Count);
+        Assert.Equal("clarity", score.Dimensions[0].Id);
+        Assert.False(score.Dimensions[1].Applicable);
+    }
+
+    // ---------------------------------------------------------------
     // Mixed evaluator tests
     // ---------------------------------------------------------------
 
