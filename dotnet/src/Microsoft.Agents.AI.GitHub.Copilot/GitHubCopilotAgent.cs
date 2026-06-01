@@ -424,8 +424,26 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             return dict;
         }
 
+        // Catch dictionary variants that don't match IDictionary<string, object?> due to
+        // generic invariance (e.g., IDictionary<string, object>, custom dictionary types).
+        if (arguments is System.Collections.IDictionary nonGenericDict)
+        {
+            var result = new Dictionary<string, object?>();
+            foreach (System.Collections.DictionaryEntry entry in nonGenericDict)
+            {
+                result[entry.Key?.ToString() ?? string.Empty] = entry.Value;
+            }
+
+            return result;
+        }
+
         if (arguments is string jsonString)
         {
+            if (string.IsNullOrWhiteSpace(jsonString))
+            {
+                return null;
+            }
+
             try
             {
                 return JsonSerializer.Deserialize<Dictionary<string, object?>>(jsonString);
