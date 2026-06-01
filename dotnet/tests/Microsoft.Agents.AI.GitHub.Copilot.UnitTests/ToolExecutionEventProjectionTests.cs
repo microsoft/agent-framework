@@ -354,6 +354,28 @@ public sealed class ToolExecutionEventProjectionTests
     }
 
     [Fact]
+    public void ConvertToAgentResponseUpdate_ToolExecutionStartEvent_WithNonStringDictionaryKey_Throws()
+    {
+        // Arrange
+        var copilotClient = new CopilotClient(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+
+        var args = new Hashtable { [1] = "value1", [2] = "value2" };
+        var startEvent = new ToolExecutionStartEvent
+        {
+            Data = new ToolExecutionStartData
+            {
+                ToolCallId = "call-bad-keys",
+                ToolName = "badTool",
+                Arguments = args
+            }
+        };
+
+        // Act & Assert
+        Assert.Throws<InvalidCastException>(() => agent.ConvertToAgentResponseUpdate(startEvent));
+    }
+
+    [Fact]
     public void ConvertToAgentResponseUpdate_ToolExecutionStartEvent_WithJsonElement_ParsesArguments()
     {
         // Arrange

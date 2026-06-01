@@ -431,7 +431,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             var result = new Dictionary<string, object?>();
             foreach (System.Collections.DictionaryEntry entry in nonGenericDict)
             {
-                result[entry.Key?.ToString() ?? string.Empty] = entry.Value;
+                result[(string)entry.Key] = entry.Value;
             }
 
             return result;
