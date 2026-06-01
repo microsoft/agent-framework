@@ -80,7 +80,9 @@ public record EvalScoreResult(string Name, double Score, bool? Passed = null)
     /// </para>
     /// <para>
     /// Non-rubric evaluators (built-in quality, safety, or agent-behavior evaluators) leave
-    /// this property <see langword="null"/>.
+    /// this property <see langword="null"/>. Use
+    /// <see cref="AgentEvaluationResults.AssertDimensionScoreAtLeast(string, double, string?, bool, string?)"/>
+    /// to gate CI on a specific dimension across all items.
     /// </para>
     /// </remarks>
     public IReadOnlyList<RubricScore>? Dimensions { get; init; }
