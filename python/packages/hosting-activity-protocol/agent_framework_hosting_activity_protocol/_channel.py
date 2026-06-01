@@ -70,7 +70,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 from urllib.parse import urlparse
 
@@ -84,6 +84,8 @@ from agent_framework import (
 )
 from agent_framework.exceptions import ContentError
 from agent_framework_hosting import (
+    ChannelCommand,
+    ChannelCommandContext,
     ChannelContext,
     ChannelContribution,
     ChannelIdentity,
@@ -191,6 +193,36 @@ def _parse_activity(activity: Mapping[str, Any]) -> Message:
     return Message("user", parts)
 
 
+def _command_text(activity: Mapping[str, Any]) -> str:
+    """Return the activity text with the bot's own @mention stripped.
+
+    Channels that require an @mention to address the bot (Teams team and
+    group-chat scopes) prefix the message ``text`` with a mention whose literal
+    rendering is carried in the matching ``entities[].text`` (e.g.
+    ``"<at>Personal Assistant</at> /todos"``). Personal 1:1 chats carry no
+    mention. We remove only the bot's own mention substring(s) — never other
+    users' mentions — so a leading ``/command`` can be detected in every scope.
+    """
+    text = activity.get("text")
+    if not isinstance(text, str):
+        return ""
+    bot_id = (activity.get("recipient") or {}).get("id")
+    for entity in activity.get("entities") or []:
+        if not isinstance(entity, Mapping) or entity.get("type") != "mention":
+            continue
+        mentioned = entity.get("mentioned")
+        mentioned_id = mentioned.get("id") if isinstance(mentioned, Mapping) else None
+        # Only strip the bot's own mention; leave mentions of other users intact.
+        # When the recipient id is unknown we cannot disambiguate, so fall back
+        # to stripping every mention to keep command detection working.
+        if bot_id is not None and mentioned_id != bot_id:
+            continue
+        mention_text = entity.get("text")
+        if isinstance(mention_text, str) and mention_text:
+            text = text.replace(mention_text, "")
+    return text.strip()
+
+
 class ActivityProtocolChannel:
     """Microsoft Teams channel via Bot Framework v4 webhook.
 
@@ -216,6 +248,7 @@ class ActivityProtocolChannel:
         tenant_id: str = _BOTFRAMEWORK_TENANT,
         token_scope: str = _BOTFRAMEWORK_SCOPE,
         credential: AsyncTokenCredential | None = None,
+        commands: Sequence[ChannelCommand] = (),
         run_hook: ChannelRunHook | None = None,
         response_hook: ChannelResponseHook | None = None,
         send_typing_action: bool = True,
@@ -247,6 +280,16 @@ class ActivityProtocolChannel:
             credential: Bring your own ``AsyncTokenCredential`` (e.g. a
                 ``DefaultAzureCredential`` configured elsewhere). Overrides
                 ``app_password`` / ``certificate_path``.
+            commands: Discoverable ``/command`` handlers. An inbound message
+                whose text (after stripping the bot's own @mention) begins with
+                ``/`` and matches a command ``name`` (case-insensitive) is
+                dispatched to that handler instead of the agent, mirroring the
+                Telegram channel. The matching ``run_hook`` is applied to the
+                command request first, so command handlers observe the same
+                resolved ``session.isolation_key`` as ordinary messages.
+                Unknown ``/foo`` text falls through to the agent. Handlers reply
+                via ``ChannelCommandContext.reply``; surface them to users with
+                a Teams manifest ``commandLists`` entry.
             run_hook: Optional rewrite of ``ChannelRequest`` before invocation.
             response_hook: Optional rewrite of the
                 :class:`HostedRunResult` before the originating Activity
@@ -293,6 +336,7 @@ class ActivityProtocolChannel:
         self._app_id = app_id
         self._token_scope = token_scope
         self._tenant_id = tenant_id
+        self._commands = list(commands)
         self._hook = run_hook
         self.response_hook = response_hook
         self._send_typing_action = send_typing_action
@@ -329,6 +373,7 @@ class ActivityProtocolChannel:
         self._ctx = context
         return ChannelContribution(
             routes=[Route("/", self._handle, methods=["POST"])],
+            commands=self._commands,
             on_startup=[self._on_startup],
             on_shutdown=[self._on_shutdown],
         )
@@ -497,6 +542,20 @@ class ActivityProtocolChannel:
             logger.warning("Teams activity missing conversation.id or serviceUrl — dropping")
             return
 
+        # Native command dispatch — a leading ``/command`` (after stripping the
+        # bot's own @mention) bypasses the agent, mirroring the Telegram channel.
+        # Unknown commands fall through to the agent as a normal message.
+        if self._commands:
+            command_text = _command_text(activity)
+            if command_text.startswith("/"):
+                tokens = command_text[1:].split()
+                if tokens:
+                    command_name = tokens[0].split("@", 1)[0].lower()
+                    handler = next((c for c in self._commands if c.name.lower() == command_name), None)
+                    if handler is not None:
+                        await self._invoke_command(activity, conversation_id, service_url, handler, command_text)
+                        return
+
         parsed = _parse_activity(activity)
         # Store a Bot Framework conversation reference on the identity so the
         # host can proactively ``push`` to this conversation later (fan-out
@@ -541,6 +600,69 @@ class ActivityProtocolChannel:
             )
 
         await self._dispatch(activity, channel_request)
+
+    async def _invoke_command(
+        self,
+        activity: Mapping[str, Any],
+        conversation_id: str,
+        service_url: str,
+        handler: ChannelCommand,
+        command_text: str,
+    ) -> None:
+        """Run a matched ``/command`` handler and reply into the conversation.
+
+        The command request mirrors the message-path request (same isolation
+        key, identity and attributes) and is run through the channel ``run_hook``
+        first, so handlers observe the same resolved ``session.isolation_key`` as
+        ordinary messages. Handler/reply failures are logged but never raised:
+        commands are best-effort, and surfacing a 502 would make Bot Service
+        retry the inbound activity and re-run a non-idempotent command.
+        """
+        if self._ctx is None:  # pragma: no cover - guarded by lifecycle
+            raise RuntimeError("activity channel not started")
+        identity = ChannelIdentity(
+            channel=self.name,
+            native_id=conversation_id,
+            attributes={
+                "service_url": service_url,
+                "conversation": dict(activity.get("conversation") or {}),
+                "bot": dict(activity.get("recipient") or {}),
+                "user": dict(activity.get("from") or {}),
+                "channel_id": activity.get("channelId"),
+                "locale": activity.get("locale"),
+            },
+        )
+        request = ChannelRequest(
+            channel=self.name,
+            operation="command.invoke",
+            input=command_text,
+            session=ChannelSession(isolation_key=activity_protocol_isolation_key(conversation_id)),
+            identity=identity,
+            attributes={
+                "conversation_id": conversation_id,
+                "service_url": service_url,
+                "from_id": (activity.get("from") or {}).get("id"),
+                "channel_id": activity.get("channelId"),
+                "aad_object_id": (activity.get("from") or {}).get("aadObjectId"),
+            },
+            metadata={"reply_to_id": activity.get("id"), "recipient": activity.get("recipient")},
+        )
+        if self._hook is not None:
+            request = await apply_run_hook(
+                self._hook,
+                request,
+                target=self._ctx.target,
+                protocol_request=activity,
+            )
+
+        async def _reply(body: str) -> None:
+            await self._send_message(activity, body)
+
+        ctx = ChannelCommandContext(request=request, reply=_reply)
+        try:
+            await handler.handle(ctx)
+        except Exception:
+            logger.exception("ActivityProtocolChannel command %r failed", command_text)
 
     # -- outbound helpers -------------------------------------------------- #
 

@@ -9,16 +9,24 @@ streaming edits and certificate paths are out of scope here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from agent_framework_hosting import AgentFrameworkHost, ChannelIdentity, ChannelRequest, HostedRunResult
+from agent_framework_hosting import (
+    AgentFrameworkHost,
+    ChannelCommand,
+    ChannelCommandContext,
+    ChannelIdentity,
+    ChannelRequest,
+    ChannelSession,
+    HostedRunResult,
+)
 from starlette.testclient import TestClient
 
 from agent_framework_hosting_activity_protocol import ActivityProtocolChannel, activity_protocol_isolation_key
-from agent_framework_hosting_activity_protocol._channel import _parse_activity, _text_result
+from agent_framework_hosting_activity_protocol._channel import _command_text, _parse_activity, _text_result
 
 
 def test_activity_protocol_isolation_key_format() -> None:
@@ -80,6 +88,50 @@ class TestParseActivity:
         })
         assert msg.text == "hi"
         assert not any(getattr(c, "uri", None) for c in msg.contents)
+
+
+class TestCommandText:
+    def test_plain_text_unchanged(self) -> None:
+        assert _command_text({"text": "/help"}) == "/help"
+
+    def test_non_string_text_returns_empty(self) -> None:
+        assert _command_text({"text": None}) == ""
+        assert _command_text({}) == ""
+
+    def test_strips_bot_mention(self) -> None:
+        activity = {
+            "text": "<at>Personal Assistant</at> /todos",
+            "recipient": {"id": "bot-1"},
+            "entities": [
+                {"type": "mention", "text": "<at>Personal Assistant</at>", "mentioned": {"id": "bot-1"}},
+            ],
+        }
+        assert _command_text(activity) == "/todos"
+
+    def test_strips_bot_mention_without_space(self) -> None:
+        activity = {
+            "text": "<at>Bot</at>/help",
+            "recipient": {"id": "bot-1"},
+            "entities": [{"type": "mention", "text": "<at>Bot</at>", "mentioned": {"id": "bot-1"}}],
+        }
+        assert _command_text(activity) == "/help"
+
+    def test_keeps_other_user_mention(self) -> None:
+        activity = {
+            "text": "/whoami <at>Someone</at>",
+            "recipient": {"id": "bot-1"},
+            "entities": [{"type": "mention", "text": "<at>Someone</at>", "mentioned": {"id": "user-9"}}],
+        }
+        # Another user's mention must not be stripped.
+        assert _command_text(activity) == "/whoami <at>Someone</at>"
+
+    def test_malformed_entities_are_ignored(self) -> None:
+        activity = {
+            "text": "/help",
+            "recipient": {"id": "bot-1"},
+            "entities": ["not-a-mapping", {"type": "clientInfo"}, {"type": "mention"}],
+        }
+        assert _command_text(activity) == "/help"
 
 
 @dataclass
@@ -218,6 +270,109 @@ class TestTeamsWebhook:
         # caller knows the activity was structurally invalid.
         assert r.status_code == 400
         assert not agent.runs
+
+
+class TestCommands:
+    def _make_with_commands(self, commands: list[ChannelCommand]) -> tuple[ActivityProtocolChannel, _FakeAgent]:
+        agent = _FakeAgent("hi there")
+        ch = ActivityProtocolChannel(send_typing_action=False, commands=commands)
+        fake_http = MagicMock()
+        response_mock = MagicMock()
+        response_mock.raise_for_status = MagicMock()
+        response_mock.json = MagicMock(return_value={"id": "act-1"})
+        fake_http.post = AsyncMock(return_value=response_mock)
+        fake_http.put = AsyncMock(return_value=response_mock)
+        fake_http.aclose = AsyncMock()
+        ch._http = fake_http
+        return ch, agent
+
+    def test_slash_command_bypasses_agent_and_replies(self) -> None:
+        seen: list[ChannelCommandContext] = []
+
+        async def handle(ctx: ChannelCommandContext) -> None:
+            seen.append(ctx)
+            await ctx.reply("listed")
+
+        ch, agent = self._make_with_commands([ChannelCommand("todos", "List", handle)])
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        activity = dict(_VALID_ACTIVITY, text="/todos")
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=activity)
+        assert r.status_code == 200
+        assert not agent.runs, "command must bypass the agent"
+        assert seen and seen[0].request.operation == "command.invoke"
+        assert seen[0].request.input == "/todos"
+        assert seen[0].request.session is not None
+        assert seen[0].request.session.isolation_key == activity_protocol_isolation_key(
+            "19:meeting_xyz@thread.v2"
+        )
+        assert ch._http is not None
+        assert ch._http.post.call_args[1]["json"]["text"] == "listed"  # type: ignore[attr-defined]
+
+    def test_command_match_is_case_insensitive(self) -> None:
+        ran = False
+
+        async def handle(ctx: ChannelCommandContext) -> None:
+            nonlocal ran
+            ran = True
+
+        ch, agent = self._make_with_commands([ChannelCommand("New", "reset", handle)])
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=dict(_VALID_ACTIVITY, text="/new"))
+        assert r.status_code == 200
+        assert ran
+        assert not agent.runs
+
+    def test_unknown_command_falls_through_to_agent(self) -> None:
+        async def handle(ctx: ChannelCommandContext) -> None:  # pragma: no cover - never called
+            raise AssertionError("should not run")
+
+        ch, agent = self._make_with_commands([ChannelCommand("todos", "List", handle)])
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=dict(_VALID_ACTIVITY, text="/unknown"))
+        assert r.status_code == 200
+        assert agent.runs, "unknown /command must reach the agent"
+
+    def test_command_failure_does_not_retry(self) -> None:
+        async def handle(ctx: ChannelCommandContext) -> None:
+            raise RuntimeError("boom")
+
+        ch, agent = self._make_with_commands([ChannelCommand("todos", "List", handle)])
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=dict(_VALID_ACTIVITY, text="/todos"))
+        # Best-effort: a failing command is swallowed and acked with 200 so Bot
+        # Service does not retry (and re-run a non-idempotent command).
+        assert r.status_code == 200
+        assert not agent.runs
+
+    def test_run_hook_applied_to_command_request(self) -> None:
+        def hook(request: ChannelRequest, **_: Any) -> ChannelRequest:
+            return replace(request, session=ChannelSession(isolation_key="resolved-key"))
+
+        captured: list[str] = []
+
+        async def handle(ctx: ChannelCommandContext) -> None:
+            assert ctx.request.session is not None
+            captured.append(ctx.request.session.isolation_key)
+
+        agent = _FakeAgent("hi")
+        ch = ActivityProtocolChannel(send_typing_action=False, commands=[ChannelCommand("todos", "x", handle)])
+        ch._hook = hook
+        fake_http = MagicMock()
+        response_mock = MagicMock()
+        response_mock.raise_for_status = MagicMock()
+        response_mock.json = MagicMock(return_value={"id": "act-1"})
+        fake_http.post = AsyncMock(return_value=response_mock)
+        fake_http.aclose = AsyncMock()
+        ch._http = fake_http
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=dict(_VALID_ACTIVITY, text="/todos"))
+        assert r.status_code == 200
+        assert captured == ["resolved-key"]
 
 
 class TestOutbound:
