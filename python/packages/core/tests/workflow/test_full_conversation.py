@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Awaitable, Sequence
-from typing import Any
+from collections.abc import AsyncIterable, Awaitable
+from typing import Any, Literal, overload
 
 import pytest
 from pydantic import PrivateAttr
@@ -13,6 +13,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
     Content,
@@ -22,6 +23,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,
+    executor,
     handler,
 )
 from agent_framework.orchestrations import SequentialBuilder
@@ -34,14 +36,32 @@ class _SimpleAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
+    @overload
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
 
             async def _stream() -> AsyncIterable[AgentResponseUpdate]:
@@ -81,14 +101,32 @@ class _ToolHistoryAgent(BaseAgent):
             Message(role="assistant", contents=[Content.from_text(text=self._summary_text)]),
         ]
 
+    @overload
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
 
             async def _stream() -> AsyncIterable[AgentResponseUpdate]:
@@ -139,7 +177,7 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
     agent_exec = AgentExecutor(agent, id="agent1-exec")
     capturer = _CaptureFullConversation(id="capture")
 
-    wf = WorkflowBuilder(start_executor=agent_exec, output_executors=[capturer]).add_edge(agent_exec, capturer).build()
+    wf = WorkflowBuilder(start_executor=agent_exec, output_from=[capturer]).add_edge(agent_exec, capturer).build()
 
     # Act: use run() to test non-streaming mode
     result = await wf.run("hello world")
@@ -165,14 +203,32 @@ class _CaptureAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
+    @overload
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         # Normalize and record messages for verification
         norm: list[Message] = []
         if messages:
@@ -260,14 +316,14 @@ class _RoundTripCoordinator(Executor):
     async def handle_response(
         self,
         response: AgentExecutorResponse,
-        ctx: WorkflowContext[Never, dict[str, Any]],
+        ctx: WorkflowContext[AgentExecutorRequest, dict[str, Any]],
     ) -> None:
         self._seen += 1
         if self._seen == 1:
             assert response.full_conversation is not None
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=list(response.full_conversation) + [Message(role="user", text="apply feedback")],
+                    messages=list(response.full_conversation) + [Message(role="user", contents=["apply feedback"])],
                     should_respond=True,
                 ),
                 target_id=self._target_agent_id,
@@ -288,7 +344,7 @@ async def test_agent_executor_full_conversation_round_trip_does_not_duplicate_hi
     coordinator = _RoundTripCoordinator(target_agent_id="writer_agent")
 
     wf = (
-        WorkflowBuilder(start_executor=agent_exec, output_executors=[coordinator])
+        WorkflowBuilder(start_executor=agent_exec, output_from=[coordinator])
         .add_edge(agent_exec, coordinator)
         .add_edge(coordinator, agent_exec)
         .build()
@@ -314,14 +370,32 @@ class _SessionIdCapturingAgent(BaseAgent):
 
     _captured_service_session_id: str | None = PrivateAttr(default="NOT_CAPTURED")
 
+    @overload
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         self._captured_service_session_id = session.service_session_id if session else None
 
         async def _run() -> AgentResponse:
@@ -342,10 +416,10 @@ class _FullHistoryReplayCoordinator(Executor):
     async def handle(
         self,
         response: AgentExecutorResponse,
-        ctx: WorkflowContext[Never, Any],
+        ctx: WorkflowContext[AgentExecutorRequest, Any],
     ) -> None:
         full_conv = list(response.full_conversation or response.agent_response.messages)
-        full_conv.append(Message(role="user", text="follow-up"))
+        full_conv.append(Message(role="user", contents=["follow-up"]))
         # Simulate a prior run: the target executor has a stored previous_response_id.
         self._target_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
         await ctx.send_message(
@@ -355,7 +429,12 @@ class _FullHistoryReplayCoordinator(Executor):
 
 
 @pytest.mark.xfail(
-    reason="reset_service_session support not yet implemented — see #4047",
+    reason=(
+        "Tracks the executor-layer half of #3295: AgentExecutor should clear service_session_id "
+        "when handed a full prior conversation. The wire-level 'Duplicate item' API error is "
+        "already closed by the chat-client strip in #3295; this xfail covers the defense-in-depth "
+        "follow-up that makes the executor wiring reflect intent."
+    ),
     strict=True,
 )
 async def test_run_request_with_full_history_clears_service_session_id() -> None:
@@ -371,7 +450,7 @@ async def test_run_request_with_full_history_clears_service_session_id() -> None
     coordinator = _FullHistoryReplayCoordinator(id="coord", target_exec=spy_exec)
 
     wf = (
-        WorkflowBuilder(start_executor=tool_exec, output_executors=[coordinator])
+        WorkflowBuilder(start_executor=tool_exec, output_from=[coordinator])
         .add_edge(tool_exec, coordinator)
         .add_edge(coordinator, spy_exec)
         .build()
@@ -399,9 +478,96 @@ async def test_from_response_preserves_service_session_id() -> None:
     # Simulate a prior run on the spy executor.
     spy_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
 
-    wf = WorkflowBuilder(start_executor=tool_exec, output_executors=[spy_exec]).add_edge(tool_exec, spy_exec).build()
+    wf = WorkflowBuilder(start_executor=tool_exec, output_from=[spy_exec]).add_edge(tool_exec, spy_exec).build()
 
     result = await wf.run("start")
     assert result.get_outputs() is not None
 
     assert spy_agent._captured_service_session_id == "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
+
+
+@executor(
+    id="upper_case_executor",
+    input=AgentExecutorResponse,
+    output=AgentExecutorResponse,
+    workflow_output=str,
+)
+async def _upper_case_executor(
+    response: AgentExecutorResponse,
+    ctx: WorkflowContext[AgentExecutorResponse, str],
+) -> None:
+    upper_text = response.agent_response.text.upper()
+    await ctx.send_message(response.with_text(upper_text))
+    await ctx.yield_output(upper_text)
+
+
+async def test_with_text_preserves_full_conversation_through_custom_executor() -> None:
+    """Custom executor using with_text must preserve the full conversation chain."""
+    # Mirrors the reproduction from issue #5246:
+    # agent1 ("User likes sky red") -> agent2 ("User likes sky blue") -> upper_case -> agent3 ("User likes sky green")
+    agent1 = AgentExecutor(
+        _SimpleAgent(id="agent1", name="ContextAgent1", reply_text="User likes sky red"), id="agent1"
+    )
+    agent2 = AgentExecutor(
+        _SimpleAgent(id="agent2", name="ContextAgent2", reply_text="User likes sky blue"), id="agent2"
+    )
+    agent3 = AgentExecutor(
+        _SimpleAgent(id="agent3", name="ContextAgent3", reply_text="User likes sky green"), id="agent3"
+    )
+    capturer = _CaptureFullConversation(id="capture")
+
+    wf = (
+        WorkflowBuilder(start_executor=agent1, output_from=[capturer])
+        .add_chain([agent1, agent2, _upper_case_executor, agent3, capturer])
+        .build()
+    )
+
+    result = await wf.run("")
+    payload = next(o for o in result.get_outputs() if isinstance(o, dict))
+
+    # The final agent must see the full conversation: user, agent1, UPPER(agent2), agent3
+    assert payload["roles"] == ["user", "assistant", "assistant", "assistant"]
+    assert payload["texts"][1] == "User likes sky red"
+    assert payload["texts"][2] == "USER LIKES SKY BLUE"
+    assert payload["texts"][3] == "User likes sky green"
+
+
+async def test_with_text_does_not_mutate_original() -> None:
+    """with_text returns a new instance; the original must be unmodified."""
+    original = AgentExecutorResponse(
+        executor_id="test_exec",
+        agent_response=AgentResponse(messages=[Message("assistant", ["original reply"])]),
+        full_conversation=[Message("user", ["prompt"]), Message("assistant", ["original reply"])],
+    )
+
+    new = original.with_text("transformed reply")
+
+    assert new is not original
+    assert new.agent_response.text == "transformed reply"
+    assert new.full_conversation[-1].text == "transformed reply"
+    assert new.full_conversation[-1].role == "assistant"
+    # Original unchanged
+    assert original.agent_response.text == "original reply"
+    assert original.full_conversation[-1].text == "original reply"
+
+
+async def test_with_text_strips_multi_message_agent_turn() -> None:
+    """When the agent turn has multiple messages (tool calls), with_text strips all of them."""
+    tool_call = Message("assistant", ["<tool_call>"])
+    tool_result = Message("tool", ["<result>"])
+    final_reply = Message("assistant", ["actual answer"])
+    user_msg = Message("user", ["question"])
+
+    original = AgentExecutorResponse(
+        executor_id="exec",
+        agent_response=AgentResponse(messages=[tool_call, tool_result, final_reply]),
+        full_conversation=[user_msg, tool_call, tool_result, final_reply],
+    )
+
+    new = original.with_text("summarised answer")
+
+    # Only the pre-agent-turn messages should remain, plus the replacement
+    assert len(new.full_conversation) == 2
+    assert new.full_conversation[0].text == "question"
+    assert new.full_conversation[1].text == "summarised answer"
+    assert new.agent_response.text == "summarised answer"

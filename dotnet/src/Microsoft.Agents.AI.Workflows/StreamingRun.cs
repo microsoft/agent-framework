@@ -60,6 +60,9 @@ public sealed class StreamingRun : CheckpointableRunBase, IAsyncDisposable
     internal ValueTask<bool> TrySendMessageUntypedAsync(object message, Type? declaredType = null)
         => this._runHandle.EnqueueMessageUntypedAsync(message, declaredType);
 
+    internal bool TryGetResponsePortExecutorId(string portId, out string? executorId)
+        => this._runHandle.TryGetResponsePortExecutorId(portId, out executorId);
+
     /// <summary>
     /// Asynchronously streams workflow events as they occur during workflow execution.
     /// </summary>

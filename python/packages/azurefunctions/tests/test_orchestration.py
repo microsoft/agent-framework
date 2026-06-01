@@ -155,7 +155,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task completion
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentResponse(messages=[Message(role="assistant", text="Test response")]).to_dict()
+        entity_task.result = AgentResponse(messages=[Message(role="assistant", contents=["Test response"])]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -197,7 +197,9 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task with JSON response
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentResponse(messages=[Message(role="assistant", text='{"answer": "42"}')]).to_dict()
+        entity_task.result = AgentResponse(
+            messages=[Message(role="assistant", contents=['{"answer": "42"}'])]
+        ).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()

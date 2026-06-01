@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -28,16 +28,24 @@ public class CopilotStudioFixture : IAgentFixture
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 
-    public Task InitializeAsync()
+    public ValueTask InitializeAsync()
     {
         const string CopilotStudioHttpClientName = nameof(CopilotStudioAgent);
 
-        var settings = new CopilotStudioConnectionSettings(
-            TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioTenantId),
-            TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioAgentAppId))
+        CopilotStudioConnectionSettings? settings = null;
+        try
         {
-            DirectConnectUrl = TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioDirectConnectUrl),
-        };
+            settings = new CopilotStudioConnectionSettings(
+                TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioTenantId),
+                TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioAgentAppId))
+            {
+                DirectConnectUrl = TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioDirectConnectUrl),
+            };
+        }
+        catch (InvalidOperationException ex)
+        {
+            Assert.Skip("CopilotStudio configuration could not be loaded. Error:" + ex.Message);
+        }
 
         ServiceCollection services = new();
 
@@ -56,8 +64,12 @@ public class CopilotStudioFixture : IAgentFixture
 
         this.Agent = new CopilotStudioAgent(client);
 
-        return Task.CompletedTask;
+        return default;
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

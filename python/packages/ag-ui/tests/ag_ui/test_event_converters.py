@@ -185,7 +185,7 @@ class TestAGUIEventConverter:
         assert update.role == "tool"
         assert len(update.contents) == 1
         assert update.contents[0].call_id == "call_123"
-        assert update.contents[0].result == {"temperature": 22, "condition": "sunny"}
+        assert update.contents[0].result == '{"temperature": 22, "condition": "sunny"}'
 
     def test_run_finished_event(self) -> None:
         """Test conversion of RUN_FINISHED event."""

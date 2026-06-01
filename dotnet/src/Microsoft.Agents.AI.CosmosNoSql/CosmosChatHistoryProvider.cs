@@ -17,11 +17,30 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides a Cosmos DB implementation of the <see cref="ChatHistoryProvider"/> abstract class.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Security considerations:</strong>
+/// <list type="bullet">
+/// <item><description><strong>PII and sensitive data:</strong> Chat history stored in Cosmos DB may contain PII, sensitive conversation
+/// content, and system instructions. Ensure the Cosmos DB account is configured with appropriate access controls, encryption at rest,
+/// and network security (e.g., private endpoints, virtual network rules). The <see cref="MessageTtlSeconds"/> property can be used to
+/// automatically expire messages and limit data retention.</description></item>
+/// <item><description><strong>Compromised store risks:</strong> Agent Framework does not validate or filter messages loaded from the
+/// store — they are accepted as-is. If the Cosmos DB store is compromised, adversarial content could be injected into the conversation
+/// context, potentially influencing LLM behavior via indirect prompt injection. Altered message roles (e.g., changing <c>user</c> to
+/// <c>system</c>) could escalate trust levels.</description></item>
+/// <item><description><strong>Authentication:</strong> Agent Framework does not manage authentication or encryption for the Cosmos DB
+/// connection — these are the responsibility of the <see cref="CosmosClient"/> configuration. Use managed identity
+/// or token-based authentication where possible, and avoid embedding connection strings with keys in source code.</description></item>
+/// </list>
+/// </para>
+/// </remarks>
 [RequiresUnreferencedCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with trimming.")]
 [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
 public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
 {
     private readonly ProviderSessionState<State> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly CosmosClient _cosmosClient;
     private readonly Container _container;
     private readonly bool _ownsClient;
@@ -87,7 +106,8 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// <param name="ownsClient">Whether this instance owns the CosmosClient and should dispose it.</param>
     /// <param name="stateKey">An optional key to use for storing the state in the <see cref="AgentSession.StateBag"/>.</param>
     /// <param name="provideOutputMessageFilter">An optional filter function to apply to messages when retrieving them from the chat history.</param>
-    /// <param name="storeInputMessageFilter">An optional filter function to apply to messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <param name="storeInputRequestMessageFilter">An optional filter function to apply to request messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <param name="storeInputResponseMessageFilter">An optional filter function to apply to response messages before storing them in the chat history. If not set, defaults to storing all response messages.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> or <paramref name="stateInitializer"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosChatHistoryProvider(
@@ -98,8 +118,9 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         bool ownsClient = false,
         string? stateKey = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
-        : base(provideOutputMessageFilter, storeInputMessageFilter)
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
+        : base(provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<State>(
             Throw.IfNull(stateInitializer),
@@ -112,7 +133,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a connection string.
@@ -123,7 +144,8 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation.</param>
     /// <param name="stateKey">An optional key to use for storing the state in the <see cref="AgentSession.StateBag"/>.</param>
     /// <param name="provideOutputMessageFilter">An optional filter function to apply to messages when retrieving them from the chat history.</param>
-    /// <param name="storeInputMessageFilter">An optional filter function to apply to messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <param name="storeInputRequestMessageFilter">An optional filter function to apply to request messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <param name="storeInputResponseMessageFilter">An optional filter function to apply to response messages before storing them in the chat history. If not set, defaults to storing all response messages.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosChatHistoryProvider(
@@ -133,8 +155,9 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         Func<AgentSession?, State> stateInitializer,
         string? stateKey = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString)), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputMessageFilter)
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
+        : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString)), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
     {
     }
 
@@ -148,7 +171,8 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation.</param>
     /// <param name="stateKey">An optional key to use for storing the state in the <see cref="AgentSession.StateBag"/>.</param>
     /// <param name="provideOutputMessageFilter">An optional filter function to apply to messages when retrieving them from the chat history.</param>
-    /// <param name="storeInputMessageFilter">An optional filter function to apply to messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <param name="storeInputRequestMessageFilter">An optional filter function to apply to request messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <param name="storeInputResponseMessageFilter">An optional filter function to apply to response messages before storing them in the chat history. If not set, defaults to storing all response messages.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosChatHistoryProvider(
@@ -159,8 +183,9 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         Func<AgentSession?, State> stateInitializer,
         string? stateKey = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential)), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputMessageFilter)
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
+        : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential)), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
     {
     }
 

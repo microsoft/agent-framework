@@ -3,28 +3,26 @@
 """Route email requests through conditional orchestration with two agents.
 
 Components used in this sample:
-- AzureOpenAIChatClient agents for spam detection and email drafting.
+- FoundryChatClient agents for spam detection and email drafting.
 - AgentFunctionApp with Durable orchestration, activity, and HTTP triggers.
 - Pydantic models that validate payloads and agent JSON responses.
 
-Prerequisites: set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`,
-and either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running the
+Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before running the
 Functions host."""
 
 import json
 import logging
+import os
 from collections.abc import Generator, Mapping
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework import Agent
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.foundry import FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
-from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
-
-# Load environment variables from .env file
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +47,20 @@ class EmailPayload(BaseModel):
 
 # 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
-    spam_agent = client.as_agent(
+    spam_agent = Agent(
+        client=client,
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
 
-    email_agent = client.as_agent(
+    email_agent = Agent(
+        client=client,
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )

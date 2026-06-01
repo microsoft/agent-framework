@@ -3,25 +3,25 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
-using System.Threading;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal sealed class FanInEdgeState
 {
-    private List<PortableMessageEnvelope> _pendingMessages;
+    private readonly object _syncLock = new();
+
     public FanInEdgeState(FanInEdgeData fanInEdge)
     {
         this.SourceIds = fanInEdge.SourceIds.ToArray();
         this.Unseen = [.. this.SourceIds];
 
-        this._pendingMessages = [];
+        this.PendingMessages = [];
     }
 
     public string[] SourceIds { get; }
     public HashSet<string> Unseen { get; private set; }
-    public List<PortableMessageEnvelope> PendingMessages => this._pendingMessages;
+    public List<PortableMessageEnvelope> PendingMessages { get; private set; }
 
     [JsonConstructor]
     public FanInEdgeState(string[] sourceIds, HashSet<string> unseen, List<PortableMessageEnvelope> pendingMessages)
@@ -29,28 +29,35 @@ internal sealed class FanInEdgeState
         this.SourceIds = sourceIds;
         this.Unseen = unseen;
 
-        this._pendingMessages = pendingMessages;
+        this.PendingMessages = pendingMessages;
     }
 
     public IEnumerable<IGrouping<ExecutorIdentity, MessageEnvelope>>? ProcessMessage(string sourceId, MessageEnvelope envelope)
     {
-        this.PendingMessages.Add(new(envelope));
-        this.Unseen.Remove(sourceId);
+        List<PortableMessageEnvelope>? takenMessages = null;
 
-        if (this.Unseen.Count == 0)
+        // Serialize concurrent calls from parallel executor tasks during superstep execution.
+        // NOTE - IMPORTANT: If this ProcessMessage method ever becomes async, replace this lock with an async friendly solution to avoid deadlocks.
+        lock (this._syncLock)
         {
-            List<PortableMessageEnvelope> takenMessages = Interlocked.Exchange(ref this._pendingMessages, []);
-            this.Unseen = [.. this.SourceIds];
+            this.PendingMessages.Add(new(envelope));
+            this.Unseen.Remove(sourceId);
 
-            if (takenMessages.Count == 0)
+            if (this.Unseen.Count == 0)
             {
-                return null;
+                takenMessages = this.PendingMessages;
+                this.PendingMessages = [];
+                this.Unseen = [.. this.SourceIds];
             }
-
-            return takenMessages.Select(portable => portable.ToMessageEnvelope())
-                                .GroupBy(keySelector: messageEnvelope => messageEnvelope.Source);
         }
 
-        return null;
+        if (takenMessages is null || takenMessages.Count == 0)
+        {
+            return null;
+        }
+
+        return takenMessages
+            .Select(portable => portable.ToMessageEnvelope())
+            .GroupBy(messageEnvelope => messageEnvelope.Source);
     }
 }

@@ -58,8 +58,8 @@ def ensure_response_format(
     """
     if response_format is not None:
         # Set the response format on the response so .value knows how to parse
-        response._response_format = response_format
-        response._value_parsed = False  # Reset to allow re-parsing with new format
+        response._response_format = response_format  # pyright: ignore[reportPrivateUsage]
+        response._value_parsed = False  # pyright: ignore[reportPrivateUsage]  # Reset to allow re-parsing with new format
 
         # Access response.value to trigger parsing (may raise ValidationError)
         # Validate that parsing succeeded

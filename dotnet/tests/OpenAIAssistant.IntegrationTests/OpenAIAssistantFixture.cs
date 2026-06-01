@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
@@ -77,7 +78,7 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
         return Task.CompletedTask;
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         var client = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey));
         this._assistantClient = client.GetAssistantClient();
@@ -85,13 +86,15 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
         this._agent = await this.CreateChatClientAgentAsync();
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
+
         if (this._assistantClient is not null && this._agent is not null)
         {
-            return this._assistantClient.DeleteAssistantAsync(this._agent.Id);
+            return new ValueTask(this._assistantClient.DeleteAssistantAsync(this._agent.Id));
         }
 
-        return Task.CompletedTask;
+        return default;
     }
 }

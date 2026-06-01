@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,9 +17,6 @@ namespace AnthropicChatCompletion.IntegrationTests;
 
 public class AnthropicChatCompletionFixture : IChatClientAgentFixture
 {
-    // All tests for Anthropic are intended to be ran locally as the CI pipeline for Anthropic is not setup.
-    internal const string SkipReason = "Integrations tests for local execution only";
-
     private readonly bool _useReasoningModel;
     private readonly bool _useBeta;
 
@@ -102,9 +100,25 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         // Chat Completion does not require/support deleting sessions, so this is a no-op.
         Task.CompletedTask;
 
-    public async Task InitializeAsync() =>
-        this._agent = await this.CreateChatClientAgentAsync();
+    public async ValueTask InitializeAsync()
+    {
+        try
+        {
+            _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey);
+            _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicChatModelName);
+            _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicReasoningModelName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Assert.Skip("Anthropic configuration could not be loaded. Error:" + ex.Message);
+        }
 
-    public Task DisposeAsync() =>
-        Task.CompletedTask;
+        this._agent = await this.CreateChatClientAgentAsync();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

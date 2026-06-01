@@ -188,9 +188,9 @@ def _validate_conversation_history(messages: list[Message], agent_name: str) -> 
     tool_result_ids: set[str] = set()
 
     for i, msg in enumerate(messages):
-        if not hasattr(msg, "contents") or msg.contents is None:
+        if not (contents := getattr(msg, "contents", None)):
             continue
-        for content in msg.contents:
+        for content in contents:
             if content.type == "function_call" and content.call_id:
                 tool_call_ids.add(content.call_id)
                 logger.debug(
@@ -640,7 +640,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         # Add user input to conversation history first (via state.append only)
         if input_text:
-            user_message = Message(role="user", text=input_text)
+            user_message = Message(role="user", contents=[input_text])
             state.append(messages_path, user_message)
 
         # Get conversation history from state AFTER adding user message
@@ -717,7 +717,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 "Agent '%s': No messages in response, creating simple assistant message",
                 agent_name,
             )
-            assistant_message = Message(role="assistant", text=accumulated_response)
+            assistant_message = Message(role="assistant", contents=[accumulated_response])
             state.append(messages_path, assistant_message)
 
         # Store results in state - support both schema formats:

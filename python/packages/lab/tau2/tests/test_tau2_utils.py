@@ -2,62 +2,46 @@
 
 """Tests for tau2 utils module."""
 
-import urllib.request
-from pathlib import Path
-
 import pytest
+
+try:
+    from litellm import completion as _litellm_completion  # noqa: F401
+except Exception:
+    pytest.skip("LiteLLM import surface required by tau2 is unavailable.", allow_module_level=True)
+
 from agent_framework import Content, FunctionTool, Message
 from agent_framework_lab_tau2._tau2_utils import (
     convert_agent_framework_messages_to_tau2_messages,
     convert_tau2_tool_to_function_tool,
 )
+from pydantic import BaseModel
 from tau2.data_model.message import AssistantMessage, SystemMessage, ToolCall, ToolMessage, UserMessage
-from tau2.domains.airline.data_model import FlightDB
-from tau2.domains.airline.tools import AirlineTools
-from tau2.environment.environment import Environment
 
 
-@pytest.fixture(scope="session")
-def tau2_airline_environment() -> Environment:
-    airline_db_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/db.json"
-    airline_policy_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/policy.md"
-
-    # Create cache directory
-    cache_dir = Path(__file__).parent / "data"
-    cache_dir.mkdir(exist_ok=True)
-
-    # Define cache file paths
-    db_cache_path = cache_dir / "airline_db.json"
-    policy_cache_path = cache_dir / "airline_policy.md"
-
-    # Download files only if they don't exist in cache
-    if not db_cache_path.exists():
-        urllib.request.urlretrieve(airline_db_remote_path, db_cache_path)
-
-    if not policy_cache_path.exists():
-        urllib.request.urlretrieve(airline_policy_remote_path, policy_cache_path)
-
-    # Load data from cached files
-    db = FlightDB.load(str(db_cache_path))
-    tools = AirlineTools(db)
-    with open(policy_cache_path) as fp:
-        policy = fp.read()
-
-    yield Environment(
-        domain_name="airline",
-        policy=policy,
-        tools=tools,
-    )
+class _DummyToolInput(BaseModel):
+    param: str
 
 
-def test_convert_tau2_tool_to_function_tool_basic(tau2_airline_environment):
+class _DummyToolResult(BaseModel):
+    output: str
+
+
+class _DummyTau2Tool:
+    def __init__(self, name: str, description: str) -> None:
+        self.name = name
+        self._description = description
+        self.params = _DummyToolInput
+
+    def _get_description(self) -> str:
+        return self._description
+
+    def __call__(self, **kwargs: str) -> _DummyToolResult:
+        return _DummyToolResult(output=kwargs["param"])
+
+
+def test_convert_tau2_tool_to_function_tool_basic():
     """Test basic conversion from tau2 tool to FunctionTool."""
-    # Get real tools from tau2 environment
-    tools = tau2_airline_environment.get_tools()
-
-    # Use the first available tool for testing
-    assert len(tools) > 0, "No tools available in environment"
-    tau2_tool = tools[0]
+    tau2_tool = _DummyTau2Tool(name="lookup_booking", description="Lookup booking by id.")
 
     # Convert the tool
     tool = convert_tau2_tool_to_function_tool(tau2_tool)
@@ -68,20 +52,25 @@ def test_convert_tau2_tool_to_function_tool_basic(tau2_airline_environment):
     assert tool.description == tau2_tool._get_description()
     assert tool.input_model == tau2_tool.params
 
-    # Test that the function is callable (we won't call it with real params to avoid side effects)
+    result = tool.func(param="ABC123")
+    assert isinstance(result, _DummyToolResult)
+    assert result.output == "ABC123"
     assert callable(tool.func)
 
 
-def test_convert_tau2_tool_to_function_tool_multiple_tools(tau2_airline_environment):
+def test_convert_tau2_tool_to_function_tool_multiple_tools():
     """Test conversion with multiple tau2 tools."""
-    # Get real tools from tau2 environment
-    tools = tau2_airline_environment.get_tools()
+    tools = [
+        _DummyTau2Tool(name="lookup_booking", description="Lookup booking by id."),
+        _DummyTau2Tool(name="cancel_booking", description="Cancel an existing booking."),
+        _DummyTau2Tool(name="check_policy", description="Get policy details."),
+    ]
 
     # Convert multiple tools
-    function_tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools[:3]]  # Test first 3 tools
+    function_tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools]
 
     # Verify all conversions
-    for tool, tau2_tool in zip(function_tools, tools[:3], strict=False):
+    for tool, tau2_tool in zip(function_tools, tools, strict=False):
         assert isinstance(tool, FunctionTool)
         assert tool.name == tau2_tool.name
         assert tool.description == tau2_tool._get_description()

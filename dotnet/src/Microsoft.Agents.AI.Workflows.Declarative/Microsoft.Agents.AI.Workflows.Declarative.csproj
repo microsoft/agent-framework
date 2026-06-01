@@ -26,7 +26,7 @@
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
-    <PackageReference Include="System.CodeDom" />
+    <PackageReference Include="System.CodeDom" TreatAsUsed="true" />
     <PackageReference Include="System.Collections.Immutable" />
   </ItemGroup>
 
@@ -36,18 +36,6 @@
 
   <ItemGroup>
     <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="CodeGen\*Template.tt">
-      <Generator>TextTemplatingFilePreprocessor</Generator>
-      <LastGenOutput>%(Filename).cs</LastGenOutput>
-    </None>
-    <Compile Update="CodeGen\*Template.cs">
-      <DependentUpon>%(Filename).tt</DependentUpon>
-      <DesignTime>True</DesignTime>
-      <AutoGen>True</AutoGen>
-    </Compile>
   </ItemGroup>
 
   <ItemGroup>

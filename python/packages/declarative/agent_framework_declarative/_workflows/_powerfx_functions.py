@@ -44,14 +44,16 @@ def message_text(messages: Any) -> str:
         content: Any = messages_dict.get("content", "")
         if isinstance(content, str):
             return content
-        if hasattr(content, "text"):
-            return str(content.text)
+        text_attr = getattr(content, "text", None)
+        if text_attr is not None:
+            return str(text_attr)
         return str(content) if content else ""
 
     if isinstance(messages, list):
         # List of messages - concatenate all text
         texts: list[str] = []
-        for msg in messages:
+        message_list = cast(list[Any], messages)  # type: ignore[redundant-cast]
+        for msg in message_list:
             if isinstance(msg, str):
                 texts.append(msg)
             elif isinstance(msg, dict):
@@ -61,14 +63,16 @@ def message_text(messages: Any) -> str:
                     texts.append(msg_content)
                 elif msg_content:
                     texts.append(str(msg_content))
-            elif hasattr(msg, "content"):
-                msg_obj_content: Any = msg.content
-                if isinstance(msg_obj_content, str):
-                    texts.append(msg_obj_content)
-                elif hasattr(msg_obj_content, "text"):
-                    texts.append(str(msg_obj_content.text))
-                elif msg_obj_content:
-                    texts.append(str(msg_obj_content))
+            else:
+                msg_obj: object = msg
+                if hasattr(msg_obj, "content"):
+                    msg_obj_content: Any = getattr(msg_obj, "content", None)
+                    if isinstance(msg_obj_content, str):
+                        texts.append(msg_obj_content)
+                    elif (msg_obj_text := getattr(msg_obj_content, "text", None)) is not None:
+                        texts.append(str(msg_obj_text))
+                    elif msg_obj_content:
+                        texts.append(str(msg_obj_content))
         return " ".join(texts)
 
     # Try to get text attribute
@@ -191,10 +195,8 @@ def is_blank(value: Any) -> bool:
         return True
     if isinstance(value, str) and not value.strip():
         return True
-    if isinstance(value, list):
-        return len(value) == 0
-    if isinstance(value, dict):
-        return len(value) == 0
+    if isinstance(value, (list, dict)):
+        return len(value) == 0  # type: ignore[reportUnknownArgumentType]
     return False
 
 

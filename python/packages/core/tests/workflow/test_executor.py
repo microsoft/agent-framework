@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 import pytest
 from typing_extensions import Never
@@ -59,7 +60,7 @@ def test_executor_handler_without_annotations():
         class MockExecutorWithOneHandlerWithoutAnnotations(Executor):  # type: ignore
             """A mock executor with one handler that does not implement any annotations."""
 
-            @handler
+            @handler  # pyright: ignore[reportUnknownArgumentType]
             async def handle(self, message, ctx) -> None:  # type: ignore
                 """A mock handler that does not implement any annotations."""
                 pass
@@ -452,7 +453,10 @@ def test_executor_workflow_output_types_includes_response_handlers():
 
         @response_handler
         async def handle_response(
-            self, original_request: str, response: bool, ctx: WorkflowContext[float, bool]
+            self,
+            original_request: str,
+            response: bool,
+            ctx: WorkflowContext[float, bool],
         ) -> None:
             pass
 
@@ -509,7 +513,10 @@ def test_executor_response_handler_union_output_types():
 
         @response_handler
         async def handle_response(
-            self, original_request: str, response: bool, ctx: WorkflowContext[int | str | float, bool | int]
+            self,
+            original_request: str,
+            response: bool,
+            ctx: WorkflowContext[int | str | float, bool | int],
         ) -> None:
             pass
 
@@ -534,7 +541,7 @@ async def test_executor_invoked_event_data_not_mutated_by_handler():
     async def mutator(messages: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
         # The handler mutates the input list by appending new messages
         original_len = len(messages)
-        messages.append(Message(role="assistant", text="Added by executor"))
+        messages.append(Message(role="assistant", contents=["Added by executor"]))
         await ctx.send_message(messages)
         # Verify mutation happened
         assert len(messages) == original_len + 1
@@ -542,7 +549,7 @@ async def test_executor_invoked_event_data_not_mutated_by_handler():
     workflow = WorkflowBuilder(start_executor=mutator).build()
 
     # Run with a single user message
-    input_messages = [Message(role="user", text="hello")]
+    input_messages = [Message(role="user", contents=["hello"])]
     events = await workflow.run(input_messages)
 
     # Find the invoked event for the Mutator executor
@@ -577,8 +584,8 @@ class TestHandlerExplicitTypes:
         exec_instance = ExplicitInputExecutor(id="explicit_input")
 
         # Handler should be registered for str (explicit), not Any (introspected)
-        assert str in exec_instance._handlers
-        assert len(exec_instance._handlers) == 1
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
+        assert len(exec_instance._handlers) == 1  # pyright: ignore[reportPrivateUsage]
 
         # Can handle str messages
         assert exec_instance.can_handle(WorkflowMessage(data="hello", source_id="mock"))
@@ -596,8 +603,8 @@ class TestHandlerExplicitTypes:
         exec_instance = ExplicitOutputExecutor(id="explicit_output")
 
         # Handler spec should have int as output type (explicit)
-        handler_func = exec_instance._handlers[str]
-        assert handler_func._handler_spec["output_types"] == [int]
+        handler_func = exec_instance._handlers[str]  # pyright: ignore[reportPrivateUsage]
+        assert handler_func._handler_spec["output_types"] == [int]  # pyright: ignore[reportFunctionMemberAccess]
 
         # Executor output_types property should reflect explicit type
         assert int in exec_instance.output_types
@@ -615,12 +622,12 @@ class TestHandlerExplicitTypes:
         exec_instance = ExplicitBothExecutor(id="explicit_both")
 
         # Handler should be registered for dict (explicit input type)
-        assert dict in exec_instance._handlers
-        assert len(exec_instance._handlers) == 1
+        assert dict in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
+        assert len(exec_instance._handlers) == 1  # pyright: ignore[reportPrivateUsage]
 
         # Output type should be list (explicit)
-        handler_func = exec_instance._handlers[dict]
-        assert handler_func._handler_spec["output_types"] == [list]
+        handler_func = exec_instance._handlers[dict]  # pyright: ignore[reportPrivateUsage]
+        assert handler_func._handler_spec["output_types"] == [list]  # pyright: ignore[reportFunctionMemberAccess]
 
         # Verify can_handle
         assert exec_instance.can_handle(WorkflowMessage(data={"key": "value"}, source_id="mock"))
@@ -639,7 +646,7 @@ class TestHandlerExplicitTypes:
 
         # Handler should be registered for the union type
         # The union type itself is stored as the key
-        assert len(exec_instance._handlers) == 1
+        assert len(exec_instance._handlers) == 1  # pyright: ignore[reportPrivateUsage]
 
         # Can handle both str and int messages
         assert exec_instance.can_handle(WorkflowMessage(data="hello", source_id="mock"))
@@ -674,8 +681,8 @@ class TestHandlerExplicitTypes:
         exec_instance = PrecedenceExecutor(id="precedence")
 
         # Should use explicit input type (bytes), not introspected (str)
-        assert bytes in exec_instance._handlers
-        assert str not in exec_instance._handlers
+        assert bytes in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
+        assert str not in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Should use explicit output type (float), not introspected (int)
         assert float in exec_instance.output_types
@@ -692,7 +699,7 @@ class TestHandlerExplicitTypes:
         exec_instance = IntrospectedExecutor(id="introspected")
 
         # Should use introspected types
-        assert str in exec_instance._handlers
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
         assert int in exec_instance.output_types
 
     def test_handler_explicit_mode_requires_input(self):
@@ -705,13 +712,13 @@ class TestHandlerExplicitTypes:
                 pass
 
         exec_input = OnlyInputExecutor(id="only_input")
-        assert bytes in exec_input._handlers  # Explicit
+        assert bytes in exec_input._handlers  # pyright: ignore[reportPrivateUsage]  # Explicit
         assert exec_input.output_types == []  # No output types (not introspected)
 
         # Only explicit output without input should raise error
         with pytest.raises(ValueError, match="must specify 'input' type"):
 
-            class OnlyOutputExecutor(Executor):
+            class OnlyOutputExecutor(Executor):  # pyright: ignore[reportUnusedClass]
                 @handler(output=float)
                 async def handle(self, message: str, ctx: WorkflowContext[int]) -> None:
                     pass
@@ -719,7 +726,7 @@ class TestHandlerExplicitTypes:
         # Only explicit workflow_output without input should raise error
         with pytest.raises(ValueError, match="must specify 'input' type"):
 
-            class OnlyWorkflowOutputExecutor(Executor):
+            class OnlyWorkflowOutputExecutor(Executor):  # pyright: ignore[reportUnusedClass]
                 @handler(workflow_output=bool)
                 async def handle(self, message: str, ctx: WorkflowContext[int, str]) -> None:
                     pass
@@ -734,8 +741,7 @@ class TestHandlerExplicitTypes:
 
         exec_instance = NoAnnotationExecutor(id="no_annotation")
 
-        # Should work with explicit input_type
-        assert str in exec_instance._handlers
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
         assert exec_instance.can_handle(WorkflowMessage(data="hello", source_id="mock"))
 
     def test_handler_multiple_handlers_mixed_explicit_and_introspected(self):
@@ -753,9 +759,9 @@ class TestHandlerExplicitTypes:
         exec_instance = MixedExecutor(id="mixed")
 
         # Should have both handlers
-        assert len(exec_instance._handlers) == 2
-        assert str in exec_instance._handlers  # Explicit
-        assert float in exec_instance._handlers  # Introspected
+        assert len(exec_instance._handlers) == 2  # pyright: ignore[reportPrivateUsage]
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]  # Explicit
+        assert float in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]  # Introspected
 
         # Should have both output types
         assert int in exec_instance.output_types  # Explicit
@@ -772,7 +778,7 @@ class TestHandlerExplicitTypes:
         exec_instance = StringRefExecutor(id="string_ref")
 
         # Should resolve the string to the actual type
-        assert ForwardRefMessage in exec_instance._handlers
+        assert ForwardRefMessage in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
         assert exec_instance.can_handle(WorkflowMessage(data=ForwardRefMessage("hello"), source_id="mock"))
 
     def test_handler_with_string_forward_reference_union(self):
@@ -813,8 +819,8 @@ class TestHandlerExplicitTypes:
         exec_instance = ExplicitWorkflowOutputExecutor(id="explicit_workflow_output")
 
         # Handler spec should have bool as workflow_output_type (explicit)
-        handler_func = exec_instance._handlers[str]
-        assert handler_func._handler_spec["workflow_output_types"] == [bool]
+        handler_func = exec_instance._handlers[str]  # pyright: ignore[reportPrivateUsage]
+        assert handler_func._handler_spec["workflow_output_types"] == [bool]  # pyright: ignore[reportFunctionMemberAccess]
 
         # Executor workflow_output_types property should reflect explicit type
         assert bool in exec_instance.workflow_output_types
@@ -831,8 +837,7 @@ class TestHandlerExplicitTypes:
 
         exec_instance = PrecedenceExecutor(id="precedence")
 
-        # All types should come from explicit params
-        assert int in exec_instance._handlers
+        assert int in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
         assert float in exec_instance.output_types
         assert str in exec_instance.workflow_output_types
         # Introspected types should NOT be present
@@ -849,8 +854,7 @@ class TestHandlerExplicitTypes:
 
         exec_instance = AllExplicitExecutor(id="all_explicit")
 
-        # Check input type
-        assert str in exec_instance._handlers
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
         assert exec_instance.can_handle(WorkflowMessage(data="hello", source_id="mock"))
 
         # Check output_type
@@ -916,3 +920,87 @@ class TestHandlerExplicitTypes:
 
 
 # endregion: Tests for @handler decorator with explicit input_type and output_type
+
+
+# region Tests for unresolved TypeVar rejection in handler registration
+
+_T = TypeVar("_T")
+
+
+def test_handler_rejects_unresolved_typevar_in_message_annotation():
+    """Test that @handler raises ValueError when the message parameter is an unresolved TypeVar."""
+
+    with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+        class GenericEcho(Executor, Generic[_T]):
+            @handler
+            async def echo(self, message: _T, ctx: WorkflowContext) -> None:
+                pass
+
+
+_BT = TypeVar("_BT", bound=str)
+
+
+def test_handler_rejects_bounded_typevar_in_message_annotation():
+    """Test that @handler raises ValueError for a bounded TypeVar in message annotation."""
+
+    with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+        class BoundedGenericExecutor(Executor, Generic[_BT]):
+            @handler
+            async def process(self, message: _BT, ctx: WorkflowContext) -> None:
+                await ctx.send_message(message)
+
+
+def test_handler_allows_concrete_types():
+    """Test that @handler works normally with concrete type annotations."""
+
+    class ConcreteExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str]) -> None:
+            pass
+
+    exec_instance = ConcreteExecutor(id="concrete")
+    assert str in exec_instance.input_types
+
+
+def test_handler_explicit_input_bypasses_typevar_check():
+    """Test that @handler(input=...) bypasses TypeVar check since explicit types take precedence."""
+
+    class GenericWithExplicit(Executor, Generic[_T]):
+        @handler(input=str, output=str)
+        async def echo(self, message, ctx: WorkflowContext) -> None:
+            pass
+
+    exec_instance = GenericWithExplicit(id="explicit")
+    assert str in exec_instance.input_types
+
+
+def test_handler_error_message_recommends_explicit_types():
+    """Test that the TypeVar error message recommends @handler(input=..., output=...)."""
+
+    with pytest.raises(ValueError, match=r"@handler\(input=<concrete_type>, output=<concrete_type>\)"):
+
+        class GenericBad(Executor, Generic[_T]):
+            @handler
+            async def echo(self, message: _T, ctx: WorkflowContext) -> None:
+                pass
+
+
+# endregion: Tests for unresolved TypeVar rejection in handler registration
+
+
+def test_handler_typevar_error_takes_priority_over_context_error():
+    """Test that TypeVar message error is raised before WorkflowContext validation.
+
+    When a handler has both a TypeVar message annotation and an unannotated ctx
+    parameter, the TypeVar error should be reported first since it is the more
+    actionable issue.
+    """
+
+    with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+        class DualBad(Executor, Generic[_T]):
+            @handler
+            async def process(self, message: _T, ctx) -> None:  # type: ignore[no-untyped-def]
+                pass

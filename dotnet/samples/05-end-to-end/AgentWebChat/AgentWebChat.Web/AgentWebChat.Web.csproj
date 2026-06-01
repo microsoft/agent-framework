@@ -9,10 +9,12 @@
   
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Hosting.A2A\Microsoft.Agents.AI.Hosting.A2A.csproj" />
-	  <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Hosting.OpenAI\Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
-    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
     <ProjectReference Include="..\AgentWebChat.ServiceDefaults\AgentWebChat.ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="OpenAI" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
+  </ItemGroup>
 </Project>

@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from agent_framework import Content
+from agent_framework import Agent, Content
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 from dotenv import load_dotenv
 
@@ -21,6 +21,10 @@ This sample demonstrates using Anthropic with:
     You can also set additonal_chat_options with "additional_beta_flags" per request.
 - Creating an agent with the Code Interpreter tool and a Skill.
 - Catching and downloading generated files from the agent.
+
+Environment variables:
+- ANTHROPIC_API_KEY: Your Anthropic API key
+- ANTHROPIC_CHAT_MODEL_ID: The Anthropic model to use, such as "claude-sonnet-4-5-20250929"
 """
 
 
@@ -29,13 +33,14 @@ async def main() -> None:
     client = AnthropicClient[AnthropicChatOptions](additional_beta_flags=["skills-2025-10-02"])
 
     # List Anthropic-managed Skills
-    skills = await client.anthropic_client.beta.skills.list(source="anthropic", betas=["skills-2025-10-02"])
+    skills = await client.anthropic_client.beta.skills.list(source="anthropic", betas=["skills-2025-10-02"])  # type: ignore
     for skill in skills.data:
         print(f"{skill.source}: {skill.id} (version: {skill.latest_version})")
 
     # Create a agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
         tools=client.get_code_interpreter_tool(),
@@ -80,7 +85,7 @@ async def main() -> None:
         # Since I'm using the pptx skill, the files will be PowerPoint presentations
         print("Generated files:")
         for idx, file in enumerate(files):
-            file_content = await client.anthropic_client.beta.files.download(
+            file_content = await client.anthropic_client.beta.files.download(  # type: ignore
                 file_id=file.file_id, betas=["files-api-2025-04-14"]
             )
             with open(Path(__file__).parent / f"python_programming-{idx}.pptx", "wb") as f:

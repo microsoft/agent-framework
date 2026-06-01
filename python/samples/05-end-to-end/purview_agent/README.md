@@ -18,7 +18,7 @@ This getting-started sample shows how to attach Microsoft Purview policy evaluat
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `AZURE_OPENAI_ENDPOINT` | Yes | Azure OpenAI endpoint (https://<name>.openai.azure.com) |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Optional | Model deployment name (defaults inside SDK if omitted) |
+| `AZURE_OPENAI_MODEL` | Optional | Model deployment name (defaults inside SDK if omitted) |
 | `PURVIEW_CLIENT_APP_ID` | Yes* | Client (application) ID used for Purview authentication |
 | `PURVIEW_USE_CERT_AUTH` | Optional (`true`/`false`) | Switch between certificate and interactive auth |
 | `PURVIEW_TENANT_ID` | Yes (when cert auth on) | Tenant ID for certificate authentication |

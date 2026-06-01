@@ -651,7 +651,7 @@ public class ExecutorRouteGeneratorTests
     }
 
     [Fact]
-    public void PartialClass_SendsYieldsInBothFiles_GeneratesAlOverrides()
+    public void PartialClass_SendsYieldsInBothFiles_GeneratesAllOverrides()
     {
         // File 1: Partial with one handler
         var file1 = """
@@ -700,7 +700,7 @@ public class ExecutorRouteGeneratorTests
         generated.Should().RegisterSentMessageType("string")
                       .And.RegisterSentMessageType("int")
                       .And.RegisterYieldedOutputType("string")
-                      .And.RegisterYieldedOutputType("string");
+                      .And.RegisterYieldedOutputType("int");
     }
 
     #endregion
@@ -1044,6 +1044,85 @@ public class ExecutorRouteGeneratorTests
 
         generated.Should().HaveHierarchy("GenericExecutor<T>")
                       .And.RegisterSentMessageType("global::TestNamespace.BroadcastMessage");
+    }
+
+    [Fact]
+    public void ProtocolOnly_DerivesFromExecutorOfT_GeneratesBaseCall()
+    {
+        // A protocol-only partial executor deriving from Executor<T>
+        // has a base class that already overrides ConfigureProtocol. The generator must emit
+        // "return base.ConfigureProtocol(protocolBuilder)" so inherited handler registrations
+        // are preserved — not "return protocolBuilder" which silently drops them.
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class FeedbackResult { }
+
+            [SendsMessage(typeof(FeedbackResult))]
+            [YieldsOutput(typeof(string))]
+            public partial class FeedbackExecutor : Executor<string>
+            {
+                public FeedbackExecutor() : base("feedback") { }
+
+                public override System.Threading.Tasks.ValueTask HandleAsync(string message, IWorkflowContext context, System.Threading.CancellationToken cancellationToken = default)
+                    => default;
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        result.RunResult.Diagnostics.Should().BeEmpty();
+
+        var generated = result.RunResult.GeneratedTrees[0].ToString();
+
+        // Base class Executor<T> overrides ConfigureProtocol, so the generated override
+        // must chain to base to preserve the inherited handler registration.
+        generated.Should().Contain("return base.ConfigureProtocol(protocolBuilder)",
+            because: "Executor<T> overrides ConfigureProtocol, so base must be called to preserve its handler registration");
+        generated.Should().Contain(".SendsMessage<global::TestNamespace.FeedbackResult>()");
+        generated.Should().Contain(".YieldsOutput<string>()");
+    }
+
+    [Fact]
+    public void ProtocolOnly_DerivesDirectlyFromExecutor_DoesNotGenerateBaseCall()
+    {
+        // A protocol-only partial executor deriving directly from Executor (abstract base
+        // with no non-abstract ConfigureProtocol override) should generate "return protocolBuilder"
+        // rather than "return base.ConfigureProtocol(protocolBuilder)".
+        var source = """
+            using System;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            public class BroadcastMessage { }
+
+            [SendsMessage(typeof(BroadcastMessage))]
+            public partial class BroadcastExecutor : Executor
+            {
+                public BroadcastExecutor() : base("broadcast") { }
+            }
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        result.RunResult.Diagnostics.Should().BeEmpty();
+
+        var generated = result.RunResult.GeneratedTrees[0].ToString();
+
+        // Executor's ConfigureProtocol is abstract — no base call needed.
+        generated.Should().Contain("return protocolBuilder",
+            because: "Executor base class has no non-abstract ConfigureProtocol, so no base call is needed");
+        generated.Should().NotContain("base.ConfigureProtocol");
     }
 
     #endregion

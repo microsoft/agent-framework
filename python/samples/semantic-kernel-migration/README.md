@@ -12,14 +12,11 @@ This gallery helps Semantic Kernel (SK) developers move to the Microsoft Agent F
 - [03_chat_completion_thread_and_stream.py](chat_completion/03_chat_completion_thread_and_stream.py) — Demonstrates session reuse and streaming prompts.
 
 ### Azure AI agent parity
-- [01_basic_azure_ai_agent.py](azure_ai_agent/01_basic_azure_ai_agent.py) — Create and run an Azure AI agent end to end.
-- [02_azure_ai_agent_with_code_interpreter.py](azure_ai_agent/02_azure_ai_agent_with_code_interpreter.py) — Enable hosted code interpreter/tool execution.
-- [03_azure_ai_agent_threads_and_followups.py](azure_ai_agent/03_azure_ai_agent_threads_and_followups.py) — Persist sessions and follow-ups across invocations.
 
 ### OpenAI Assistants API parity
-- [01_basic_openai_assistant.py](openai_assistant/01_basic_openai_assistant.py) — Baseline assistant comparison.
-- [02_openai_assistant_with_code_interpreter.py](openai_assistant/02_openai_assistant_with_code_interpreter.py) — Code interpreter tool usage.
-- [03_openai_assistant_function_tool.py](openai_assistant/03_openai_assistant_function_tool.py) — Custom function tooling.
+
+OpenAI Assistants parity samples were removed alongside the deprecated Python assistants surface and are no longer
+part of this migration gallery.
 
 ### OpenAI Responses API parity
 - [01_basic_responses_agent.py](openai_responses/01_basic_responses_agent.py) — Basic responses agent migration.
@@ -47,7 +44,7 @@ Each script is fully async and the `main()` routine runs both implementations ba
 - Python 3.10 or later.
 - Access to the necessary model endpoints (Azure OpenAI, OpenAI, Azure AI, Copilot Studio, etc.).
 - Installed SDKs: `semantic-kernel` and the Microsoft Agent Framework (`pip install semantic-kernel agent-framework`), or the repo’s editable packages if you are developing locally.
-- Service credentials exposed through environment variables (for example `OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY`, or Copilot Studio auth settings).
+- Service credentials exposed through environment variables (for example `OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, or Copilot Studio auth settings).
 
 ## Running Single-Agent Samples
 From the repository root:

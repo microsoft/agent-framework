@@ -284,46 +284,48 @@ class DurableAgentSession(AgentSession):
         durable_session_id: AgentSessionId | None = None,
         session_id: str | None = None,
         service_session_id: str | None = None,
-        **kwargs: Any,
     ) -> None:
-        super().__init__(session_id=session_id, service_session_id=service_session_id, **kwargs)
-        self._session_id_value: AgentSessionId | None = durable_session_id
+        super().__init__(session_id=session_id, service_session_id=service_session_id)
+        self.durable_session_id: AgentSessionId | None = durable_session_id
 
-    @property
-    def durable_session_id(self) -> AgentSessionId | None:
-        return self._session_id_value
-
-    @durable_session_id.setter
-    def durable_session_id(self, value: AgentSessionId | None) -> None:
-        self._session_id_value = value
+    def to_dict(self) -> dict[str, Any]:
+        state = super().to_dict()
+        if self.durable_session_id is not None:
+            state[self._SERIALIZED_SESSION_ID_KEY] = str(self.durable_session_id)
+        return state
 
     @classmethod
     def from_session_id(
         cls,
-        session_id: AgentSessionId,
-        **kwargs: Any,
+        durable_session_id: AgentSessionId,
+        *,
+        session_id: str | None = None,
+        service_session_id: str | None = None,
     ) -> DurableAgentSession:
-        return cls(durable_session_id=session_id, **kwargs)
-
-    def to_dict(self) -> dict[str, Any]:
-        state = super().to_dict()
-        if self._session_id_value is not None:
-            state[self._SERIALIZED_SESSION_ID_KEY] = str(self._session_id_value)
-        return state
+        """Create a DurableAgentSession from an AgentSessionId."""
+        return cls(
+            durable_session_id=durable_session_id,
+            session_id=session_id,
+            service_session_id=service_session_id,
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentSession:
-        state_payload = dict(data)
-        session_id_value = state_payload.pop(cls._SERIALIZED_SESSION_ID_KEY, None)
-        session = super().from_dict(state_payload)
+        """Create a DurableAgentSession from a state dict."""
+        data = dict(data)  # defensive copy — avoid mutating caller's dict
+        session_id_value = data.pop(cls._SERIALIZED_SESSION_ID_KEY, None)
+        session = super().from_dict(data)
+        durable_session_id: AgentSessionId | None = None
         # We need to create a DurableAgentSession from the base AgentSession
+        if session_id_value is not None:
+            if not isinstance(session_id_value, str):
+                raise ValueError("durable_session_id must be a string when present in serialized state")
+            durable_session_id = AgentSessionId.parse(session_id_value)
+
         durable_session = cls(
+            durable_session_id=durable_session_id,
             session_id=session.session_id,
             service_session_id=session.service_session_id,
         )
         durable_session.state.update(session.state)
-        if session_id_value is not None:
-            if not isinstance(session_id_value, str):
-                raise ValueError("durable_session_id must be a string when present in serialized state")
-            durable_session._session_id_value = AgentSessionId.parse(session_id_value)
         return durable_session

@@ -39,6 +39,18 @@ public static class Program
             {
                 Console.WriteLine(outputEvent.Data);
             }
+            else if (evt is WorkflowErrorEvent workflowError)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                Console.ResetColor();
+            }
+            else if (evt is ExecutorFailedEvent executorFailed)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                Console.ResetColor();
+            }
         }
     }
 }
@@ -99,6 +111,10 @@ internal sealed class ParagraphCountingExecutor() : Executor<string, FileStats>(
     }
 }
 
+/// <summary>
+/// The aggregation executor collects results from both executors and yields the final output.
+/// </summary>
+[YieldsOutput(typeof(string))]
 internal sealed class AggregationExecutor() : Executor<FileStats>("AggregationExecutor")
 {
     private readonly List<FileStats> _messages = [];

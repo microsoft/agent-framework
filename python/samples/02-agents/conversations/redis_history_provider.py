@@ -4,7 +4,7 @@ import asyncio
 import os
 from uuid import uuid4
 
-from agent_framework import AgentSession
+from agent_framework import Agent, AgentSession
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisHistoryProvider
 from dotenv import load_dotenv
@@ -36,7 +36,8 @@ async def example_manual_memory_store() -> None:
     )
 
     # Create agent with Redis history provider
-    agent = OpenAIChatClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="RedisBot",
         instructions="You are a helpful assistant that remembers our conversation using Redis.",
         context_providers=[redis_provider],
@@ -75,7 +76,8 @@ async def example_user_session_management() -> None:
     )
 
     # Create agent with history provider
-    agent = OpenAIChatClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="SessionBot",
         instructions="You are a helpful assistant. Keep track of user preferences.",
         context_providers=[redis_provider],
@@ -114,7 +116,8 @@ async def example_conversation_persistence() -> None:
         redis_url=REDIS_URL,
     )
 
-    agent = OpenAIChatClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="PersistentBot",
         instructions="You are a helpful assistant. Remember our conversation history.",
         context_providers=[redis_provider],
@@ -163,7 +166,8 @@ async def example_session_serialization() -> None:
         redis_url=REDIS_URL,
     )
 
-    agent = OpenAIChatClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="SerializationBot",
         instructions="You are a helpful assistant.",
         context_providers=[redis_provider],
@@ -206,7 +210,8 @@ async def example_message_limits() -> None:
         max_messages=3,  # Keep only 3 most recent messages
     )
 
-    agent = OpenAIChatClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="LimitBot",
         instructions="You are a helpful assistant with limited memory.",
         context_providers=[redis_provider],

@@ -16,7 +16,7 @@ using OpenAI.Chat;
 using SampleApp;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -50,12 +50,12 @@ Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", session));
 Console.WriteLine(await agent.RunAsync("I am 20 years old", session));
 
 // We can serialize the session. The serialized state will include the state of the memory component.
-JsonElement sesionElement = await agent.SerializeSessionAsync(session);
+JsonElement sessionElement = await agent.SerializeSessionAsync(session);
 
 Console.WriteLine("\n>> Use deserialized session with previously created memories\n");
 
 // Later we can deserialize the session and continue the conversation with the previous memory component state.
-var deserializedSession = await agent.DeserializeSessionAsync(sesionElement);
+var deserializedSession = await agent.DeserializeSessionAsync(sessionElement);
 Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedSession));
 
 Console.WriteLine("\n>> Read memories using memory component\n");
@@ -89,10 +89,10 @@ namespace SampleApp
     internal sealed class UserInfoMemory : AIContextProvider
     {
         private readonly ProviderSessionState<UserInfo> _sessionState;
+        private IReadOnlyList<string>? _stateKeys;
         private readonly IChatClient _chatClient;
 
         public UserInfoMemory(IChatClient chatClient, Func<AgentSession?, UserInfo>? stateInitializer = null)
-            : base(null, null)
         {
             this._sessionState = new ProviderSessionState<UserInfo>(
                 stateInitializer ?? (_ => new UserInfo()),
@@ -100,7 +100,7 @@ namespace SampleApp
             this._chatClient = chatClient;
         }
 
-        public override string StateKey => this._sessionState.StateKey;
+        public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
         public UserInfo GetUserInfo(AgentSession session)
             => this._sessionState.GetOrInitializeState(session);

@@ -12,6 +12,9 @@ Supported MCP server types:
 - "http": Remote HTTP server
 - "sse": Remote SSE (Server-Sent Events) server
 
+Environment variables:
+- ANTHROPIC_API_KEY: Your Anthropic API key
+
 SECURITY NOTE: MCP servers can expose powerful capabilities. Only configure
 servers you trust. Use permission handlers to control what actions are allowed.
 """

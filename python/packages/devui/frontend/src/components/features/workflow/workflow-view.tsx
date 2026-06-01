@@ -49,6 +49,28 @@ interface WorkflowViewProps {
   onDebugEvent: DebugEventHandler;
 }
 
+function getWorkflowEventTimestamp(event: ExtendedResponseStreamEvent): number | undefined {
+  if ("created_at" in event && typeof event.created_at === "number" && event.created_at) {
+    return event.created_at;
+  }
+
+  const response = "response" in event ? event.response : undefined;
+  if (response && typeof response === "object" && "created_at" in response) {
+    const createdAt = response.created_at;
+    if (typeof createdAt === "number") {
+      return createdAt;
+    }
+  }
+
+  const data = "data" in event ? event.data : undefined;
+  if (data && typeof data === "object" && "timestamp" in data && typeof data.timestamp === "string") {
+    const milliseconds = new Date(data.timestamp).getTime();
+    return Number.isFinite(milliseconds) ? milliseconds / 1000 : undefined;
+  }
+
+  return undefined;
+}
+
 // TODO: CheckpointSelector is not currently used but may be needed for checkpoint resumption feature
 // Smart Run Workflow Button Component moved to separate file
 
@@ -576,17 +598,24 @@ export function WorkflowView({
             openAIEvent.type === "response.workflow_event.complete" // Fallback variant
           ) {
             setOpenAIEvents((prev) => {
-              // Generate unique timestamp for each event
+              // Derive a server-side timestamp from the event, in priority order:
+              //   1. top-level created_at  (custom output-item events)
+              //   2. response.created_at   (response.created / lifecycle events)
+              //   3. data.timestamp        (response.workflow_event.completed ISO string)
+              // Fall back to a synthesized timestamp only when none is present.
+              const eventTimestamp = getWorkflowEventTimestamp(openAIEvent);
               const baseTimestamp = Math.floor(Date.now() / 1000);
               const lastTimestamp =
                 prev.length > 0
                   ? (prev[prev.length - 1] as { _uiTimestamp?: number })
                       ._uiTimestamp || 0
                   : 0;
-              const uniqueTimestamp = Math.max(
-                baseTimestamp,
-                lastTimestamp + 1
-              );
+              // When we have a real server timestamp clamp to lastTimestamp (no +1s gap).
+              // When synthesizing, keep the +1 s gap so ordering is always monotonic.
+              const uniqueTimestamp =
+                eventTimestamp !== undefined
+                  ? Math.max(eventTimestamp, lastTimestamp)
+                  : Math.max(baseTimestamp, lastTimestamp + 1);
 
               return [
                 ...prev,
@@ -643,6 +672,7 @@ export function WorkflowView({
               item &&
               item.type === "message" &&
               (!("metadata" in item) || !(item.metadata as { source?: string } | undefined)?.source) &&
+              (item.metadata as { workflow_output_kind?: string } | undefined)?.workflow_output_kind !== "intermediate" &&
               "content" in item &&
               Array.isArray(item.content)
             ) {
@@ -992,14 +1022,24 @@ export function WorkflowView({
           openAIEvent.type === "response.workflow_event.completed"
         ) {
           setOpenAIEvents((prev) => {
-            // Generate unique timestamp for each event
+            // Derive a server-side timestamp from the event, in priority order:
+            //   1. top-level created_at  (custom output-item events)
+            //   2. response.created_at   (response.created / lifecycle events)
+            //   3. data.timestamp        (response.workflow_event.completed ISO string)
+            // Fall back to a synthesized timestamp only when none is present.
+            const eventTimestamp = getWorkflowEventTimestamp(openAIEvent);
             const baseTimestamp = Math.floor(Date.now() / 1000);
             const lastTimestamp =
               prev.length > 0
                 ? (prev[prev.length - 1] as { _uiTimestamp?: number })
                     ._uiTimestamp || 0
                 : 0;
-            const uniqueTimestamp = Math.max(baseTimestamp, lastTimestamp + 1);
+            // When we have a real server timestamp clamp to lastTimestamp (no +1s gap).
+            // When synthesizing, keep the +1 s gap so ordering is always monotonic.
+            const uniqueTimestamp =
+              eventTimestamp !== undefined
+                ? Math.max(eventTimestamp, lastTimestamp)
+                : Math.max(baseTimestamp, lastTimestamp + 1);
 
             return [
               ...prev,
@@ -1078,27 +1118,30 @@ export function WorkflowView({
 
           // Handle workflow output messages
           if (item && item.type === "message" && "content" in item && Array.isArray(item.content)) {
-            // Extract text from message content
-            for (const content of item.content as Array<{ type: string; text?: string }>) {
-              if (content.type === "output_text" && content.text) {
-                const text = content.text; // Capture for closure
-                // Append to workflow result (support multiple yield_output calls)
-                setWorkflowResult((prev) => {
-                  if (prev && prev.length > 0) {
-                    // If there's existing output, add separator
-                    return prev + "\n\n" + text;
-                  }
-                  return text;
-                });
+            const metadata = item.metadata as { workflow_output_kind?: string } | undefined;
+            if (metadata?.workflow_output_kind !== "intermediate") {
+              // Extract text from message content
+              for (const content of item.content as Array<{ type: string; text?: string }>) {
+                if (content.type === "output_text" && content.text) {
+                  const text = content.text; // Capture for closure
+                  // Append to workflow result (support multiple yield_output calls)
+                  setWorkflowResult((prev) => {
+                    if (prev && prev.length > 0) {
+                      // If there's existing output, add separator
+                      return prev + "\n\n" + text;
+                    }
+                    return text;
+                  });
 
-                // Try to parse as JSON for structured metadata
-                try {
-                  const parsed = JSON.parse(text);
-                  if (typeof parsed === "object" && parsed !== null) {
-                    workflowMetadata.current = parsed;
+                  // Try to parse as JSON for structured metadata
+                  try {
+                    const parsed = JSON.parse(text);
+                    if (typeof parsed === "object" && parsed !== null) {
+                      workflowMetadata.current = parsed;
+                    }
+                  } catch {
+                    // Not JSON, keep as text
                   }
-                } catch {
-                  // Not JSON, keep as text
                 }
               }
             }

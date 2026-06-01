@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
@@ -41,14 +41,16 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = OpenAIChatClient(
+    _client = OpenAIChatClient(
         api_key="ollama",  # Just a placeholder, Ollama doesn't require API key
         base_url=os.getenv("OLLAMA_ENDPOINT"),
-        model_id=os.getenv("OLLAMA_MODEL"),
-    ).as_agent(
+        model=os.getenv("OLLAMA_MODEL"),
+    )
+    agent = Agent(
+        client=_client,
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
-        tools=get_weather,
+        tools=[get_weather],
     )
 
     query = "What's the weather like in Seattle?"
@@ -61,14 +63,16 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = OpenAIChatClient(
+    _client = OpenAIChatClient(
         api_key="ollama",  # Just a placeholder, Ollama doesn't require API key
         base_url=os.getenv("OLLAMA_ENDPOINT"),
-        model_id=os.getenv("OLLAMA_MODEL"),
-    ).as_agent(
+        model=os.getenv("OLLAMA_MODEL"),
+    )
+    agent = Agent(
+        client=_client,
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
-        tools=get_weather,
+        tools=[get_weather],
     )
 
     query = "What's the weather like in Portland?"

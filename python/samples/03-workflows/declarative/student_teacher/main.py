@@ -15,21 +15,23 @@ The workflow loops until the teacher gives congratulations or max turns reached.
 Prerequisites:
     - Azure OpenAI deployment with chat completion capability
     - Environment variables:
-        AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry Agent Service (V2) project endpoint
-        AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name
+        FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry Agent Service (V2) project endpoint
+        FOUNDRY_MODEL: Your model deployment name
 """
 
 import asyncio
 import os
 from pathlib import Path
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
 from agent_framework.declarative import WorkflowFactory
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
+from dotenv.main import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
 
 STUDENT_INSTRUCTIONS = """You are a curious math student working on understanding mathematical concepts.
 When given a problem:
@@ -56,19 +58,21 @@ Focus on building understanding, not just getting the right answer."""
 async def main() -> None:
     """Run the student-teacher workflow with real Azure AI agents."""
     # Create chat client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
     # Create student and teacher agents
-    student_agent = client.as_agent(
+    student_agent = Agent(
+        client=client,
         name="StudentAgent",
         instructions=STUDENT_INSTRUCTIONS,
     )
 
-    teacher_agent = client.as_agent(
+    teacher_agent = Agent(
+        client=client,
         name="TeacherAgent",
         instructions=TEACHER_INSTRUCTIONS,
     )

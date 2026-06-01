@@ -3,8 +3,8 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -45,7 +45,8 @@ def safe_divide(
 
 async def main():
     # tools = Tools()
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="ToolAgent",
         instructions="Use the provided tools.",
         tools=[greet, safe_divide],

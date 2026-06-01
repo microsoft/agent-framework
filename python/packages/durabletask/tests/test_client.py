@@ -88,15 +88,6 @@ class TestDurableAIAgentClientIntegration:
 
         assert isinstance(session, DurableAgentSession)
 
-    def test_client_agent_session_with_parameters(self, agent_client: DurableAIAgentClient) -> None:
-        """Verify agent can create sessions with custom parameters."""
-        agent = agent_client.get_agent("assistant")
-
-        session = agent.create_session(service_session_id="client-session-123")
-
-        assert isinstance(session, DurableAgentSession)
-        assert session.service_session_id == "client-session-123"
-
 
 class TestDurableAIAgentClientPollingConfiguration:
     """Test polling configuration parameters for DurableAIAgentClient."""

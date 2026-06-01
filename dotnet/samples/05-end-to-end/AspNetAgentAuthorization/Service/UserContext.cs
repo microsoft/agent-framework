@@ -27,43 +27,73 @@ public interface IUserContext
 /// Keycloak uses <c>sub</c> for the user ID, <c>preferred_username</c>
 /// for the login name, <c>given_name</c>/<c>family_name</c> for the
 /// display name, and <c>scope</c> (space-delimited) for granted scopes.
-/// Registered as a scoped service so it is resolved once per request.
+/// Registered as a singleton — claims are parsed once per request and
+/// cached in <see cref="HttpContext.Items"/>.
 /// </summary>
 public sealed class KeycloakUserContext : IUserContext
 {
-    public string UserId { get; }
+    private static readonly object s_cacheKey = new();
 
-    public string UserName { get; }
-
-    public string DisplayName { get; }
-
-    public IReadOnlySet<string> Scopes { get; }
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public KeycloakUserContext(IHttpContextAccessor httpContextAccessor)
     {
-        ClaimsPrincipal? user = httpContextAccessor.HttpContext?.User;
+        this._httpContextAccessor = httpContextAccessor;
+    }
 
-        this.UserId = user?.FindFirstValue(ClaimTypes.NameIdentifier)
-                   ?? user?.FindFirstValue("sub")
-                   ?? "anonymous";
+    public string UserId => this.GetOrCreateCachedInfo().UserId;
 
-        this.UserName = user?.FindFirstValue("preferred_username")
-                     ?? user?.FindFirstValue(ClaimTypes.Name)
-                     ?? "unknown";
+    public string UserName => this.GetOrCreateCachedInfo().UserName;
+
+    public string DisplayName => this.GetOrCreateCachedInfo().DisplayName;
+
+    public IReadOnlySet<string> Scopes => this.GetOrCreateCachedInfo().Scopes;
+
+    private CachedUserInfo GetOrCreateCachedInfo()
+    {
+        HttpContext? httpContext = this._httpContextAccessor.HttpContext;
+        if (httpContext is not null && httpContext.Items.TryGetValue(s_cacheKey, out object? cached) && cached is CachedUserInfo info)
+        {
+            return info;
+        }
+
+        info = ParseClaims(httpContext?.User);
+
+        if (httpContext is not null)
+        {
+            httpContext.Items[s_cacheKey] = info;
+        }
+
+        return info;
+    }
+
+    private static CachedUserInfo ParseClaims(ClaimsPrincipal? user)
+    {
+        string userId = user?.FindFirstValue(ClaimTypes.NameIdentifier)
+                     ?? user?.FindFirstValue("sub")
+                     ?? "anonymous";
+
+        string userName = user?.FindFirstValue("preferred_username")
+                       ?? user?.FindFirstValue(ClaimTypes.Name)
+                       ?? "unknown";
 
         string? givenName = user?.FindFirstValue("given_name") ?? user?.FindFirstValue(ClaimTypes.GivenName);
         string? familyName = user?.FindFirstValue("family_name") ?? user?.FindFirstValue(ClaimTypes.Surname);
-        this.DisplayName = (givenName, familyName) switch
+        string displayName = (givenName, familyName) switch
         {
             (not null, not null) => $"{givenName} {familyName}",
             (not null, null) => givenName,
             (null, not null) => familyName,
-            _ => this.UserName,
+            _ => userName,
         };
 
         string? scopeClaim = user?.FindFirstValue("scope");
-        this.Scopes = scopeClaim is not null
+        IReadOnlySet<string> scopes = scopeClaim is not null
             ? new HashSet<string>(scopeClaim.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return new CachedUserInfo(userId, userName, displayName, scopes);
     }
+
+    private sealed record CachedUserInfo(string UserId, string UserName, string DisplayName, IReadOnlySet<string> Scopes);
 }

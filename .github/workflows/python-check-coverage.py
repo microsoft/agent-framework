@@ -34,15 +34,14 @@ from dataclasses import dataclass
 #   (e.g., "packages/core/agent_framework/observability.py")
 # =============================================================================
 ENFORCED_TARGETS: set[str] = {
-    # Packages
-    "packages.azure-ai.agent_framework_azure_ai",
-    "packages.core.agent_framework",
-    "packages.core.agent_framework._workflows",
-    "packages.purview.agent_framework_purview",
+    # Packages (sorted alphabetically)
     "packages.anthropic.agent_framework_anthropic",
     "packages.azure-ai-search.agent_framework_azure_ai_search",
-    "packages.core.agent_framework.azure",
-    "packages.core.agent_framework.openai",
+    "packages.core.agent_framework",
+    "packages.core.agent_framework._workflows",
+    "packages.foundry.agent_framework_foundry",
+    "packages.openai.agent_framework_openai",
+    "packages.purview.agent_framework_purview",
     # Individual files (if you want to enforce specific files instead of whole packages)
     "packages/core/agent_framework/observability.py",
     # Add more targets here as coverage improves

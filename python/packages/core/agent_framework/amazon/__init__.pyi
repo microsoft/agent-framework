@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from agent_framework_anthropic import AnthropicBedrockClient, RawAnthropicBedrockClient
 from agent_framework_bedrock import (
     BedrockChatClient,
     BedrockChatOptions,
@@ -11,6 +12,7 @@ from agent_framework_bedrock import (
 )
 
 __all__ = [
+    "AnthropicBedrockClient",
     "BedrockChatClient",
     "BedrockChatOptions",
     "BedrockEmbeddingClient",
@@ -18,4 +20,5 @@ __all__ = [
     "BedrockEmbeddingSettings",
     "BedrockGuardrailConfig",
     "BedrockSettings",
+    "RawAnthropicBedrockClient",
 ]

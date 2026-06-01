@@ -10,7 +10,6 @@ using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
-using Xunit.Abstractions;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;

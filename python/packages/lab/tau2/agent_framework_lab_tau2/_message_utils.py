@@ -23,7 +23,7 @@ def flip_messages(messages: list[Message]) -> list[Message]:
         """Remove function call content from message contents."""
         return [content for content in messages if content.type != "function_call"]
 
-    flipped_messages = []
+    flipped_messages: list[Message] = []
     for msg in messages:
         role_value = _get_role_value(msg.role)
         if role_value == "assistant":

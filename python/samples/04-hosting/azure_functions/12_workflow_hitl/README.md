@@ -88,12 +88,12 @@ When running on Durable Functions, the HITL pattern maps to:
    cp local.settings.json.sample local.settings.json
    ```
 
-2. Update `local.settings.json` with your Azure OpenAI credentials:
+2. Update `local.settings.json` with your Foundry project settings:
    ```json
    {
      "Values": {
-       "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
-       "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "gpt-4o"
+       "FOUNDRY_PROJECT_ENDPOINT": "https://your-project.services.ai.azure.com/api/projects/your-project",
+       "FOUNDRY_MODEL": "gpt-4o"
      }
    }
    ```

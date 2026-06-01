@@ -55,7 +55,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         return options;
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         // Fail fast if emulator is not available
         this.SkipIfEmulatorNotAvailable();
@@ -88,8 +88,10 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         }
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
+
         if (this._cosmosClient != null && this._emulatorAvailable)
         {
             try
@@ -124,12 +126,12 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         // Locally: Skip if emulator connection check failed
         var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOSDB_EMULATOR_AVAILABLE"), bool.TrueString, StringComparison.OrdinalIgnoreCase);
 
-        Xunit.Skip.If(!ciEmulatorAvailable && !this._emulatorAvailable, "Cosmos DB Emulator is not available");
+        Assert.SkipWhen(!ciEmulatorAvailable && !this._emulatorAvailable, "Cosmos DB Emulator is not available");
     }
 
     #region Constructor Tests
 
-    [SkippableFact]
+    [Fact]
     public void Constructor_WithCosmosClient_SetsProperties()
     {
         // Arrange
@@ -143,7 +145,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     public void Constructor_WithConnectionString_SetsProperties()
     {
         // Arrange
@@ -157,7 +159,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     public void Constructor_WithNullCosmosClient_ThrowsArgumentNullException()
     {
         // Act & Assert
@@ -165,7 +167,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
             new CosmosCheckpointStore((CosmosClient)null!, s_testDatabaseId, TestContainerId));
     }
 
-    [SkippableFact]
+    [Fact]
     public void Constructor_WithNullConnectionString_ThrowsArgumentException()
     {
         // Act & Assert
@@ -177,7 +179,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
     #region Checkpoint Operations Tests
 
-    [SkippableFact]
+    [Fact]
     public async Task CreateCheckpointAsync_NewCheckpoint_CreatesSuccessfullyAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -197,7 +199,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         Assert.NotEmpty(checkpointInfo.CheckpointId);
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task RetrieveCheckpointAsync_ExistingCheckpoint_ReturnsCorrectValueAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -218,7 +220,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal("Hello, World!", messageProp.GetString());
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task RetrieveCheckpointAsync_NonExistentCheckpoint_ThrowsInvalidOperationExceptionAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -233,7 +235,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
             store.RetrieveCheckpointAsync(sessionId, fakeCheckpointInfo).AsTask());
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task RetrieveIndexAsync_EmptyStore_ReturnsEmptyCollectionAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -250,7 +252,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         Assert.Empty(index);
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task RetrieveIndexAsync_WithCheckpoints_ReturnsAllCheckpointsAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -275,7 +277,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         Assert.Contains(index, c => c.CheckpointId == checkpoint3.CheckpointId);
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task CreateCheckpointAsync_WithParent_CreatesHierarchyAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -295,7 +297,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(sessionId, childCheckpoint.SessionId);
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task RetrieveIndexAsync_WithParentFilter_ReturnsFilteredResultsAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -331,7 +333,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
     #region Run Isolation Tests
 
-    [SkippableFact]
+    [Fact]
     public async Task CheckpointOperations_DifferentRuns_IsolatesDataAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -361,7 +363,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
     #region Error Handling Tests
 
-    [SkippableFact]
+    [Fact]
     public async Task CreateCheckpointAsync_WithNullSessionId_ThrowsArgumentExceptionAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -375,7 +377,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
             store.CreateCheckpointAsync(null!, checkpointValue).AsTask());
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task CreateCheckpointAsync_WithEmptySessionId_ThrowsArgumentExceptionAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -389,7 +391,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
             store.CreateCheckpointAsync("", checkpointValue).AsTask());
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task RetrieveCheckpointAsync_WithNullCheckpointInfo_ThrowsArgumentNullExceptionAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -407,7 +409,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
     #region Disposal Tests
 
-    [SkippableFact]
+    [Fact]
     public async Task Dispose_AfterDisposal_ThrowsObjectDisposedExceptionAsync()
     {
         this.SkipIfEmulatorNotAvailable();
@@ -424,7 +426,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
             store.CreateCheckpointAsync("test-run", checkpointValue).AsTask());
     }
 
-    [SkippableFact]
+    [Fact]
     public void Dispose_MultipleCalls_DoesNotThrow()
     {
         this.SkipIfEmulatorNotAvailable();

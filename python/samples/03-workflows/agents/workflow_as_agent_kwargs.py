@@ -5,8 +5,8 @@ import json
 import os
 from typing import Annotated, Any
 
-from agent_framework import tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -19,23 +19,23 @@ load_dotenv()
 Sample: Workflow as Agent with kwargs Propagation to @tool Tools
 
 This sample demonstrates how to flow custom context (skill data, user tokens, etc.)
-through a workflow exposed via .as_agent() to @tool functions using the **kwargs pattern.
+through a workflow exposed Agent(client=via,) to @tool functions using the **kwargs pattern.
 
 Key Concepts:
 - Build a workflow using SequentialBuilder (or any builder pattern)
-- Expose the workflow as a reusable agent via workflow.as_agent()
+- Expose the workflow as a reusable agent via Agent(client=workflow,)
 - Pass custom context as kwargs when invoking workflow_agent.run()
 - kwargs are stored in State and propagated to all agent invocations
 - @tool functions receive kwargs via **kwargs parameter
 
-When to use workflow.as_agent():
+When to use Agent(client=workflow,):
 - To treat an entire workflow orchestration as a single agent
 - To compose workflows into higher-level orchestrations
 - To maintain a consistent agent interface for callers
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
@@ -87,14 +87,15 @@ async def main() -> None:
     print("=" * 70)
 
     # Create chat client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
     # Create agent with tools that use kwargs
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="assistant",
         instructions=(
             "You are a helpful assistant. Use the available tools to help users. "
@@ -107,8 +108,8 @@ async def main() -> None:
     # Build a sequential workflow
     workflow = SequentialBuilder(participants=[agent]).build()
 
-    # Expose the workflow as an agent using .as_agent()
-    workflow_agent = workflow.as_agent(name="WorkflowAgent")
+    # Expose the workflow as an agent Agent(client=using,)
+    workflow_agent = workflow.as_agent()
 
     # Define custom context that will flow to tools via kwargs
     custom_data = {

@@ -1,10 +1,39 @@
-[tool.poe.tasks]
-fmt = "ruff format"
-format.ref = "fmt"
-lint = "ruff check"
-pyright = "pyright"
-publish = "uv publish"
-clean-dist = "rm -rf dist"
-build-package = "uv build"
-move-dist = "sh -c 'mkdir -p ../../dist && mv dist/* ../../dist/ 2>/dev/null || true'"
-build = ["build-package", "move-dist"]
+[tool.poe.tasks.syntax]
+help = "Run Ruff formatting and Ruff checks for this package."
+sequence = ["fmt", "lint"]
+
+[tool.poe.tasks.fmt]
+help = "DEPRECATED: Use `syntax --format` instead."
+cmd = "ruff format"
+
+[tool.poe.tasks.format]
+help = "DEPRECATED: Use `syntax --format` instead."
+ref = "fmt"
+
+[tool.poe.tasks.lint]
+help = "DEPRECATED: Use `syntax --check` instead."
+cmd = "ruff check"
+
+[tool.poe.tasks.pyright]
+help = "Run Pyright for this package."
+cmd = "pyright"
+
+[tool.poe.tasks.publish]
+help = "Publish this package with uv."
+cmd = "uv publish"
+
+[tool.poe.tasks.clean-dist]
+help = "Remove generated dist artifacts for this package."
+cmd = "rm -rf dist"
+
+[tool.poe.tasks.build-package]
+help = "Build distribution artifacts for this package."
+cmd = "uv build"
+
+[tool.poe.tasks.move-dist]
+help = "Move built package artifacts into the workspace dist directory."
+cmd = "sh -c 'mkdir -p ../../dist && mv dist/* ../../dist/ 2>/dev/null || true'"
+
+[tool.poe.tasks.build]
+help = "Build this package and move its artifacts into the workspace dist directory."
+sequence = ["build-package", "move-dist"]

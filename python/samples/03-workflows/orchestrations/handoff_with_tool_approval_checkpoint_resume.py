@@ -14,7 +14,7 @@ from agent_framework import (
     WorkflowEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -45,9 +45,9 @@ Pattern:
   workflow.run(stream=True, checkpoint_id=..., responses=responses).)
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Azure CLI authentication (az login).
-- Environment variables configured for AzureOpenAIResponsesClient.
 """
 
 CHECKPOINT_DIR = Path(__file__).parent / "tmp" / "handoff_checkpoints"
@@ -60,19 +60,22 @@ def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
     return f"refund recorded for order {order_id} (amount: {amount}) with details: {refund_description}"
 
 
-def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Agent]:
+def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent]:
     """Create a simple handoff scenario: triage, refund, and order specialists."""
 
-    triage = client.as_agent(
+    triage = Agent(
+        client=client,
         name="triage_agent",
         instructions=(
             "You are a customer service triage agent. Listen to customer issues and determine "
             "if they need refund help or order tracking. Use handoff_to_refund_agent or "
             "handoff_to_order_agent to transfer them."
         ),
+        require_per_service_call_history_persistence=True,
     )
 
-    refund = client.as_agent(
+    refund = Agent(
+        client=client,
         name="refund_agent",
         instructions=(
             "You are a refund specialist. Help customers with refund requests. "
@@ -81,14 +84,17 @@ def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Age
             "to record the request before continuing."
         ),
         tools=[submit_refund],
+        require_per_service_call_history_persistence=True,
     )
 
-    order = client.as_agent(
+    order = Agent(
+        client=client,
         name="order_agent",
         instructions=(
             "You are an order tracking specialist. Help customers track their orders. "
             "Ask for order numbers and provide shipping updates."
         ),
+        require_per_service_call_history_persistence=True,
     )
 
     return triage, refund, order
@@ -97,9 +103,9 @@ def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Age
 def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     """Build the handoff workflow with checkpointing enabled."""
 
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
     triage, refund, order = create_agents(client)

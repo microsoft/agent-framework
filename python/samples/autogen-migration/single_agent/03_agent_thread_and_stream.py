@@ -1,0 +1,98 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/single_agent/03_assistant_agent_thread_and_stream.py
+
+# Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+
+from agent_framework import Agent
+from dotenv import load_dotenv
+
+"""AutoGen vs Agent Framework: Thread management and streaming responses.
+
+Demonstrates conversation state management and streaming in both frameworks.
+"""
+
+# Load environment variables from .env file
+load_dotenv()
+
+
+async def run_autogen() -> None:
+    """AutoGen agent with conversation history and streaming."""
+
+    from autogen_agentchat.agents import AssistantAgent
+    from autogen_agentchat.ui import Console
+    from autogen_ext.models.openai import OpenAIChatCompletionClient
+
+    client = OpenAIChatCompletionClient(model="gpt-4.1-mini")
+    agent = AssistantAgent(
+        name="assistant",
+        model_client=client,
+        system_message="You are a helpful math tutor.",
+        model_client_stream=True,
+    )
+
+    print("[AutoGen] Conversation with history:")
+    # First turn - AutoGen maintains state internally with Console for streaming
+    result = await agent.run(task="What is 15 + 27?")
+    print(f"  Q1: {result.messages[-1].to_text()}")
+
+    # Second turn - agent remembers context
+    result = await agent.run(task="What about that number times 2?")
+    print(f"  Q2: {result.messages[-1].to_text()}")
+
+    print("\n[AutoGen] Streaming response:")
+    # Stream response with Console for token streaming
+    await Console(agent.run_stream(task="Count from 1 to 5"))
+
+
+async def run_agent_framework() -> None:
+    """Agent Framework agent with explicit session and streaming."""
+    from agent_framework.openai import OpenAIChatClient
+
+    client = OpenAIChatClient(model="gpt-4.1-mini")
+    agent = Agent(
+        client=client,
+        name="assistant",
+        instructions="You are a helpful math tutor.",
+    )
+
+    print("[Agent Framework] Conversation with session:")
+    # Create a session to maintain state
+    session = agent.create_session()
+
+    # First turn - pass session to maintain history
+    result1 = await agent.run("What is 15 + 27?", session=session)
+    print(f"  Q1: {result1.text}")
+
+    # Second turn - agent remembers context via session
+    result2 = await agent.run("What about that number times 2?", session=session)
+    print(f"  Q2: {result2.text}")
+
+    print("\n[Agent Framework] Streaming response:")
+    # Stream response
+    print("  ", end="")
+    async for chunk in agent.run("Count from 1 to 5", session=session, stream=True):
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+    print()
+
+
+async def main() -> None:
+    print("=" * 60)
+    print("Thread Management and Streaming Comparison")
+    print("=" * 60)
+    await run_autogen()
+    print()
+    await run_agent_framework()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

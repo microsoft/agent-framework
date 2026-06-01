@@ -119,8 +119,8 @@ public class ChatClientAgentOptionsTests
         const string Description = "Test description";
         var tools = new List<AITool> { AIFunctionFactory.Create(() => "test") };
 
-        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null).Object;
-        var mockAIContextProvider = new Mock<AIContextProvider>(null, null).Object;
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null, null).Object;
+        var mockAIContextProvider = new Mock<AIContextProvider>(null, null, null).Object;
 
         var original = new ChatClientAgentOptions()
         {
@@ -161,8 +161,8 @@ public class ChatClientAgentOptionsTests
     public void Clone_WithoutProvidingChatOptions_ClonesCorrectly()
     {
         // Arrange
-        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null).Object;
-        var mockAIContextProvider = new Mock<AIContextProvider>(null, null).Object;
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null, null).Object;
+        var mockAIContextProvider = new Mock<AIContextProvider>(null, null, null).Object;
 
         var original = new ChatClientAgentOptions
         {

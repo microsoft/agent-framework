@@ -12,6 +12,7 @@ namespace Microsoft.Agents.AI.Workflows;
 internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
 {
     private readonly ProviderSessionState<StoreState> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WorkflowChatHistoryProvider"/> class.
@@ -22,7 +23,6 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
     /// and source generated serializers are required, or Native AOT / Trimming is required.
     /// </param>
     public WorkflowChatHistoryProvider(JsonSerializerOptions? jsonSerializerOptions = null)
-        : base(provideOutputMessageFilter: null, storeInputMessageFilter: null)
     {
         this._sessionState = new ProviderSessionState<StoreState>(
             _ => new StoreState(),
@@ -31,7 +31,7 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     internal sealed class StoreState
     {
@@ -43,7 +43,7 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
         => this._sessionState.GetOrInitializeState(session).Messages.AddRange(messages);
 
     protected override ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        => new(this._sessionState.GetOrInitializeState(context.Session).Messages);
+        => new(this._sessionState.GetOrInitializeState(context.Session).Messages.AsReadOnly());
 
     protected override ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
@@ -60,6 +60,12 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
         {
             yield return state.Messages[i];
         }
+    }
+
+    public IEnumerable<ChatMessage> GetAllMessages(AgentSession session)
+    {
+        var state = this._sessionState.GetOrInitializeState(session);
+        return state.Messages.AsReadOnly();
     }
 
     public void UpdateBookmark(AgentSession session)

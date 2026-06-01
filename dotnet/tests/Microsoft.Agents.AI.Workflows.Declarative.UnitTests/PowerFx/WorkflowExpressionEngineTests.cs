@@ -8,7 +8,6 @@ using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Agents.ObjectModel.Exceptions;
 using Microsoft.PowerFx.Types;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.PowerFx;
 

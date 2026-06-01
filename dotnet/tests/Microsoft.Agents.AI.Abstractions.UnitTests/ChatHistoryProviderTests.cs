@@ -439,7 +439,9 @@ public class ChatHistoryProviderTests
         var storedRequest = provider.LastStoredContext!.RequestMessages.ToList();
         Assert.Single(storedRequest);
         Assert.Equal("External", storedRequest[0].Text);
-        Assert.Same(responseMessages, provider.LastStoredContext.ResponseMessages);
+        var storedResponse = provider.LastStoredContext.ResponseMessages!.ToList();
+        Assert.Single(storedResponse);
+        Assert.Equal("Response", storedResponse[0].Text);
     }
 
     [Fact]
@@ -461,13 +463,14 @@ public class ChatHistoryProviderTests
     {
         // Arrange - filter that only keeps System messages
         var provider = new TestChatHistoryProvider(
-            storeInputMessageFilter: msgs => msgs.Where(m => m.Role == ChatRole.System));
+            storeInputRequestMessageFilter: msgs => msgs.Where(m => m.Role == ChatRole.System),
+            storeInputResponseMessageFilter: msgs => msgs.Where(m => m.Role == ChatRole.Assistant));
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "User msg"),
             new ChatMessage(ChatRole.System, "System msg")
         };
-        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, messages, [new ChatMessage(ChatRole.Assistant, "Response")]);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, messages, [new ChatMessage(ChatRole.Assistant, "Response"), new ChatMessage(ChatRole.Tool, "Response")]);
 
         // Act
         await provider.InvokedAsync(context);
@@ -477,6 +480,9 @@ public class ChatHistoryProviderTests
         var storedRequest = provider.LastStoredContext!.RequestMessages.ToList();
         Assert.Single(storedRequest);
         Assert.Equal("System msg", storedRequest[0].Text);
+        var storedResponse = provider.LastStoredContext.ResponseMessages!.ToList();
+        Assert.Single(storedResponse);
+        Assert.Equal("Response", storedResponse[0].Text);
     }
 
     [Fact]
@@ -529,8 +535,9 @@ public class ChatHistoryProviderTests
         public TestChatHistoryProvider(
             IEnumerable<ChatMessage>? provideMessages = null,
             Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
-            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
-            : base(provideOutputMessageFilter, storeInputMessageFilter)
+            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
+            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
+            : base(provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
         {
             this._provideMessages = provideMessages;
         }

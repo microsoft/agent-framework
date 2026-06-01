@@ -7,7 +7,8 @@ Each action becomes a node in the workflow graph.
 """
 
 import uuid
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from agent_framework import (
     WorkflowContext,
@@ -28,9 +29,12 @@ def _get_variable_path(action_def: dict[str, Any], key: str = "variable") -> str
     variable = action_def.get(key)
     if isinstance(variable, str):
         return variable
-    if isinstance(variable, dict):
-        return variable.get("path")
-    return action_def.get("path")
+    if isinstance(variable, Mapping):
+        path = variable.get("path")  # type: ignore[reportUnknownVariableType]
+        return path if isinstance(path, str) else None
+
+    fallback_path = action_def.get("path")
+    return fallback_path if isinstance(fallback_path, str) else None
 
 
 class SetValueExecutor(DeclarativeActionExecutor):
@@ -150,42 +154,27 @@ class SetMultipleVariablesExecutor(DeclarativeActionExecutor):
         """Handle the SetMultipleVariables action."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
-        assignments = self._action_def.get("assignments", [])
+        assignments = cast(
+            list[Mapping[str, Any]],
+            self._action_def.get("assignments") if isinstance(self._action_def.get("assignments"), list) else [],
+        )
         for assignment in assignments:
+            if not isinstance(assignment, Mapping):
+                continue
             variable = assignment.get("variable")
             path: str | None
             if isinstance(variable, str):
                 path = variable
-            elif isinstance(variable, dict):
-                path = variable.get("path")
+            elif isinstance(variable, Mapping):
+                path_value = variable.get("path")  # type: ignore[reportUnknownMemberType]
+                path = path_value if isinstance(path_value, str) else None
             else:
-                path = assignment.get("path")
+                fallback_path = assignment.get("path")
+                path = fallback_path if isinstance(fallback_path, str) else None
             value = assignment.get("value")
             if path:
                 evaluated_value = state.eval_if_expression(value)
                 state.set(path, evaluated_value)
-
-        await ctx.send_message(ActionComplete())
-
-
-class AppendValueExecutor(DeclarativeActionExecutor):
-    """Executor for the AppendValue action."""
-
-    @handler
-    async def handle_action(
-        self,
-        trigger: Any,
-        ctx: WorkflowContext[ActionComplete],
-    ) -> None:
-        """Handle the AppendValue action."""
-        state = await self._ensure_state_initialized(ctx, trigger)
-
-        path = self._action_def.get("path")
-        value = self._action_def.get("value")
-
-        if path:
-            evaluated_value = state.eval_if_expression(value)
-            state.append(path, evaluated_value)
 
         await ctx.send_message(ActionComplete())
 
@@ -249,7 +238,10 @@ class SendActivityExecutor(DeclarativeActionExecutor):
         activity = self._action_def.get("activity", "")
 
         # Activity can be a string directly or a dict with a "text" field
-        text = activity.get("text", "") if isinstance(activity, dict) else activity
+        if isinstance(activity, Mapping):
+            text: Any = activity.get("text", "")  # type: ignore[reportUnknownMemberType]
+        else:
+            text = activity
 
         if isinstance(text, str):
             # First evaluate any =expression syntax
@@ -260,48 +252,7 @@ class SendActivityExecutor(DeclarativeActionExecutor):
 
         # Yield the text as workflow output
         if text:
-            await ctx.yield_output(str(text))
-
-        await ctx.send_message(ActionComplete())
-
-
-class EmitEventExecutor(DeclarativeActionExecutor):
-    """Executor for the EmitEvent action.
-
-    Emits a custom event to the workflow event stream.
-
-    Supports two schema formats:
-    1. Graph mode: eventName, eventValue
-    2. Interpreter mode: event.name, event.data
-    """
-
-    @handler
-    async def handle_action(
-        self,
-        trigger: Any,
-        ctx: WorkflowContext[ActionComplete, dict[str, Any]],
-    ) -> None:
-        """Handle the EmitEvent action."""
-        state = await self._ensure_state_initialized(ctx, trigger)
-
-        # Support both schema formats:
-        # - Graph mode: eventName, eventValue
-        # - Interpreter mode: event.name, event.data
-        event_def = self._action_def.get("event", {})
-        event_name = self._action_def.get("eventName") or event_def.get("name", "")
-        event_value = self._action_def.get("eventValue")
-        if event_value is None:
-            event_value = event_def.get("data")
-
-        if event_name:
-            evaluated_name = state.eval_if_expression(event_name)
-            evaluated_value = state.eval_if_expression(event_value)
-
-            event_data = {
-                "eventName": evaluated_name,
-                "eventValue": evaluated_value,
-            }
-            await ctx.yield_output(event_data)
+            await ctx.yield_output(str(text))  # type: ignore[reportUnknownArgumentType]
 
         await ctx.send_message(ActionComplete())
 
@@ -336,11 +287,14 @@ class EditTableExecutor(DeclarativeActionExecutor):
 
         if table_path:
             # Get current table value
-            current_table = state.get(table_path)
-            if current_table is None:
+            current_table_value = state.get(table_path)
+            current_table: list[Any]
+            if current_table_value is None:
                 current_table = []
-            elif not isinstance(current_table, list):
-                current_table = [current_table]
+            elif isinstance(current_table_value, list):
+                current_table = list(current_table_value)  # type: ignore[reportUnknownArgumentType]
+            else:
+                current_table = [current_table_value]
 
             if operation == "add" or operation == "insert":
                 evaluated_value = state.eval_if_expression(value)
@@ -413,11 +367,14 @@ class EditTableV2Executor(DeclarativeActionExecutor):
 
         if table_path:
             # Get current table value
-            current_table = state.get(table_path)
-            if current_table is None:
+            current_table_value = state.get(table_path)
+            current_table: list[Any]
+            if current_table_value is None:
                 current_table = []
-            elif not isinstance(current_table, list):
-                current_table = [current_table]
+            elif isinstance(current_table_value, list):
+                current_table = list(current_table_value)  # type: ignore[reportUnknownArgumentType]
+            else:
+                current_table = [current_table_value]
 
             if operation == "add":
                 evaluated_item = state.eval_if_expression(item)
@@ -433,9 +390,12 @@ class EditTableV2Executor(DeclarativeActionExecutor):
                     evaluated_item = state.eval_if_expression(item)
                     if key_field and isinstance(evaluated_item, dict):
                         # Remove by key match
-                        key_value = evaluated_item.get(key_field)
+                        evaluated_item_dict = cast(dict[str, Any], evaluated_item)
+                        key_value = evaluated_item_dict.get(key_field)
                         current_table = [
-                            r for r in current_table if not (isinstance(r, dict) and r.get(key_field) == key_value)
+                            r
+                            for r in current_table
+                            if not (isinstance(r, dict) and cast(dict[str, Any], r).get(key_field) == key_value)
                         ]
                     elif evaluated_item in current_table:
                         current_table.remove(evaluated_item)
@@ -451,11 +411,11 @@ class EditTableV2Executor(DeclarativeActionExecutor):
             elif operation == "addorupdate":
                 evaluated_item = state.eval_if_expression(item)
                 if key_field and isinstance(evaluated_item, dict):
-                    key_value = evaluated_item.get(key_field)
+                    key_value = evaluated_item.get(key_field)  # type: ignore[reportUnknownArgumentType]
                     # Find existing item with same key
                     found_idx = -1
                     for i, r in enumerate(current_table):
-                        if isinstance(r, dict) and r.get(key_field) == key_value:
+                        if isinstance(r, dict) and cast(dict[str, Any], r).get(key_field) == key_value:
                             found_idx = i
                             break
                     if found_idx >= 0:
@@ -476,9 +436,9 @@ class EditTableV2Executor(DeclarativeActionExecutor):
                     if 0 <= idx < len(current_table):
                         current_table[idx] = evaluated_item
                 elif key_field and isinstance(evaluated_item, dict):
-                    key_value = evaluated_item.get(key_field)
+                    key_value = evaluated_item.get(key_field)  # type: ignore[reportUnknownArgumentType]
                     for i, r in enumerate(current_table):
-                        if isinstance(r, dict) and r.get(key_field) == key_value:
+                        if isinstance(r, dict) and cast(dict[str, Any], r).get(key_field) == key_value:
                             current_table[i] = evaluated_item
                             break
 
@@ -568,11 +528,13 @@ class ParseValueExecutor(DeclarativeActionExecutor):
             if value is None:
                 return {}
             if isinstance(value, dict):
-                return value
+                return cast(dict[str, Any], value)
             if isinstance(value, str):
                 try:
                     parsed = json.loads(value)
-                    return parsed if isinstance(parsed, dict) else {"value": parsed}
+                    if isinstance(parsed, dict):
+                        return cast(dict[str, Any], parsed)
+                    return {"value": parsed}
                 except json.JSONDecodeError:
                     return {"value": value}
             return {"value": value}
@@ -581,11 +543,13 @@ class ParseValueExecutor(DeclarativeActionExecutor):
             if value is None:
                 return []
             if isinstance(value, list):
-                return value
+                return cast(list[Any], value)  # type: ignore[redundant-cast]
             if isinstance(value, str):
                 try:
                     parsed = json.loads(value)
-                    return parsed if isinstance(parsed, list) else [parsed]
+                    if isinstance(parsed, list):
+                        return cast(list[Any], parsed)  # type: ignore[redundant-cast]
+                    return [parsed]
                 except json.JSONDecodeError:
                     return [value]
             return [value]
@@ -601,11 +565,9 @@ BASIC_ACTION_EXECUTORS: dict[str, type[DeclarativeActionExecutor]] = {
     "SetVariable": SetVariableExecutor,
     "SetTextVariable": SetTextVariableExecutor,
     "SetMultipleVariables": SetMultipleVariablesExecutor,
-    "AppendValue": AppendValueExecutor,
     "ResetVariable": ResetVariableExecutor,
     "ClearAllVariables": ClearAllVariablesExecutor,
     "SendActivity": SendActivityExecutor,
-    "EmitEvent": EmitEventExecutor,
     "ParseValue": ParseValueExecutor,
     "EditTable": EditTableExecutor,
     "EditTableV2": EditTableV2Executor,

@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from agent_framework import Agent, tool
 
 from agent_framework_ag_ui._orchestration._tooling import (
@@ -20,7 +21,8 @@ class DummyTool:
 class MockMCPTool:
     """Mock MCP tool that simulates connected MCP tool with functions."""
 
-    def __init__(self, functions: list[DummyTool], is_connected: bool = True) -> None:
+    def __init__(self, functions: list[DummyTool], is_connected: bool = True, name: str = "mock-mcp") -> None:
+        self.name = name
         self.functions = functions
         self.is_connected = is_connected
 
@@ -45,11 +47,8 @@ def test_merge_tools_filters_duplicates() -> None:
     server = [DummyTool("a"), DummyTool("b")]
     client = [DummyTool("b"), DummyTool("c")]
 
-    merged = merge_tools(server, client)
-
-    assert merged is not None
-    names = [getattr(t, "name", None) for t in merged]
-    assert names == ["a", "b", "c"]
+    with pytest.raises(ValueError, match="Duplicate tool name 'b'"):
+        merge_tools(server, client)
 
 
 def test_register_additional_client_tools_assigns_when_configured() -> None:
@@ -131,6 +130,17 @@ def test_collect_server_tools_with_mcp_tools_via_public_property() -> None:
     assert len(tools) == 2
 
 
+def test_collect_server_tools_raises_on_duplicate_agent_and_mcp_tool_names() -> None:
+    duplicate_tool = DummyTool("regular_tool")
+    mock_mcp = MockMCPTool([duplicate_tool], is_connected=True, name="docs-mcp")
+
+    agent = _create_chat_agent_with_tool("regular_tool")
+    agent.mcp_tools = [mock_mcp]
+
+    with pytest.raises(ValueError, match="Duplicate tool name 'regular_tool'"):
+        collect_server_tools(agent)
+
+
 # Additional tests for tooling coverage
 
 
@@ -176,11 +186,11 @@ def test_merge_tools_no_client_tools() -> None:
 
 
 def test_merge_tools_all_duplicates() -> None:
-    """merge_tools returns None when all client tools duplicate server tools."""
+    """merge_tools raises when client and server tools share a name."""
     server = [DummyTool("a"), DummyTool("b")]
     client = [DummyTool("a"), DummyTool("b")]
-    result = merge_tools(server, client)
-    assert result is None
+    with pytest.raises(ValueError, match="Duplicate tool name 'a'"):
+        merge_tools(server, client)
 
 
 def test_merge_tools_empty_server() -> None:
@@ -208,7 +218,7 @@ def test_merge_tools_with_approval_tools_no_client() -> None:
 
 
 def test_merge_tools_with_approval_tools_all_duplicates() -> None:
-    """merge_tools returns server tools with approval mode even when client duplicates."""
+    """merge_tools raises even when a client tool duplicates an approval-gated server tool."""
 
     class ApprovalTool:
         def __init__(self, name: str):
@@ -217,7 +227,5 @@ def test_merge_tools_with_approval_tools_all_duplicates() -> None:
 
     server = [ApprovalTool("write_doc")]
     client = [DummyTool("write_doc")]  # Same name as server
-    result = merge_tools(server, client)
-    assert result is not None
-    assert len(result) == 1
-    assert result[0].approval_mode == "always_require"
+    with pytest.raises(ValueError, match="Duplicate tool name 'write_doc'"):
+        merge_tools(server, client)

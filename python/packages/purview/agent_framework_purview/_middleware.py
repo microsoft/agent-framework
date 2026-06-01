@@ -2,9 +2,11 @@
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Union
 
 from agent_framework import AgentContext, AgentMiddleware, ChatContext, ChatMiddleware, MiddlewareTermination
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
+from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 
 from ._cache import CacheProvider
 from ._client import PurviewClient
@@ -12,6 +14,9 @@ from ._exceptions import PurviewPaymentRequiredError
 from ._models import Activity
 from ._processor import ScopedContentProcessor
 from ._settings import PurviewSettings
+
+AzureCredentialTypes = Union[TokenCredential, AsyncTokenCredential]
+AzureTokenProvider = Callable[[], Union[str, Awaitable[str]]]
 
 logger = logging.getLogger("agent_framework.purview")
 
@@ -67,6 +72,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         call_next: Callable[[], Awaitable[None]],
     ) -> None:  # type: ignore[override]
         resolved_user_id: str | None = None
+        session_id: str | None = None
         try:
             # Pre (prompt) check
             session_id = self._get_agent_session_id(context)
@@ -76,10 +82,13 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             if should_block_prompt:
                 from agent_framework import AgentResponse, Message
 
+                msg = self._settings.get("blocked_prompt_message", None) or "Prompt blocked by policy"
+
                 context.result = AgentResponse(
                     messages=[
                         Message(
-                            role="system", text=self._settings.get("blocked_prompt_message", "Prompt blocked by policy")
+                            role="system",
+                            contents=[msg],
                         )
                     ]
                 )
@@ -107,17 +116,19 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 should_block_response, _ = await self._processor.process_messages(
                     context.result.messages,  # type: ignore[union-attr]
                     Activity.DOWNLOAD_TEXT,
-                    session_id=session_id,
+                    session_id=session_id_response,
                     user_id=resolved_user_id,
                 )
                 if should_block_response:
                     from agent_framework import AgentResponse, Message
 
+                    msg = self._settings.get("blocked_response_message", None) or "Response blocked by policy"
+
                     context.result = AgentResponse(
                         messages=[
                             Message(
                                 role="system",
-                                text=self._settings.get("blocked_response_message", "Response blocked by policy"),
+                                contents=[msg],
                             )
                         ]
                     )
@@ -173,6 +184,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         call_next: Callable[[], Awaitable[None]],
     ) -> None:  # type: ignore[override]
         resolved_user_id: str | None = None
+        session_id: str | None = None
         try:
             session_id = context.options.get("conversation_id") if context.options else None
             should_block_prompt, resolved_user_id = await self._processor.process_messages(
@@ -182,7 +194,8 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 from agent_framework import ChatResponse, Message
 
                 blocked_message = Message(
-                    role="system", text=self._settings.get("blocked_prompt_message", "Prompt blocked by policy")
+                    role="system",
+                    contents=[self._settings.get("blocked_prompt_message", None) or "Prompt blocked by policy"],
                 )
                 context.result = ChatResponse(messages=[blocked_message])
                 raise MiddlewareTermination
@@ -217,7 +230,9 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
 
                         blocked_message = Message(
                             role="system",
-                            text=self._settings.get("blocked_response_message", "Response blocked by policy"),
+                            contents=[
+                                self._settings.get("blocked_response_message", None) or "Response blocked by policy"
+                            ],
                         )
                         context.result = ChatResponse(messages=[blocked_message])
             else:

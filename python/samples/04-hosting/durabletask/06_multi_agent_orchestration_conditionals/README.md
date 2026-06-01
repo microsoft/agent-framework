@@ -14,6 +14,11 @@ This sample demonstrates conditional orchestration logic with two agents that an
 
 See the [README.md](../README.md) file in the parent directory for more information on how to configure the environment, including how to install and run common sample dependencies.
 
+This sample uses Azure OpenAI credentials:
+
+- `AZURE_OPENAI_ENDPOINT`
+- `AZURE_OPENAI_MODEL`
+
 ## Running the Sample
 
 With the environment setup, you can run the sample using the combined approach or separate worker and client processes:

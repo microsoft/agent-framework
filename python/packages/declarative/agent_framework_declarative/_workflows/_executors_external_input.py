@@ -2,14 +2,14 @@
 
 """External input executors for declarative workflows.
 
-These executors handle interactions that require external input (user questions,
-confirmations, etc.), using the request_info pattern to pause the workflow and
-wait for responses.
+These executors handle interactions that require external input (user questions
+and external integrations), using the request_info pattern to pause the workflow
+and wait for responses.
 """
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import (
     WorkflowContext,
@@ -23,18 +23,49 @@ from ._declarative_base import (
 )
 
 
+def _get_prompt_text(action_def: dict[str, Any], primary_key: str, fallback_key: str) -> Any:
+    """Return the prompt text from an action definition.
+
+    Accepts a nested ``{primary_key: {"text": ...}}`` mapping, a bare
+    string under ``primary_key``, or a top-level ``fallback_key`` value.
+    """
+    match action_def.get(primary_key):
+        case {"text": text}:
+            return text
+        case str() as text:
+            return text
+        case _:
+            return action_def.get(fallback_key, "")
+
+
+def _get_output_path(action_def: dict[str, Any], default: str) -> str:
+    """Return the state path where the action result should be written.
+
+    Looks at ``variable``, then ``output.property``, then top-level
+    ``property``, falling back to ``default``.
+    """
+    output = action_def.get("output")
+    nested = cast(dict[str, Any], output).get("property") if isinstance(output, dict) else None
+    return action_def.get("variable") or nested or action_def.get("property") or default
+
+
 @dataclass
 class ExternalInputRequest:
     """Request for external input (triggers workflow pause).
 
-    Aligns with .NET ExternalInputRequest pattern. Used by Question, Confirmation,
-    WaitForInput, and RequestExternalInput executors to signal that user input is
-    needed. The workflow will pause via request_info and wait for an ExternalInputResponse.
+    Aligns with .NET ExternalInputRequest pattern. Used by Question and
+    RequestExternalInput executors to signal that user input is needed.
+    The workflow will pause via request_info and wait for an ExternalInputResponse.
 
     Attributes:
         request_id: Unique identifier for this request.
         message: The prompt or question to display to the user.
-        request_type: Type of input requested (question, confirmation, user_input, external).
+        request_type: A free-form discriminator describing the kind of input
+            being requested. ``QuestionExecutor`` emits ``"question"`` and
+            ``RequestExternalInputExecutor`` defaults to ``"external"``; callers
+            may supply any other string via the ``requestType`` field on a
+            ``RequestExternalInput`` action (e.g. ``"approval"``) and it is
+            propagated unchanged.
         metadata: Additional context (choices, output_property, timeout, etc.).
     """
 
@@ -75,15 +106,12 @@ class QuestionExecutor(DeclarativeActionExecutor):
         """Ask the question and wait for a response."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
-        question_text = self._action_def.get("text") or self._action_def.get("question", "")
-        output_property = self._action_def.get("output", {}).get("property") or self._action_def.get(
-            "property", "Local.answer"
-        )
+        question_text = _get_prompt_text(self._action_def, primary_key="question", fallback_key="text")
+        output_property = _get_output_path(self._action_def, default="Local.answer")
+        default_value = self._action_def.get("default", self._action_def.get("defaultValue"))
         choices = self._action_def.get("choices", [])
-        default_value = self._action_def.get("defaultValue")
         allow_free_text = self._action_def.get("allowFreeText", True)
 
-        # Evaluate the question text if it's an expression
         evaluated_question = state.eval_if_expression(question_text)
 
         # Build choices metadata
@@ -139,133 +167,6 @@ class QuestionExecutor(DeclarativeActionExecutor):
         await ctx.send_message(ActionComplete())
 
 
-class ConfirmationExecutor(DeclarativeActionExecutor):
-    """Executor that asks for a yes/no confirmation.
-
-    A specialized version of Question that expects a boolean response.
-    """
-
-    @handler
-    async def handle_action(
-        self,
-        trigger: Any,
-        ctx: WorkflowContext[ActionComplete],
-    ) -> None:
-        """Ask for confirmation."""
-        state = await self._ensure_state_initialized(ctx, trigger)
-
-        message = self._action_def.get("text") or self._action_def.get("message", "")
-        output_property = self._action_def.get("output", {}).get("property") or self._action_def.get(
-            "property", "Local.confirmed"
-        )
-        yes_label = self._action_def.get("yesLabel", "Yes")
-        no_label = self._action_def.get("noLabel", "No")
-        default_value = self._action_def.get("defaultValue", False)
-
-        # Evaluate the message if it's an expression
-        evaluated_message = state.eval_if_expression(message)
-
-        # Request confirmation - workflow pauses here
-        await ctx.request_info(
-            ExternalInputRequest(
-                request_id=str(uuid.uuid4()),
-                message=str(evaluated_message),
-                request_type="confirmation",
-                metadata={
-                    "output_property": output_property,
-                    "yes_label": yes_label,
-                    "no_label": no_label,
-                    "default_value": default_value,
-                },
-            ),
-            ExternalInputResponse,
-        )
-
-    @response_handler
-    async def handle_response(
-        self,
-        original_request: ExternalInputRequest,
-        response: ExternalInputResponse,
-        ctx: WorkflowContext[ActionComplete],
-    ) -> None:
-        """Handle the user's confirmation response."""
-        state = self._get_state(ctx.state)
-
-        output_property = original_request.metadata.get("output_property", "Local.confirmed")
-
-        # Convert response to boolean
-        if response.value is not None:
-            confirmed = bool(response.value)
-        else:
-            # Interpret common affirmative responses
-            user_input_lower = response.user_input.lower().strip()
-            confirmed = user_input_lower in ("yes", "y", "true", "1", "confirm", "ok")
-
-        if output_property:
-            state.set(output_property, confirmed)
-
-        await ctx.send_message(ActionComplete())
-
-
-class WaitForInputExecutor(DeclarativeActionExecutor):
-    """Executor that waits for user input during a conversation.
-
-    Used when the workflow needs to pause and wait for the next user message
-    in a conversational flow.
-    """
-
-    @handler
-    async def handle_action(
-        self,
-        trigger: Any,
-        ctx: WorkflowContext[ActionComplete, str],
-    ) -> None:
-        """Wait for user input."""
-        state = await self._ensure_state_initialized(ctx, trigger)
-
-        prompt = self._action_def.get("prompt")
-        output_property = self._action_def.get("output", {}).get("property") or self._action_def.get(
-            "property", "Local.input"
-        )
-        timeout_seconds = self._action_def.get("timeout")
-
-        # Emit prompt if specified
-        if prompt:
-            evaluated_prompt = state.eval_if_expression(prompt)
-            await ctx.yield_output(str(evaluated_prompt))
-
-        # Request user input - workflow pauses here
-        await ctx.request_info(
-            ExternalInputRequest(
-                request_id=str(uuid.uuid4()),
-                message=str(prompt) if prompt else "Waiting for input...",
-                request_type="user_input",
-                metadata={
-                    "output_property": output_property,
-                    "timeout_seconds": timeout_seconds,
-                },
-            ),
-            ExternalInputResponse,
-        )
-
-    @response_handler
-    async def handle_response(
-        self,
-        original_request: ExternalInputRequest,
-        response: ExternalInputResponse,
-        ctx: WorkflowContext[ActionComplete, str],
-    ) -> None:
-        """Handle the user's input."""
-        state = self._get_state(ctx.state)
-
-        output_property = original_request.metadata.get("output_property", "Local.input")
-
-        if output_property:
-            state.set(output_property, response.user_input)
-
-        await ctx.send_message(ActionComplete())
-
-
 class RequestExternalInputExecutor(DeclarativeActionExecutor):
     """Executor that requests external input/approval.
 
@@ -282,16 +183,15 @@ class RequestExternalInputExecutor(DeclarativeActionExecutor):
         """Request external input."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
+        message = _get_prompt_text(self._action_def, primary_key="prompt", fallback_key="message")
+        output_property = _get_output_path(self._action_def, default="Local.externalInput")
+        default_value = self._action_def.get("default")
+
         request_type = self._action_def.get("requestType", "external")
-        message = self._action_def.get("message", "")
-        output_property = self._action_def.get("output", {}).get("property") or self._action_def.get(
-            "property", "Local.externalInput"
-        )
         timeout_seconds = self._action_def.get("timeout")
         required_fields = self._action_def.get("requiredFields", [])
         metadata = self._action_def.get("metadata", {})
 
-        # Evaluate the message if it's an expression
         evaluated_message = state.eval_if_expression(message)
 
         # Build request metadata
@@ -299,6 +199,7 @@ class RequestExternalInputExecutor(DeclarativeActionExecutor):
             **metadata,
             "output_property": output_property,
             "required_fields": required_fields,
+            "default_value": default_value,
         }
 
         if timeout_seconds:
@@ -338,7 +239,5 @@ class RequestExternalInputExecutor(DeclarativeActionExecutor):
 # Mapping of external input action kinds to executor classes
 EXTERNAL_INPUT_EXECUTORS: dict[str, type[DeclarativeActionExecutor]] = {
     "Question": QuestionExecutor,
-    "Confirmation": ConfirmationExecutor,
-    "WaitForInput": WaitForInputExecutor,
     "RequestExternalInput": RequestExternalInputExecutor,
 }

@@ -6,12 +6,19 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunFinishedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
@@ -25,9 +32,13 @@ from ag_ui.core import (
 from agent_framework import Content
 
 from ._orchestration._predictive_state import PredictiveStateHandler
+from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 from ._utils import generate_event_id, make_json_safe
 
 logger = logging.getLogger(__name__)
+
+# Sentinel for an unset display_result; distinguishes "caller didn't pass" from None/{}/"".
+_UNSET = object()
 
 
 def _has_only_tool_calls(contents: list[Any]) -> bool:
@@ -120,6 +131,9 @@ class FlowState:
     tool_results: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     tool_calls_ended: set[str] = field(default_factory=set)  # pyright: ignore[reportUnknownVariableType]
     interrupts: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    reasoning_messages: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    accumulated_reasoning: dict[str, str] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    reasoning_message_id: str | None = None
 
     def get_tool_name(self, call_id: str | None) -> str | None:
         """Get tool name by call ID."""
@@ -224,28 +238,105 @@ def _emit_tool_call(
     return events
 
 
-def _emit_tool_result(
-    content: Content,
+def _extract_tool_result_marker_values(content: Content, key: str) -> list[Any]:
+    """Extract marker values from outer and inner tool-result content."""
+    values: list[Any] = []
+
+    outer_ap = getattr(content, "additional_properties", None) or {}
+    if key in outer_ap:
+        values.append(outer_ap[key])
+
+    for item in content.items or ():
+        item_ap = getattr(item, "additional_properties", None) or {}
+        if key in item_ap:
+            values.append(item_ap[key])
+
+    return values
+
+
+def _extract_tool_result_state(content: Content) -> dict[str, Any] | None:
+    """Extract a deterministic AG-UI state update from a tool-result ``Content``.
+
+    Tools using :func:`agent_framework_ag_ui.state_update` carry the state
+    payload in ``additional_properties[TOOL_RESULT_STATE_KEY]`` on the inner
+    text item produced by ``parse_result``. We also check the outer
+    function_result content's ``additional_properties`` for robustness.
+
+    If multiple items carry state, they are merged in order so later items
+    override earlier ones (plain ``dict.update`` semantics).
+
+    Returns:
+        The merged state dict to apply, or ``None`` if no state update is
+        present.
+    """
+    merged: dict[str, Any] | None = None
+
+    for item_state in _extract_tool_result_marker_values(content, TOOL_RESULT_STATE_KEY):
+        if isinstance(item_state, dict):
+            if merged is None:
+                merged = dict(item_state)
+            else:
+                merged.update(item_state)
+
+    return merged
+
+
+def _extract_tool_result_display(content: Content) -> Any:  # noqa: ANN401
+    """Extract a UI-only AG-UI tool result display payload, if present."""
+    display_values = _extract_tool_result_marker_values(content, TOOL_RESULT_DISPLAY_KEY)
+    return display_values[-1] if display_values else _UNSET
+
+
+def _stringify_tool_result(raw_result: Any) -> str:  # noqa: ANN401
+    return raw_result if isinstance(raw_result, str) else json.dumps(make_json_safe(raw_result))
+
+
+def _resolve_ui_payload(llm_str: str, display_result: Any) -> str:  # noqa: ANN401
+    """Pick the UI-bound string: the serialized display payload when set, else the LLM string."""
+    return llm_str if display_result is _UNSET else _stringify_tool_result(display_result)
+
+
+def _emit_tool_result_common(
+    call_id: str,
+    raw_result: Any,
     flow: FlowState,
     predictive_handler: PredictiveStateHandler | None = None,
+    *,
+    state_update: Mapping[str, Any] | None = None,
+    display_result: Any = _UNSET,  # noqa: ANN401
 ) -> list[BaseEvent]:
-    """Emit ToolCallResult events for function_result content."""
+    """Shared helper for emitting ToolCallEnd + ToolCallResult events and performing FlowState cleanup.
+
+    Both ``_emit_tool_result`` (standard function results) and ``_emit_mcp_tool_result``
+    (MCP server tool results) delegate to this function.
+
+    Args:
+        call_id: Tool call identifier.
+        raw_result: The stringified tool result content sent back to the LLM.
+        flow: Current ``FlowState``.
+        predictive_handler: Optional predictive state handler driven by
+            ``predict_state_config``.
+        state_update: Optional deterministic state snapshot produced by a tool
+            returning :func:`agent_framework_ag_ui.state_update`. When present,
+            it is merged into ``flow.current_state`` and a ``StateSnapshotEvent``
+            is emitted after the ``ToolCallResult`` event. When both
+            ``predictive_handler`` and ``state_update`` are active, predictive
+            updates are applied first, then the deterministic merge, and a
+            single coalesced ``StateSnapshotEvent`` is emitted.
+    """
     events: list[BaseEvent] = []
 
-    if not content.call_id:
-        return events
+    events.append(ToolCallEndEvent(tool_call_id=call_id))
+    flow.tool_calls_ended.add(call_id)
 
-    events.append(ToolCallEndEvent(tool_call_id=content.call_id))
-    flow.tool_calls_ended.add(content.call_id)
-
-    raw_result = content.result if content.result is not None else ""
-    result_content = raw_result if isinstance(raw_result, str) else json.dumps(make_json_safe(raw_result))
+    result_content = _stringify_tool_result(raw_result)
+    ui_result_content = _resolve_ui_payload(result_content, display_result)
     message_id = generate_event_id()
     events.append(
         ToolCallResultEvent(
             message_id=message_id,
-            tool_call_id=content.call_id,
-            content=result_content,
+            tool_call_id=call_id,
+            content=ui_result_content,
             role="tool",
         )
     )
@@ -254,26 +345,57 @@ def _emit_tool_result(
         {
             "id": message_id,
             "role": "tool",
-            "toolCallId": content.call_id,
+            "toolCallId": call_id,
             "content": result_content,
         }
     )
 
     if predictive_handler:
         predictive_handler.apply_pending_updates()
-        if flow.current_state:
-            events.append(StateSnapshotEvent(snapshot=flow.current_state))
+
+    if state_update:
+        flow.current_state.update(state_update)
+        logger.debug(
+            "Emitted deterministic tool-result StateSnapshotEvent for call_id=%s (keys=%s)",
+            call_id,
+            list(state_update.keys()),
+        )
+
+    # Emit a single coalesced snapshot when either mechanism updated state.
+    if (predictive_handler or state_update) and flow.current_state:
+        events.append(StateSnapshotEvent(snapshot=flow.current_state))
 
     flow.tool_call_id = None
     flow.tool_call_name = None
 
     if flow.message_id:
-        logger.debug("Closing text message (issue #3568 fix): message_id=%s", flow.message_id)
+        logger.debug("Closing text message: message_id=%s", flow.message_id)
         events.append(TextMessageEndEvent(message_id=flow.message_id))
     flow.message_id = None
     flow.accumulated_text = ""
 
     return events
+
+
+def _emit_tool_result(
+    content: Content,
+    flow: FlowState,
+    predictive_handler: PredictiveStateHandler | None = None,
+) -> list[BaseEvent]:
+    """Emit ToolCallResult events for function_result content."""
+    if not content.call_id:
+        return []
+    raw_result = content.result if content.result is not None else ""
+    state_update = _extract_tool_result_state(content)
+    display_result = _extract_tool_result_display(content)
+    return _emit_tool_result_common(
+        content.call_id,
+        raw_result,
+        flow,
+        predictive_handler,
+        state_update=state_update,
+        display_result=display_result,
+    )
 
 
 def _emit_approval_request(
@@ -320,7 +442,7 @@ def _emit_approval_request(
     )
     interrupt_id = func_call_id or content.id
     if interrupt_id:
-        flow.interrupts = [
+        flow.interrupts.append(
             {
                 "id": str(interrupt_id),
                 "value": {
@@ -332,7 +454,7 @@ def _emit_approval_request(
                     },
                 },
             }
-        ]
+        )
 
     if require_confirmation:
         confirm_id = generate_event_id()
@@ -372,6 +494,209 @@ def _emit_usage(content: Content) -> list[BaseEvent]:
     return [CustomEvent(name="usage", value=usage_details)]
 
 
+def _emit_oauth_consent(content: Content) -> list[BaseEvent]:
+    """Emit an OAuth consent request as a custom event so frontends can render a consent link."""
+    return (
+        [CustomEvent(name="oauth_consent_request", value={"consent_link": content.consent_link})]
+        if content.consent_link
+        else []
+    )
+
+
+def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
+    """Emit ToolCall start/args events for MCP server tool call content.
+
+    MCP tool calls arrive as complete items (not streamed deltas), so we emit a
+    ``ToolCallStartEvent`` (and, when arguments are present, a ``ToolCallArgsEvent``)
+    immediately. This maps MCP-specific fields (tool_name, server_name) to the
+    same AG-UI ToolCall* events used by regular function calls, making MCP tool
+    execution visible to AG-UI consumers. Completion/end events are handled
+    separately by ``_emit_mcp_tool_result``.
+    """
+    events: list[BaseEvent] = []
+
+    tool_call_id = content.call_id or generate_event_id()
+    tool_name = content.tool_name or "mcp_tool"
+
+    display_name = tool_name
+
+    events.append(
+        ToolCallStartEvent(
+            tool_call_id=tool_call_id,
+            tool_call_name=display_name,
+            parent_message_id=flow.message_id,
+        )
+    )
+
+    # Serialize arguments
+    args_str = ""
+    if content.arguments:
+        args_str = (
+            content.arguments if isinstance(content.arguments, str) else json.dumps(make_json_safe(content.arguments))
+        )
+        events.append(ToolCallArgsEvent(tool_call_id=tool_call_id, delta=args_str))
+
+    # Track in flow state for MESSAGES_SNAPSHOT
+    tool_entry = {
+        "id": tool_call_id,
+        "type": "function",
+        "function": {"name": display_name, "arguments": args_str},
+    }
+    flow.pending_tool_calls.append(tool_entry)
+    flow.tool_calls_by_id[tool_call_id] = tool_entry
+
+    return events
+
+
+def _emit_mcp_tool_result(
+    content: Content, flow: FlowState, predictive_handler: PredictiveStateHandler | None = None
+) -> list[BaseEvent]:
+    """Emit ToolCallResult events for MCP server tool result content.
+
+    Delegates to the shared _emit_tool_result_common helper using content.output
+    (the MCP-specific result field) instead of content.result.
+    """
+    if not content.call_id:
+        logger.warning("MCP tool result content missing call_id, skipping")
+        return []
+    raw_output = content.output if content.output is not None else ""
+    state_update = _extract_tool_result_state(content)
+    display_result = _extract_tool_result_display(content)
+    return _emit_tool_result_common(
+        content.call_id,
+        raw_output,
+        flow,
+        predictive_handler,
+        state_update=state_update,
+        display_result=display_result,
+    )
+
+
+def _close_reasoning_block(flow: FlowState) -> list[BaseEvent]:
+    """Close an open reasoning block, emitting end events.
+
+    Should be called when the reasoning block is complete -- e.g. when
+    non-reasoning content arrives or at end of a run.
+    """
+    if not flow.reasoning_message_id:
+        return []
+    message_id = flow.reasoning_message_id
+    flow.reasoning_message_id = None
+    return [
+        ReasoningMessageEndEvent(message_id=message_id),
+        ReasoningEndEvent(message_id=message_id),
+    ]
+
+
+def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> list[BaseEvent]:
+    """Emit AG-UI reasoning events for text_reasoning content.
+
+    Uses the protocol-defined reasoning event types so that AG-UI consumers
+    such as CopilotKit can render reasoning natively.
+
+    When *flow* is provided the function follows the streaming pattern: it
+    emits ``ReasoningStartEvent`` / ``ReasoningMessageStartEvent`` only on
+    the first delta for a given ``message_id`` and just
+    ``ReasoningMessageContentEvent`` for subsequent deltas.  The matching
+    ``ReasoningMessageEndEvent`` / ``ReasoningEndEvent`` are deferred until
+    ``_close_reasoning_block`` is called (e.g. when non-reasoning content
+    arrives or at end-of-run).
+
+    Without *flow* (backward-compat) the full Start→Content→End sequence is
+    emitted for every call.
+
+    Only ``content.text`` is used for the visible reasoning message. If
+    ``content.protected_data`` is present it is emitted as a
+    ``ReasoningEncryptedValueEvent`` so that consumers can persist encrypted
+    reasoning for state continuity without conflating it with display text.
+
+    When *flow* is provided the reasoning message is persisted into
+    ``flow.reasoning_messages`` so that ``_build_messages_snapshot`` can
+    include it in the final ``MESSAGES_SNAPSHOT``.
+    """
+    text = content.text or ""
+    if not text and content.protected_data is None:
+        return []
+
+    message_id = content.id or generate_event_id()
+
+    events: list[BaseEvent] = []
+
+    if flow is not None:
+        # Streaming mode: track open reasoning block in flow state.
+        if flow.reasoning_message_id != message_id:
+            # Close any previously open reasoning block (different message_id).
+            events.extend(_close_reasoning_block(flow))
+            # Open new reasoning block.
+            events.append(ReasoningStartEvent(message_id=message_id))
+            events.append(ReasoningMessageStartEvent(message_id=message_id, role="reasoning"))
+            flow.reasoning_message_id = message_id
+
+        if text:
+            events.append(ReasoningMessageContentEvent(message_id=message_id, delta=text))
+
+        if content.protected_data is not None:
+            events.append(
+                ReasoningEncryptedValueEvent(
+                    subtype="message",
+                    entity_id=message_id,
+                    encrypted_value=content.protected_data,
+                )
+            )
+    else:
+        # No flow -- backward-compatible full sequence per call.
+        events.append(ReasoningStartEvent(message_id=message_id))
+        events.append(ReasoningMessageStartEvent(message_id=message_id, role="reasoning"))
+
+        if text:
+            events.append(ReasoningMessageContentEvent(message_id=message_id, delta=text))
+
+        events.append(ReasoningMessageEndEvent(message_id=message_id))
+
+        if content.protected_data is not None:
+            events.append(
+                ReasoningEncryptedValueEvent(
+                    subtype="message",
+                    entity_id=message_id,
+                    encrypted_value=content.protected_data,
+                )
+            )
+
+        events.append(ReasoningEndEvent(message_id=message_id))
+
+    # Persist reasoning into flow state for MESSAGES_SNAPSHOT.
+    # Accumulate reasoning text per message_id, similar to flow.accumulated_text,
+    # so that incremental deltas build the full reasoning string.
+    if flow is not None:
+        if text:
+            previous_text = flow.accumulated_reasoning.get(message_id, "")
+            flow.accumulated_reasoning[message_id] = previous_text + text
+        full_text = flow.accumulated_reasoning.get(message_id, text or "")
+
+        # Update existing reasoning entry for this message_id if present; otherwise append a new one.
+        existing_entry: dict[str, Any] | None = None
+        for entry in flow.reasoning_messages:
+            if isinstance(entry, dict) and entry.get("id") == message_id:
+                existing_entry = entry
+                break
+
+        if existing_entry is None:
+            reasoning_entry: dict[str, Any] = {
+                "id": message_id,
+                "role": "reasoning",
+                "content": full_text,
+            }
+            if content.protected_data is not None:
+                reasoning_entry["encryptedValue"] = content.protected_data
+            flow.reasoning_messages.append(reasoning_entry)
+        else:
+            existing_entry["content"] = full_text
+            if content.protected_data is not None:
+                existing_entry["encryptedValue"] = content.protected_data
+
+    return events
+
+
 def _emit_content(
     content: Any,
     flow: FlowState,
@@ -381,15 +706,30 @@ def _emit_content(
 ) -> list[BaseEvent]:
     """Emit appropriate events for any content type."""
     content_type = getattr(content, "type", None)
+
+    # Close open reasoning block when switching to non-reasoning content.
+    if content_type != "text_reasoning":
+        events = _close_reasoning_block(flow)
+    else:
+        events = []
+
     if content_type == "text":
-        return _emit_text(content, flow, skip_text)
+        return events + _emit_text(content, flow, skip_text)
     if content_type == "function_call":
-        return _emit_tool_call(content, flow, predictive_handler)
+        return events + _emit_tool_call(content, flow, predictive_handler)
     if content_type == "function_result":
-        return _emit_tool_result(content, flow, predictive_handler)
+        return events + _emit_tool_result(content, flow, predictive_handler)
     if content_type == "function_approval_request":
-        return _emit_approval_request(content, flow, predictive_handler, require_confirmation)
+        return events + _emit_approval_request(content, flow, predictive_handler, require_confirmation)
     if content_type == "usage":
-        return _emit_usage(content)
+        return events + _emit_usage(content)
+    if content_type == "oauth_consent_request":
+        return events + _emit_oauth_consent(content)
+    if content_type == "mcp_server_tool_call":
+        return events + _emit_mcp_tool_call(content, flow)
+    if content_type == "mcp_server_tool_result":
+        return events + _emit_mcp_tool_result(content, flow, predictive_handler)
+    if content_type == "text_reasoning":
+        return _emit_text_reasoning(content, flow)
     logger.debug("Skipping unsupported content type in AG-UI emitter: %s", content_type)
-    return []
+    return events

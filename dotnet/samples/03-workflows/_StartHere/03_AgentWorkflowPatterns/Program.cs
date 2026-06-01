@@ -24,7 +24,7 @@ public static class Program
     {
         // Set up the Azure OpenAI client.
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
         var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         Console.Write("Choose workflow type ('sequential', 'concurrent', 'handoffs', 'groupchat'): ");
@@ -110,6 +110,18 @@ public static class Program
                 {
                     Console.WriteLine();
                     return output.As<List<ChatMessage>>()!;
+                }
+                else if (evt is WorkflowErrorEvent workflowError)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                    Console.ResetColor();
+                }
+                else if (evt is ExecutorFailedEvent executorFailed)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                    Console.ResetColor();
                 }
             }
 

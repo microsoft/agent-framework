@@ -11,21 +11,21 @@ Usage::
 
     class MySettings(TypedDict, total=False):
         api_key: str | None  # optional — resolves to None if not set
-        model_id: str | None  # optional by default
+        model: str | None  # optional by default
         source_a: str | None
         source_b: str | None
 
 
-    # Make model_id required; require exactly one of source_a / source_b:
+    # Make model required; require exactly one of source_a / source_b:
     settings = load_settings(
         MySettings,
         env_prefix="MY_APP_",
-        required_fields=["model_id", ("source_a", "source_b")],
-        model_id="gpt-4",
+        required_fields=["model", ("source_a", "source_b")],
+        model="gpt-4",
         source_a="value",
     )
     settings["api_key"]  # type-checked dict access
-    settings["model_id"]  # str | None per type, but guaranteed not None at runtime
+    settings["model"]  # str | None per type, but guaranteed not None at runtime
 """
 
 from __future__ import annotations
@@ -215,9 +215,7 @@ def load_settings(
             raise FileNotFoundError(env_file_path)
 
         raw_dotenv_values = dotenv_values(dotenv_path=env_file_path, encoding=encoding)
-        loaded_dotenv_values = {
-            key: value for key, value in raw_dotenv_values.items() if key is not None and value is not None
-        }
+        loaded_dotenv_values = {key: value for key, value in raw_dotenv_values.items() if value is not None}
 
     # Filter out None overrides so defaults / env vars are preserved
     overrides = {k: v for k, v in overrides.items() if v is not None}

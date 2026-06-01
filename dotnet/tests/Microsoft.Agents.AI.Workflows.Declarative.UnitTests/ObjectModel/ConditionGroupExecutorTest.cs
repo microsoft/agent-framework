@@ -4,7 +4,6 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 

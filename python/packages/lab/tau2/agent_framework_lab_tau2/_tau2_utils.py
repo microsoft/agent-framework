@@ -3,7 +3,7 @@
 import json
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any
+from typing import Any, TypeGuard, cast
 
 import numpy as np
 from agent_framework._tools import FunctionTool
@@ -27,6 +27,26 @@ from tau2.environment.tool import Tool  # type: ignore[import-untyped]
 _original_set_state = Environment.set_state
 
 
+def _to_str(value: object, default: str = "") -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return default
+    return str(value)
+
+
+def _is_any_list(value: Any) -> TypeGuard[list[Any]]:
+    return isinstance(value, list)
+
+
+def _is_any_mapping(value: Any) -> TypeGuard[Mapping[Any, Any]]:
+    return isinstance(value, Mapping)
+
+
+def _is_any_sequence(value: Any) -> TypeGuard[list[Any] | tuple[Any, ...] | set[Any]]:
+    return isinstance(value, (list, tuple, set))
+
+
 def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool:
     """Convert a tau2 Tool to a FunctionTool for agent framework compatibility.
 
@@ -41,7 +61,7 @@ def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool:
 
     return FunctionTool(
         name=tau2_tool.name,
-        description=tau2_tool._get_description(),
+        description=tau2_tool._get_description(),  # pyright: ignore[reportPrivateUsage]
         func=wrapped_func,
         input_model=tau2_tool.params,
     )
@@ -53,27 +73,26 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[Message]) -
     Handles role mapping, text extraction, function calls, and function results.
     Function results are converted to separate ToolMessage instances.
     """
-    tau2_messages = []
+    tau2_messages: list[Tau2Message] = []
 
     for msg in messages:
         role_str = str(msg.role)
 
         # Extract text content from all text-type contents
-        text_content = None
         text_contents = [c for c in msg.contents if hasattr(c, "text") and hasattr(c, "type") and c.type == "text"]
-        if text_contents:
-            text_content = " ".join(c.text for c in text_contents)  # type: ignore[misc]
+        content_parts: list[str] = [_to_str(getattr(c, "text", "")) for c in text_contents]
+        content_value = " ".join(content_parts)
 
         # Extract function calls and convert to ToolCall objects
         function_calls = [c for c in msg.contents if hasattr(c, "type") and c.type == "function_call"]
-        tool_calls = None
+        tool_calls: list[ToolCall] | None = None
         if function_calls:
             tool_calls = []
             for fc in function_calls:
                 arguments = fc.parse_arguments() or {}
                 tool_call = ToolCall(
-                    id=fc.call_id,
-                    name=fc.name,
+                    id=_to_str(fc.call_id),
+                    name=_to_str(fc.name),
                     arguments=arguments,
                     requestor="assistant" if role_str == "assistant" else "user",
                 )
@@ -84,11 +103,11 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[Message]) -
 
         # Create main message based on role
         if role_str == "system":
-            tau2_messages.append(SystemMessage(role="system", content=text_content))
+            tau2_messages.append(SystemMessage(role="system", content=content_value))
         elif role_str == "user":
-            tau2_messages.append(UserMessage(role="user", content=text_content, tool_calls=tool_calls))
+            tau2_messages.append(UserMessage(role="user", content=content_value, tool_calls=tool_calls))
         elif role_str == "assistant":
-            tau2_messages.append(AssistantMessage(role="assistant", content=text_content, tool_calls=tool_calls))
+            tau2_messages.append(AssistantMessage(role="assistant", content=content_value, tool_calls=tool_calls))
         elif role_str == "tool":
             # Tool messages are handled as function results below
             pass
@@ -98,7 +117,7 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[Message]) -
             dumpable_content = _dump_function_result(fr.result)
             content = dumpable_content if isinstance(dumpable_content, str) else json.dumps(dumpable_content)
             tool_msg = ToolMessage(
-                id=fr.call_id,
+                id=_to_str(fr.call_id),
                 role="tool",
                 content=content,
                 requestor="assistant",  # Most tool calls originate from assistant
@@ -126,12 +145,10 @@ def patch_env_set_state() -> None:
         if self.solo_mode and any(isinstance(message, UserMessage) for message in message_history):
             raise ValueError("User messages are not allowed in solo mode")
 
-        def get_actions_from_messages(
-            messages: list[Tau2Message],
-        ) -> list[tuple[ToolCall, ToolMessage]]:
+        def get_actions_from_messages(messages: list[Tau2Message]) -> list[tuple[ToolCall, ToolMessage]]:
             """Get the actions from the messages."""
             messages = deepcopy(messages)[::-1]
-            actions = []
+            actions: list[tuple[ToolCall, ToolMessage]] = []
             while messages:
                 message = messages.pop()
                 if isinstance(message, ToolMessage):
@@ -153,10 +170,13 @@ def patch_env_set_state() -> None:
             return actions
 
         if initialization_data is not None:
-            if initialization_data.agent_data is not None:
-                self.tools.update_db(initialization_data.agent_data)
-            if initialization_data.user_data is not None:
-                self.user_tools.update_db(initialization_data.user_data)
+            agent_data = cast(object, getattr(initialization_data, "agent_data", None))
+            if isinstance(agent_data, dict):
+                self.tools.update_db(cast(dict[str, Any], agent_data))
+
+            user_data = cast(object, getattr(initialization_data, "user_data", None))
+            if isinstance(user_data, dict):
+                self.user_tools.update_db(cast(dict[str, Any], user_data))
 
         if initialization_actions is not None:
             for action in initialization_actions:
@@ -188,10 +208,11 @@ def unpatch_env_set_state() -> None:
 def _dump_function_result(result: Any) -> Any:
     if isinstance(result, BaseModel):
         return result.model_dump_json()
-    if isinstance(result, list):
+    if _is_any_list(result):
         return [_dump_function_result(item) for item in result]
     if isinstance(result, dict):
-        return {k: _dump_function_result(v) for k, v in result.items()}
+        result_dict = cast(dict[str, Any], result)
+        return {k: _dump_function_result(v) for k, v in result_dict.items()}
     if result is None:
         return None
     return result
@@ -208,11 +229,11 @@ def _to_native(obj: Any) -> Any:
         return _to_native(obj.item())
 
     # 3) Dict-like -> dict
-    if isinstance(obj, Mapping):
+    if _is_any_mapping(obj):
         return {_to_native(k): _to_native(v) for k, v in obj.items()}
 
     # 4) Lists/Tuples/Sets -> list
-    if isinstance(obj, (list, tuple, set)):
+    if _is_any_sequence(obj):
         return [_to_native(x) for x in obj]
 
     # 5) Anything else: leave as-is
@@ -227,9 +248,10 @@ def _recursive_json_deserialize(obj: Any) -> Any:
             return _recursive_json_deserialize(deserialized)
         except (json.JSONDecodeError, TypeError):
             return obj
-    elif isinstance(obj, list):
+    elif _is_any_list(obj):
         return [_recursive_json_deserialize(item) for item in obj]
     elif isinstance(obj, dict):
-        return {k: _recursive_json_deserialize(v) for k, v in obj.items()}
+        typed_obj = cast(dict[str, Any], obj)
+        return {k: _recursive_json_deserialize(v) for k, v in typed_obj.items()}
     else:
         return obj

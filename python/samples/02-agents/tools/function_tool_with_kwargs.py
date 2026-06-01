@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Annotated, Any
+from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import Agent, FunctionInvocationContext, tool
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 from pydantic import Field
 
@@ -14,27 +14,27 @@ load_dotenv()
 """
 AI Function with kwargs Example
 
-This example demonstrates how to inject custom keyword arguments (kwargs) into an AI function
-from the agent's run method, without exposing them to the AI model.
+This example demonstrates how to inject runtime context into an AI function
+from the agent's run method, without exposing it to the AI model.
 
 This is useful for passing runtime information like access tokens, user IDs, or
 request-specific context that the tool needs but the model shouldn't know about
-or provide.
+or provide. The injected context parameter can be typed as
+``FunctionInvocationContext`` as shown here, or left untyped as ``ctx`` when you
+prefer a lighter-weight sample setup.
 """
 
 
-# Define the function tool with **kwargs to accept injected arguments
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
-# see samples/02-agents/tools/function_tool_with_approval.py
-# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# Define the function tool with explicit invocation context.
+# The context parameter can also be declared as an untyped ``ctx`` parameter.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
-    **kwargs: Any,
+    ctx: FunctionInvocationContext,
 ) -> str:
     """Get the weather for a given location."""
-    # Extract the injected argument from kwargs
-    user_id = kwargs.get("user_id", "unknown")
+    # Extract the injected argument from the explicit context
+    user_id = ctx.kwargs.get("user_id", "unknown")
 
     # Simulate using the user_id for logging or personalization
     print(f"Getting weather for user: {user_id}")
@@ -43,15 +43,18 @@ def get_weather(
 
 
 async def main() -> None:
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="WeatherAgent",
         instructions="You are a helpful weather assistant.",
         tools=[get_weather],
     )
 
-    # Pass the injected argument when running the agent
-    # The 'user_id' kwarg will be passed down to the tool execution via **kwargs
-    response = await agent.run("What is the weather like in Amsterdam?", user_id="user_123")
+    # Pass the runtime context explicitly when running the agent.
+    response = await agent.run(
+        "What is the weather like in Amsterdam?",
+        function_invocation_kwargs={"user_id": "user_123"},
+    )
 
     print(f"Agent: {response.text}")
 

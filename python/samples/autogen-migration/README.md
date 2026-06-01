@@ -6,9 +6,9 @@ This gallery helps AutoGen developers move to the Microsoft Agent Framework (AF)
 
 ### Single-Agent Parity
 
-- [01_basic_assistant_agent.py](single_agent/01_basic_assistant_agent.py) — Minimal AutoGen `AssistantAgent` and AF `Agent` comparison.
-- [02_assistant_agent_with_tool.py](single_agent/02_assistant_agent_with_tool.py) — Function tool integration in both SDKs.
-- [03_assistant_agent_thread_and_stream.py](single_agent/03_assistant_agent_thread_and_stream.py) — Session management and streaming responses.
+- [01_basic_agent.py](single_agent/01_basic_agent.py) — Minimal AutoGen `AssistantAgent` and AF `Agent` comparison.
+- [02_agent_with_tool.py](single_agent/02_agent_with_tool.py) — Function tool integration in both SDKs.
+- [03_agent_thread_and_stream.py](single_agent/03_agent_thread_and_stream.py) — Session management and streaming responses.
 - [04_agent_as_tool.py](single_agent/04_agent_as_tool.py) — Using agents as tools (hierarchical agent pattern) and streaming with tools.
 
 ### Multi-Agent Orchestration
@@ -35,7 +35,7 @@ Each script is fully async and the `main()` routine runs both implementations ba
 From the repository root:
 
 ```bash
-python samples/autogen-migration/single_agent/01_basic_assistant_agent.py
+python samples/autogen-migration/single_agent/01_basic_agent.py
 ```
 
 Every script accepts no CLI arguments and will first call the AutoGen implementation, followed by the AF version. Adjust the prompt or credentials inside the file as necessary before running.

@@ -3,8 +3,8 @@
 import asyncio
 import os
 
-from agent_framework import AgentResponseUpdate, WorkflowBuilder
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, AgentResponseUpdate, WorkflowBuilder
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -17,29 +17,31 @@ Sample: Azure AI Agents in a Workflow with Streaming
 This sample shows how to create agents backed by Azure OpenAI Responses and use them in a workflow with streaming.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- AZURE_AI_MODEL_DEPLOYMENT_NAME must be set to your Azure OpenAI model deployment name.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be the deployment name of a model in your Foundry project.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, and streaming runs.
 """
 
 
 async def main() -> None:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
     # Create two agents: a Writer and a Reviewer.
-    writer_agent = client.as_agent(
+    writer_agent = Agent(
+        client=client,
         name="Writer",
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
     )
 
-    reviewer_agent = client.as_agent(
+    reviewer_agent = Agent(
+        client=client,
         name="Reviewer",
         instructions=(
             "You are an excellent content reviewer. "

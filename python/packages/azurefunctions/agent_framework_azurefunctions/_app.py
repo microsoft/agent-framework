@@ -14,6 +14,7 @@ import logging
 import re
 import uuid
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 import azure.durable_functions as df
 import azure.functions as func
 from agent_framework import AgentExecutor, SupportsAgentRun, Workflow, WorkflowEvent
+from agent_framework._workflows._runner_context import YieldOutputEventType
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -44,7 +46,7 @@ from ._context import CapturingRunnerContext
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
-from ._serialization import deserialize_value, serialize_value
+from ._serialization import deserialize_value, serialize_value, strip_pickle_markers
 from ._workflow import (
     SOURCE_HITL_RESPONSE,
     SOURCE_ORCHESTRATOR,
@@ -56,6 +58,11 @@ logger = logging.getLogger("agent_framework.azurefunctions")
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
+
+
+def _create_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    """Create a deep copy of the deserialized state for later diffing."""
+    return deepcopy(state)
 
 
 @dataclass
@@ -118,16 +125,17 @@ class AgentFunctionApp(DFAppBase):
 
     .. code-block:: python
 
-        from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+        from agent_framework.azure import AgentFunctionApp
+        from agent_framework.openai import OpenAIChatCompletionClient
 
         # Create agents with unique names
-        weather_agent = AzureOpenAIChatClient(...).as_agent(
+        weather_agent = OpenAIChatCompletionClient(...).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=[get_weather],
         )
 
-        math_agent = AzureOpenAIChatClient(...).as_agent(
+        math_agent = OpenAIChatCompletionClient(...).as_agent(
             name="MathAgent",
             instructions="You are a helpful math assistant.",
             tools=[calculate],
@@ -274,10 +282,14 @@ class AgentFunctionApp(DFAppBase):
             """
             from agent_framework._workflows._state import State
 
-            data = json.loads(inputData)
-            message_data = data["message"]
+            data_obj = json.loads(inputData)
+            if not isinstance(data_obj, dict):
+                raise ValueError("Activity inputData must decode to a JSON object")
+            data = cast(dict[str, Any], data_obj)
+
+            message_data = data.get("message")
             shared_state_snapshot = data.get("shared_state_snapshot", {})
-            source_executor_ids = data.get("source_executor_ids", [SOURCE_ORCHESTRATOR])
+            source_executor_ids = cast(list[str], data.get("source_executor_ids", [SOURCE_ORCHESTRATOR]))
 
             if not self.workflow:
                 raise RuntimeError("Workflow not initialized in AgentFunctionApp")
@@ -296,18 +308,35 @@ class AgentFunctionApp(DFAppBase):
             async def run() -> dict[str, Any]:
                 # Create runner context and shared state
                 runner_context = CapturingRunnerContext()
+                workflow = self.workflow
+
+                def classify_yielded_output(executor_id: str) -> YieldOutputEventType | None:
+                    if workflow is None:
+                        return "output"
+                    if workflow.is_terminal_executor(executor_id):
+                        return "output"
+                    if workflow.is_intermediate_executor(executor_id):
+                        return "intermediate"
+                    return None
+
+                runner_context.set_yield_output_classifier(classify_yielded_output)
                 shared_state = State()
 
                 # Deserialize shared state values to reconstruct dataclasses/Pydantic models
-                deserialized_state = {k: deserialize_value(v) for k, v in (shared_state_snapshot or {}).items()}
-                original_snapshot = dict(deserialized_state)
+                deserialized_state: dict[str, Any] = {
+                    str(k): deserialize_value(v) for k, v in shared_state_snapshot.items()
+                }
+                original_snapshot = _create_state_snapshot(deserialized_state)
                 shared_state.import_state(deserialized_state)
 
                 if is_hitl_response:
                     # Handle HITL response by calling the executor's @response_handler
+                    if not isinstance(message_data, dict):
+                        raise ValueError("HITL message payload must be a JSON object")
+
                     await execute_hitl_response_handler(
                         executor=executor,
-                        hitl_message=message_data,
+                        hitl_message=cast(dict[str, Any], message_data),
                         shared_state=shared_state,
                         runner_context=runner_context,
                     )
@@ -323,16 +352,17 @@ class AgentFunctionApp(DFAppBase):
                 # Commit pending state changes and export
                 shared_state.commit()
                 current_state = shared_state.export_state()
-                original_keys = set(original_snapshot.keys())
-                current_keys = set(current_state.keys())
+                original_keys: set[str] = set(original_snapshot.keys())
+                current_keys: set[str] = set(current_state.keys())
 
                 # Deleted = was in original, not in current
-                deletes = original_keys - current_keys
+                deletes: set[str] = original_keys - current_keys
 
                 # Updates = keys in current that are new or have different values
-                updates = {
-                    k: v for k, v in current_state.items() if k not in original_snapshot or original_snapshot[k] != v
-                }
+                updates: dict[str, Any] = {}
+                for key in current_keys:
+                    if key not in original_keys or current_state[key] != original_snapshot.get(key):
+                        updates[key] = current_state[key]
 
                 # Drain messages and events from runner context
                 sent_messages = await runner_context.drain_messages()
@@ -348,7 +378,7 @@ class AgentFunctionApp(DFAppBase):
                 pending_request_info_events = await runner_context.get_pending_request_info_events()
 
                 # Serialize pending request info events for orchestrator
-                serialized_pending_requests = []
+                serialized_pending_requests: list[dict[str, Any]] = []
                 for _request_id, event in pending_request_info_events.items():
                     serialized_pending_requests.append({
                         "request_id": event.request_id,
@@ -361,7 +391,7 @@ class AgentFunctionApp(DFAppBase):
                     })
 
                 # Serialize messages for JSON compatibility
-                serialized_sent_messages = []
+                serialized_sent_messages: list[dict[str, Any]] = []
                 for _source_id, msg_list in sent_messages.items():
                     for msg in msg_list:
                         serialized_sent_messages.append({
@@ -441,6 +471,9 @@ class AgentFunctionApp(DFAppBase):
         ) -> func.HttpResponse:
             """HTTP endpoint to get workflow status."""
             instance_id = req.route_params.get("instanceId")
+            if not instance_id:
+                return self._build_error_response("Instance ID is required", status_code=400)
+
             status = await client.get_status(instance_id)
 
             if not status:
@@ -457,17 +490,23 @@ class AgentFunctionApp(DFAppBase):
             }
 
             # Add pending HITL requests info if available
-            custom_status = status.custom_status or {}
-            if isinstance(custom_status, dict) and custom_status.get("pending_requests"):
+            if (
+                (custom_status := status.custom_status)
+                and isinstance(custom_status, dict)
+                and (pending_requests_dict := custom_status.get("pending_requests"))  # type: ignore
+                and isinstance(pending_requests_dict, dict)
+            ):
                 base_url = self._build_base_url(req.url)
-                pending_requests = []
-                for req_id, req_data in custom_status["pending_requests"].items():
+                pending_requests: list[dict[str, Any]] = []
+                for req_id, req_data in pending_requests_dict.items():  # type: ignore
+                    if not isinstance(req_data, dict):
+                        continue
                     pending_requests.append({
                         "requestId": req_id,
-                        "sourceExecutor": req_data.get("source_executor_id"),
-                        "requestData": req_data.get("data"),
-                        "requestType": req_data.get("request_type"),
-                        "responseType": req_data.get("response_type"),
+                        "sourceExecutor": req_data.get("source_executor_id"),  # type: ignore[reportUnknownMemberType]
+                        "requestData": req_data.get("data"),  # type: ignore[reportUnknownMemberType]
+                        "requestType": req_data.get("request_type"),  # type: ignore[reportUnknownMemberType]
+                        "responseType": req_data.get("response_type"),  # type: ignore[reportUnknownMemberType]
                         "respondUrl": f"{base_url}/api/workflow/respond/{instance_id}/{req_id}",
                     })
                 response["pendingHumanInputRequests"] = pending_requests
@@ -497,6 +536,10 @@ class AgentFunctionApp(DFAppBase):
             except ValueError:
                 return self._build_error_response("Request body must be valid JSON.")
 
+            # Sanitize untrusted HTTP input before it reaches pickle.loads().
+            # See strip_pickle_markers() docstring for details on the attack vector.
+            response_data = strip_pickle_markers(response_data)
+
             # Send the response as an external event
             # The request_id is used as the event name for correlation
             await client.raise_event(
@@ -514,6 +557,11 @@ class AgentFunctionApp(DFAppBase):
                 status_code=200,
                 mimetype="application/json",
             )
+
+        # Ensure route handlers are registered (prevents unused function warnings)
+        _ = start_workflow_orchestration
+        _ = get_workflow_status
+        _ = send_hitl_response
 
     def _build_status_url(self, request_url: str, instance_id: str) -> str:
         """Build the status URL for a workflow instance."""

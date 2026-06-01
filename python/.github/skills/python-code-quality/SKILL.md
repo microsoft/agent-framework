@@ -13,26 +13,34 @@ description: >
 All commands run from the `python/` directory:
 
 ```bash
-# Format code (ruff format, parallel across packages)
-uv run poe fmt
-
-# Lint and auto-fix (ruff check, parallel across packages)
-uv run poe lint
+# Syntax formatting + checks (parallel across packages by default)
+uv run poe syntax
+uv run poe syntax -P core
+uv run poe syntax -F    # Format only
+uv run poe syntax -C    # Check only
+uv run poe syntax -S    # Samples only
 
 # Type checking
-uv run poe pyright       # Pyright (parallel across packages)
-uv run poe mypy          # MyPy (parallel across packages)
+uv run poe pyright       # Pyright fan-out across packages
+uv run poe pyright -P core
+uv run poe pyright -A
+uv run poe mypy          # MyPy fan-out across packages
+uv run poe mypy -P core
+uv run poe mypy -A
 uv run poe typing        # Both pyright and mypy
+uv run poe typing -P core
+uv run poe typing -A
 
-# All package-level checks in parallel (fmt + lint + pyright + mypy)
+# All package-level checks in parallel (syntax + pyright)
 uv run poe check-packages
 
 # Full check (packages + samples + tests + markdown)
 uv run poe check
+uv run poe check -P core
 
 # Samples only
-uv run poe samples-lint     # Ruff lint on samples/
-uv run poe samples-syntax   # Pyright syntax check on samples/
+uv run poe check -S
+uv run poe pyright -S
 
 # Markdown code blocks
 uv run poe markdown-code-lint
@@ -40,8 +48,8 @@ uv run poe markdown-code-lint
 
 ## Pre-commit Hooks (prek)
 
-Prek hooks run automatically on commit. They check only changed files and run
-package-level checks in parallel for affected packages only.
+Prek hooks run automatically on commit. They stay lightweight and only check
+changed files.
 
 ```bash
 # Install hooks
@@ -54,8 +62,10 @@ uv run prek run -a
 uv run prek run --last-commit
 ```
 
-When core package changes, type-checking (mypy, pyright) runs across all packages
-since type changes propagate. Format and lint only run in changed packages.
+They run changed-package syntax formatting/checking, markdown code lint only
+when markdown files change, and sample syntax lint/pyright only when files
+under `samples/` change.
+They intentionally do not run workspace `pyright` or `mypy` by default.
 
 ## Ruff Configuration
 
@@ -80,6 +90,6 @@ in-process with streaming output.
 
 CI splits into 4 parallel jobs:
 1. **Pre-commit hooks** — lightweight hooks (SKIP=poe-check)
-2. **Package checks** — fmt/lint/pyright via check-packages
-3. **Samples & markdown** — samples-lint, samples-syntax, markdown-code-lint
+2. **Package checks** — syntax/pyright via check-packages
+3. **Samples & markdown** — `check -S` plus `markdown-code-lint`
 4. **Mypy** — change-detected mypy checks

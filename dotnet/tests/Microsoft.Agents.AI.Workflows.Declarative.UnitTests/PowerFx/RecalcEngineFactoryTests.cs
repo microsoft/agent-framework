@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.PowerFx;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.PowerFx;
 

@@ -63,7 +63,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that AddWorkflow registers the workflow as a keyed singleton service.
+    /// Verifies that AddWorkflow registers the workflow as a keyed singleton service by default.
     /// </summary>
     [Fact]
     public void AddWorkflow_RegistersKeyedSingleton()
@@ -101,6 +101,30 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         Assert.Contains(workflowDescriptors, d => (string)d.ServiceKey! == "workflow1");
         Assert.Contains(workflowDescriptors, d => (string)d.ServiceKey! == "workflow2");
         Assert.Contains(workflowDescriptors, d => (string)d.ServiceKey! == "workflow3");
+    }
+
+    /// <summary>
+    /// Verifies that a handoff workflow can be named from the DI workflow key.
+    /// </summary>
+    [Fact]
+    public void AddWorkflow_HandoffWorkflowWithName_ResolvesWorkflow()
+    {
+        var builder = new HostApplicationBuilder();
+        const string WorkflowName = "handoffWorkflow";
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Name).Returns("handoffAgent");
+
+#pragma warning disable MAAIW001 // This test covers hosting handoff workflows.
+        builder.AddWorkflow(WorkflowName, (sp, key) =>
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(mockAgent.Object)
+                .WithName(key)
+                .Build());
+#pragma warning restore MAAIW001
+
+        var workflow = builder.Build().Services.GetRequiredKeyedService<Workflow>(WorkflowName);
+
+        Assert.Equal(WorkflowName, workflow.Name);
     }
 
     /// <summary>
@@ -326,6 +350,77 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var agentDescriptor = builder.Services.FirstOrDefault(
             d => d.ServiceKey is string s && s.Length == 0 && d.ServiceType == typeof(AIAgent));
         Assert.NotNull(agentDescriptor);
+    }
+
+    /// <summary>
+    /// Verifies that AddWorkflow registers with the specified scoped lifetime.
+    /// </summary>
+    [Fact]
+    public void AddWorkflow_WithScopedLifetime_RegistersKeyedScoped()
+    {
+        // Arrange
+        var builder = new HostApplicationBuilder();
+        const string WorkflowName = "scopedWorkflow";
+
+        // Act
+        builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key), ServiceLifetime.Scoped);
+
+        // Assert
+        var descriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == WorkflowName &&
+                 d.ServiceType == typeof(Workflow));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal(ServiceLifetime.Scoped, descriptor.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies that AddWorkflow registers with the specified transient lifetime.
+    /// </summary>
+    [Fact]
+    public void AddWorkflow_WithTransientLifetime_RegistersKeyedTransient()
+    {
+        // Arrange
+        var builder = new HostApplicationBuilder();
+        const string WorkflowName = "transientWorkflow";
+
+        // Act
+        builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key), ServiceLifetime.Transient);
+
+        // Assert
+        var descriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == WorkflowName &&
+                 d.ServiceType == typeof(Workflow));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal(ServiceLifetime.Transient, descriptor.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies that AddAsAIAgent respects the lifetime parameter.
+    /// </summary>
+    [Theory]
+    [InlineData(ServiceLifetime.Singleton)]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public void AddAsAIAgent_RespectsLifetime(ServiceLifetime lifetime)
+    {
+        // Arrange
+        var builder = new HostApplicationBuilder();
+        const string WorkflowName = "testWorkflow";
+        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+
+        // Act
+        var agentBuilder = workflowBuilder.AddAsAIAgent("agent", lifetime);
+
+        // Assert
+        var descriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == "agent" &&
+                 d.ServiceType == typeof(AIAgent));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal(lifetime, descriptor.Lifetime);
+        Assert.Equal(lifetime, agentBuilder.Lifetime);
     }
 
     /// <summary>

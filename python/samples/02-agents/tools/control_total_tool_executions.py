@@ -3,8 +3,8 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -81,14 +81,15 @@ async def scenario_max_iterations():
     print("Scenario 1: max_iterations — limit LLM roundtrips")
     print("=" * 60)
 
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
     # 1. Set max_iterations to 3 — the tool loop will run at most 3 roundtrips
     #    to the model before forcing a text response.
     client.function_invocation_configuration["max_iterations"] = 3
     print(f"  max_iterations = {client.function_invocation_configuration['max_iterations']}")
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="ResearchAgent",
         instructions=(
             "You are a research assistant. Use the search_web tool to answer "
@@ -115,7 +116,7 @@ async def scenario_max_function_calls():
     print("Scenario 2: max_function_calls — limit total tool executions")
     print("=" * 60)
 
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
     # 1. Allow many iterations but cap total function calls to 4.
     #    If the model requests 3 parallel searches per iteration, after 2
@@ -125,7 +126,8 @@ async def scenario_max_function_calls():
     print(f"  max_iterations    = {client.function_invocation_configuration['max_iterations']}")
     print(f"  max_function_calls = {client.function_invocation_configuration['max_function_calls']}")
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="ResearchAgent",
         instructions=(
             "You are a research assistant. Use the search_web and get_weather "
@@ -135,8 +137,7 @@ async def scenario_max_function_calls():
     )
 
     response = await agent.run(
-        "Search for the weather in Paris, London, Tokyo, "
-        "New York, and Sydney, and also search for best travel tips."
+        "Search for the weather in Paris, London, Tokyo, New York, and Sydney, and also search for best travel tips."
     )
     print(f"  Response: {response.text[:200]}...")
     print()
@@ -156,7 +157,8 @@ async def scenario_max_invocations():
     print("Scenario 3: max_invocations — lifetime cap on a tool")
     print("=" * 60)
 
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="APIAgent",
         instructions="Use call_expensive_api when asked to analyze something.",
         tools=[call_expensive_api],
@@ -212,13 +214,15 @@ async def scenario_per_agent_tool_limits():
     agent_a_lookup = tool(name="lookup", approval_mode="never_require", max_invocations=2)(_do_lookup)
     agent_b_lookup = tool(name="lookup", approval_mode="never_require", max_invocations=5)(_do_lookup)
 
-    client = OpenAIResponsesClient()
-    agent_a = client.as_agent(
+    client = OpenAIChatClient()
+    agent_a = Agent(
+        client=client,
         name="AgentA",
         instructions="Use the lookup tool to answer questions.",
         tools=[agent_a_lookup],
     )
-    agent_b = client.as_agent(
+    agent_b = Agent(
+        client=client,
         name="AgentB",
         instructions="Use the lookup tool to answer questions.",
         tools=[agent_b_lookup],
@@ -236,8 +240,12 @@ async def scenario_per_agent_tool_limits():
     session_b = agent_b.create_session()
     await agent_b.run("Look up quantum computing", session=session_b)
 
-    print(f"  agent_a_lookup.invocation_count = {agent_a_lookup.invocation_count}  (limit {agent_a_lookup.max_invocations})")
-    print(f"  agent_b_lookup.invocation_count = {agent_b_lookup.invocation_count}  (limit {agent_b_lookup.max_invocations})")
+    print(
+        f"  agent_a_lookup.invocation_count = {agent_a_lookup.invocation_count}  (limit {agent_a_lookup.max_invocations})"
+    )
+    print(
+        f"  agent_b_lookup.invocation_count = {agent_b_lookup.invocation_count}  (limit {agent_b_lookup.max_invocations})"
+    )
     print("  → Agent A hit its limit; Agent B used 1 of 5.")
     print()
 
@@ -251,11 +259,11 @@ async def scenario_combined():
     print("Scenario 5: Combined — all mechanisms together")
     print("=" * 60)
 
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
     # 1. Configure the client with both iteration and function call limits.
-    client.function_invocation_configuration["max_iterations"] = 5       # max 5 LLM roundtrips
-    client.function_invocation_configuration["max_function_calls"] = 8   # max 8 total tool calls
+    client.function_invocation_configuration["max_iterations"] = 5  # max 5 LLM roundtrips
+    client.function_invocation_configuration["max_function_calls"] = 8  # max 8 total tool calls
     print(f"  max_iterations     = {client.function_invocation_configuration['max_iterations']}")
     print(f"  max_function_calls = {client.function_invocation_configuration['max_function_calls']}")
 
@@ -267,7 +275,8 @@ async def scenario_combined():
 
     print(f"  premium_lookup.max_invocations = {premium_lookup.max_invocations}")
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="MultiToolAgent",
         instructions="Use all available tools to answer comprehensively.",
         tools=[search_web, get_weather, premium_lookup],

@@ -58,7 +58,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
     private bool _preserveContainer;
     private CosmosClient? _setupClient; // Only used for test setup/cleanup
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         // Fail fast if emulator is not available
         this.SkipIfEmulatorNotAvailable();
@@ -100,8 +100,10 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         }
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
+
         if (this._setupClient != null && this._emulatorAvailable)
         {
             try
@@ -143,14 +145,14 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         // Locally: Skip if emulator connection check failed
         var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOSDB_EMULATOR_AVAILABLE"), bool.TrueString, StringComparison.OrdinalIgnoreCase);
 
-        Xunit.Skip.If(!ciEmulatorAvailable && !this._emulatorAvailable, "Cosmos DB Emulator is not available");
+        Assert.SkipWhen(!ciEmulatorAvailable && !this._emulatorAvailable, "Cosmos DB Emulator is not available");
     }
 
     #region Constructor Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
-    public void StateKey_ReturnsDefaultKey_WhenNoStateKeyProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoStateKeyProvided()
     {
         // Arrange & Act
         this.SkipIfEmulatorNotAvailable();
@@ -159,12 +161,13 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             _ => new CosmosChatHistoryProvider.State("test-conversation"));
 
         // Assert
-        Assert.Equal("CosmosChatHistoryProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("CosmosChatHistoryProvider", provider.StateKeys);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
-    public void StateKey_ReturnsCustomKey_WhenSetViaConstructor()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaConstructor()
     {
         // Arrange & Act
         this.SkipIfEmulatorNotAvailable();
@@ -174,10 +177,11 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             stateKey: "custom-key");
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithConnectionString_ShouldCreateInstance()
     {
@@ -194,7 +198,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(TestContainerId, provider.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithNullConnectionString_ShouldThrowArgumentException()
     {
@@ -204,7 +208,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
                 _ => new CosmosChatHistoryProvider.State("test-conversation")));
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithNullStateInitializer_ShouldThrowArgumentNullException()
     {
@@ -219,7 +223,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     #region InvokedAsync Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_WithSingleMessage_ShouldAddMessageAsync()
     {
@@ -284,7 +288,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(ChatRole.User, messageList[0].Role);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_WithMultipleMessages_ShouldAddAllMessagesAsync()
     {
@@ -327,7 +331,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     #region InvokingAsync Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokingAsync_WithNoMessages_ShouldReturnEmptyAsync()
     {
@@ -345,7 +349,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Empty(messages);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokingAsync_WithConversationIsolation_ShouldOnlyReturnMessagesForConversationAsync()
     {
@@ -389,7 +393,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     #region Integration Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task FullWorkflow_AddAndGet_ShouldWorkCorrectlyAsync()
     {
@@ -440,7 +444,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     #region Disposal Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Dispose_AfterUse_ShouldNotThrow()
     {
@@ -453,7 +457,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         provider.Dispose(); // Should not throw
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Dispose_MultipleCalls_ShouldNotThrow()
     {
@@ -471,7 +475,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     #region Hierarchical Partitioning Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalConnectionString_ShouldCreateInstance()
     {
@@ -488,7 +492,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(HierarchicalTestContainerId, provider.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalEndpoint_ShouldCreateInstance()
     {
@@ -506,7 +510,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(HierarchicalTestContainerId, provider.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalCosmosClient_ShouldCreateInstance()
     {
@@ -523,7 +527,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(HierarchicalTestContainerId, provider.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void State_WithEmptyConversationId_ShouldThrowArgumentException()
     {
@@ -532,7 +536,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             new CosmosChatHistoryProvider.State(""));
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void State_WithWhitespaceConversationId_ShouldThrowArgumentException()
     {
@@ -541,7 +545,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             new CosmosChatHistoryProvider.State("   "));
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_WithHierarchicalPartitioning_ShouldAddMessageWithMetadataAsync()
     {
@@ -595,7 +599,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(SessionId, (string)document!.sessionId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_WithHierarchicalMultipleMessages_ShouldAddAllMessagesAsync()
     {
@@ -634,7 +638,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Third hierarchical message", messageList[2].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokingAsync_WithHierarchicalPartitionIsolation_ShouldIsolateMessagesByUserIdAsync()
     {
@@ -680,7 +684,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Message from user 2", messageList2[0].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task StateBag_WithHierarchicalPartitioning_ShouldPreserveStateAcrossProviderInstancesAsync()
     {
@@ -715,7 +719,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(HierarchicalTestContainerId, newStore.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task HierarchicalAndSimplePartitioning_ShouldCoexistAsync()
     {
@@ -757,7 +761,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Hierarchical partitioning message", hierarchicalMessageList[0].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task MaxMessagesToRetrieve_ShouldLimitAndReturnMostRecentAsync()
     {
@@ -798,7 +802,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Message 10", messageList[4].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task MaxMessagesToRetrieve_Null_ShouldReturnAllMessagesAsync()
     {
@@ -834,7 +838,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Message 10", messageList[9].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task GetMessageCountAsync_WithMessages_ShouldReturnCorrectCountAsync()
     {
@@ -866,7 +870,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(5, count);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task GetMessageCountAsync_WithNoMessages_ShouldReturnZeroAsync()
     {
@@ -885,7 +889,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(0, count);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task ClearMessagesAsync_WithMessages_ShouldDeleteAndReturnCountAsync()
     {
@@ -933,7 +937,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Empty(retrievedMessages);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task ClearMessagesAsync_WithNoMessages_ShouldReturnZeroAsync()
     {
@@ -956,7 +960,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     #region Message Filter Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_DefaultFilter_ExcludesChatHistoryMessagesFromStorageAsync()
     {
@@ -991,7 +995,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Response", messages[2].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_CustomStorageInputFilter_OverridesDefaultAsync()
     {
@@ -1004,7 +1008,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             s_testDatabaseId,
             TestContainerId,
             _ => new CosmosChatHistoryProvider.State(conversationId),
-            storeInputMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
+            storeInputRequestMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
 
         var requestMessages = new[]
         {
@@ -1029,7 +1033,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Response", messages[1].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokingAsync_RetrievalOutputFilter_FiltersRetrievedMessagesAsync()
     {

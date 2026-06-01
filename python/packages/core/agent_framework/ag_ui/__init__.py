@@ -7,10 +7,13 @@ This module lazily re-exports objects from:
 
 Supported classes and functions:
 - AgentFrameworkAgent
+- AgentFrameworkWorkflow
 - AGUIChatClient
 - AGUIEventConverter
 - AGUIHttpService
 - add_agent_framework_fastapi_endpoint
+- state_update
+- __version__
 """
 
 import importlib
@@ -23,6 +26,10 @@ _IMPORTS = [
     "AgentFrameworkWorkflow",
     "add_agent_framework_fastapi_endpoint",
     "AGUIChatClient",
+    "AGUIEventConverter",
+    "AGUIHttpService",
+    "state_update",
+    "__version__",
 ]
 
 

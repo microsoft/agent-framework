@@ -4,14 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
-using Azure.Identity;
-using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 
@@ -63,13 +60,23 @@ public abstract class IntegrationTest : IDisposable
 
     protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation = false, params IEnumerable<AIFunction> functionTools)
     {
-        return await this.CreateOptionsAsync(externalConversation, mcpToolProvider: null, functionTools).ConfigureAwait(false);
+        return await this.CreateOptionsAsync(externalConversation, mcpToolProvider: null, httpRequestHandler: null, functionTools).ConfigureAwait(false);
     }
 
     protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation, IMcpToolHandler? mcpToolProvider, params IEnumerable<AIFunction> functionTools)
     {
+        return await this.CreateOptionsAsync(externalConversation, mcpToolProvider, httpRequestHandler: null, functionTools).ConfigureAwait(false);
+    }
+
+    protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation, IHttpRequestHandler? httpRequestHandler, params IEnumerable<AIFunction> functionTools)
+    {
+        return await this.CreateOptionsAsync(externalConversation, mcpToolProvider: null, httpRequestHandler, functionTools).ConfigureAwait(false);
+    }
+
+    protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation, IMcpToolHandler? mcpToolProvider, IHttpRequestHandler? httpRequestHandler, params IEnumerable<AIFunction> functionTools)
+    {
         AzureAgentProvider agentProvider =
-            new(this.TestEndpoint, new AzureCliCredential())
+            new(this.TestEndpoint, TestAzureCliCredentials.CreateAzureCliCredential())
             {
                 Functions = functionTools,
             };
@@ -85,7 +92,8 @@ public abstract class IntegrationTest : IDisposable
             {
                 ConversationId = conversationId,
                 LoggerFactory = this.Output,
-                McpToolHandler = mcpToolProvider
+                McpToolHandler = mcpToolProvider,
+                HttpRequestHandler = httpRequestHandler,
             };
     }
 

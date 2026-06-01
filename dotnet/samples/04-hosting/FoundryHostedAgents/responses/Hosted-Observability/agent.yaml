@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
+kind: hosted
+name: hosted-observability
+protocols:
+  - protocol: responses
+    version: 1.0.0
+resources:
+  cpu: "0.25"
+  memory: 0.5Gi
+environment_variables:
+  # Capture prompt / completion / tool argument content on GenAI spans.
+  # See https://opentelemetry.io/docs/specs/semconv/gen-ai/ for the standard env var.
+  - name: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+    value: "true"

@@ -11,7 +11,7 @@ The DevUI provides an interactive web interface for testing and debugging AI age
 Set the following environment variables:
 
 - `AZURE_OPENAI_ENDPOINT` - Your Azure OpenAI endpoint URL (required)
-- `AZURE_OPENAI_DEPLOYMENT_NAME` - Your deployment name (defaults to "gpt-4o-mini")
+- `AZURE_OPENAI_DEPLOYMENT_NAME` - Your deployment name (defaults to "gpt-5.4-mini")
 
 ## Running the Sample
 

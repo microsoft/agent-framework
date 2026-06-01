@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_framework import BaseChatClient
+from agent_framework._tools import _append_unique_tools  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from agent_framework import SupportsAgentRun
@@ -22,7 +23,7 @@ def _collect_mcp_tool_functions(mcp_tools: list[Any]) -> list[Any]:
         mcp_tools: List of MCP tool instances.
 
     Returns:
-        List of functions from connected MCP tools.
+        Functions from connected MCP tools.
     """
     functions: list[Any] = []
     for mcp_tool in mcp_tools:
@@ -56,7 +57,11 @@ def collect_server_tools(agent: SupportsAgentRun) -> list[Any]:
     # Include functions from connected MCP tools (only available on Agent)
     mcp_tools = getattr(agent, "mcp_tools", None)
     if mcp_tools:
-        server_tools.extend(_collect_mcp_tool_functions(mcp_tools))
+        _append_unique_tools(
+            server_tools,
+            _collect_mcp_tool_functions(mcp_tools),
+            duplicate_error_message="Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool.",
+        )
 
     logger.info(f"[TOOLS] Agent has {len(server_tools)} configured tools")
     for tool in server_tools:
@@ -109,26 +114,13 @@ def merge_tools(server_tools: list[Any], client_tools: list[Any] | None) -> list
         logger.info("[TOOLS] No client tools - not passing tools= parameter (using agent's configured tools)")
         return None
 
-    server_tool_names = {getattr(tool, "name", None) for tool in server_tools}
-    unique_client_tools = [tool for tool in client_tools if getattr(tool, "name", None) not in server_tool_names]
-
-    if not unique_client_tools:
-        # Same check: must pass server tools if any require approval
-        if server_tools and _has_approval_tools(server_tools):
-            logger.info(
-                f"[TOOLS] Client tools duplicate server but server has approval tools - "
-                f"passing {len(server_tools)} server tools for approval mode"
-            )
-            return server_tools
-        logger.info("[TOOLS] All client tools duplicate server tools - not passing tools= parameter")
-        return None
-
-    combined_tools: list[Any] = []
-    if server_tools:
-        combined_tools.extend(server_tools)
-    combined_tools.extend(unique_client_tools)
+    combined_tools = _append_unique_tools(
+        list(server_tools),
+        client_tools,
+        duplicate_error_message="Tool names must be unique.",
+    )
     logger.info(
         f"[TOOLS] Passing tools= parameter with {len(combined_tools)} tools "
-        f"({len(server_tools)} server + {len(unique_client_tools)} unique client)"
+        f"({len(server_tools)} server + {len(client_tools)} client)"
     )
     return combined_tools

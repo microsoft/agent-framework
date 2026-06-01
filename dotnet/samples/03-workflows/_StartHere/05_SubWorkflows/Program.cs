@@ -74,6 +74,18 @@ public static class Program
                 Console.WriteLine($"Final Output: {output.Data}");
                 Console.ResetColor();
             }
+            else if (evt is WorkflowErrorEvent workflowError)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                Console.ResetColor();
+            }
+            else if (evt is ExecutorFailedEvent executorFailed)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                Console.ResetColor();
+            }
         }
 
         // Optional: Visualize the workflow structure - Note that sub-workflows are not rendered

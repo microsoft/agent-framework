@@ -124,10 +124,20 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
         """
         raise NotImplementedError
 
-    def get_new_session(self, agent_name: str, **kwargs: Any) -> DurableAgentSession:
+    def get_new_session(
+        self,
+        agent_name: str,
+        *,
+        session_id: str | None = None,
+        service_session_id: str | None = None,
+    ) -> DurableAgentSession:
         """Create a new DurableAgentSession with random session ID."""
-        session_id = self._create_session_id(agent_name)
-        return DurableAgentSession.from_session_id(session_id, **kwargs)
+        durable_session_id = self._create_session_id(agent_name)
+        return DurableAgentSession(
+            durable_session_id=durable_session_id,
+            session_id=session_id,
+            service_session_id=service_session_id,
+        )
 
     def _create_session_id(
         self,

@@ -3,6 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
+    <InjectSharedIntegrationTestAzureCredentialsCode>True</InjectSharedIntegrationTestAzureCredentialsCode>
   </PropertyGroup>
 
   <!-- Public packages required by integration tests -->

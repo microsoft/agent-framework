@@ -10,7 +10,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
   </ItemGroup>
 
   <ItemGroup>

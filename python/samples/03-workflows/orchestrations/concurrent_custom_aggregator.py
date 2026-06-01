@@ -4,8 +4,8 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework import Message
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, Message
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -18,7 +18,7 @@ Sample: Concurrent Orchestration with Custom Aggregator
 
 Build a concurrent workflow with ConcurrentBuilder that fans out one prompt to
 multiple domain agents and fans in their responses. Override the default
-aggregator with a custom async callback that uses AzureOpenAIResponsesClient.get_response()
+aggregator with a custom async callback that uses FoundryChatClient.get_response()
 to synthesize a concise, consolidated summary from the experts' outputs.
 The workflow completes when all participants become idle.
 
@@ -29,34 +29,37 @@ Demonstrates:
 - Workflow output yielded with the synthesized summary string
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 
 async def main() -> None:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    researcher = client.as_agent(
+    researcher = Agent(
+        client=client,
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
         ),
         name="researcher",
     )
-    marketer = client.as_agent(
+    marketer = Agent(
+        client=client,
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
         ),
         name="marketer",
     )
-    legal = client.as_agent(
+    legal = Agent(
+        client=client,
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."
@@ -79,12 +82,14 @@ async def main() -> None:
         # Ask the model to synthesize a concise summary of the experts' outputs
         system_msg = Message(
             "system",
-            text=(
-                "You are a helpful assistant that consolidates multiple domain expert outputs "
-                "into one cohesive, concise summary with clear takeaways. Keep it under 200 words."
-            ),
+            contents=[
+                (
+                    "You are a helpful assistant that consolidates multiple domain expert outputs "
+                    "into one cohesive, concise summary with clear takeaways. Keep it under 200 words."
+                )
+            ],
         )
-        user_msg = Message("user", text="\n\n".join(expert_sections))
+        user_msg = Message("user", contents=["\n\n".join(expert_sections)])
 
         response = await client.get_response([system_msg, user_msg])
         # Return the model's final assistant text as the completion result

@@ -55,12 +55,32 @@ public static class ChatClientExtensions
 
         if (chatClient.GetService<FunctionInvokingChatClient>() is null)
         {
-            _ = chatBuilder.Use((innerClient, services) =>
+            chatBuilder.Use((innerClient, services) =>
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 
                 return new FunctionInvokingChatClient(innerClient, loggerFactory, services);
             });
+        }
+
+        // MessageInjectingChatClient is injected when EnableMessageInjection is enabled.
+        // It is registered after FunctionInvokingChatClient so that it sits between FIC and the inner client.
+        // ChatClientBuilder.Build applies factories in reverse order, making the first Use() call outermost.
+        // MessageInjectingChatClient enables injecting messages during the function loop and looping when needed.
+        if (options?.EnableMessageInjection is true)
+        {
+            chatBuilder.Use(innerClient => new MessageInjectingChatClient(innerClient));
+        }
+
+        // PerServiceCallChatHistoryPersistingChatClient is injected when RequirePerServiceCallChatHistoryPersistence is enabled.
+        // It is registered after MessageInjectingChatClient (if present) so it sits closest to the leaf client.
+        // The resulting pipeline is:
+        //   FunctionInvokingChatClient → [MessageInjectingChatClient] → [PerServiceCallChatHistoryPersistingChatClient] → leaf IChatClient
+        // PerServiceCallChatHistoryPersistingChatClient simulates service-stored chat history by loading history
+        // before each service call, persisting after each call, and returning a sentinel ConversationId.
+        if (options?.RequirePerServiceCallChatHistoryPersistence is true)
+        {
+            chatBuilder.Use(innerClient => new PerServiceCallChatHistoryPersistingChatClient(innerClient));
         }
 
         var agentChatClient = chatBuilder.Build(services);

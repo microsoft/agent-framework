@@ -41,6 +41,7 @@ internal enum NumberSignal
 /// <summary>
 /// Executor that makes a guess based on the current bounds.
 /// </summary>
+[SendsMessage(typeof(int))]
 internal sealed class GuessNumberExecutor() : Executor<NumberSignal>("Guess")
 {
     /// <summary>
@@ -104,6 +105,8 @@ internal sealed class GuessNumberExecutor() : Executor<NumberSignal>("Guess")
 /// <summary>
 /// Executor that judges the guess and provides feedback.
 /// </summary>
+[SendsMessage(typeof(NumberSignal))]
+[YieldsOutput(typeof(string))]
 internal sealed class JudgeExecutor() : Executor<int>("Judge")
 {
     private readonly int _targetNumber;
