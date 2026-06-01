@@ -197,6 +197,70 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
+    public void MapAGUI_WithFactoryDelegate_MapsEndpoint_AtSpecifiedPattern()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        serviceProviderMock.As<IKeyedServiceProvider>();
+
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        // Act
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(
+            "test-agent", "/api/agent", static (_, _) => new NamedTestAgent());
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void MapAGUI_WithFactoryDelegate_DefersResolution_DoesNotInvokeFactoryOrResolveAgentAtMapTime()
+    {
+        // Arrange — the factory overload resolves the agent per request, so mapping must NOT invoke
+        // the factory nor resolve a keyed AIAgent from DI (unlike the startup-capture agentName overload).
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        serviceProviderMock.As<IKeyedServiceProvider>();
+
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        int factoryInvocations = 0;
+
+        // Act
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(
+            "test-agent",
+            "/api/agent",
+            (_, _) =>
+            {
+                factoryInvocations++;
+                return new NamedTestAgent();
+            });
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(0, factoryInvocations);
+        serviceProviderMock.As<IKeyedServiceProvider>()
+            .Verify(sp => sp.GetRequiredKeyedService(typeof(AIAgent), It.IsAny<object>()), Times.Never);
+    }
+
+    [Fact]
+    public void MapAGUI_WithNullFactoryDelegate_ThrowsArgumentNullException()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        serviceProviderMock.As<IKeyedServiceProvider>();
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            endpointsMock.Object.MapAGUI("test-agent", "/api/agent", (Func<IServiceProvider, string, AIAgent>)null!));
+    }
+
+    [Fact]
     public async Task MapAGUIAgent_WithNullOrInvalidInput_Returns400BadRequestAsync()
     {
         // Arrange
