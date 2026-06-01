@@ -51,19 +51,16 @@ actions:
 ### Variable Actions
 - `SetValue` - Set a variable in state
 - `SetVariable` - Set a variable (.NET style naming)
-- `AppendValue` - Append to a list
 - `ResetVariable` - Clear a variable
 
 ### Control Flow
 - `If` - Conditional branching
-- `Switch` - Multi-way branching
+- `ConditionGroup` - Multi-way branching
 - `Foreach` - Iterate over collections
-- `RepeatUntil` - Loop until condition
 - `GotoAction` - Jump to labeled action
 
 ### Output
 - `SendActivity` - Send text/attachments to user
-- `EmitEvent` - Emit custom events
 
 ### Agent Invocation
 - `InvokeAzureAgent` - Call an Azure AI agent
@@ -74,4 +71,4 @@ actions:
 
 ### Human-in-Loop
 - `Question` - Request user input
-- `WaitForInput` - Pause for external input
+- `RequestExternalInput` - Request external data/approval

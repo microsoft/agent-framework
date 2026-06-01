@@ -636,7 +636,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             continuation_token["response_id"],
                             stream=True,
                         )
-                        served_model = self._extract_served_model(raw_stream_response.headers)
+                        # Read headers defensively: telemetry instrumentors (e.g. azure-ai-projects
+                        # experimental tracing) wrap the streaming response in objects that do not
+                        # proxy ``.headers``. Degrade gracefully so the served-model surfacing is
+                        # best-effort instead of crashing the whole call.
+                        served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
                         async with raw_stream_response.parse() as stream_response:
                             async for chunk in stream_response:
                                 update = self._parse_chunk_from_openai(
@@ -677,7 +681,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             raw_create_response = await client.responses.with_raw_response.create(
                                 stream=True, **run_options
                             )
-                            served_model = self._extract_served_model(raw_create_response.headers)
+                            # See note above on ``raw_stream_response.headers``.
+                            served_model = self._extract_served_model(getattr(raw_create_response, "headers", None))
                             async with raw_create_response.parse() as stream_response:
                                 async for chunk in stream_response:
                                     update = self._parse_chunk_from_openai(
@@ -706,7 +711,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 except Exception as ex:
                     self._handle_request_error(ex)
                 chat_response = self._parse_response_from_openai(response, options=validated_options)
-                served_model = self._extract_served_model(raw_response.headers)
+                # See note above on ``raw_stream_response.headers``.
+                served_model = self._extract_served_model(getattr(raw_response, "headers", None))
                 if served_model is not None:
                     chat_response.model = served_model
                 # Once the background response completes, drop the continuation_token from
@@ -728,7 +734,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             except Exception as ex:
                 self._handle_request_error(ex)
             chat_response = self._parse_response_from_openai(response, options=validated_options)
-            served_model = self._extract_served_model(raw_response.headers)
+            # See note above on ``raw_stream_response.headers``.
+            served_model = self._extract_served_model(getattr(raw_response, "headers", None))
             if served_model is not None:
                 chat_response.model = served_model
             return chat_response
@@ -2880,11 +2887,15 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     if ann_url:
                         ann_start = _get_ann_value("start_index")
                         ann_end = _get_ann_value("end_index")
+                        annotation_properties: dict[str, Any] = {"annotation_index": event.annotation_index}
+                        ann_get_url = _get_ann_value("get_url")
+                        if ann_get_url is not None:
+                            annotation_properties["get_url"] = ann_get_url
                         annotation_obj = Annotation(
                             type="citation",
                             title=_get_ann_value("title") or "",
                             url=str(ann_url),
-                            additional_properties={"annotation_index": event.annotation_index},
+                            additional_properties=annotation_properties,
                             raw_representation=annotation,
                         )
                         if ann_start is not None and ann_end is not None:

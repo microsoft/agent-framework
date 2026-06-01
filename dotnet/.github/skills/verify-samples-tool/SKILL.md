@@ -173,11 +173,11 @@ new SampleDefinition
 ```csharp
 new SampleDefinition
 {
-    Name = "Workflow_Declarative_GenerateCode",
-    ProjectPath = "samples/03-workflows/Declarative/GenerateCode",
+    Name = "Workflow_Visualization",
+    ProjectPath = "samples/03-workflows/Visualization",
     IsDeterministic = true,
-    MustContain = ["WORKFLOW: Parsing", "WORKFLOW: Defined"],
-    ExpectedOutputDescription = ["The output should show a YAML workflow being parsed and C# code being generated from it."],
+    MustContain = ["Generating workflow visualization...", "Mermaid string:", "DiGraph string:"],
+    ExpectedOutputDescription = ["The output should show workflow visualization in Mermaid and DiGraph formats."],
 },
 ```
 

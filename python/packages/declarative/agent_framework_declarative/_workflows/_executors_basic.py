@@ -179,28 +179,6 @@ class SetMultipleVariablesExecutor(DeclarativeActionExecutor):
         await ctx.send_message(ActionComplete())
 
 
-class AppendValueExecutor(DeclarativeActionExecutor):
-    """Executor for the AppendValue action."""
-
-    @handler
-    async def handle_action(
-        self,
-        trigger: Any,
-        ctx: WorkflowContext[ActionComplete],
-    ) -> None:
-        """Handle the AppendValue action."""
-        state = await self._ensure_state_initialized(ctx, trigger)
-
-        path = self._action_def.get("path")
-        value = self._action_def.get("value")
-
-        if path:
-            evaluated_value = state.eval_if_expression(value)
-            state.append(path, evaluated_value)
-
-        await ctx.send_message(ActionComplete())
-
-
 class ResetVariableExecutor(DeclarativeActionExecutor):
     """Executor for the ResetVariable action."""
 
@@ -275,47 +253,6 @@ class SendActivityExecutor(DeclarativeActionExecutor):
         # Yield the text as workflow output
         if text:
             await ctx.yield_output(str(text))  # type: ignore[reportUnknownArgumentType]
-
-        await ctx.send_message(ActionComplete())
-
-
-class EmitEventExecutor(DeclarativeActionExecutor):
-    """Executor for the EmitEvent action.
-
-    Emits a custom event to the workflow event stream.
-
-    Supports two schema formats:
-    1. Graph mode: eventName, eventValue
-    2. Interpreter mode: event.name, event.data
-    """
-
-    @handler
-    async def handle_action(
-        self,
-        trigger: Any,
-        ctx: WorkflowContext[ActionComplete, dict[str, Any]],
-    ) -> None:
-        """Handle the EmitEvent action."""
-        state = await self._ensure_state_initialized(ctx, trigger)
-
-        # Support both schema formats:
-        # - Graph mode: eventName, eventValue
-        # - Interpreter mode: event.name, event.data
-        event_def = self._action_def.get("event", {})
-        event_name = self._action_def.get("eventName") or event_def.get("name", "")
-        event_value = self._action_def.get("eventValue")
-        if event_value is None:
-            event_value = event_def.get("data")
-
-        if event_name:
-            evaluated_name = state.eval_if_expression(event_name)
-            evaluated_value = state.eval_if_expression(event_value)
-
-            event_data = {
-                "eventName": evaluated_name,
-                "eventValue": evaluated_value,
-            }
-            await ctx.yield_output(event_data)
 
         await ctx.send_message(ActionComplete())
 
@@ -628,11 +565,9 @@ BASIC_ACTION_EXECUTORS: dict[str, type[DeclarativeActionExecutor]] = {
     "SetVariable": SetVariableExecutor,
     "SetTextVariable": SetTextVariableExecutor,
     "SetMultipleVariables": SetMultipleVariablesExecutor,
-    "AppendValue": AppendValueExecutor,
     "ResetVariable": ResetVariableExecutor,
     "ClearAllVariables": ClearAllVariablesExecutor,
     "SendActivity": SendActivityExecutor,
-    "EmitEvent": EmitEventExecutor,
     "ParseValue": ParseValueExecutor,
     "EditTable": EditTableExecutor,
     "EditTableV2": EditTableV2Executor,

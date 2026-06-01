@@ -88,16 +88,17 @@ public sealed class PlanningOutputObserver : ConsoleObserver
         {
             planningResponse = JsonSerializer.Deserialize<PlanningResponse>(collectedText);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            await ux.WriteInfoLineAsync($"❌ Failed to parse planning response: {ex.Message}", ConsoleColor.Red);
-            await ux.WriteInfoLineAsync($"(raw response) {collectedText}", ConsoleColor.DarkYellow);
+            // JSON parsing failed — fall back to rendering as regular text output.
+            await ux.WriteTextAsync(collectedText).ConfigureAwait(false);
             return null;
         }
 
         if (planningResponse is null)
         {
-            await ux.WriteInfoLineAsync("(no structured response from agent)", ConsoleColor.DarkYellow);
+            // Null result — fall back to rendering as regular text output.
+            await ux.WriteTextAsync(collectedText).ConfigureAwait(false);
             return null;
         }
 
@@ -118,7 +119,8 @@ public sealed class PlanningOutputObserver : ConsoleObserver
             return new List<FollowUpAction> { this.BuildApprovalAction(question, session) };
         }
 
-        await ux.WriteInfoLineAsync($"(unexpected response type: {planningResponse.Type})", ConsoleColor.DarkYellow);
+        // Unexpected type — fall back to rendering as regular text output.
+        await ux.WriteTextAsync(collectedText).ConfigureAwait(false);
         return null;
     }
 

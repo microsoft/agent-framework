@@ -1161,6 +1161,43 @@ async def test_local_mcp_server_function_execution_error():
             await func.invoke(param="test_value")
 
 
+async def test_mcp_tool_reconnects_after_session_terminated_error():
+    """Session termination errors should reconnect once and retry the tool call."""
+
+    class TestServer(MCPTool):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.connect_count = 0
+            self.sessions: list[Any] = []
+
+        async def connect(self, *, reset: bool = False) -> None:
+            self.connect_count += 1
+            self.session = Mock(spec=ClientSession)
+            self.sessions.append(self.session)
+            if self.connect_count == 1:
+                self.session.call_tool = AsyncMock(
+                    side_effect=McpError(types.ErrorData(code=-32000, message="Session terminated"))
+                )
+            else:
+                self.session.call_tool = AsyncMock(
+                    return_value=types.CallToolResult(content=[types.TextContent(type="text", text="recovered")])
+                )
+            self.is_connected = True
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    await server.connect()
+
+    result = await server.call_tool("test_tool", param="test_value")
+
+    assert _mcp_result_to_text(result) == "recovered"
+    assert server.connect_count == 2
+    assert server.sessions[0].call_tool.await_count == 1
+    assert server.sessions[1].call_tool.await_count == 1
+
+
 async def test_mcp_tool_call_tool_raises_on_is_error():
     """Test that call_tool raises ToolExecutionException when MCP returns isError=True."""
 
@@ -3260,6 +3297,68 @@ async def test_load_prompts_pagination_with_duplicates():
     assert [f.name for f in tool._functions] == ["prompt_1", "prompt_2"]
 
 
+async def test_load_tools_concurrent_reload_does_not_duplicate_tools_and_preserves_meta():
+    """Concurrent tool reloads should not duplicate functions or lose tools/list metadata."""
+    tool = MCPTool(name="test_tool")
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="tool_1",
+            description="First tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            _meta={"echo": "tool_1"},
+        ),
+    ]
+    page.nextCursor = None
+
+    async def mock_list_tools(params: Any = None) -> Any:
+        assert params is None
+        await asyncio.sleep(0)
+        return page
+
+    mock_session.list_tools = AsyncMock(side_effect=mock_list_tools)
+
+    await asyncio.wait_for(asyncio.gather(tool.load_tools(), tool.load_tools()), timeout=1)
+
+    assert mock_session.list_tools.call_count == 2
+    assert [f.name for f in tool._functions] == ["tool_1"]
+    assert tool._tool_call_meta_by_name == {"tool_1": {"echo": "tool_1"}}
+
+
+async def test_load_prompts_concurrent_reload_does_not_duplicate_prompts():
+    """Concurrent prompt reloads should not duplicate functions."""
+    tool = MCPTool(name="test_tool")
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    page = Mock()
+    page.prompts = [
+        types.Prompt(
+            name="prompt_1",
+            description="First prompt",
+            arguments=[types.PromptArgument(name="arg1", description="Arg 1", required=True)],
+        ),
+    ]
+    page.nextCursor = None
+
+    async def mock_list_prompts(params: Any = None) -> Any:
+        assert params is None
+        await asyncio.sleep(0)
+        return page
+
+    mock_session.list_prompts = AsyncMock(side_effect=mock_list_prompts)
+
+    await asyncio.wait_for(asyncio.gather(tool.load_prompts(), tool.load_prompts()), timeout=1)
+
+    assert mock_session.list_prompts.call_count == 2
+    assert [f.name for f in tool._functions] == ["prompt_1"]
+
+
 async def test_load_tools_pagination_exception_handling():
     """Test that load_tools handles exceptions during pagination gracefully."""
     from unittest.mock import AsyncMock
@@ -3891,6 +3990,31 @@ async def test_mcp_tool_safe_close_handles_cancelled_error():
     mock_exit_stack.aclose.assert_called_once()
 
 
+async def test_mcp_tool_safe_close_handles_cleanup_exception_group():
+    """Cleanup task groups should not hide the original connect failure."""
+    import builtins
+    from contextlib import AsyncExitStack
+
+    exception_group_type = getattr(builtins, "ExceptionGroup", None)
+    if exception_group_type is None:
+        pytest.skip("ExceptionGroup is not available on this Python version")
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    mock_exit_stack = AsyncMock(spec=AsyncExitStack)
+    mock_exit_stack.aclose = AsyncMock(side_effect=exception_group_type("cleanup failed", [RuntimeError("reader")]))
+    tool._exit_stack = mock_exit_stack
+
+    await tool._safe_close_exit_stack()
+
+    mock_exit_stack.aclose.assert_called_once()
+
+
 async def test_connect_sets_logging_level_when_logger_level_is_set():
     """Test that connect() sets the MCP server logging level when the logger level is not NOTSET."""
 
@@ -4389,6 +4513,52 @@ async def test_mcp_tool_call_tool_forwards_tool_list_meta():
         assert server.session.call_tool.call_args.kwargs["meta"] == tool_meta
 
 
+async def test_mcp_tool_call_tool_user_meta_merges_with_tool_list_meta():
+    """User-provided _meta should be sent as MCP request metadata, not tool arguments."""
+    from opentelemetry import trace
+
+    tool_meta = {"from_tool": "tool-value", "shared": "tool-value"}
+    user_meta = {"from_user": "user-value", "shared": "user-value"}
+
+    class TestServer(MCPTool):
+        async def connect(self) -> None:
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+                            _meta=tool_meta,
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+
+        with trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)):
+            await server.call_tool("test_tool", param="test_value", _meta=user_meta)
+
+        call_kwargs = server.session.call_tool.call_args.kwargs
+        assert call_kwargs["arguments"] == {"param": "test_value"}
+        assert call_kwargs["meta"] == {
+            "from_tool": "tool-value",
+            "from_user": "user-value",
+            "shared": "user-value",
+        }
+        assert user_meta == {"from_user": "user-value", "shared": "user-value"}
+
+
 async def test_mcp_streamable_http_tool_hook_not_duplicated_on_repeated_get_mcp_client():
     """Test that calling get_mcp_client multiple times does not accumulate duplicate hooks."""
     tool = MCPStreamableHTTPTool(
@@ -4637,6 +4807,42 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
                 _mcp_call_headers.reset(token)
     finally:
         # Ensure any created httpx client is properly closed
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()
+
+
+async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redirect():
+    """The request hook must not re-add caller headers after a cross-origin redirect."""
+    import httpx
+
+    from agent_framework._mcp import _mcp_call_headers
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"Authorization": f"Bearer {kw.get('token', '')}"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            token = _mcp_call_headers.set({"Authorization": "Bearer secret"})
+            try:
+                same_origin = httpx.Request("POST", "http://example.com/redirected")
+                await hooks[0](same_origin)
+                assert same_origin.headers.get("Authorization") == "Bearer secret"
+
+                cross_origin = httpx.Request("POST", "http://attacker.example/capture")
+                await hooks[0](cross_origin)
+                assert "Authorization" not in cross_origin.headers
+            finally:
+                _mcp_call_headers.reset(token)
+    finally:
         if getattr(tool, "_httpx_client", None) is not None:
             await tool._httpx_client.aclose()
 
