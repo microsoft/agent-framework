@@ -394,3 +394,94 @@ def test_create_harness_agent_logs_warning_when_no_web_search(caplog: pytest.Log
             max_output_tokens=16_384,
         )
     assert any("SupportsWebSearchTool" in msg for msg in caplog.messages)
+
+
+# --- Background Agents Tests ---
+
+
+class _FakeBackgroundAgent:
+    """Minimal agent stub satisfying SupportsAgentRun for background agents tests."""
+
+    def __init__(self, name: str, description: str | None = None):
+        self.id = f"agent-{name}"
+        self.name = name
+        self.description = description
+
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id)
+
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(service_session_id=service_session_id, session_id=session_id)
+
+    async def run(self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any) -> Any:
+        from agent_framework import AgentResponse
+
+        return AgentResponse(messages=[], response_id="fake-bg-response")
+
+
+def test_create_harness_agent_no_background_agents_by_default() -> None:
+    """No BackgroundAgentsProvider should be included when background_agents is not provided."""
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_web_search=True,
+    )
+    providers = agent.context_providers or []
+    assert not any(isinstance(p, BackgroundAgentsProvider) for p in providers)
+
+
+def test_create_harness_agent_adds_background_agents_provider() -> None:
+    """BackgroundAgentsProvider should be included when background_agents are provided."""
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    bg_agent = _FakeBackgroundAgent("WebSearcher", "Searches the web")
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_web_search=True,
+        background_agents=[bg_agent],
+    )
+    providers = agent.context_providers or []
+    bg_providers = [p for p in providers if isinstance(p, BackgroundAgentsProvider)]
+    assert len(bg_providers) == 1
+
+
+def test_create_harness_agent_background_agents_custom_instructions() -> None:
+    """Custom instructions should be passed to BackgroundAgentsProvider."""
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    custom_instructions = "## Custom\n\nUse agents wisely.\n\n{background_agents}"
+    bg_agent = _FakeBackgroundAgent("Helper", "A helper agent")
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_web_search=True,
+        background_agents=[bg_agent],
+        background_agents_instructions=custom_instructions,
+    )
+    providers = agent.context_providers or []
+    bg_providers = [p for p in providers if isinstance(p, BackgroundAgentsProvider)]
+    assert len(bg_providers) == 1
+    # Verify the custom instructions were used (placeholder replaced with agent list).
+    assert "Custom" in bg_providers[0]._instructions
+    assert "Helper" in bg_providers[0]._instructions
+
+
+def test_create_harness_agent_empty_background_agents_list() -> None:
+    """An empty background_agents list should NOT add a BackgroundAgentsProvider."""
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_web_search=True,
+        background_agents=[],
+    )
+    providers = agent.context_providers or []
+    assert not any(isinstance(p, BackgroundAgentsProvider) for p in providers)
