@@ -23,7 +23,10 @@ This channel handles:
 - inbound ``message`` activities — text and attachments resolved to URIs,
 - outbound replies via ``POST /v3/conversations/{id}/activities``,
 - streaming via ``PUT /v3/conversations/{id}/activities/{id}`` mid-stream
-  edits (Teams supports updateActivity in personal chats and groups),
+  edits on channels that support ``updateActivity`` (Teams personal chats
+  and groups); every other channel — Web Chat, Direct Line, the Emulator —
+  rejects the PUT with ``405``, so those buffer the stream and POST a
+  single final message instead,
 - typing indicators while the agent works,
 - per-conversation isolation key ``activity:<conversation_id>`` so a Responses
   caller can resume a Teams conversation by passing the conversation id,
@@ -116,6 +119,16 @@ _DEFAULT_SERVICE_URL_HOSTS = (
     "botframework.com",
     "smba.trafficmanager.net",
 )
+
+# Bot Framework channels that support editing an Activity in place via
+# ``PUT /v3/conversations/{id}/activities/{id}`` (the ``updateActivity``
+# REST operation). Progressive-edit streaming (POST a placeholder, then
+# repeatedly PUT it) only works on these. Every other channel — Web Chat,
+# Direct Line, the Emulator, etc. — returns ``405 Method Not Allowed`` on
+# the PUT, so those channels buffer the stream and POST a single final
+# message instead. Teams is the canonical (and effectively only) public
+# channel that supports the edit operation.
+_EDIT_CAPABLE_CHANNELS = frozenset({"msteams"})
 
 
 InboundAuthValidator = Callable[[Request], Awaitable[bool]]
@@ -565,20 +578,27 @@ class ActivityProtocolChannel:
         request: ChannelRequest,
         stream: ResponseStream[AgentResponseUpdate, AgentResponse],
     ) -> None:
-        """Iterate the stream and progressively edit a single Teams activity.
+        """Stream the reply back into the originating conversation.
 
-        If the initial placeholder POST fails we fall back to buffering
-        the whole stream and POSTing a single final message at the end.
-        Without that fallback the edit-loop's exit condition
-        ``accumulated == last_sent`` is unreachable while ``activity_id``
-        is ``None`` (no PUT possible), and the worker would deadlock
-        forever on ``wake.wait()`` after ``worker_done`` is set.
+        Channels that support the ``updateActivity`` REST operation (see
+        ``_EDIT_CAPABLE_CHANNELS`` — effectively only Teams) get the
+        progressive-edit experience: a ``…`` placeholder is POSTed, then
+        repeatedly PUT-edited as text accumulates. Every other channel —
+        Web Chat, Direct Line, the Emulator, etc. — returns ``405 Method
+        Not Allowed`` on the PUT, so those buffer the whole stream and POST
+        a single final message (``_buffer_and_send``); attempting the
+        edit path there would leave the user staring at a stray ``…``.
         """
+        if str(inbound.get("channelId") or "").lower() not in _EDIT_CAPABLE_CHANNELS:
+            await self._buffer_and_send(inbound, request, stream)
+            return
+
         accumulated = ""
         last_sent = ""
         last_edit_at = 0.0
         activity_id: str | None = None
         placeholder_ok = False
+        edit_unsupported = False
         worker_done = asyncio.Event()
         wake = asyncio.Event()
 
@@ -595,7 +615,7 @@ class ActivityProtocolChannel:
                 placeholder_ok = False
 
         async def edit_worker() -> None:
-            nonlocal last_sent, last_edit_at
+            nonlocal last_sent, last_edit_at, edit_unsupported
             # When the placeholder failed we have no activity_id to PUT
             # into; the loop's only useful work is exiting cleanly. Skip
             # straight to that — the final flush below will POST the
@@ -619,8 +639,23 @@ class ActivityProtocolChannel:
                     continue
                 try:
                     await self._update_activity(inbound, activity_id or "", snapshot)
+                except httpx.HTTPStatusError as exc:
+                    # Some channels advertised as edit-capable may still
+                    # reject the PUT (405). Stop editing and let the final
+                    # flush POST the accumulated text as a new message;
+                    # don't advance ``last_sent`` so that flush still fires.
+                    if exc.response.status_code == 405:
+                        edit_unsupported = True
+                        logger.warning(
+                            "Activity edit not supported by channel %r — sending a single final message instead",
+                            inbound.get("channelId"),
+                        )
+                        return
+                    logger.exception("Activity interim edit failed")
+                    continue
                 except Exception:  # pragma: no cover
                     logger.exception("Activity interim edit failed")
+                    continue
                 last_sent = snapshot
                 last_edit_at = time.monotonic()
 
@@ -666,9 +701,10 @@ class ActivityProtocolChannel:
             return
 
         # Final flush — make sure the user sees everything that arrived after
-        # the worker's last edit. If the placeholder failed we POST a fresh
-        # activity here with whatever accumulated.
-        if not placeholder_ok:
+        # the worker's last edit. If the placeholder failed, or the channel
+        # turned out not to support edits (405), POST a fresh activity here
+        # with whatever accumulated rather than PUT-editing the placeholder.
+        if not placeholder_ok or edit_unsupported:
             text = accumulated or "(no response)"
             try:
                 await self._send_message(inbound, text)
@@ -686,6 +722,59 @@ class ActivityProtocolChannel:
                 await self._update_activity(inbound, activity_id, "(no response)")
             except Exception:  # pragma: no cover
                 logger.exception("Activity placeholder replace failed")
+
+    async def _buffer_and_send(
+        self,
+        inbound: Mapping[str, Any],
+        request: ChannelRequest,
+        stream: ResponseStream[AgentResponseUpdate, AgentResponse],
+    ) -> None:
+        """Consume the whole stream and POST a single final message.
+
+        Used for Bot Framework channels that do not support editing an
+        activity in place (everything except Teams — see
+        ``_EDIT_CAPABLE_CHANNELS``). Those channels return ``405`` to
+        ``PUT /v3/conversations/{id}/activities/{id}``, so the progressive
+        in-place edit cannot be used; we buffer the stream and ``POST`` a
+        single message at the end. Mirrors the non-streaming path's
+        fan-out + response-hook semantics so behaviour is consistent
+        regardless of whether the target streamed.
+        """
+        accumulated = ""
+        try:
+            async for update in stream:
+                if self._stream_transform_hook is not None:
+                    transformed = self._stream_transform_hook(update)
+                    if isinstance(transformed, Awaitable):
+                        transformed = await transformed
+                    if transformed is None:
+                        continue
+                    update = transformed
+                chunk = getattr(update, "text", None)
+                if chunk:
+                    accumulated += chunk
+        except Exception:
+            logger.exception("Activity streaming consumption failed")
+
+        try:
+            await stream.get_final_response()
+        except Exception:  # pragma: no cover
+            logger.exception("Stream finalize failed")
+
+        # Fan the final reply out to any non-originating linked destinations
+        # and learn whether this channel should still render on its own wire.
+        include_originating = True
+        if self._ctx is not None and accumulated:
+            include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
+        if not include_originating:
+            return
+
+        result = await self._apply_response_hook(_text_result(accumulated), request)
+        text = getattr(result.result, "text", None) or "(no response)"
+        try:
+            await self._send_message(inbound, text)
+        except Exception:  # pragma: no cover
+            logger.exception("Activity buffered final send failed")
 
     # -- Bot Framework REST helpers --------------------------------------- #
 

@@ -542,3 +542,94 @@ class TestStreaming:
         assert ch._http is not None
         last_put_body = ch._http.put.call_args[1]["json"]  # type: ignore[attr-defined]
         assert last_put_body["text"] == "(no response)"
+
+    async def test_non_edit_channel_buffers_and_posts_single_message(self) -> None:
+        # Web Chat (and every non-Teams channel) does not support
+        # PUT /activities/{id}; the channel must buffer the stream and POST
+        # a single final message rather than the placeholder+edit dance.
+        ch, _agent = _make_teams(stream=True)
+        webchat_activity = {**_VALID_ACTIVITY, "channelId": "webchat"}
+
+        @dataclass
+        class _Up:
+            text: str
+
+        class _Stream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    yield _Up("hel")
+                    yield _Up("lo")
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="hello")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(webchat_activity, _VALID_REQUEST, _Stream())  # type: ignore[arg-type]
+        assert ch._http is not None
+        # No PUT (no editing); exactly one POST with the full text.
+        ch._http.put.assert_not_called()  # type: ignore[attr-defined]
+        assert ch._http.post.await_count == 1  # type: ignore[attr-defined]
+        body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert body["text"] == "hello"
+
+    async def test_non_edit_channel_empty_stream_posts_no_response(self) -> None:
+        ch, _agent = _make_teams(stream=True)
+        webchat_activity = {**_VALID_ACTIVITY, "channelId": "directline"}
+
+        class _EmptyStream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    if False:
+                        yield None  # type: ignore[unreachable]
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(webchat_activity, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
+        assert ch._http is not None
+        ch._http.put.assert_not_called()  # type: ignore[attr-defined]
+        body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert body["text"] == "(no response)"
+
+    async def test_edit_405_falls_back_to_single_post(self) -> None:
+        # Defensive: a channel advertised as edit-capable that nonetheless
+        # rejects the PUT with 405 must stop editing and POST the final
+        # text as a fresh message instead of silently leaving "…".
+        import httpx as _httpx
+
+        ch, _agent = _make_teams(stream=True)
+        assert ch._http is not None
+
+        request_405 = _httpx.Request("PUT", "https://smba.trafficmanager.net/amer/v3/x")
+        response_405 = _httpx.Response(405, request=request_405)
+        ch._http.put = AsyncMock(  # type: ignore[attr-defined]
+            side_effect=_httpx.HTTPStatusError("405", request=request_405, response=response_405)
+        )
+
+        @dataclass
+        class _Up:
+            text: str
+
+        class _Stream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    yield _Up("hel")
+                    yield _Up("lo")
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="hello")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _Stream())  # type: ignore[arg-type]
+        # Placeholder POST + fallback final POST = 2 POSTs; the final one
+        # carries the full text.
+        assert ch._http.post.await_count == 2  # type: ignore[attr-defined]
+        final_body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert final_body["text"] == "hello"
