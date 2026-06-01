@@ -551,31 +551,29 @@ class BaseAgent(SerializationMixin):
             """
             session = ctx.session if propagate_session else None
 
-            # Isolate the child agent from the parent's server-side conversation.
-            # service_session_id would cause the child to send previous_response_id
-            # referencing the parent's pending tool_call, resulting in a 400 error.
-            saved_service_session_id = None
-            if session is not None and session.service_session_id is not None:
-                saved_service_session_id = session.service_session_id
-                session.service_session_id = None
+            # Create a child session that shares the parent's state dict but has
+            # an isolated service_session_id. This avoids mutating the parent
+            # session in-place, which would race under concurrent asyncio.gather
+            # tool invocations sharing the same session.
+            if session is not None:
+                child_session = AgentSession(session_id=session.session_id)
+                child_session.state = session.state  # shared by reference
+                child_session.service_session_id = None
+                session = child_session
 
-            try:
-                stream = self.run(
-                    str(kwargs.get(arg_name, "")),
-                    stream=True,
-                    session=session,
-                    function_invocation_kwargs=dict(ctx.kwargs),
-                )
-                if stream_callback is not None:
-                    stream.with_transform_hook(stream_callback)
-                final_response = await stream.get_final_response()
-                if final_response.user_input_requests:
-                    raise UserInputRequiredException(contents=final_response.user_input_requests)
-                # TODO(Copilot): update once #4331 merges
-                return final_response.text
-            finally:
-                if session is not None and saved_service_session_id is not None:
-                    session.service_session_id = saved_service_session_id
+            stream = self.run(
+                str(kwargs.get(arg_name, "")),
+                stream=True,
+                session=session,
+                function_invocation_kwargs=dict(ctx.kwargs),
+            )
+            if stream_callback is not None:
+                stream.with_transform_hook(stream_callback)
+            final_response = await stream.get_final_response()
+            if final_response.user_input_requests:
+                raise UserInputRequiredException(contents=final_response.user_input_requests)
+            # TODO(Copilot): update once #4331 merges
+            return final_response.text
 
         return FunctionTool(
             name=tool_name,

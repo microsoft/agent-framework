@@ -1533,7 +1533,7 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(client: Support
 
 
 async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(client: SupportsChatGetResponse) -> None:
-    """Test that propagate_session=True clears service_session_id for the child and restores it after."""
+    """Test that propagate_session=True gives the child a separate session with cleared service_session_id."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool(propagate_session=True)
 
@@ -1547,9 +1547,11 @@ async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(cl
     def capturing_run(*args: Any, **kwargs: Any) -> Any:
         nonlocal captured_session
         captured_session = kwargs.get("session")
-        # The child should see the same session object but with service_session_id cleared
-        assert captured_session is parent_session
+        # The child gets a different session object with isolated service_session_id
+        assert captured_session is not parent_session
         assert captured_session.service_session_id is None
+        # But shares the same state dict by reference
+        assert captured_session.state is parent_session.state
         assert captured_session.state["data"] == "shared"
         return original_run(*args, **kwargs)
 
@@ -1563,14 +1565,14 @@ async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(cl
         )
     )
 
-    # After the child finishes, service_session_id is restored
+    # Parent's service_session_id is never mutated
     assert parent_session.service_session_id == "resp_parent_abc123"
 
 
 async def test_chat_agent_as_tool_propagate_session_restores_service_session_id_on_error(
     client: SupportsChatGetResponse,
 ) -> None:
-    """Test that service_session_id is restored even if the child agent raises."""
+    """Test that parent's service_session_id is untouched even if the child agent raises."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool(propagate_session=True)
 
@@ -1591,12 +1593,12 @@ async def test_chat_agent_as_tool_propagate_session_restores_service_session_id_
             )
         )
 
-    # service_session_id must be restored even after failure
+    # Parent's service_session_id is never mutated — child has its own session
     assert parent_session.service_session_id == "resp_parent_xyz789"
 
 
 async def test_chat_agent_as_tool_propagate_session_no_service_session_id(client: SupportsChatGetResponse) -> None:
-    """Test that when service_session_id is None, no save/restore is needed."""
+    """Test that child setting service_session_id does not leak back to the parent."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool(propagate_session=True)
 
@@ -1610,6 +1612,8 @@ async def test_chat_agent_as_tool_propagate_session_no_service_session_id(client
         nonlocal captured_session
         captured_session = kwargs.get("session")
         assert captured_session.service_session_id is None
+        # Simulate the child's run populating service_session_id
+        captured_session.service_session_id = "resp_child_leaked"
         return original_run(*args, **kwargs)
 
     agent.run = capturing_run  # type: ignore[assignment, method-assign]
@@ -1622,6 +1626,7 @@ async def test_chat_agent_as_tool_propagate_session_no_service_session_id(client
         )
     )
 
+    # The child's service_session_id must not leak back to the parent
     assert parent_session.service_session_id is None
 
 
