@@ -3610,6 +3610,19 @@ async def test_service_response_exception_includes_original_error_details() -> N
     assert original_error_message in exception_message
 
 
+def test_parse_response_rejects_non_openai_response_object() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    response: Any = "plain backend error"
+
+    with pytest.raises(ChatClientException) as exc_info:
+        client._parse_response_from_openai(response, options={})
+
+    exception_message = str(exc_info.value)
+    assert "invalid OpenAI Responses API response" in exception_message
+    assert "expected an object with 'output'" in exception_message
+    assert "plain backend error" in exception_message
+
+
 async def test_get_response_streaming_with_response_format() -> None:
     """Test get_response streaming with response_format."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
