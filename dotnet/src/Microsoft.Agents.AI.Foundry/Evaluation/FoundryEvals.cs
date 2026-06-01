@@ -43,7 +43,7 @@ public sealed class FoundryEvals : IAgentEvaluator
 
     private readonly EvaluationClient _evaluationClient;
     private readonly string _model;
-    private readonly string[] _evaluatorNames;
+    private readonly FoundryEvaluatorSpec[] _evaluators;
     private readonly IConversationSplitter? _splitter;
     private readonly double _pollIntervalSeconds = 5.0;
     private readonly double _timeoutSeconds = 300.0;
@@ -58,17 +58,19 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// <param name="projectClient">The Azure AI Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="evaluators">
-    /// Names of evaluators to use (e.g., <see cref="Relevance"/>, <see cref="Coherence"/>).
-    /// When empty, defaults to relevance and coherence.
+    /// Evaluator specs to use. Each entry can be a built-in evaluator name (string, for example
+    /// <see cref="Relevance"/>) or a <see cref="GeneratedEvaluatorRef"/> for a rubric evaluator
+    /// already registered in the Foundry project. When empty, defaults to relevance, coherence,
+    /// and task adherence.
     /// </param>
-    public FoundryEvals(AIProjectClient projectClient, string model, params string[] evaluators)
+    public FoundryEvals(AIProjectClient projectClient, string model, params FoundryEvaluatorSpec[] evaluators)
     {
         ArgumentNullException.ThrowIfNull(projectClient);
         ArgumentException.ThrowIfNullOrWhiteSpace(model);
 
         this._evaluationClient = projectClient.GetProjectOpenAIClient().GetEvaluationClient();
         this._model = model;
-        this._evaluatorNames = evaluators.Length > 0
+        this._evaluators = evaluators.Length > 0
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
     }
@@ -84,14 +86,14 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// or a custom <see cref="IConversationSplitter"/> implementation.
     /// </param>
     /// <param name="evaluators">
-    /// Names of evaluators to use (e.g., <see cref="Relevance"/>, <see cref="Coherence"/>).
-    /// When empty, defaults to relevance and coherence.
+    /// Evaluator specs (built-in names and/or <see cref="GeneratedEvaluatorRef"/> instances).
+    /// When empty, defaults to relevance, coherence, and task adherence.
     /// </param>
     public FoundryEvals(
         AIProjectClient projectClient,
         string model,
         IConversationSplitter? splitter,
-        params string[] evaluators)
+        params FoundryEvaluatorSpec[] evaluators)
         : this(projectClient, model, evaluators)
     {
         this._splitter = splitter;
@@ -107,14 +109,16 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// </param>
     /// <param name="pollIntervalSeconds">Seconds between status polls (default 5).</param>
     /// <param name="timeoutSeconds">Maximum seconds to wait for completion (default 300).</param>
-    /// <param name="evaluators">Evaluator names to use.</param>
+    /// <param name="evaluators">
+    /// Evaluator specs (built-in names and/or <see cref="GeneratedEvaluatorRef"/> instances).
+    /// </param>
     public FoundryEvals(
         AIProjectClient projectClient,
         string model,
         IConversationSplitter? splitter,
         double pollIntervalSeconds,
         double timeoutSeconds,
-        params string[] evaluators)
+        params FoundryEvaluatorSpec[] evaluators)
         : this(projectClient, model, splitter, evaluators)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(pollIntervalSeconds, 0);
@@ -149,10 +153,10 @@ public sealed class FoundryEvals : IAgentEvaluator
         bool allHaveGroundTruth = payloads.Count > 0 && payloads.All(p => p.GroundTruth is not null);
 
         // Filter out tool evaluators if no items have tools; auto-add ToolCallAccuracy if tools present
-        var evaluators = FilterToolEvaluators(this._evaluatorNames, hasTools);
-        if (hasTools && !evaluators.Any(e => FoundryEvalConverter.ToolEvaluators.Contains(FoundryEvalConverter.ResolveEvaluator(e))))
+        var evaluators = FilterToolEvaluators(this._evaluators, hasTools);
+        if (hasTools && !HasToolEvaluator(evaluators))
         {
-            evaluators = [.. evaluators, ToolCallAccuracy];
+            evaluators = [.. evaluators, (FoundryEvaluatorSpec)ToolCallAccuracy];
         }
 
         // Fail fast if a ground-truth evaluator (e.g. similarity) is requested but not
@@ -178,7 +182,7 @@ public sealed class FoundryEvals : IAgentEvaluator
                 ItemSchema = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools, hasGroundTruth),
             },
             TestingCriteria = FoundryEvalConverter.BuildTestingCriteria(
-                evaluators, this._model, includeDataMapping: true),
+                evaluators, this._model, includeDataMapping: true, includeToolDefinitions: hasTools),
         };
 
         var createEvalJson = JsonSerializer.Serialize(createEvalPayload, s_jsonOptions);
@@ -287,7 +291,11 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// <param name="traceIds">Evaluate specific OTel trace IDs from App Insights.</param>
     /// <param name="agentId">Filter traces by agent ID (used with <paramref name="lookbackHours"/>).</param>
     /// <param name="lookbackHours">Hours of trace history to evaluate (default 24).</param>
-    /// <param name="evaluators">Evaluator names. Defaults to relevance, coherence, and task adherence.</param>
+    /// <param name="evaluators">
+    /// Evaluator specs. Each entry can be a built-in evaluator name (string) or a
+    /// <see cref="GeneratedEvaluatorRef"/> for a rubric evaluator. Defaults to relevance,
+    /// coherence, and task adherence.
+    /// </param>
     /// <param name="evalName">Display name for the evaluation.</param>
     /// <param name="pollIntervalSeconds">Seconds between status polls (default 5).</param>
     /// <param name="timeoutSeconds">Maximum seconds to wait for completion (default 300).</param>
@@ -300,7 +308,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         IEnumerable<string>? traceIds = null,
         string? agentId = null,
         int lookbackHours = 24,
-        string[]? evaluators = null,
+        FoundryEvaluatorSpec[]? evaluators = null,
         string evalName = "Agent Framework Trace Eval",
         double pollIntervalSeconds = 5.0,
         double timeoutSeconds = 300.0,
@@ -320,7 +328,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         var evalClient = projectClient.GetProjectOpenAIClient().GetEvaluationClient();
-        var resolvedEvaluators = evaluators is { Length: > 0 }
+        FoundryEvaluatorSpec[] resolvedEvaluators = evaluators is { Length: > 0 }
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
 
@@ -440,7 +448,10 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="target">Target configuration (must include a "type" key, e.g. "azure_ai_agent").</param>
     /// <param name="testQueries">Queries for Foundry to send to the target.</param>
-    /// <param name="evaluators">Evaluator names. Defaults to relevance, coherence, and task adherence.</param>
+    /// <param name="evaluators">
+    /// Evaluator specs (built-in names and/or <see cref="GeneratedEvaluatorRef"/> instances).
+    /// Defaults to relevance, coherence, and task adherence.
+    /// </param>
     /// <param name="evalName">Display name for the evaluation.</param>
     /// <param name="pollIntervalSeconds">Seconds between status polls (default 5).</param>
     /// <param name="timeoutSeconds">Maximum seconds to wait for completion (default 300).</param>
@@ -451,7 +462,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         string model,
         IDictionary<string, object> target,
         IEnumerable<string> testQueries,
-        string[]? evaluators = null,
+        FoundryEvaluatorSpec[]? evaluators = null,
         string evalName = "Agent Framework Target Eval",
         double pollIntervalSeconds = 5.0,
         double timeoutSeconds = 300.0,
@@ -473,7 +484,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         var evalClient = projectClient.GetProjectOpenAIClient().GetEvaluationClient();
-        var resolvedEvaluators = evaluators is { Length: > 0 }
+        FoundryEvaluatorSpec[] resolvedEvaluators = evaluators is { Length: > 0 }
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
 
@@ -917,20 +928,46 @@ public sealed class FoundryEvals : IAgentEvaluator
         return result;
     }
 
-    internal static string[] FilterToolEvaluators(string[] evaluators, bool hasTools)
+    internal static FoundryEvaluatorSpec[] FilterToolEvaluators(FoundryEvaluatorSpec[] evaluators, bool hasTools)
     {
         if (hasTools)
         {
             return evaluators;
         }
 
-        var filtered = Array.FindAll(evaluators, e =>
-            !FoundryEvalConverter.ToolEvaluators.Contains(FoundryEvalConverter.ResolveEvaluator(e)));
+        var filtered = Array.FindAll(evaluators, spec =>
+        {
+            if (spec.IsRubric)
+            {
+                // Rubric refs are tool-aware but not tool-required; preserve them.
+                return true;
+            }
+
+            return !FoundryEvalConverter.ToolEvaluators.Contains(FoundryEvalConverter.ResolveEvaluator(spec.BuiltinName!));
+        });
 
         return filtered.Length > 0
             ? filtered
             : throw new ArgumentException(
                 "All configured evaluators require tool definitions, but no tool calls were found in the eval items. "
-                + $"Tool evaluators: {string.Join(", ", evaluators)}. Either add tool call content to your EvalItems or remove tool-type evaluators.");
+                + $"Tool evaluators: {string.Join(", ", evaluators.Select(e => e.ToString()))}. Either add tool call content to your EvalItems or remove tool-type evaluators.");
+    }
+
+    private static bool HasToolEvaluator(FoundryEvaluatorSpec[] evaluators)
+    {
+        foreach (var spec in evaluators)
+        {
+            if (spec.IsRubric)
+            {
+                continue;
+            }
+
+            if (FoundryEvalConverter.ToolEvaluators.Contains(FoundryEvalConverter.ResolveEvaluator(spec.BuiltinName!)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
