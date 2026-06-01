@@ -89,17 +89,17 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
 
     /// <summary>
     /// Initializes a new instance of <see cref="ContentUnderstandingContextProvider"/> from an
-    /// endpoint and credential, with optional inline configuration of additional options.
+    /// endpoint and credential, using default options. To set additional options such as
+    /// <see cref="ContentUnderstandingContextProviderOptions.AnalyzerId"/>, construct a
+    /// <see cref="ContentUnderstandingContextProviderOptions"/> and use the options constructor.
     /// </summary>
     /// <param name="endpoint">The Content Understanding service endpoint.</param>
     /// <param name="credential">The credential used to authenticate against the service.</param>
-    /// <param name="configure">Optional callback to set additional options.</param>
     /// <exception cref="ArgumentNullException"><paramref name="endpoint"/> or <paramref name="credential"/> is <see langword="null"/>.</exception>
     public ContentUnderstandingContextProvider(
         Uri endpoint,
-        TokenCredential credential,
-        Action<ContentUnderstandingContextProviderOptions>? configure = null)
-        : this(BuildOptions(endpoint, credential, configure))
+        TokenCredential credential)
+        : this(new ContentUnderstandingContextProviderOptions(endpoint, credential))
     {
     }
 
@@ -967,16 +967,4 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         }
     }
 #pragma warning restore CA1513
-
-    private static ContentUnderstandingContextProviderOptions BuildOptions(
-        Uri endpoint,
-        TokenCredential credential,
-        Action<ContentUnderstandingContextProviderOptions>? configure)
-    {
-        // ContentUnderstandingContextProviderOptions' constructor null-checks endpoint and
-        // credential, so the convenience overload reuses that validation rather than duplicating it.
-        var options = new ContentUnderstandingContextProviderOptions(endpoint, credential);
-        configure?.Invoke(options);
-        return options;
-    }
 }

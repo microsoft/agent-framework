@@ -42,12 +42,10 @@ public sealed class ContentUnderstandingLiveTests
 
         var credential = new DefaultAzureCredential();
         await using var cu = new ContentUnderstandingContextProvider(
-            new Uri(cuEndpoint),
-            credential,
-            options =>
+            new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
             {
-                options.AnalyzerId = "prebuilt-documentSearch";
-                options.MaxWait = TimeSpan.FromMinutes(2);
+                AnalyzerId = "prebuilt-documentSearch",
+                MaxWait = TimeSpan.FromMinutes(2),
             });
 
         AIProjectClient projectClient = new(new Uri(projectEndpoint), credential);
@@ -89,12 +87,10 @@ public sealed class ContentUnderstandingLiveTests
 
         var credential = new DefaultAzureCredential();
         await using var cu = new ContentUnderstandingContextProvider(
-            new Uri(cuEndpoint),
-            credential,
-            options =>
+            new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
             {
-                options.AnalyzerId = "prebuilt-invoice";
-                options.MaxWait = TimeSpan.FromMinutes(2);
+                AnalyzerId = "prebuilt-invoice",
+                MaxWait = TimeSpan.FromMinutes(2),
             });
 
         AIProjectClient projectClient = new(new Uri(projectEndpoint), credential);
@@ -134,12 +130,10 @@ public sealed class ContentUnderstandingLiveTests
 
         var credential = new DefaultAzureCredential();
         await using var cu = new ContentUnderstandingContextProvider(
-            new Uri(cuEndpoint),
-            credential,
-            options =>
+            new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
             {
-                options.AnalyzerId = "prebuilt-documentSearch";
-                options.MaxWait = TimeSpan.FromMinutes(2);
+                AnalyzerId = "prebuilt-documentSearch",
+                MaxWait = TimeSpan.FromMinutes(2),
             });
 
         AIProjectClient projectClient = new(new Uri(projectEndpoint), credential);
@@ -177,12 +171,10 @@ public sealed class ContentUnderstandingLiveTests
 
         var credential = new DefaultAzureCredential();
         var cu = new ContentUnderstandingContextProvider(
-            new Uri(cuEndpoint),
-            credential,
-            options =>
+            new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
             {
-                options.AnalyzerId = "prebuilt-documentSearch";
-                options.MaxWait = TimeSpan.FromMilliseconds(1); // force background path
+                AnalyzerId = "prebuilt-documentSearch",
+                MaxWait = TimeSpan.FromMilliseconds(1), // force background path
             });
 
         // Disposing immediately, before any analysis is scheduled, must complete promptly.
