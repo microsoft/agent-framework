@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from agent_framework import Content, Message
@@ -263,6 +265,118 @@ def test_invalid_response_format_type_raises() -> None:
     client, _ = _make_client()
     with pytest.raises(TypeError, match="Pydantic BaseModel subclass"):
         client._prepare_output_config("not_a_valid_format")
+
+
+def test_mapping_response_format_accepted() -> None:
+    """A non-dict Mapping response_format must be accepted and produce
+    correct outputConfig, not raise TypeError."""
+    from collections.abc import MutableMapping
+
+    class _WrappedMapping(MutableMapping):
+        def __init__(self, data):
+            self._data = dict(data)
+
+        def __getitem__(self, key):
+            return self._data[key]
+
+        def __setitem__(self, key, value):
+            self._data[key] = value
+
+        def __delitem__(self, key):
+            del self._data[key]
+
+        def __iter__(self):
+            return iter(self._data)
+
+        def __len__(self):
+            return len(self._data)
+
+    client, _ = _make_client()
+    mapping_format = _WrappedMapping({
+        "json_schema": {
+            "name": "test_output",
+            "schema": {
+                "type": "object",
+                "properties": {"result": {"type": "string"}},
+            },
+        }
+    })
+
+    output_config = client._prepare_output_config(mapping_format)
+
+    assert output_config is not None
+    json_schema = output_config["textFormat"]["structure"]["jsonSchema"]
+    assert json_schema["name"] == "test_output"
+    schema = json.loads(json_schema["schema"])
+    assert schema.get("additionalProperties") is False
+
+
+def test_shape_b_dict_schema_wire_format() -> None:
+    """Dict response_format in Shape B (inner shape directly) should
+    produce correct outputConfig."""
+    client, _ = _make_client()
+
+    response_format = {
+        "name": "weather_output",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"},
+                "temperature": {"type": "number"},
+            },
+        },
+    }
+
+    output_config = client._prepare_output_config(response_format)
+
+    assert output_config is not None
+    text_format = output_config["textFormat"]
+    assert text_format["type"] == "json_schema"
+    json_schema = text_format["structure"]["jsonSchema"]
+    assert json_schema["name"] == "weather_output"
+    schema = json.loads(json_schema["schema"])
+    assert schema.get("additionalProperties") is False
+
+
+def test_dict_schema_not_mutated() -> None:
+    """Caller's dict schema must not be mutated by _prepare_output_config."""
+    client, _ = _make_client()
+    original_schema = {
+        "json_schema": {
+            "name": "test",
+            "schema": {
+                "type": "object",
+                "properties": {"a": {"type": "string"}},
+            },
+        }
+    }
+    snapshot = copy.deepcopy(original_schema)
+    client._prepare_output_config(original_schema)
+    assert original_schema == snapshot, "Original dict schema was mutated"
+
+
+async def test_non_outputconfig_validation_exception_propagates() -> None:
+    """ValidationException unrelated to outputConfig must propagate
+    as raw ClientError, not be caught and reclassified."""
+    client, _ = _make_client()
+    error_response = {
+        "Error": {
+            "Code": "ValidationException",
+            "Message": "Invalid message format",
+        }
+    }
+    with (
+        patch.object(
+            client,
+            "_bedrock_client",
+            **{"converse.side_effect": ClientError(error_response, "Converse")},
+        ),
+        pytest.raises(ClientError),
+    ):
+        await client.get_response(
+            messages=_user_messages(),
+            options={"max_tokens": 100},
+        )
 
 
 # endregion

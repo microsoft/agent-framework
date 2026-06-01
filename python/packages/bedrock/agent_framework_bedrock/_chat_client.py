@@ -771,7 +771,7 @@ class BedrockChatClient(
         if response_format is None:
             return None
 
-        if isinstance(response_format, dict):
+        if isinstance(response_format, Mapping):
             if "json_schema" in response_format:
                 # Shape A — OpenAI-style wrapper
                 json_schema_config = response_format["json_schema"]
@@ -787,7 +787,7 @@ class BedrockChatClient(
                     "response_format dict has no 'json_schema' or 'schema' key; "
                     "treating entire dict as raw JSON schema."
                 )
-                schema_src = response_format
+                schema_src = dict(response_format)
                 name = "output_schema"
 
             if isinstance(schema_src, str):
@@ -810,7 +810,7 @@ class BedrockChatClient(
             "schema": json.dumps(schema),
         }
 
-        description = getattr(response_format, "__doc__", None) if not isinstance(response_format, dict) else None
+        description = getattr(response_format, "__doc__", None) if not isinstance(response_format, Mapping) else None
         if description and isinstance(description, str) and description.strip():
             json_schema["description"] = description.strip()
 
