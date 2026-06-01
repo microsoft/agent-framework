@@ -29,7 +29,7 @@ from .._types import (
     UsageDetails,
     add_usage_details,
 )
-from ..exceptions import AgentInvalidRequestException, AgentInvalidResponseException
+from ..exceptions import AgentException, AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
 from ._events import (
     AGENT_FORWARDED_EVENT_TYPES,
@@ -177,7 +177,7 @@ class WorkflowAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the workflow. Required for new runs,
-                should be None when resuming from checkpoint.
+                could be None if only restoring the underlying workflow from a checkpoint.
 
         Keyword Args:
             stream: If True, returns an async iterable of updates. If False (default),
@@ -411,34 +411,29 @@ class WorkflowAgent(BaseAgent):
         Yields:
             WorkflowEvent objects from the workflow execution.
         """
-        final_state: WorkflowRunState | None = None
+        # Restore the workflow state if a checkpoint is provided
         if checkpoint_id is not None:
             if checkpoint_storage is None:
                 raise AgentInvalidRequestException("checkpoint_storage must be provided when checkpoint_id is provided")
             logger.debug(f"Restoring workflow from checkpoint {checkpoint_id}")
             # Restore the workflow from checkpoint
             if streaming:
-                async for event in self.workflow.run(
+                async for _ in self.workflow.run(
                     stream=True,
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
                 ):
-                    if event.type == "status":
-                        final_state = event.state
+                    pass
             else:
-                run_result = await self.workflow.run(
+                _ = await self.workflow.run(
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
                 )
-                final_state = run_result.get_final_state()
+            if not input_messages:
+                logger.info("No input messages provided; the workflow has been restored to the checkpoint state.")
+                return
 
-            if final_state is None:
-                raise AgentInvalidRequestException(
-                    "Workflow did not emit a final state event. Unable to determine workflow completion."
-                )
-
-        # Set the default final state to IDLE if checkpoint was not provided
-        final_state = final_state or WorkflowRunState.IDLE
+        final_state = self._workflow.status
         logger.debug(f"Workflow state: {final_state}")
 
         if final_state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
@@ -453,6 +448,7 @@ class WorkflowAgent(BaseAgent):
                 async for event in self.workflow.run(
                     responses=function_responses,
                     stream=True,
+                    checkpoint_storage=checkpoint_storage,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 ):
@@ -460,11 +456,12 @@ class WorkflowAgent(BaseAgent):
             else:
                 for event in await self.workflow.run(
                     responses=function_responses,
+                    checkpoint_storage=checkpoint_storage,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 ):
                     yield event
-        else:
+        elif final_state == WorkflowRunState.IDLE:
             if streaming:
                 async for event in self.workflow.run(
                     message=input_messages,
@@ -482,6 +479,8 @@ class WorkflowAgent(BaseAgent):
                     client_kwargs=client_kwargs,
                 ):
                     yield event
+        else:
+            raise AgentException(f"The underlying workflow is in an invalid state to restart: {final_state}.")
 
     # endregion Run Methods
 
@@ -725,6 +724,11 @@ class WorkflowAgent(BaseAgent):
         for message in input_messages:
             for content in message.contents:
                 if content.type == "function_approval_response":
+                    request_id = content.additional_properties.get("request_id")
+                    if not request_id:
+                        raise AgentInvalidResponseException(
+                            "FunctionApprovalResponseContent must have a request_id in additional_properties."
+                        )
                     # Parse the function arguments to recover request payload
                     arguments_payload = content.function_call.arguments  # type: ignore[attr-defined, union-attr]
                     if isinstance(arguments_payload, str):
@@ -740,8 +744,7 @@ class WorkflowAgent(BaseAgent):
                         raise AgentInvalidResponseException(
                             "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
                         )
-
-                    function_responses[parsed_args.request_id] = parsed_args.data
+                    function_responses[request_id] = parsed_args.data
                 elif content.type == "function_result":
                     response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
                     function_responses[content.call_id] = response_data  # pyright: ignore[reportArgumentType]

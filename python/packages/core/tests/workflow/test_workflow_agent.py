@@ -263,8 +263,9 @@ class TestWorkflowAgent:
         assert approval_request.function_call.name == function_call.name
 
         # Verify the request is tracked in pending_requests
-        assert len(agent.pending_requests) == 1
-        assert function_call.call_id in agent.pending_requests
+        pending_requests = await workflow._runner_context.get_pending_request_info_events()
+        assert len(pending_requests) == 1
+        assert function_call.call_id in pending_requests
 
         # Now provide an approval response with updated arguments to test continuation
         response_args = WorkflowAgent.RequestInfoFunctionArgs(
@@ -291,7 +292,8 @@ class TestWorkflowAgent:
         assert isinstance(continuation_result, AgentResponse)
 
         # Verify cleanup - pending requests should be cleared after function response handling
-        assert len(agent.pending_requests) == 0
+        pending_requests = await workflow._runner_context.get_pending_request_info_events()
+        assert len(pending_requests) == 0
 
     def test_workflow_as_agent_method(self) -> None:
         """Test that Workflow.as_agent() creates a properly configured WorkflowAgent."""
