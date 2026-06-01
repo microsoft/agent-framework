@@ -11,6 +11,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 
 from ._clients import SupportsChatGetResponse
+from ._feature_stage import ExperimentalFeature, experimental
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -214,6 +215,12 @@ class FunctionInvocationContext:
         result: Function execution result. Can be observed after calling ``call_next()``
                 to see the actual execution result or can be set to override the execution result.
         kwargs: Additional runtime keyword arguments forwarded to the function invocation.
+        tools: The live, mutable list of tools available to the model for the current
+                agent run, or ``None`` when the function is invoked outside of a
+                function-calling loop (for example via ``FunctionTool.invoke`` directly).
+                Tools can add or remove tools during execution using :meth:`add_tools`
+                and :meth:`remove_tools` (progressive tool exposure). Mutations take
+                effect on the **next** model iteration, not the in-flight batch.
 
     Examples:
         .. code-block:: python
@@ -232,6 +239,18 @@ class FunctionInvocationContext:
 
                     # Continue execution
                     await call_next()
+
+        Progressive tool exposure from inside a tool:
+
+        .. code-block:: python
+
+            from agent_framework import FunctionInvocationContext, tool
+
+
+            @tool(approval_mode="never_require")
+            def load_math_tools(ctx: FunctionInvocationContext) -> str:
+                ctx.add_tools([factorial, fibonacci])
+                return "Math tools are now available."
     """
 
     def __init__(
@@ -242,6 +261,7 @@ class FunctionInvocationContext:
         metadata: Mapping[str, Any] | None = None,
         result: Any = None,
         kwargs: Mapping[str, Any] | None = None,
+        tools: list[ToolTypes] | None = None,
     ) -> None:
         """Initialize the FunctionInvocationContext.
 
@@ -252,6 +272,9 @@ class FunctionInvocationContext:
             metadata: Metadata dictionary for sharing data between function middleware.
             result: Function execution result.
             kwargs: Additional runtime keyword arguments forwarded to the function invocation.
+            tools: The live, mutable list of tools for the current agent run. When provided,
+                this is the same list object the model sees on the next iteration, so
+                appending or removing tools changes the model's available tools.
         """
         self.function = function
         self.arguments = arguments
@@ -259,6 +282,91 @@ class FunctionInvocationContext:
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
         self.result = result
         self.kwargs: dict[str, Any] = dict(kwargs) if kwargs is not None else {}
+        self.tools = tools
+
+    @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)
+    def add_tools(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
+    ) -> None:
+        """Add one or more tools to the current agent run (progressive tool exposure).
+
+        Callable inputs are converted to :class:`FunctionTool`, and tool collections are
+        flattened, using the same normalization as the rest of the framework. Added tools
+        become available to the model on the **next** iteration of the function-calling
+        loop; they do not affect tool calls already requested in the in-flight batch.
+
+        Adding a tool whose name already exists is a no-op when it is the same object, and
+        raises ``ValueError`` when it is a different object with a duplicate name.
+
+        Args:
+            tools: A single tool/callable or a sequence of tools/callables to add.
+
+        Raises:
+            RuntimeError: If the context has no live tools list (for example when the
+                function is invoked outside of a function-calling loop).
+            ValueError: If a different tool with a duplicate name is added.
+        """
+        from ._tools import _append_unique_tools, normalize_tools  # type: ignore[reportPrivateUsage]
+
+        if self.tools is None:
+            raise RuntimeError(
+                "Cannot add tools: this FunctionInvocationContext is not bound to a live "
+                "agent run. add_tools is only available for functions invoked within an "
+                "agent's function-calling loop."
+            )
+        _append_unique_tools(self.tools, normalize_tools(tools))
+
+    def remove_tools(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | str | Sequence[str],
+    ) -> None:
+        """Remove one or more tools from the current agent run (progressive tool exposure).
+
+        Tools may be specified by name, by tool object, or by the original callable. Names
+        that are not currently present are ignored. Removals take effect on the **next**
+        iteration of the function-calling loop; tool calls already requested in the
+        in-flight batch still execute.
+
+        Args:
+            tools: A tool name, tool/callable, or a sequence of any of these to remove.
+
+        Raises:
+            RuntimeError: If the context has no live tools list (for example when the
+                function is invoked outside of a function-calling loop).
+        """
+        from ._tools import _get_tool_name, normalize_tools  # type: ignore[reportPrivateUsage]
+
+        if self.tools is None:
+            raise RuntimeError(
+                "Cannot remove tools: this FunctionInvocationContext is not bound to a live "
+                "agent run. remove_tools is only available for functions invoked within an "
+                "agent's function-calling loop."
+            )
+
+        names_to_remove: set[str] = set()
+        raw_items: list[Any]
+        if isinstance(tools, str):
+            raw_items = [tools]
+        elif isinstance(tools, Sequence) and not isinstance(tools, (bytes, bytearray)):
+            raw_items = list(cast("Sequence[Any]", tools))
+        else:
+            raw_items = [tools]
+        for item in raw_items:
+            if isinstance(item, str):
+                names_to_remove.add(item)
+                continue
+            for normalized in normalize_tools(item):
+                if name := _get_tool_name(normalized):  # type: ignore[reportPrivateUsage]
+                    names_to_remove.add(name)
+
+        if not names_to_remove:
+            return
+        self.tools[:] = [
+            tool
+            for tool in self.tools
+            if _get_tool_name(tool) not in names_to_remove  # type: ignore[reportPrivateUsage]
+        ]
 
 
 class ChatContext:

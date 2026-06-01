@@ -1418,6 +1418,7 @@ async def _auto_invoke_function(
     sequence_index: int | None = None,
     request_index: int | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+    live_tools: list[ToolTypes] | None = None,
 ) -> Content:
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
@@ -1432,6 +1433,8 @@ async def _auto_invoke_function(
         sequence_index: The index of the function call in the sequence.
         request_index: The index of the request iteration.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
+        live_tools: The live, mutable tools list for the current agent run, exposed on
+            the FunctionInvocationContext so tools can add/remove tools at runtime.
 
     Returns:
         The function result content.
@@ -1523,6 +1526,7 @@ async def _auto_invoke_function(
                     arguments=args,
                     session=invocation_session,
                     kwargs=runtime_kwargs.copy(),
+                    tools=live_tools,
                 )
             function_result = await tool.invoke(
                 arguments=args,
@@ -1552,6 +1556,7 @@ async def _auto_invoke_function(
         arguments=args,
         session=invocation_session,
         kwargs=runtime_kwargs.copy(),
+        tools=live_tools,
     )
 
     call_id = function_call_content.call_id
@@ -1659,6 +1664,9 @@ async def _try_execute_function_calls(
     from ._types import Content
 
     tool_map = _get_tool_map(tools)
+    # The live tools list (when tools is the run-local list) is exposed on the
+    # FunctionInvocationContext so tools can add/remove tools during the run.
+    live_tools: list[ToolTypes] | None = cast("list[ToolTypes]", tools) if isinstance(tools, list) else None
     approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
     logger.debug(
         "_try_execute_function_calls: tool_map keys=%s, approval_tools=%s",
@@ -1733,6 +1741,7 @@ async def _try_execute_function_calls(
                 request_index=attempt_idx,
                 middleware_pipeline=middleware_pipeline,
                 config=config,
+                live_tools=live_tools,
             )
             return (result, False)
         except MiddlewareTermination as exc:
@@ -2371,6 +2380,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=filtered_kwargs,
             )
+        # Establish a single, run-local mutable tools list so that tools can add or remove
+        # tools during the run (progressive tool exposure). A fresh list is created via
+        # normalize_tools so the caller's original tools container is never mutated, while
+        # the same list object is shared with the model (options["tools"]) and the tool map
+        # rebuilt on every loop iteration.
+        if mutable_options.get("tools"):
+            mutable_options["tools"] = normalize_tools(mutable_options["tools"])
         if not stream:
 
             async def _get_response() -> ChatResponse[Any]:

@@ -3975,3 +3975,402 @@ async def test_user_input_request_empty_contents_returns_fallback(chat_client_ba
     ]
     assert len(function_results) >= 1
     assert any("user input" in (fr.result or "").lower() for fr in function_results)
+
+
+# region Progressive tool exposure (FunctionInvocationContext.add_tools / remove_tools)
+
+
+def _pte_function_call_response(call_id: str, name: str, arguments: str = "{}") -> ChatResponse:
+    return ChatResponse(
+        messages=Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id=call_id, name=name, arguments=arguments)],
+        )
+    )
+
+
+def _pte_text_response(text: str = "done") -> ChatResponse:
+    return ChatResponse(messages=Message(role="assistant", contents=[text]))
+
+
+@tool(name="factorial", approval_mode="never_require")
+def _pte_factorial(n: int) -> int:
+    """Compute the factorial of n."""
+    result = 1
+    for value in range(2, n + 1):
+        result *= value
+    return result
+
+
+async def test_context_exposes_live_tools(chat_client_base: SupportsChatGetResponse):
+    from agent_framework import FunctionTool
+
+    seen_names: list[str] = []
+
+    @tool(name="inspect_tools", approval_mode="never_require")
+    def inspect_tools(ctx: FunctionInvocationContext) -> str:
+        assert ctx.tools is not None
+        seen_names.extend(t.name for t in ctx.tools if isinstance(t, FunctionTool))
+        return "inspected"
+
+    chat_client_base.run_responses = [
+        _pte_function_call_response("1", "inspect_tools"),
+        _pte_text_response(),
+    ]
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": [inspect_tools]},
+    )
+    assert "inspect_tools" in seen_names
+
+
+async def test_add_tools_available_next_iteration(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="factorial", approval_mode="never_require")
+    def factorial(n: int) -> int:
+        nonlocal exec_counter
+        exec_counter += 1
+        return 120
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(factorial)
+        return "math tools loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "factorial", '{"n": 5}'),
+        _pte_text_response(),
+    ]
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["compute 5!"])],
+        options={"tool_choice": "auto", "tools": [load_math]},
+    )
+    assert exec_counter == 1
+    assert response.messages[-1].text == "done"
+
+
+async def test_add_tools_model_sees_added_tools_in_options(chat_client_base: SupportsChatGetResponse):
+    from agent_framework import FunctionTool
+
+    recorded: list[list[str]] = []
+    client_cls = type(chat_client_base)
+    original = client_cls._get_non_streaming_response
+
+    async def recording(self: Any, *, messages: Any, options: dict[str, Any], **kwargs: Any) -> ChatResponse:
+        tools = options.get("tools") or []
+        recorded.append([t.name for t in tools if isinstance(t, FunctionTool)])
+        return await original(self, messages=messages, options=options, **kwargs)
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(_pte_factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "factorial", '{"n": 5}'),
+        _pte_text_response(),
+    ]
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(client_cls, "_get_non_streaming_response", recording)
+    try:
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["compute 5!"])],
+            options={"tool_choice": "auto", "tools": [load_math]},
+        )
+    finally:
+        monkey.undo()
+
+    assert recorded[0] == ["load_math"]
+    assert "factorial" in recorded[1]
+
+
+async def test_remove_tools_next_iteration(chat_client_base: SupportsChatGetResponse):
+    from agent_framework import FunctionTool
+
+    recorded: list[list[str]] = []
+    client_cls = type(chat_client_base)
+    original = client_cls._get_non_streaming_response
+
+    async def recording(self: Any, *, messages: Any, options: dict[str, Any], **kwargs: Any) -> ChatResponse:
+        tools = options.get("tools") or []
+        recorded.append([t.name for t in tools if isinstance(t, FunctionTool)])
+        return await original(self, messages=messages, options=options, **kwargs)
+
+    @tool(name="get_weather", approval_mode="never_require")
+    def get_weather(location: str) -> str:
+        return "sunny"
+
+    @tool(name="drop_weather", approval_mode="never_require")
+    def drop_weather(ctx: FunctionInvocationContext) -> str:
+        ctx.remove_tools("get_weather")
+        return "removed"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [
+        _pte_function_call_response("1", "drop_weather"),
+        _pte_text_response(),
+    ]
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(client_cls, "_get_non_streaming_response", recording)
+    try:
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["hi"])],
+            options={"tool_choice": "auto", "tools": [get_weather, drop_weather]},
+        )
+    finally:
+        monkey.undo()
+
+    assert set(recorded[0]) == {"get_weather", "drop_weather"}
+    assert "get_weather" not in recorded[1]
+
+
+async def test_add_tools_does_not_mutate_caller_tools_list(chat_client_base: SupportsChatGetResponse):
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(_pte_factorial)
+        return "loaded"
+
+    original_tools: list[Any] = [load_math]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [
+        _pte_function_call_response("1", "load_math"),
+        _pte_text_response(),
+    ]
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": original_tools},
+    )
+    assert original_tools == [load_math]
+
+
+async def test_add_tools_persists_across_iterations(chat_client_base: SupportsChatGetResponse):
+    from agent_framework import FunctionTool
+
+    recorded: list[list[str]] = []
+    client_cls = type(chat_client_base)
+    original = client_cls._get_non_streaming_response
+
+    async def recording(self: Any, *, messages: Any, options: dict[str, Any], **kwargs: Any) -> ChatResponse:
+        tools = options.get("tools") or []
+        recorded.append([t.name for t in tools if isinstance(t, FunctionTool)])
+        return await original(self, messages=messages, options=options, **kwargs)
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(_pte_factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 4  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "factorial", '{"n": 5}'),
+        _pte_function_call_response("3", "factorial", '{"n": 3}'),
+        _pte_text_response(),
+    ]
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(client_cls, "_get_non_streaming_response", recording)
+    try:
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["hi"])],
+            options={"tool_choice": "auto", "tools": [load_math]},
+        )
+    finally:
+        monkey.undo()
+
+    assert "factorial" in recorded[1]
+    assert "factorial" in recorded[2]
+
+
+async def test_add_tools_through_function_middleware(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            await call_next()
+
+    @tool(name="factorial", approval_mode="never_require")
+    def factorial(n: int) -> int:
+        nonlocal exec_counter
+        exec_counter += 1
+        return 120
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "factorial", '{"n": 5}'),
+        _pte_text_response(),
+    ]
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": [load_math]},
+        middleware=[PassthroughMiddleware()],
+    )
+    assert exec_counter == 1
+
+
+async def test_add_tools_with_approval_required_tool(chat_client_base: SupportsChatGetResponse):
+    @tool(name="secure_tool", approval_mode="always_require")
+    def secure_tool(value: str) -> str:
+        return f"secure: {value}"
+
+    @tool(name="load_secure", approval_mode="never_require")
+    def load_secure(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(secure_tool)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [
+        _pte_function_call_response("1", "load_secure"),
+        _pte_function_call_response("2", "secure_tool", '{"value": "x"}'),
+        _pte_text_response(),
+    ]
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": [load_secure]},
+    )
+    assert any(item.type == "function_approval_request" for msg in response.messages for item in msg.contents)
+
+
+async def test_add_tools_accepts_plain_callable(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    def plain_factorial(n: int) -> int:
+        """Compute factorial."""
+        nonlocal exec_counter
+        exec_counter += 1
+        return 120
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(plain_factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "plain_factorial", '{"n": 5}'),
+        _pte_text_response(),
+    ]
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": [load_math]},
+    )
+    assert exec_counter == 1
+
+
+async def test_add_tools_streaming(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="factorial", approval_mode="never_require")
+    def factorial(n: int) -> int:
+        nonlocal exec_counter
+        exec_counter += 1
+        return 120
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="1", name="load_math", arguments="{}")],
+                role="assistant",
+            )
+        ],
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="2", name="factorial", arguments='{"n": 5}')],
+                role="assistant",
+            )
+        ],
+        [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant", finish_reason="stop")],
+    ]
+    async for _ in chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        stream=True,
+        options={"tool_choice": "auto", "tools": [load_math]},
+    ):
+        pass
+    assert exec_counter == 1
+
+
+def test_add_tools_duplicate_same_object_is_noop():
+    @tool(name="dup", approval_mode="never_require")
+    def dup(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=dup, arguments={}, tools=[dup])
+    ctx.add_tools(dup)
+    assert ctx.tools is not None
+    assert len(ctx.tools) == 1
+
+
+def test_add_tools_duplicate_name_different_object_raises():
+    @tool(name="dup", approval_mode="never_require")
+    def dup_a(x: int) -> int:
+        return x
+
+    @tool(name="dup", approval_mode="never_require")
+    def dup_b(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=dup_a, arguments={}, tools=[dup_a])
+    with pytest.raises(ValueError):
+        ctx.add_tools(dup_b)
+
+
+def test_remove_tools_by_name_and_object():
+    @tool(name="a", approval_mode="never_require")
+    def a(x: int) -> int:
+        return x
+
+    @tool(name="b", approval_mode="never_require")
+    def b(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=a, arguments={}, tools=[a, b])
+    ctx.remove_tools("a")
+    assert ctx.tools is not None
+    assert [t.name for t in ctx.tools] == ["b"]
+    ctx.remove_tools(b)
+    assert ctx.tools == []
+
+
+def test_remove_tools_unknown_name_is_noop():
+    @tool(name="a", approval_mode="never_require")
+    def a(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=a, arguments={}, tools=[a])
+    ctx.remove_tools("nonexistent")
+    assert ctx.tools is not None
+    assert [t.name for t in ctx.tools] == ["a"]
+
+
+def test_progressive_tools_helpers_raise_without_live_tools():
+    @tool(name="a", approval_mode="never_require")
+    def a(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=a, arguments={})
+    assert ctx.tools is None
+    with pytest.raises(RuntimeError):
+        ctx.add_tools(a)
+    with pytest.raises(RuntimeError):
+        ctx.remove_tools("a")
+
+
+# endregion
