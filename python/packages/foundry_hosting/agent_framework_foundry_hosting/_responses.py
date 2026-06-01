@@ -11,7 +11,7 @@ import tempfile
 import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -264,10 +264,16 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
 
 # Foundry Toolbox Auth integration
 # Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
-CONSENT_ERROR_CODE = -32007
+CONSENT_ERROR_CODE = -32006
 
 
-def consent_url_from_error(exc: BaseException) -> str | None:
+@dataclass
+class ConsentError:
+    name: str
+    consent_url: str
+
+
+def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     """Return the consent URL when ``exc`` wraps a Foundry MCP gateway consent error.
 
     The Agent Framework MCP layer surfaces gateway consent failures by wrapping the underlying
@@ -285,7 +291,53 @@ def consent_url_from_error(exc: BaseException) -> str | None:
     """
     inner_exception = next((arg for arg in exc.args if isinstance(arg, McpError)), None)
     if inner_exception is not None and inner_exception.error.code == CONSENT_ERROR_CODE:
-        return inner_exception.error.message
+        # Parse the error message
+        # The error message is structured with the following format:
+        # "tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {"errors":[{"name": ..."
+        # where the second part is a JSON string that can be deserialized into an object with the following shape:
+        # ruff: disable[ERA001]
+        # {
+        #   "errors" : [
+        #       {
+        #           "name": "Name of the MCP tool that requires consent",
+        #           "type" : "mcp",
+        #           "error": {
+        #               "code": "CONSENT_REQUIRED",
+        #               "message": consent_url,
+        #           }
+        #       }
+        #   ]
+        # }
+        # ruff: enable[ERA001]
+        try:
+            consent_errors: list[ConsentError] = []
+            error_message_start = inner_exception.error.message.find("{")
+            if error_message_start == -1:
+                logger.warning("Consent error message does not contain JSON: %s", inner_exception.error.message)
+                return None
+            consent_details_json = inner_exception.error.message[error_message_start:]
+            consent_details = json.loads(consent_details_json)
+            if "errors" not in consent_details or not isinstance(consent_details["errors"], list):
+                logger.warning("Consent error message JSON does not contain 'errors' list: %s", consent_details_json)
+                return None
+            for error in consent_details["errors"]:
+                if (
+                    isinstance(error, dict)
+                    and error.get("type") == "mcp"  # type: ignore
+                    and "error" in error
+                    and isinstance(error["error"], dict)
+                    and error["error"].get("code") == "CONSENT_REQUIRED"  # type: ignore
+                    and "message" in error["error"]
+                ):
+                    consent_url = error["error"]["message"]  # type: ignore
+                    if isinstance(consent_url, str):
+                        consent_errors.append(ConsentError(name=error.get("name", "Unknown"), consent_url=consent_url))  # type: ignore
+                    else:
+                        logger.warning("Consent URL in error message is not a valid URL: %s", consent_url)  # type: ignore
+            if consent_errors:
+                return consent_errors
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse consent details JSON: %s", inner_exception.error.message)
     return None
 
 
@@ -448,18 +500,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         try:
             await self._ensure_agent_ready()
         except AgentFrameworkException as ex:
-            consent_url = consent_url_from_error(ex)
-            if consent_url is None:
+            consent_errors = consent_url_from_error(ex)
+            if consent_errors is None:
                 raise
-            logger.warning("OAuth consent required for Foundry MCP gateway.")
-            oauth_item = OAuthConsentRequestOutputItem(
-                id=IdGenerator.new_id("oacr"),
-                consent_link=consent_url,
-                server_label="Foundry Toolbox",
-            )
-            builder = response_event_stream.add_output_item(oauth_item.id)
-            yield builder.emit_added(oauth_item)
-            yield builder.emit_done(oauth_item)
+            for consent_error in consent_errors:
+                logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
+                oauth_item = OAuthConsentRequestOutputItem(
+                    id=IdGenerator.new_id("oacr"),
+                    consent_link=consent_error.consent_url,
+                    server_label=consent_error.name,
+                )
+                builder = response_event_stream.add_output_item(oauth_item.id)
+                yield builder.emit_added(oauth_item)
+                yield builder.emit_done(oauth_item)
             yield response_event_stream.emit_completed()
             return
 

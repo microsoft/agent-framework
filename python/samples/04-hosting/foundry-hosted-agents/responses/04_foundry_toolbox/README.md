@@ -20,7 +20,7 @@ You can connect to MCP servers in Foundry Toolbox that use different authenticat
 - **Agent identity authentication**: The tool requires an agent identity token to authenticate. Sample MCP server: `https://{foundry-resource-name}.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview` (Azure Language MCP server) with agent identity for authentication.
 - **Entra Pass-through authentication**: The tool requires an Entra pass-through token to authenticate. Sample MCP server: Microsoft Outlook MCP server with Entra pass-through for authentication.
 
-> Definitions of these authentication methods can be found in the [agent.manifest.yaml](agent.manifest.yaml) file in this sample.
+> Definitions of these authentication methods can be found in the [agent.manifest.yaml](agent.manifest.yaml) file in this sample. The GitHub MCP connection is defaulted to used PAT for authentication in this sample, but you can switch to OAuth2 by changing the `project_connection_id` field in the `agent.manifest.yaml` file and following the instructions in the comments.
 
 There are also Non-MCP tools in the toolbox that support different authentication methods. Learn more at the [Foundry sample repository](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS.md).
 
