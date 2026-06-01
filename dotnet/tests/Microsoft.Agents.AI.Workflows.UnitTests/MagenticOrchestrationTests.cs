@@ -3,8 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
@@ -986,6 +988,58 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
+    public async Task Participant_Response_Is_Shared_With_Next_SpeakerAsync()
+    {
+        List<ChatMessage> factsResponse = CreatePlanResponse("Task delegation facts");
+        List<ChatMessage> planResponse = CreatePlanResponse("Delegate across participants");
+        List<ChatMessage> workerALedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "WorkerA",
+            instructionOrQuestion: "WorkerA private instruction");
+        List<ChatMessage> workerBLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "WorkerB",
+            instructionOrQuestion: "WorkerB private instruction");
+        List<ChatMessage> satisfiedLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "WorkerB",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Routed correctly");
+
+        TestReplayAgent manager = new(
+            [factsResponse, planResponse, workerALedger, workerBLedger, satisfiedLedger, finalAnswerResponse],
+            name: "Manager");
+        RecordingAgent workerA = new("WorkerA", "WorkerA response");
+        RecordingAgent workerB = new("WorkerB", "WorkerB response");
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(workerA, workerB)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Route task")]);
+
+        workerA.Turns.Should().ContainSingle();
+        workerB.Turns.Should().ContainSingle();
+        string workerBInput = string.Join("\n", workerB.Turns[0].Select(message => message.Text));
+
+        workerBInput.Should().Contain("WorkerB private instruction");
+        workerBInput.Should().Contain("WorkerA response");
+        workerBInput.Should().NotContain("WorkerA private instruction");
+
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Routed correctly");
+    }
+
+    [Fact]
     public async Task Progress_Made_Decrements_StallCountAsync()
     {
         // Arrange: MaxStallCount=3, so a single stall won't trigger reset.
@@ -1323,6 +1377,55 @@ public class MagenticOrchestrationTests
         List<ChatMessage>? Result,
         CheckpointInfo? LastCheckpoint,
         List<RequestInfoEvent> PendingRequests);
+
+    private sealed class RecordingAgent(string name, string responseText) : AIAgent
+    {
+        public override string? Name => name;
+
+        public List<List<ChatMessage>> Turns { get; } = [];
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+            new(new RecordingAgentSession());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(new RecordingAgentSession());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(JsonSerializer.SerializeToElement<object?>(null));
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            ChatMessage response = this.RecordAndCreateResponse(messages);
+            return Task.FromResult(new AgentResponse([response]));
+        }
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            ChatMessage response = this.RecordAndCreateResponse(messages);
+            yield return new AgentResponseUpdate(ChatRole.Assistant, response.Contents)
+            {
+                AuthorName = this.Name,
+                MessageId = response.MessageId,
+                ResponseId = Guid.NewGuid().ToString("N"),
+                CreatedAt = response.CreatedAt,
+            };
+        }
+
+        private ChatMessage RecordAndCreateResponse(IEnumerable<ChatMessage> messages)
+        {
+            this.Turns.Add([.. messages]);
+            return new ChatMessage(ChatRole.Assistant, responseText)
+            {
+                AuthorName = this.Name,
+                MessageId = Guid.NewGuid().ToString("N"),
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+        }
+
+        private sealed class RecordingAgentSession : AgentSession
+        {
+        }
+    }
 
     private static List<ChatMessage> CreatePlanResponse(string plan)
     {

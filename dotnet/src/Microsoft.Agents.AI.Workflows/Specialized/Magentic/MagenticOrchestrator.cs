@@ -90,6 +90,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
     private MagenticTaskContext? _taskContext;
     private PortBinding? _planReviewPort;
+    private string? _currentSpeakerExecutorId;
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
@@ -200,7 +201,16 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             if (messages is { Count: > 0 })
             {
                 this._taskContext.ChatHistory.AddRange(messages);
+                try
+                {
+                    await this.BroadcastToOtherParticipantsAsync(messages, context, cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    this._currentSpeakerExecutorId = null;
+                }
             }
+
             await this.RunCoordinationRoundAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -287,16 +297,35 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             return;
         }
 
+        string nextExecutorId = AIAgentHostExecutor.IdFor(nextAgent);
+
         if (!string.IsNullOrWhiteSpace(taskContext.ProgressLedger.InstructionOrQuestion))
         {
             ChatMessage instruction = new(ChatRole.Assistant, taskContext.ProgressLedger.InstructionOrQuestion);
             taskContext.ChatHistory.Add(instruction);
 
-            await context.SendMessageAsync(instruction, cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(instruction, nextExecutorId, cancellationToken).ConfigureAwait(false);
         }
 
-        string nextExecutorId = AIAgentHostExecutor.IdFor(nextAgent);
+        this._currentSpeakerExecutorId = nextExecutorId;
         await context.SendMessageAsync(new TurnToken(taskContext.EmitUpdateEvents), nextExecutorId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private ValueTask BroadcastToOtherParticipantsAsync(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        List<Task>? sendTasks = null;
+        foreach (AIAgent participant in team)
+        {
+            string participantId = AIAgentHostExecutor.IdFor(participant);
+            if (string.Equals(participantId, this._currentSpeakerExecutorId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            (sendTasks ??= []).Add(context.SendMessageAsync(messages, participantId, cancellationToken).AsTask());
+        }
+
+        return sendTasks is null ? default : new ValueTask(Task.WhenAll(sendTasks));
     }
 
     private async ValueTask ResetAndReplanAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
