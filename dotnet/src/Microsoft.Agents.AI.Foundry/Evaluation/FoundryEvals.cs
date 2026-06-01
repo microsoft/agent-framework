@@ -842,7 +842,13 @@ public sealed class FoundryEvals : IAgentEvaluator
                     passed = pp.ValueKind == JsonValueKind.True;
                 }
 
-                scores.Add(new EvalScoreResult(name, score, passed));
+                IReadOnlyList<RubricScore>? dimensions = null;
+                if (r.TryGetProperty("sample", out var perResultSample))
+                {
+                    dimensions = ParseRubricScores(perResultSample);
+                }
+
+                scores.Add(new EvalScoreResult(name, score, passed) { Dimensions = dimensions });
             }
         }
 
@@ -926,6 +932,143 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         return result;
+    }
+
+    private static readonly string[] s_rubricDimensionKeys = ["dimension_scores", "rubric_scores"];
+
+    /// <summary>
+    /// Extracts the per-dimension <see cref="RubricScore"/> list from a result-level <c>sample</c>
+    /// payload, when present. Accepts several legacy/canonical shapes for forward compatibility
+    /// with provider SDK changes:
+    /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item>
+    /// <description><c>sample.properties.dimension_scores</c> (canonical Foundry shape).</description>
+    /// </item>
+    /// <item>
+    /// <description><c>sample.properties.rubric_scores</c> (preview / legacy key).</description>
+    /// </item>
+    /// <item>
+    /// <description>Top-level <c>sample.dimension_scores</c> / <c>sample.rubric_scores</c> as a
+    /// defensive fallback.</description>
+    /// </item>
+    /// </list>
+    /// Returns <see langword="null"/> when no rubric scores are present (the evaluator was not
+    /// a rubric evaluator). Malformed entries (missing <c>id</c>, <c>weight</c>, or <c>applicable</c>)
+    /// are skipped without failing the whole list.
+    /// </remarks>
+    internal static List<RubricScore>? ParseRubricScores(JsonElement sample)
+    {
+        if (sample.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        // Prefer sample.properties.<key> then fall back to top-level sample.<key>.
+        if (sample.TryGetProperty("properties", out var properties)
+            && properties.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var key in s_rubricDimensionKeys)
+            {
+                if (properties.TryGetProperty(key, out var raw))
+                {
+                    var parsed = ParseDimensionEntries(raw);
+                    if (parsed.Count > 0)
+                    {
+                        return parsed;
+                    }
+                }
+            }
+        }
+
+        foreach (var key in s_rubricDimensionKeys)
+        {
+            if (sample.TryGetProperty(key, out var raw))
+            {
+                var parsed = ParseDimensionEntries(raw);
+                if (parsed.Count > 0)
+                {
+                    return parsed;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static List<RubricScore> ParseDimensionEntries(JsonElement raw)
+    {
+        var parsed = new List<RubricScore>();
+        if (raw.ValueKind != JsonValueKind.Array)
+        {
+            return parsed;
+        }
+
+        foreach (var entry in raw.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!entry.TryGetProperty("id", out var idProp)
+                || !entry.TryGetProperty("weight", out var weightProp)
+                || !entry.TryGetProperty("applicable", out var applicableProp))
+            {
+                continue;
+            }
+
+            string? id = idProp.ValueKind switch
+            {
+                JsonValueKind.String => idProp.GetString(),
+                JsonValueKind.Number => idProp.GetRawText(),
+                _ => null,
+            };
+            if (string.IsNullOrEmpty(id))
+            {
+                continue;
+            }
+
+            if (weightProp.ValueKind != JsonValueKind.Number
+                || !weightProp.TryGetInt32(out var weight))
+            {
+                continue;
+            }
+
+            if (applicableProp.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            {
+                continue;
+            }
+
+            int? score = null;
+            if (entry.TryGetProperty("score", out var scoreProp)
+                && scoreProp.ValueKind == JsonValueKind.Number)
+            {
+                if (scoreProp.TryGetInt32(out var intScore))
+                {
+                    score = intScore;
+                }
+                else if (scoreProp.TryGetDouble(out var doubleScore))
+                {
+                    score = (int)doubleScore;
+                }
+            }
+
+            string reason = entry.TryGetProperty("reason", out var reasonProp)
+                && reasonProp.ValueKind == JsonValueKind.String
+                ? reasonProp.GetString() ?? string.Empty
+                : string.Empty;
+
+            parsed.Add(new RubricScore(
+                Id: id!,
+                Score: score,
+                Applicable: applicableProp.ValueKind == JsonValueKind.True,
+                Weight: weight,
+                Reason: reason));
+        }
+
+        return parsed;
     }
 
     internal static FoundryEvaluatorSpec[] FilterToolEvaluators(FoundryEvaluatorSpec[] evaluators, bool hasTools)
