@@ -57,6 +57,30 @@ class TestParseActivity:
         # No URI content survived.
         assert not any(getattr(c, "uri", None) for c in msg.contents)
 
+    def test_skips_teams_text_html_inline_content(self) -> None:
+        # Teams attaches a text/html rendering whose inline ``content`` is raw
+        # HTML (not a URL). It must not be parsed as a URI.
+        msg = _parse_activity({
+            "type": "message",
+            "text": "hello there",
+            "attachments": [
+                {"contentType": "text/html", "content": "<p>hello there</p>"},
+            ],
+        })
+        assert msg.text == "hello there"
+        assert not any(getattr(c, "uri", None) for c in msg.contents)
+
+    def test_skips_attachment_contenturl_without_scheme(self) -> None:
+        msg = _parse_activity({
+            "type": "message",
+            "text": "hi",
+            "attachments": [
+                {"contentType": "image/png", "contentUrl": "/relative/path.png"},
+            ],
+        })
+        assert msg.text == "hi"
+        assert not any(getattr(c, "uri", None) for c in msg.contents)
+
 
 @dataclass
 class _FakeAgentResponse:

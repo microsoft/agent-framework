@@ -82,6 +82,7 @@ from agent_framework import (
     Message,
     ResponseStream,
 )
+from agent_framework.exceptions import ContentError
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
@@ -156,10 +157,12 @@ def _text_result(text: str) -> HostedRunResult[AgentResponse]:
 def _parse_activity(activity: Mapping[str, Any]) -> Message:
     """Translate one Bot Framework ``message`` Activity into an Agent Framework Message.
 
-    Pulls the activity's ``text`` plus any image/file attachments with a
-    ``contentType`` and resolvable URL into ``Content`` parts. If the
-    activity has no usable parts an empty text part is emitted so the
-    caller never sees a content-less message.
+    Pulls the activity's ``text`` plus any image/file attachments that expose a
+    resolvable ``contentUrl`` into ``Content`` parts. Bot Framework's inline
+    ``content`` field (e.g. the ``text/html`` rendering Teams attaches alongside
+    ``text``, or an Adaptive Card payload) is *not* a URI, so it is ignored here
+    to avoid mis-parsing it as a URL. If the activity has no usable parts an
+    empty text part is emitted so the caller never sees a content-less message.
     """
     parts: list[Content] = []
     if (text := activity.get("text")) and isinstance(text, str):
@@ -168,10 +171,20 @@ def _parse_activity(activity: Mapping[str, Any]) -> Message:
     for attachment in activity.get("attachments") or []:
         if not isinstance(attachment, Mapping):
             continue
-        url = attachment.get("contentUrl") or attachment.get("content")
+        url = attachment.get("contentUrl")
         content_type = attachment.get("contentType")
-        if isinstance(url, str) and isinstance(content_type, str) and "/" in content_type:
+        if not (isinstance(url, str) and isinstance(content_type, str) and "/" in content_type):
+            continue
+        # contentUrl is occasionally a relative reference or otherwise lacks a
+        # scheme; skip those so one odd attachment can't fail the whole turn.
+        if not urlparse(url).scheme:
+            logger.debug("Skipping attachment with non-absolute contentUrl: %r", url)
+            continue
+        try:
             parts.append(Content.from_uri(uri=url, media_type=content_type))
+        except ContentError:
+            logger.debug("Skipping attachment with unparseable contentUrl: %r", url)
+            continue
 
     if not parts:
         parts.append(Content.from_text(text=""))
