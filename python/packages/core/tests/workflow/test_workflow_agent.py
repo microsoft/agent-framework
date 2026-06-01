@@ -293,6 +293,94 @@ class TestWorkflowAgent:
         # Verify cleanup - pending requests should be cleared after function response handling
         assert len(agent.pending_requests) == 0
 
+    async def test_request_info_resume_after_session_restore_with_checkpoint(self):
+        """Pending request metadata in AgentSession should resume the same request_id after restore."""
+        from agent_framework import InMemoryCheckpointStorage
+
+        simple_executor = SimpleExecutor(id="simple", response_text="SimpleResponse", streaming=False)
+        requesting_executor = RequestingExecutor(id="requester", streaming=False)
+        checkpoint_storage = InMemoryCheckpointStorage()
+
+        workflow = (
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=checkpoint_storage)
+            .add_edge(simple_executor, requesting_executor)
+            .build()
+        )
+        agent = WorkflowAgent(workflow=workflow, name="Request Restore Test Agent")
+        session = AgentSession()
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("Start request", stream=True, session=session):
+            updates.append(update)
+
+        approval_update = next(
+            (
+                update
+                for update in updates
+                if any(content.type == "function_approval_request" for content in update.contents)
+            ),
+            None,
+        )
+        assert approval_update is not None, "Should have received a request_info approval request"
+
+        function_call = next(content for content in approval_update.contents if content.type == "function_call")
+        approval_request = next(
+            content for content in approval_update.contents if content.type == "function_approval_request"
+        )
+        request_id = approval_request.id
+        assert request_id is not None
+        assert function_call.call_id == request_id
+
+        checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
+        checkpoint_with_request = next(
+            (checkpoint for checkpoint in checkpoints if request_id in checkpoint.pending_request_info_events),
+            None,
+        )
+        assert checkpoint_with_request is not None
+
+        serialized_session = session.to_dict()
+        workflow_agent_state = serialized_session["state"].get("workflow_agent", {})
+        pending_state = workflow_agent_state.get("pending_request_info_events", {})
+        assert request_id in pending_state
+
+        restored_session = AgentSession.from_dict(serialized_session)
+
+        restored_simple_executor = SimpleExecutor(id="simple", response_text="SimpleResponse", streaming=False)
+        restored_requesting_executor = RequestingExecutor(id="requester", streaming=False)
+        restored_workflow = (
+            WorkflowBuilder(start_executor=restored_simple_executor, checkpoint_storage=checkpoint_storage)
+            .add_edge(restored_simple_executor, restored_requesting_executor)
+            .build()
+        )
+        restored_agent = WorkflowAgent(workflow=restored_workflow, name="Request Restore Test Agent")
+
+        response_args = WorkflowAgent.RequestInfoFunctionArgs(
+            request_id=request_id,
+            data="User provided answer",
+        ).to_dict()
+        approval_response = Content.from_function_approval_response(
+            approved=True,
+            id=request_id,
+            function_call=Content.from_function_call(
+                call_id=request_id,
+                name=WorkflowAgent.REQUEST_INFO_FUNCTION_NAME,
+                arguments=response_args,
+            ),
+        )
+        response_message = Message(role="user", contents=[approval_response])
+
+        continuation_result = await restored_agent.run(
+            response_message,
+            session=restored_session,
+            checkpoint_id=checkpoint_with_request.checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+        )
+
+        assert isinstance(continuation_result, AgentResponse)
+        response_texts = [message.text for message in continuation_result.messages if message.text]
+        assert any("Request completed with response: User provided answer" in text for text in response_texts)
+        assert len(restored_agent.pending_requests) == 0
+
     def test_workflow_as_agent_method(self) -> None:
         """Test that Workflow.as_agent() creates a properly configured WorkflowAgent."""
         # Create a simple workflow
