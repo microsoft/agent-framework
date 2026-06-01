@@ -30,6 +30,8 @@ iteration of the function-calling loop.
 @tool(approval_mode="never_require")
 def factorial(n: Annotated[int, Field(description="A non-negative integer.")]) -> str:
     """Compute the factorial of n."""
+    if n < 0:
+        return "Error: n must be a non-negative integer."
     result = 1
     for value in range(2, n + 1):
         result *= value
@@ -39,6 +41,8 @@ def factorial(n: Annotated[int, Field(description="A non-negative integer.")]) -
 @tool(approval_mode="never_require")
 def fibonacci(n: Annotated[int, Field(description="The 0-based index in the Fibonacci sequence.")]) -> str:
     """Compute the n-th Fibonacci number."""
+    if n < 0:
+        return "Error: n must be a non-negative integer."
     a, b = 0, 1
     for _ in range(n):
         a, b = b, a + b
