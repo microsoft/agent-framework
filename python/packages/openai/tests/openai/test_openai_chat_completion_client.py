@@ -61,6 +61,19 @@ def test_get_response_is_defined_on_openai_class() -> None:
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
+def test_parse_response_rejects_non_chat_completion_object() -> None:
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+    response: Any = "plain backend error"
+
+    with pytest.raises(ChatClientException) as exc_info:
+        client._parse_response_from_openai(response, options={})
+
+    exception_message = str(exc_info.value)
+    assert "invalid OpenAI Chat Completions API response" in exception_message
+    assert "expected an object with 'choices'" in exception_message
+    assert "plain backend error" in exception_message
+
+
 def test_init_uses_explicit_parameters() -> None:
     signature = inspect.signature(RawOpenAIChatCompletionClient.__init__)
 

@@ -684,6 +684,18 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
     def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> ChatResponse:
         """Parse a response from OpenAI into a ChatResponse."""
+        if not hasattr(response, "choices"):
+            preview = repr(response)
+            if len(preview) > 500:
+                preview = f"{preview[:500]}..."
+            raise ChatClientException(
+                maybe_append_azure_endpoint_guidance(
+                    f"{type(self)} service returned an invalid OpenAI Chat Completions API response: "
+                    f"expected an object with 'choices', got {type(response).__name__}: {preview}",
+                    azure_endpoint=self.azure_endpoint,
+                )
+            )
+
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[Message] = []
         finish_reason: FinishReason | None = None

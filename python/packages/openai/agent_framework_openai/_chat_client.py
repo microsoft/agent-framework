@@ -1992,6 +1992,18 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         options: dict[str, Any],
     ) -> ChatResponse:
         """Parse an OpenAI Responses API response into a ChatResponse."""
+        if not hasattr(response, "output"):
+            preview = repr(response)
+            if len(preview) > 500:
+                preview = f"{preview[:500]}..."
+            raise ChatClientException(
+                maybe_append_azure_endpoint_guidance(
+                    f"{type(self)} service returned an invalid OpenAI Responses API response: "
+                    f"expected an object with 'output', got {type(response).__name__}: {preview}",
+                    azure_endpoint=self.azure_endpoint,
+                )
+            )
+
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
         metadata: dict[str, Any] = response.metadata or {}

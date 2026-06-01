@@ -574,6 +574,33 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
         assert response.model == "test-model"
 
 
+@pytest.mark.parametrize(
+    ("options", "raw_method"),
+    [
+        ({"response_format": OutputStruct}, "parse"),
+        ({}, "create"),
+    ],
+)
+async def test_non_response_payload_raises_actionable_error(options: dict[str, Any], raw_method: str) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    raw_response = MagicMock()
+    raw_response.headers = {}
+    raw_response.parse = MagicMock(return_value="backend returned plain text")
+
+    with (
+        patch.object(client.client.responses, raw_method, return_value=raw_response),
+        pytest.raises(ChatClientException) as exc_info,
+    ):
+        await client.get_response(messages=[Message(role="user", contents=["Hi"])], options=options)
+
+    message = str(exc_info.value)
+    assert "invalid OpenAI Responses API response" in message
+    assert "got str" in message
+    assert "backend returned plain text" in message
+    assert "'str' object has no attribute 'output'" not in message
+
+
 async def test_response_format_dict_parse_path() -> None:
     """Test get_response response_format parsing path for runtime JSON schema mappings."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -3628,6 +3655,19 @@ async def test_service_response_exception_includes_original_error_details() -> N
     exception_message = str(exc_info.value)
     assert "service failed to complete the prompt:" in exception_message
     assert original_error_message in exception_message
+
+
+def test_parse_response_rejects_non_openai_response_object() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    response: Any = "plain backend error"
+
+    with pytest.raises(ChatClientException) as exc_info:
+        client._parse_response_from_openai(response, options={})
+
+    exception_message = str(exc_info.value)
+    assert "invalid OpenAI Responses API response" in exception_message
+    assert "expected an object with 'output'" in exception_message
+    assert "plain backend error" in exception_message
 
 
 async def test_get_response_streaming_with_response_format() -> None:
