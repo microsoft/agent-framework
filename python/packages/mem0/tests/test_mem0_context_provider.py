@@ -193,9 +193,9 @@ class TestBeforeRun:
         assert call_kwargs["user_id"] == "u1"
         assert "filters" not in call_kwargs
 
-    async def test_oss_client_all_scoping_params(self, mock_oss_mem0_client: AsyncMock) -> None:
-        """OSS client with all scoping parameters passes them as direct kwargs."""
-        mock_oss_mem0_client.search.return_value = []
+    async def test_oss_client_splits_user_and_agent_scope(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client searches user and agent buckets independently."""
+        mock_oss_mem0_client.search.side_effect = [[{"memory": "user memory"}], [{"memory": "agent memory"}]]
         provider = Mem0ContextProvider(
             source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
         )
@@ -206,10 +206,11 @@ class TestBeforeRun:
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        call_kwargs = mock_oss_mem0_client.search.call_args.kwargs
-        assert call_kwargs["user_id"] == "u1"
-        assert call_kwargs["agent_id"] == "a1"
-        assert "filters" not in call_kwargs
+        first_call, second_call = mock_oss_mem0_client.search.await_args_list
+        assert first_call.kwargs == {"query": "Hello", "app_id": "app1", "user_id": "u1"}
+        assert second_call.kwargs == {"query": "Hello", "app_id": "app1", "agent_id": "a1"}
+        assert "user memory" in ctx.context_messages["mem0"][0].text  # type: ignore[operator]
+        assert "agent memory" in ctx.context_messages["mem0"][0].text  # type: ignore[operator]
 
     async def test_platform_client_passes_filters_dict(self, mock_mem0_client: AsyncMock) -> None:
         """Platform AsyncMemoryClient should receive scoping params in a filters dict."""
@@ -226,6 +227,46 @@ class TestBeforeRun:
         assert call_kwargs["query"] == "Hello"
         assert "filters" in call_kwargs
         assert call_kwargs["filters"]["user_id"] == "u1"
+
+    async def test_platform_client_splits_user_and_agent_filters(self, mock_mem0_client: AsyncMock) -> None:
+        """Platform client searches user and agent buckets independently."""
+        mock_mem0_client.search.side_effect = [
+            {"results": [{"id": "u", "memory": "user memory"}]},
+            {"results": [{"id": "a", "memory": "agent memory"}]},
+        ]
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        first_call, second_call = mock_mem0_client.search.await_args_list
+        assert first_call.kwargs == {"query": "Hello", "filters": {"app_id": "app1", "user_id": "u1"}}
+        assert second_call.kwargs == {"query": "Hello", "filters": {"app_id": "app1", "agent_id": "a1"}}
+        assert "user memory" in ctx.context_messages["mem0"][0].text  # type: ignore[operator]
+        assert "agent memory" in ctx.context_messages["mem0"][0].text  # type: ignore[operator]
+
+    async def test_split_search_deduplicates_memory_ids(self, mock_mem0_client: AsyncMock) -> None:
+        """The same memory returned from both buckets is added once."""
+        mock_mem0_client.search.side_effect = [
+            {"results": [{"id": "same", "memory": "shared memory"}]},
+            {"results": [{"id": "same", "memory": "shared memory"}]},
+        ]
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        assert ctx.context_messages["mem0"][0].text.count("shared memory") == 1  # type: ignore[union-attr]
 
 
 # -- after_run tests -----------------------------------------------------------
@@ -318,8 +359,8 @@ class TestAfterRun:
         with pytest.raises(ValueError, match="At least one of the filters"):
             await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
-    async def test_stores_with_application_id_metadata(self, mock_mem0_client: AsyncMock) -> None:
-        """application_id is passed in metadata."""
+    async def test_stores_with_application_id_app_id(self, mock_mem0_client: AsyncMock) -> None:
+        """application_id is passed as Mem0's native app_id."""
         provider = Mem0ContextProvider(
             source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", application_id="app1"
         )
@@ -331,7 +372,9 @@ class TestAfterRun:
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        assert mock_mem0_client.add.call_args.kwargs["metadata"] == {"application_id": "app1"}
+        call_kwargs = mock_mem0_client.add.call_args.kwargs
+        assert call_kwargs["app_id"] == "app1"
+        assert "metadata" not in call_kwargs
 
 
 # -- _validate_filters tests --------------------------------------------------

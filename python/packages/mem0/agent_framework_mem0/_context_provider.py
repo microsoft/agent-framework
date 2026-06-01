@@ -106,26 +106,12 @@ class Mem0ContextProvider(ContextProvider):
         if not input_text.strip():
             return
 
-        filters = self._build_filters()
+        memories = []
+        for filters in self._build_search_filter_sets():
+            search_response = await self._search(input_text, filters)
+            memories.extend(self._coerce_search_response(search_response))
 
-        # AsyncMemory (OSS) expects user_id/agent_id/run_id as direct kwargs
-        # AsyncMemoryClient (Platform) expects them in a filters dict
-        search_kwargs: dict[str, Any] = {"query": input_text}
-        if isinstance(self.mem0_client, AsyncMemory):
-            search_kwargs.update(filters)
-        else:
-            search_kwargs["filters"] = filters
-
-        search_response: _MemorySearchResponse_v1_1 | _MemorySearchResponse_v2 = await self.mem0_client.search(  # type: ignore[misc]
-            **search_kwargs,
-        )
-
-        if isinstance(search_response, list):
-            memories = search_response
-        elif isinstance(search_response, dict) and "results" in search_response:
-            memories = search_response["results"]
-        else:
-            memories = [search_response]
+        memories = self._dedupe_memories(memories)
 
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
         if line_separated_memories:
@@ -159,12 +145,10 @@ class Mem0ContextProvider(ContextProvider):
         ]
 
         if messages:
-            await self.mem0_client.add(  # type: ignore[misc]
-                messages=messages,
-                user_id=self.user_id,
-                agent_id=self.agent_id,
-                metadata={"application_id": self.application_id},
-            )
+            add_kwargs: dict[str, Any] = {"messages": messages, "user_id": self.user_id, "agent_id": self.agent_id}
+            if self.application_id:
+                add_kwargs["app_id"] = self.application_id
+            await self.mem0_client.add(**add_kwargs)  # type: ignore[misc]
 
     # -- Internal methods ------------------------------------------------------
 
@@ -183,6 +167,59 @@ class Mem0ContextProvider(ContextProvider):
         if self.application_id:
             filters["app_id"] = self.application_id
         return filters
+
+    def _build_search_filter_sets(self) -> list[dict[str, Any]]:
+        """Build Mem0 search filters.
+
+        Mem0 stores facts in either the user bucket or the agent bucket. Query
+        them separately; a combined user_id+agent_id filter is an empty
+        intersection for those records.
+        """
+        if not (self.user_id and self.agent_id):
+            return [self._build_filters()]
+
+        base: dict[str, Any] = {}
+        if self.application_id:
+            base["app_id"] = self.application_id
+        return [
+            {**base, "user_id": self.user_id},
+            {**base, "agent_id": self.agent_id},
+        ]
+
+    async def _search(
+        self, input_text: str, filters: dict[str, Any]
+    ) -> _MemorySearchResponse_v1_1 | _MemorySearchResponse_v2:
+        # AsyncMemory (OSS) expects user_id/agent_id/app_id as direct kwargs.
+        # AsyncMemoryClient (Platform) expects them in a filters dict.
+        search_kwargs: dict[str, Any] = {"query": input_text}
+        if isinstance(self.mem0_client, AsyncMemory):
+            search_kwargs.update(filters)
+        else:
+            search_kwargs["filters"] = filters
+        return await self.mem0_client.search(**search_kwargs)  # type: ignore[misc,no-any-return]
+
+    @staticmethod
+    def _coerce_search_response(
+        search_response: _MemorySearchResponse_v1_1 | _MemorySearchResponse_v2,
+    ) -> list[dict[str, Any]]:
+        if isinstance(search_response, list):
+            return search_response
+        if isinstance(search_response, dict) and "results" in search_response:
+            return search_response["results"]
+        return [search_response]
+
+    @staticmethod
+    def _dedupe_memories(memories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped = []
+        seen_ids = set()
+        for memory in memories:
+            memory_id = memory.get("id")
+            if memory_id is not None:
+                if memory_id in seen_ids:
+                    continue
+                seen_ids.add(memory_id)
+            deduped.append(memory)
+        return deduped
 
 
 __all__ = ["Mem0ContextProvider"]
