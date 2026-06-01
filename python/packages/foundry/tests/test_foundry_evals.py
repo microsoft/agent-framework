@@ -25,16 +25,25 @@ from agent_framework._evaluation import (
 from agent_framework._workflows._workflow import WorkflowRunResult
 from openai import AsyncOpenAI
 
+from agent_framework_foundry import GeneratedEvaluatorRef
 from agent_framework_foundry._foundry_evals import (
+    _AGENT_EVALUATORS,
+    _BUILTIN_EVALUATORS,
+    _TOOL_EVALUATORS,
     FoundryEvals,
     _build_item_schema,
     _build_testing_criteria,
     _extract_per_evaluator,
     _extract_result_counts,
+    _extract_rubric_scores,
+    _fetch_output_items,
     _filter_tool_evaluators,
+    _poll_eval_run,
     _resolve_default_evaluators,
     _resolve_evaluator,
     _resolve_openai_client,
+    evaluate_foundry_target,
+    evaluate_traces,
 )
 
 
@@ -807,7 +816,6 @@ class TestBuildTestingCriteria:
             assert "tool_definitions" in c["data_mapping"], f"{c['name']} missing tool_definitions"
 
     def test_generated_evaluator_ref_pinned_version(self) -> None:
-        from agent_framework_foundry import GeneratedEvaluatorRef
 
         ref = GeneratedEvaluatorRef(name="my-rubric", version="1")
         criteria = _build_testing_criteria([ref], "gpt-4o", include_data_mapping=True)
@@ -825,7 +833,6 @@ class TestBuildTestingCriteria:
         }
 
     def test_generated_evaluator_ref_display_name_used_as_short(self) -> None:
-        from agent_framework_foundry import GeneratedEvaluatorRef
 
         ref = GeneratedEvaluatorRef(name="my-rubric", version="2", display_name="My Rubric")
         criteria = _build_testing_criteria([ref], "gpt-4o")
@@ -834,7 +841,6 @@ class TestBuildTestingCriteria:
         assert criteria[0]["evaluator_name"] == "my-rubric"
 
     def test_generated_evaluator_ref_tool_definitions_added(self) -> None:
-        from agent_framework_foundry import GeneratedEvaluatorRef
 
         ref = GeneratedEvaluatorRef(name="my-rubric", version="1")
         criteria = _build_testing_criteria(
@@ -849,8 +855,6 @@ class TestBuildTestingCriteria:
     def test_generated_evaluator_ref_unpinned_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         import logging
 
-        from agent_framework_foundry import GeneratedEvaluatorRef
-
         ref = GeneratedEvaluatorRef.latest("my-rubric")
         with caplog.at_level(logging.WARNING, logger="agent_framework_foundry._foundry_evals"):
             criteria = _build_testing_criteria([ref], "gpt-4o")
@@ -859,7 +863,6 @@ class TestBuildTestingCriteria:
         assert any("no pinned version" in r.message for r in caplog.records)
 
     def test_generated_evaluator_ref_mixed_with_builtins(self) -> None:
-        from agent_framework_foundry import GeneratedEvaluatorRef
 
         ref = GeneratedEvaluatorRef(name="my-rubric", version="1")
         criteria = _build_testing_criteria(
@@ -1331,7 +1334,6 @@ class TestFilterToolEvaluators:
             )
 
     def test_preserves_generated_ref_when_no_tools(self) -> None:
-        from agent_framework_foundry import GeneratedEvaluatorRef
 
         ref = GeneratedEvaluatorRef(name="rubric", version="1")
         items = [
@@ -1346,7 +1348,6 @@ class TestFilterToolEvaluators:
         assert "tool_call_accuracy" not in result
 
     def test_generated_ref_alone_does_not_raise(self) -> None:
-        from agent_framework_foundry import GeneratedEvaluatorRef
 
         ref = GeneratedEvaluatorRef(name="rubric", version="1")
         items = [
@@ -2359,7 +2360,6 @@ class TestEvalResultsWithItems:
 
 class TestFetchOutputItems:
     async def test_fetches_and_converts_output_items(self) -> None:
-        from agent_framework_foundry._foundry_evals import _fetch_output_items
 
         # Build mock output items matching the OpenAI SDK schema
         mock_result = MagicMock()
@@ -2421,7 +2421,6 @@ class TestFetchOutputItems:
         assert item.error_code is None
 
     async def test_handles_errored_item(self) -> None:
-        from agent_framework_foundry._foundry_evals import _fetch_output_items
 
         mock_error = MagicMock()
         mock_error.code = "QueryExtractionError"
@@ -2453,7 +2452,6 @@ class TestFetchOutputItems:
         assert len(item.scores) == 0
 
     async def test_handles_api_failure_gracefully(self) -> None:
-        from agent_framework_foundry._foundry_evals import _fetch_output_items
 
         mock_client = MagicMock()
         mock_client.evals.runs.output_items.list = AsyncMock(side_effect=TypeError("API error"))
@@ -2462,7 +2460,6 @@ class TestFetchOutputItems:
         assert items == []
 
     async def test_extracts_rubric_scores_from_dict_sample(self) -> None:
-        from agent_framework_foundry._foundry_evals import _fetch_output_items
 
         mock_result = MagicMock()
         mock_result.name = "my-rubric"
@@ -2504,7 +2501,6 @@ class TestFetchOutputItems:
         assert safety.applicable is False
 
     async def test_no_rubric_scores_when_absent(self) -> None:
-        from agent_framework_foundry._foundry_evals import _fetch_output_items
 
         mock_result = MagicMock()
         mock_result.name = "relevance"
@@ -2529,7 +2525,6 @@ class TestFetchOutputItems:
 
 class TestExtractRubricScores:
     def test_handles_attribute_style_properties(self) -> None:
-        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
 
         rs = MagicMock()
         rs.id = "policy"
@@ -2549,7 +2544,6 @@ class TestExtractRubricScores:
         assert result[0].weight == 2
 
     def test_top_level_rubric_scores_in_dict(self) -> None:
-        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
 
         sample = {"rubric_scores": [{"id": "a", "score": 3, "applicable": True, "weight": 1, "reason": "r"}]}
         result = _extract_rubric_scores(sample)
@@ -2557,14 +2551,12 @@ class TestExtractRubricScores:
         assert result[0].id == "a"
 
     def test_returns_none_when_missing(self) -> None:
-        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
 
         assert _extract_rubric_scores(None) is None
         assert _extract_rubric_scores({}) is None
         assert _extract_rubric_scores({"properties": {}}) is None
 
     def test_skips_malformed_entries(self) -> None:
-        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
 
         sample = {
             "properties": {
@@ -2581,7 +2573,6 @@ class TestExtractRubricScores:
 
     def test_canonical_dimension_scores_key_from_docs(self) -> None:
         """Per the Microsoft Learn docs, runtime output uses ``properties.dimension_scores``."""
-        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
 
         sample = {
             "properties": {
@@ -2611,7 +2602,6 @@ class TestExtractRubricScores:
 
     def test_dimension_scores_via_attribute(self) -> None:
         """Canonical key also resolves when properties exposes ``dimension_scores`` as an attr."""
-        from agent_framework_foundry._foundry_evals import _extract_rubric_scores
 
         rs = MagicMock()
         rs.id = "policy_enforcement"
@@ -2638,7 +2628,6 @@ class TestExtractRubricScores:
 class TestPollEvalRun:
     async def test_timeout_returns_timeout_status(self) -> None:
         """Poll timeout returns EvalResults with status='timeout'."""
-        from agent_framework_foundry._foundry_evals import _poll_eval_run
 
         mock_client = MagicMock()
         mock_pending = MagicMock()
@@ -2652,7 +2641,6 @@ class TestPollEvalRun:
 
     async def test_failed_run_returns_error(self) -> None:
         """Failed run returns EvalResults with error message."""
-        from agent_framework_foundry._foundry_evals import _poll_eval_run
 
         mock_client = MagicMock()
         mock_failed = MagicMock()
@@ -2670,7 +2658,6 @@ class TestPollEvalRun:
 
     async def test_canceled_run_returns_canceled_status(self) -> None:
         """Canceled run returns EvalResults with status='canceled'."""
-        from agent_framework_foundry._foundry_evals import _poll_eval_run
 
         mock_client = MagicMock()
         mock_canceled = MagicMock()
@@ -2695,7 +2682,6 @@ class TestPollEvalRun:
 class TestEvaluateTraces:
     async def test_raises_without_required_args(self) -> None:
         """Raises ValueError when no response_ids, trace_ids, or agent_id given."""
-        from agent_framework_foundry._foundry_evals import evaluate_traces
 
         mock_client = MagicMock()
         with pytest.raises(ValueError, match="Provide at least one of"):
@@ -2706,7 +2692,6 @@ class TestEvaluateTraces:
 
     async def test_response_ids_path(self) -> None:
         """evaluate_traces with response_ids uses the responses API path."""
-        from agent_framework_foundry._foundry_evals import evaluate_traces
 
         mock_client = MagicMock()
 
@@ -2754,7 +2739,6 @@ class TestEvaluateTraces:
 
     async def test_trace_ids_path(self) -> None:
         """evaluate_traces with trace_ids builds azure_ai_traces data source."""
-        from agent_framework_foundry._foundry_evals import evaluate_traces
 
         mock_client = MagicMock()
 
@@ -2794,7 +2778,6 @@ class TestEvaluateTraces:
 class TestEvaluateFoundryTarget:
     async def test_happy_path(self) -> None:
         """evaluate_foundry_target creates eval + run and polls to completion."""
-        from agent_framework_foundry._foundry_evals import evaluate_foundry_target
 
         mock_client = MagicMock()
 
@@ -2930,13 +2913,11 @@ class TestEvaluatorSetConsistency:
     """Verify that _AGENT_EVALUATORS and _TOOL_EVALUATORS are subsets of _BUILTIN_EVALUATORS."""
 
     def test_agent_evaluators_subset(self):
-        from agent_framework_foundry._foundry_evals import _AGENT_EVALUATORS, _BUILTIN_EVALUATORS
 
         diff = _AGENT_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
         assert not diff, f"_AGENT_EVALUATORS has names not in _BUILTIN_EVALUATORS: {diff}"
 
     def test_tool_evaluators_subset(self):
-        from agent_framework_foundry._foundry_evals import _BUILTIN_EVALUATORS, _TOOL_EVALUATORS
 
         diff = _TOOL_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
         assert not diff, f"_TOOL_EVALUATORS has names not in _BUILTIN_EVALUATORS: {diff}"
@@ -2950,7 +2931,6 @@ class TestEvaluatorSetConsistency:
 class TestEvaluateTracesAgentId:
     async def test_agent_id_only_path(self) -> None:
         """evaluate_traces with agent_id only builds azure_ai_traces data source."""
-        from agent_framework_foundry._foundry_evals import evaluate_traces
 
         mock_client = MagicMock()
 
@@ -3008,7 +2988,6 @@ class TestFilterToolEvaluatorsRaises:
 class TestEvaluateFoundryTargetValidation:
     async def test_target_without_type_raises(self) -> None:
         """target dict without 'type' key raises ValueError."""
-        from agent_framework_foundry._foundry_evals import evaluate_foundry_target
 
         mock_client = MagicMock()
         with pytest.raises(ValueError, match="'type' key"):
