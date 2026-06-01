@@ -513,6 +513,9 @@ def _get_exporters_from_env(
     # (which the SDK always treats as a full URL), we must replicate the auto-append
     # ourselves for HTTP when falling back to the base endpoint. For gRPC, the base
     # endpoint is used as-is.
+    traces_endpoint: str | None
+    metrics_endpoint: str | None
+    logs_endpoint: str | None
     if protocol in ("http/protobuf", "http") and base_endpoint:
         base_for_http = base_endpoint.rstrip("/")
         traces_endpoint = traces_endpoint_specific or f"{base_for_http}/v1/traces"
