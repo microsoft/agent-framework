@@ -75,12 +75,12 @@ resources:
   #   authType: AgenticIdentity
   #   audience: "{{ language_mcp_entra_audience }}"
   #   target: "{{ language_mcp_target_url }}"
-  # # - kind: connection
-  # #   name: outlook-mail-conn
-  # #   category: RemoteTool
-  # #   authType: UserEntraToken
-  # #   audience: "{{ outlook_mail_entra_audience }}"
-  # #   target: "{{ outlook_mail_entra_mcp_target }}"
+  # - kind: connection
+  #   name: outlook-mail-conn
+  #   category: RemoteTool
+  #   authType: UserEntraToken
+  #   audience: "{{ outlook_mail_entra_audience }}"
+  #   target: "{{ outlook_mail_entra_mcp_target }}"
   - kind: toolbox
     name: agent-tools
     tools:
@@ -98,11 +98,11 @@ resources:
         server_label: github
         project_connection_id: github-mcp-pat-conn # use `github-mcp-oauth-conn` for OAuth2 authentication
         require_approval: "never"
-      - type: mcp
-        # This MCP tool uses the Azure Language MCP server with agent identity for authentication
-        server_label: language-mcp
-        project_connection_id: language-mcp-conn
-        require_approval: "never"
+      # - type: mcp
+      #   # This MCP tool uses the Azure Language MCP server with agent identity for authentication
+      #   server_label: language-mcp
+      #   project_connection_id: language-mcp-conn
+      #   require_approval: "never"
       # - type: mcp
       #   server_label: outlook-mail
       #   project_connection_id: outlook-mail-conn
