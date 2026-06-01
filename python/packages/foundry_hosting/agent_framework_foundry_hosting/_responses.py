@@ -274,20 +274,13 @@ class ConsentError:
 
 
 def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
-    """Return the consent URL when ``exc`` wraps a Foundry MCP gateway consent error.
-
-    The Agent Framework MCP layer surfaces gateway consent failures by wrapping the underlying
-    ``McpError`` inside an :class:`AgentFrameworkException` (typically a ``ToolExecutionException``
-    raised from ``MCPStreamableHTTPTool.__aenter__``). This helper inspects ``exc.args`` for a
-    wrapped ``McpError`` whose ``error.code`` is :data:`CONSENT_ERROR_CODE`; when found, the
-    consent link the gateway returned in ``error.message`` is returned. Returns ``None`` for
-    anything else, so callers can do ``if (url := consent_url_from_error(ex)) is None: raise``.
+    """Return the consent URLs when ``exc`` wraps Foundry MCP gateway consent errors.
 
     Args:
         exc: The exception to inspect.
 
     Returns:
-        The consent URL if ``exc`` wraps a consent ``McpError``, otherwise ``None``.
+        The consent URL(s) extracted from the error, or ``None`` if no consent error was found.
     """
     inner_exception = next((arg for arg in exc.args if isinstance(arg, McpError)), None)
     if inner_exception is not None and inner_exception.error.code == CONSENT_ERROR_CODE:
