@@ -281,14 +281,12 @@ internal static class OutputConverter
 
                         var outputText = EncodeFunctionResultAsJsonStringPayload(functionResult.Result);
 
-                        var itemId = GenerateItemId("fc");
-                        var outputItem = new OutputItemFunctionToolCallOutput(
+                        foreach (var evt in stream.OutputItemFunctionCallOutput(
                             functionResult.CallId,
-                            BinaryData.FromString(outputText));
-
-                        var outputBuilder = stream.AddOutputItem<OutputItemFunctionToolCallOutput>(itemId);
-                        yield return outputBuilder.EmitAdded(outputItem);
-                        yield return outputBuilder.EmitDone(outputItem);
+                            BinaryData.FromString(outputText)))
+                        {
+                            yield return evt;
+                        }
                         break;
                     }
 
