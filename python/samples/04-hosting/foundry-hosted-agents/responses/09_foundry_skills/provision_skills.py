@@ -28,6 +28,7 @@ import zipfile
 from pathlib import Path
 
 from azure.ai.projects.aio import AIProjectClient
+from azure.ai.projects.models import CreateSkillVersionFromFilesBody
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -68,8 +69,13 @@ async def main() -> None:
             name = skill_md.parent.name
             print(f"Provisioning skill '{name}' from {skill_md.relative_to(SKILLS_DIR.parent)}...")
             await _delete_skill_if_exists(project, name)
-            imported = await project.beta.skills.create_from_package(_zip_skill_md(skill_md))
-            print(f"  Imported skill '{imported.name}' (id={imported.skill_id}, has_blob={imported.has_blob}).")
+            imported = await project.beta.skills.create_from_files(
+                name,
+                content=CreateSkillVersionFromFilesBody(
+                    files=[(f"{name}.zip", _zip_skill_md(skill_md), "application/zip")]
+                ),
+            )
+            print(f"  Imported skill '{imported.name}' (id={imported.skill_id}, version={imported.version}).")
 
         print("Verifying skills via project.beta.skills.list()...")
         listed = {skill.name: skill async for skill in project.beta.skills.list()}
@@ -79,8 +85,8 @@ async def main() -> None:
             if skill is None:
                 raise RuntimeError(f"Skill '{name}' was imported but is not present in the project listing.")
             print(
-                f"  OK '{skill.name}': id={skill.skill_id}, "
-                f"description={skill.description!r}, has_blob={skill.has_blob}"
+                f"  OK '{skill.name}': id={skill.id}, "
+                f"description={skill.description!r}, default_version={skill.default_version}"
             )
 
     print("Done.")

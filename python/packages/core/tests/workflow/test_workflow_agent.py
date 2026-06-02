@@ -1648,6 +1648,7 @@ class _ToolApprovalMockAgent(SupportsAgentRun):
         session: AgentSession | None = ...,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
+
     @overload
     def run(
         self,
@@ -1908,6 +1909,61 @@ class TestWorkflowAgentToolApproval:
         # The final assistant message reflects the resumption.
         final_text = " ".join(m.text or "" for m in final_result.messages)
         assert "done" in final_text
+        assert approval_id in final_text
+
+    async def test_tool_approval_response_rejected_resumes_agent(self) -> None:
+        """Rejection path: ``approved=False`` is forwarded to the inner agent and clears the pending request.
+
+        The WorkflowAgent must route a rejection response back to the paused
+        ``AgentExecutor`` exactly the same way as an approval — only the
+        ``approved`` flag differs. The inner agent decides what to do with it.
+        """
+        approval_id = "approval-reject-1"
+        mock_agent = _ToolApprovalMockAgent(
+            name="approval-reject-agent",
+            tool_name="delete_file",
+            tool_arguments={"path": "/tmp/x"},
+            approval_request_ids=[approval_id],
+        )
+
+        @executor
+        async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+            await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+
+        workflow = WorkflowBuilder(start_executor=start).add_edge(start, mock_agent).build()
+        agent = WorkflowAgent(workflow=workflow, name="Approval Reject Agent")
+
+        first_result = await agent.run("delete it")
+        approval = self._find_approval_request(
+            [c for m in first_result.messages for c in m.contents],
+            tool_name="delete_file",
+        )
+        assert approval is not None
+        assert mock_agent.run_count == 1
+
+        # Reject the tool invocation.
+        approval_response = approval.to_function_approval_response(approved=False)  # type: ignore[attr-defined]
+        response_message = Message(role="user", contents=[approval_response])
+
+        final_result = await agent.run(response_message)
+        assert isinstance(final_result, AgentResponse)
+
+        # The inner agent must have been resumed and seen ``approved=False``.
+        assert mock_agent.run_count == 2
+        approvals_seen = [
+            c for m in mock_agent.last_run_messages for c in m.contents if c.type == "function_approval_response"
+        ]
+        assert len(approvals_seen) == 1
+        assert approvals_seen[0].id == approval_id  # type: ignore[attr-defined]
+        assert approvals_seen[0].approved is False  # type: ignore[attr-defined]
+
+        # Pending approval cleared regardless of approve/reject.
+        pending = await workflow._runner_context.get_pending_request_info_events()
+        assert approval_id not in pending
+
+        # The final assistant message reflects the rejection.
+        final_text = " ".join(m.text or "" for m in final_result.messages)
+        assert "approved=False" in final_text
         assert approval_id in final_text
 
     async def test_tool_approval_request_id_matches_pending_request(self) -> None:
