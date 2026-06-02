@@ -704,6 +704,34 @@ public class OutputConverterTests
         Assert.Equal("[{\"id\":1}]", inner);
     }
 
+    // K-07: Regression guard for issue #6245.
+    // The old code used the 2-arg OutputItemFunctionToolCallOutput constructor, which leaves the
+    // Id property null (get-only). A null id causes the Responses API storage layer to reject the
+    // function_call_output with HTTP 500. The fix uses the ResponseEventStream convenience method
+    // OutputItemFunctionCallOutput(), which generates a proper "fco_..." id via IdGenerator.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultContent_EmittedOutputItemHasNonNullIdAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "tool result")] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        // Id must not be null — a null id causes HTTP 500 on persistence.
+        Assert.NotNull(output.Id);
+        Assert.NotEmpty(output.Id);
+        // The convenience method uses IdGenerator.NewFunctionCallOutputItemId(), which produces
+        // ids with the "fco_" prefix. Verify the correct prefix is used (not "fc_", which was
+        // the wrong prefix used by the old GenerateItemId("fc") call).
+        Assert.StartsWith("fco_", output.Id);
+    }
+
     // L-01
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_ExecutorInvokedEvent_EmitsWorkflowActionItemAsync()
