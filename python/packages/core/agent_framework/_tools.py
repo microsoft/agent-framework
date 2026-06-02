@@ -1492,7 +1492,7 @@ async def _auto_invoke_function(
         runtime_kwargs["session"] = invocation_session
     try:
         if not cast(bool, getattr(tool, "_schema_supplied", False)) and tool.input_model is not None:
-            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_none=False)
+            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_unset=True, exclude_none=False)
         else:
             args = dict(parsed_args)
         args = _validate_arguments_against_schema(

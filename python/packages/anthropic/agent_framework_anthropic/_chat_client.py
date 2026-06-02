@@ -698,8 +698,8 @@ class RawAnthropicClient(
         as Anthropic expects system instructions as a separate parameter.
 
         Anthropic's API requires that the conversation ends with a user message.
-        If the last message is from the assistant, its role is changed to user
-        to satisfy this constraint.
+        If the last message is from the assistant, a synthetic user turn is
+        appended to satisfy this constraint.
         """
         # first system message is passed as instructions
         if messages and isinstance(messages[0], Message) and messages[0].role == "system":
