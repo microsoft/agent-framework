@@ -224,6 +224,9 @@ class OtelAttr(str, Enum):
     LLM_OPERATION_DURATION = "gen_ai.client.operation.duration"
     LLM_TOKEN_USAGE = "gen_ai.client.token.usage"  # nosec B105 # noqa: S105 - OpenTelemetry metric name, not a secret.
 
+    # Usage attribute prefix for dynamically constructed span attributes
+    GEN_AI_USAGE_PREFIX = "gen_ai.usage."
+
     # Agent attributes
     AGENT_NAME = "gen_ai.agent.name"
     AGENT_DESCRIPTION = "gen_ai.agent.description"
@@ -2379,14 +2382,14 @@ def _get_response_attributes(
         attributes[OtelAttr.RESPONSE_MODEL] = model
     if capture_usage and (usage := response.usage_details):
         for key, value in usage.items():
-            if not isinstance(value, int):
+            if not isinstance(value, int) or isinstance(value, bool):
                 continue
             if key == "input_token_count":
                 attributes[OtelAttr.INPUT_TOKENS] = value
             elif key == "output_token_count":
                 attributes[OtelAttr.OUTPUT_TOKENS] = value
             else:
-                attributes[f"gen_ai.usage.{key}"] = value
+                attributes[f"{OtelAttr.GEN_AI_USAGE_PREFIX}{key}"] = value
     return attributes
 
 
