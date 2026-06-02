@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -1641,6 +1642,37 @@ class TestFunctionalWorkflowAgentHITL:
                     approval_found = True
                     break
         assert approval_found, "expected FunctionApprovalRequestContent in agent response"
+
+    async def test_request_info_dataclass_arguments_are_serialized_for_agent(self):
+        @dataclass
+        class HandoffRequest:
+            target_agent: str
+            reason: str
+
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(
+                HandoffRequest(target_agent=x, reason="overflow"),
+                response_type=str,
+                request_id="rid-1",
+            )
+            return f"got:{answer}"
+
+        agent = wf.as_agent()
+        response = await agent.run("helper")
+
+        function_call_arguments = None
+        for message in response.messages:
+            for content in message.contents:
+                if getattr(content, "type", None) == "function_approval_request" and content.function_call is not None:
+                    function_call_arguments = content.function_call.arguments
+                    break
+
+        assert function_call_arguments == {
+            "request_id": "rid-1",
+            "data": {"target_agent": "helper", "reason": "overflow"},
+        }
+        assert json.loads(json.dumps(function_call_arguments)) == function_call_arguments
 
     async def test_resume_via_agent_responses_kwarg(self):
         @workflow

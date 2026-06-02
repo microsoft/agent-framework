@@ -77,36 +77,12 @@ public class TextScrollPanel : ConsoleReactiveComponent<TextScrollPanelProps, Te
             Console.Write(props.Items[i]);
         }
 
-        // Calculate the offset from bottom for the start of the new last item
-        int lastItemLines = CountLines(props.Items[^1]);
+        // Calculate the offset from bottom for the start of the new last item,
+        // accounting for terminal line wrapping at the available width.
+        int lastItemLines = AnsiEscapes.CountPhysicalLines(props.Items[^1], props.Width);
         this._lastItemOffsetFromBottom = lastItemLines > 0 ? lastItemLines - 1 : 0;
 
         // Update rendered count
         this._renderedCount = props.Items.Count;
-    }
-
-    private static int CountLines(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return 0;
-        }
-
-        int count = 1;
-        for (int i = 0; i < text.Length; i++)
-        {
-            if (text[i] == '\n')
-            {
-                count++;
-            }
-        }
-
-        // If text ends with a newline, don't count the trailing empty line
-        if (text[text.Length - 1] == '\n')
-        {
-            count--;
-        }
-
-        return count;
     }
 }
