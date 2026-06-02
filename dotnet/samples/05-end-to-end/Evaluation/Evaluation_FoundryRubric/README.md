@@ -6,8 +6,6 @@ scoring dimensions you define for your domain; agent-framework references them b
 version, mixes them with built-in evaluators, and exposes per-dimension scores you can gate
 CI on.
 
-See the [rubric evaluator documentation](https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-evaluators/rubric-evaluators).
-
 ## What this sample demonstrates
 
 - Connecting to a pre-existing Foundry agent (`AgentAdministrationClient.GetAgentAsync`).

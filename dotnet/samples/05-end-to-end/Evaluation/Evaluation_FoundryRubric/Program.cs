@@ -8,8 +8,6 @@
 // authored in the Foundry portal (or via the dedicated SDK / REST surface) and referenced
 // here by name and version.
 //
-// See: https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-evaluators/rubric-evaluators
-//
 // Prerequisites:
 //   - An Azure AI Foundry project with a deployed model.
 //   - A registered Foundry agent in that project (the rubric was created against this agent).
@@ -27,9 +25,9 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using FoundryEvals = Microsoft.Agents.AI.Foundry.FoundryEvals;
 
-string projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+string projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT_3")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL")
+string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL_3")
     ?? throw new InvalidOperationException("FOUNDRY_MODEL is not set.");
 string agentName = Environment.GetEnvironmentVariable("FOUNDRY_AGENT_NAME")
     ?? throw new InvalidOperationException("FOUNDRY_AGENT_NAME is not set.");
