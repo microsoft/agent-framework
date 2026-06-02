@@ -67,6 +67,8 @@ public sealed class FoundryEvals : IAgentEvaluator
     {
         ArgumentNullException.ThrowIfNull(projectClient);
         ArgumentException.ThrowIfNullOrWhiteSpace(model);
+        ArgumentNullException.ThrowIfNull(evaluators);
+        EnsureAllSpecsValid(evaluators, nameof(evaluators));
 
         this._evaluationClient = projectClient.GetProjectOpenAIClient().GetEvaluationClient();
         this._model = model;
@@ -125,6 +127,81 @@ public sealed class FoundryEvals : IAgentEvaluator
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeoutSeconds, 0);
         this._pollIntervalSeconds = pollIntervalSeconds;
         this._timeoutSeconds = timeoutSeconds;
+    }
+
+    // -----------------------------------------------------------------------
+    // string[] constructor overloads (source-compat with older API that took
+    // `params string[] evaluators` before FoundryEvaluatorSpec was introduced).
+    // `params` is intentionally omitted to avoid overload ambiguity with the
+    // spec-based ctors at zero-args; individual string literals still resolve
+    // through `params FoundryEvaluatorSpec[]` via implicit conversion.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FoundryEvals"/> class using built-in evaluator
+    /// names. Preserves source compatibility for callers that pass a <see cref="string"/> array.
+    /// </summary>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
+    /// <param name="evaluators">Built-in evaluator names (for example <see cref="Relevance"/>).</param>
+    public FoundryEvals(AIProjectClient projectClient, string model, string[] evaluators)
+        : this(projectClient, model, ToSpecs(evaluators))
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FoundryEvals"/> class with a splitter and
+    /// built-in evaluator names.
+    /// </summary>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
+    /// <param name="splitter">Default conversation splitter for multi-turn conversations.</param>
+    /// <param name="evaluators">Built-in evaluator names.</param>
+    public FoundryEvals(
+        AIProjectClient projectClient,
+        string model,
+        IConversationSplitter? splitter,
+        string[] evaluators)
+        : this(projectClient, model, splitter, ToSpecs(evaluators))
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FoundryEvals"/> class with full configuration
+    /// and built-in evaluator names.
+    /// </summary>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
+    /// <param name="splitter">Default conversation splitter for multi-turn conversations.</param>
+    /// <param name="pollIntervalSeconds">Seconds between status polls.</param>
+    /// <param name="timeoutSeconds">Maximum seconds to wait for completion.</param>
+    /// <param name="evaluators">Built-in evaluator names.</param>
+    public FoundryEvals(
+        AIProjectClient projectClient,
+        string model,
+        IConversationSplitter? splitter,
+        double pollIntervalSeconds,
+        double timeoutSeconds,
+        string[] evaluators)
+        : this(projectClient, model, splitter, pollIntervalSeconds, timeoutSeconds, ToSpecs(evaluators))
+    {
+    }
+
+    private static FoundryEvaluatorSpec[] ToSpecs(string[]? evaluators)
+    {
+        if (evaluators is null || evaluators.Length == 0)
+        {
+            return [];
+        }
+
+        var specs = new FoundryEvaluatorSpec[evaluators.Length];
+        for (int i = 0; i < evaluators.Length; i++)
+        {
+            specs[i] = evaluators[i]
+                ?? throw new ArgumentException($"Evaluator name at index {i} is null.", nameof(evaluators));
+        }
+
+        return specs;
     }
 
     // -----------------------------------------------------------------------
@@ -275,6 +352,47 @@ public sealed class FoundryEvals : IAgentEvaluator
     // -----------------------------------------------------------------------
 
     /// <summary>
+    /// Source-compat overload of <see cref="EvaluateTracesAsync(AIProjectClient, string, IEnumerable{string}, IEnumerable{string}, string, int, FoundryEvaluatorSpec[], string, double, double, CancellationToken)"/>
+    /// that accepts a <see cref="string"/> array of built-in evaluator names.
+    /// </summary>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
+    /// <param name="responseIds">Evaluate specific Responses API response IDs.</param>
+    /// <param name="traceIds">Evaluate specific OTel trace IDs from App Insights.</param>
+    /// <param name="agentId">Filter traces by agent ID (used with <paramref name="lookbackHours"/>).</param>
+    /// <param name="lookbackHours">Hours of trace history to evaluate.</param>
+    /// <param name="evaluators">Built-in evaluator names. Each is wrapped via <see cref="FoundryEvaluatorSpec(string)"/>.</param>
+    /// <param name="evalName">Display name for the evaluation.</param>
+    /// <param name="pollIntervalSeconds">Seconds between status polls.</param>
+    /// <param name="timeoutSeconds">Maximum seconds to wait for completion.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Evaluation results with status, report URL, and per-item details.</returns>
+    public static Task<AgentEvaluationResults> EvaluateTracesAsync(
+        AIProjectClient projectClient,
+        string model,
+        IEnumerable<string>? responseIds,
+        IEnumerable<string>? traceIds,
+        string? agentId,
+        int lookbackHours,
+        string[]? evaluators,
+        string evalName = "Agent Framework Trace Eval",
+        double pollIntervalSeconds = 5.0,
+        double timeoutSeconds = 300.0,
+        CancellationToken cancellationToken = default)
+        => EvaluateTracesAsync(
+            projectClient,
+            model,
+            responseIds,
+            traceIds,
+            agentId,
+            lookbackHours,
+            ToSpecs(evaluators) is { Length: > 0 } specs ? specs : null,
+            evalName,
+            pollIntervalSeconds,
+            timeoutSeconds,
+            cancellationToken);
+
+    /// <summary>
     /// Evaluates agent behavior from Responses API response IDs, OTel traces, or agent activity.
     /// </summary>
     /// <remarks>
@@ -331,6 +449,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         FoundryEvaluatorSpec[] resolvedEvaluators = evaluators is { Length: > 0 }
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
+        EnsureAllSpecsValid(resolvedEvaluators, nameof(evaluators));
 
         // Create the evaluation definition with the appropriate data source scenario
         object dataSourceConfig;
@@ -438,6 +557,41 @@ public sealed class FoundryEvals : IAgentEvaluator
     }
 
     /// <summary>
+    /// Source-compat overload of <see cref="EvaluateFoundryTargetAsync(AIProjectClient, string, IDictionary{string, object}, IEnumerable{string}, FoundryEvaluatorSpec[], string, double, double, CancellationToken)"/>
+    /// that accepts a <see cref="string"/> array of built-in evaluator names.
+    /// </summary>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
+    /// <param name="target">Target configuration (must include a "type" key).</param>
+    /// <param name="testQueries">Queries for Foundry to send to the target.</param>
+    /// <param name="evaluators">Built-in evaluator names. Each is wrapped via <see cref="FoundryEvaluatorSpec(string)"/>.</param>
+    /// <param name="evalName">Display name for the evaluation.</param>
+    /// <param name="pollIntervalSeconds">Seconds between status polls.</param>
+    /// <param name="timeoutSeconds">Maximum seconds to wait for completion.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Evaluation results with status, report URL, and per-item details.</returns>
+    public static Task<AgentEvaluationResults> EvaluateFoundryTargetAsync(
+        AIProjectClient projectClient,
+        string model,
+        IDictionary<string, object> target,
+        IEnumerable<string> testQueries,
+        string[]? evaluators,
+        string evalName = "Agent Framework Target Eval",
+        double pollIntervalSeconds = 5.0,
+        double timeoutSeconds = 300.0,
+        CancellationToken cancellationToken = default)
+        => EvaluateFoundryTargetAsync(
+            projectClient,
+            model,
+            target,
+            testQueries,
+            ToSpecs(evaluators) is { Length: > 0 } specs ? specs : null,
+            evalName,
+            pollIntervalSeconds,
+            timeoutSeconds,
+            cancellationToken);
+
+    /// <summary>
     /// Evaluates a Foundry-registered agent or model deployment.
     /// </summary>
     /// <remarks>
@@ -487,6 +641,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         FoundryEvaluatorSpec[] resolvedEvaluators = evaluators is { Length: > 0 }
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
+        EnsureAllSpecsValid(resolvedEvaluators, nameof(evaluators));
 
         var createEvalPayload = new WireCreateEvalRequest
         {
@@ -1094,6 +1249,25 @@ public sealed class FoundryEvals : IAgentEvaluator
             : throw new ArgumentException(
                 "All configured evaluators require tool definitions, but no tool calls were found in the eval items. "
                 + $"Tool evaluators: {string.Join(", ", evaluators.Select(e => e.ToString()))}. Either add tool call content to your EvalItems or remove tool-type evaluators.");
+    }
+
+    /// <summary>
+    /// Validates every spec in <paramref name="evaluators"/> — defensively guards against
+    /// <c>default(FoundryEvaluatorSpec)</c> values that would otherwise NRE deep in the
+    /// dispatch pipeline (e.g. on <c>spec.BuiltinName!</c>).
+    /// </summary>
+    internal static void EnsureAllSpecsValid(FoundryEvaluatorSpec[] evaluators, string paramName)
+    {
+        for (int i = 0; i < evaluators.Length; i++)
+        {
+            if (!evaluators[i].IsValid)
+            {
+                throw new ArgumentException(
+                    $"Invalid {nameof(FoundryEvaluatorSpec)} at index {i}: must be constructed with either a built-in " +
+                    $"evaluator name or a {nameof(GeneratedEvaluatorRef)}. The default struct value is not a valid spec.",
+                    paramName);
+            }
+        }
     }
 
     private static bool HasToolEvaluator(FoundryEvaluatorSpec[] evaluators)

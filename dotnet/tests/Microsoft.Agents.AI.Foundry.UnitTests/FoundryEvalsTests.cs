@@ -195,4 +195,60 @@ public sealed class FoundryEvalsTests
         Assert.False(result[0].Applicable);
         Assert.Null(result[0].Score);
     }
+
+    // ---------------------------------------------------------------
+    // FoundryEvaluatorSpec validation tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void FoundryEvaluatorSpec_Default_IsNotValid()
+    {
+        var spec = default(FoundryEvaluatorSpec);
+        Assert.False(spec.IsValid);
+        Assert.Null(spec.BuiltinName);
+        Assert.Null(spec.GeneratedRef);
+    }
+
+    [Fact]
+    public void FoundryEvaluatorSpec_EnsureValid_DefaultThrows()
+    {
+        var spec = default(FoundryEvaluatorSpec);
+        var ex = Assert.Throws<ArgumentException>(() => spec.EnsureValid("evaluators"));
+        Assert.Equal("evaluators", ex.ParamName);
+    }
+
+    [Fact]
+    public void FoundryEvaluatorSpec_EnsureValid_BuiltinPasses()
+    {
+        var spec = (FoundryEvaluatorSpec)"relevance";
+        spec.EnsureValid(); // does not throw
+    }
+
+    [Fact]
+    public void FoundryEvaluatorSpec_EnsureValid_RubricPasses()
+    {
+        var spec = (FoundryEvaluatorSpec)new GeneratedEvaluatorRef("r", "1");
+        spec.EnsureValid(); // does not throw
+    }
+
+    [Fact]
+    public void EnsureAllSpecsValid_DefaultEntry_ThrowsWithParamName()
+    {
+        var specs = new FoundryEvaluatorSpec[] { "relevance", default };
+        var ex = Assert.Throws<ArgumentException>(
+            () => FoundryEvals.EnsureAllSpecsValid(specs, "evaluators"));
+        Assert.Equal("evaluators", ex.ParamName);
+        Assert.Contains("index 1", ex.Message);
+    }
+
+    [Fact]
+    public void EnsureAllSpecsValid_AllValid_DoesNotThrow()
+    {
+        var specs = new FoundryEvaluatorSpec[]
+        {
+            "relevance",
+            new GeneratedEvaluatorRef("policy", "1"),
+        };
+        FoundryEvals.EnsureAllSpecsValid(specs, "evaluators");
+    }
 }

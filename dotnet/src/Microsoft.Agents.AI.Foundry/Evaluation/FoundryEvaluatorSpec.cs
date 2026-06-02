@@ -63,6 +63,29 @@ public readonly struct FoundryEvaluatorSpec : IEquatable<FoundryEvaluatorSpec>
     /// <summary>Gets whether this spec references a generated rubric evaluator.</summary>
     public bool IsRubric => this.GeneratedRef is not null;
 
+    /// <summary>Gets whether this spec is valid (i.e. references either a built-in or a rubric).</summary>
+    /// <remarks>
+    /// Because <see cref="FoundryEvaluatorSpec"/> is a struct, <c>default(FoundryEvaluatorSpec)</c>
+    /// is a syntactically-valid but semantically-invalid value (both <see cref="BuiltinName"/> and
+    /// <see cref="GeneratedRef"/> are <see langword="null"/>). Call <see cref="EnsureValid"/> at
+    /// API boundaries to fail fast instead of NRE-ing later.
+    /// </remarks>
+    public bool IsValid => this.BuiltinName is not null || this.GeneratedRef is not null;
+
+    /// <summary>Validates that this spec references either a built-in evaluator or a rubric.</summary>
+    /// <param name="paramName">Parameter name used in the thrown <see cref="ArgumentException"/>.</param>
+    /// <exception cref="ArgumentException">Thrown when neither <see cref="BuiltinName"/> nor <see cref="GeneratedRef"/> is set.</exception>
+    public void EnsureValid(string? paramName = null)
+    {
+        if (!this.IsValid)
+        {
+            throw new ArgumentException(
+                $"Invalid {nameof(FoundryEvaluatorSpec)}: must be constructed with either a built-in evaluator name " +
+                $"or a {nameof(GeneratedEvaluatorRef)}. The default struct value is not a valid spec.",
+                paramName);
+        }
+    }
+
     /// <summary>Implicit conversion from a built-in evaluator name.</summary>
     public static implicit operator FoundryEvaluatorSpec(string builtinName) => new(builtinName);
 
