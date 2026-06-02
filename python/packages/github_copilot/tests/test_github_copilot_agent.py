@@ -22,7 +22,7 @@ from agent_framework import (
     Message,
 )
 from agent_framework.exceptions import AgentException
-from copilot.generated.session_events import (
+from copilot.session_events import (
     Data,
     SessionEvent,
     SessionEventType,
@@ -308,27 +308,27 @@ class TestGitHubCopilotAgentLifecycle:
             )
             await agent.start()
 
-            call_args = MockClient.call_args[0][0]
-            assert call_args.cli_path == "/custom/path"
-            assert call_args.log_level == "debug"
+            kwargs = MockClient.call_args.kwargs
+            assert kwargs["connection"].path == "/custom/path"
+            assert kwargs["log_level"] == "debug"
 
-    async def test_start_passes_copilot_home_to_subprocess_config(self) -> None:
-        """Test that copilot_home is passed through to SubprocessConfig."""
+    async def test_start_passes_base_directory_to_client(self) -> None:
+        """Test that base_directory is passed through to CopilotClient."""
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
             MockClient.return_value = mock_client
 
             agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
-                default_options={"copilot_home": "/custom/copilot/home"}
+                default_options={"base_directory": "/custom/copilot/home"}
             )
             await agent.start()
 
-            call_args = MockClient.call_args[0][0]
-            assert call_args.copilot_home == "/custom/copilot/home"
+            kwargs = MockClient.call_args.kwargs
+            assert kwargs["base_directory"] == "/custom/copilot/home"
 
-    async def test_start_copilot_home_not_set_when_unspecified(self) -> None:
-        """Test that copilot_home is not included in SubprocessConfig when not specified."""
+    async def test_start_base_directory_not_set_when_unspecified(self) -> None:
+        """Test that base_directory is not included in client kwargs when not specified."""
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
@@ -337,14 +337,14 @@ class TestGitHubCopilotAgentLifecycle:
             agent = GitHubCopilotAgent()
             await agent.start()
 
-            call_args = MockClient.call_args[0][0]
-            assert call_args.copilot_home is None
+            kwargs = MockClient.call_args.kwargs
+            assert "base_directory" not in kwargs
 
-    async def test_start_copilot_home_from_env_variable(self) -> None:
-        """Test that copilot_home can be set via GITHUB_COPILOT_COPILOT_HOME env variable."""
+    async def test_start_base_directory_from_env_variable(self) -> None:
+        """Test that base_directory can be set via GITHUB_COPILOT_BASE_DIRECTORY env variable."""
         with (
             patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
-            patch.dict("os.environ", {"GITHUB_COPILOT_COPILOT_HOME": "/env/copilot/home"}),
+            patch.dict("os.environ", {"GITHUB_COPILOT_BASE_DIRECTORY": "/env/copilot/home"}),
         ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
@@ -353,8 +353,8 @@ class TestGitHubCopilotAgentLifecycle:
             agent = GitHubCopilotAgent()
             await agent.start()
 
-            call_args = MockClient.call_args[0][0]
-            assert call_args.copilot_home == "/env/copilot/home"
+            kwargs = MockClient.call_args.kwargs
+            assert kwargs["base_directory"] == "/env/copilot/home"
 
 
 class TestGitHubCopilotAgentRun:
@@ -1053,11 +1053,11 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_session: MagicMock,
     ) -> None:
         """Test that resumed session config includes tools and permission handler."""
-        from copilot.generated.session_events import PermissionRequest
-        from copilot.session import PermissionRequestResult
+        from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
+        from copilot.session_events import PermissionRequest
 
         def my_handler(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
-            return PermissionRequestResult(kind="approved")
+            return PermissionDecisionApproveOnce()
 
         def my_tool(arg: str) -> str:
             """A test tool."""
@@ -1876,13 +1876,14 @@ class TestGitHubCopilotAgentPermissions:
 
     def test_permission_handler_set_when_provided(self) -> None:
         """Test that a handler is set when on_permission_request is provided."""
-        from copilot.generated.session_events import PermissionRequest
-        from copilot.session import PermissionRequestResult
+        from copilot.generated.rpc import PermissionDecisionDeniedInteractivelyByUser
+        from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
+        from copilot.session_events import PermissionRequest
 
         def approve_shell(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
             if request.kind == "shell":
-                return PermissionRequestResult(kind="approved")
-            return PermissionRequestResult(kind="denied-interactively-by-user")
+                return PermissionDecisionApproveOnce()
+            return PermissionDecisionDeniedInteractivelyByUser()
 
         agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
             default_options={"on_permission_request": approve_shell}
@@ -1895,13 +1896,14 @@ class TestGitHubCopilotAgentPermissions:
         mock_session: MagicMock,
     ) -> None:
         """Test that session config includes permission handler when provided."""
-        from copilot.generated.session_events import PermissionRequest
-        from copilot.session import PermissionRequestResult
+        from copilot.generated.rpc import PermissionDecisionDeniedInteractivelyByUser
+        from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
+        from copilot.session_events import PermissionRequest
 
         def approve_shell_read(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
             if request.kind in ("shell", "read"):
-                return PermissionRequestResult(kind="approved")
-            return PermissionRequestResult(kind="denied-interactively-by-user")
+                return PermissionDecisionApproveOnce()
+            return PermissionDecisionDeniedInteractivelyByUser()
 
         agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
             client=mock_client,

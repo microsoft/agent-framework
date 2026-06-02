@@ -37,9 +37,10 @@ from agent_framework.exceptions import AgentException
 from agent_framework.observability import AgentTelemetryLayer
 
 try:
-    from copilot import CopilotClient, CopilotSession, SubprocessConfig
-    from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
+    from copilot import CopilotClient, CopilotSession, RuntimeConnection
+    from copilot.generated.rpc import PermissionDecisionUserNotAvailable
     from copilot.session import MCPServerConfig, PermissionRequestResult, ProviderConfig, SystemMessageConfig
+    from copilot.session_events import PermissionRequest, SessionEvent, SessionEventType
     from copilot.tools import Tool as CopilotTool
     from copilot.tools import ToolInvocation, ToolResult
 except ImportError as _copilot_import_error:
@@ -121,7 +122,7 @@ def _deny_all_permissions(
     _invocation: dict[str, str],
 ) -> PermissionRequestResult:
     """Default permission handler that denies all requests."""
-    return PermissionRequestResult()
+    return PermissionDecisionUserNotAvailable()
 
 
 class GitHubCopilotSettings(TypedDict, total=False):
@@ -140,9 +141,9 @@ class GitHubCopilotSettings(TypedDict, total=False):
             Can be set via environment variable GITHUB_COPILOT_TIMEOUT.
         log_level: CLI log level.
             Can be set via environment variable GITHUB_COPILOT_LOG_LEVEL.
-        copilot_home: Directory where the CLI stores session state, configuration,
+        base_directory: Directory where the CLI stores session state, configuration,
             and other persistent data. Can be set via environment variable
-            GITHUB_COPILOT_COPILOT_HOME. Defaults to ~/.copilot when not set.
+            GITHUB_COPILOT_BASE_DIRECTORY. Defaults to ~/.copilot when not set.
             Only applicable when the SDK spawns the CLI process (ignored when
             connecting to an external server via a pre-configured client).
     """
@@ -151,7 +152,7 @@ class GitHubCopilotSettings(TypedDict, total=False):
     model: str | None
     timeout: float | None
     log_level: str | None
-    copilot_home: str | None
+    base_directory: str | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
@@ -314,7 +315,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         provider: ProviderConfig | None = opts.pop("provider", None)
         instruction_directories: list[str] | None = opts.pop("instruction_directories", None)
         on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
-        copilot_home = opts.pop("copilot_home", None)
+        base_directory = opts.pop("base_directory", None)
 
         self._settings = load_settings(
             GitHubCopilotSettings,
@@ -323,7 +324,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             model=model,
             timeout=timeout,
             log_level=log_level,
-            copilot_home=copilot_home,
+            base_directory=base_directory,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
@@ -362,14 +363,16 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if self._client is None:
             cli_path = self._settings.get("cli_path") or None
             log_level = self._settings.get("log_level") or None
-            copilot_home = self._settings.get("copilot_home") or None
+            base_directory = self._settings.get("base_directory") or None
 
-            subprocess_kwargs: dict[str, Any] = {"cli_path": cli_path}
+            client_kwargs: dict[str, Any] = {}
+            if cli_path:
+                client_kwargs["connection"] = RuntimeConnection.for_stdio(path=cli_path)
             if log_level:
-                subprocess_kwargs["log_level"] = log_level
-            if copilot_home:
-                subprocess_kwargs["copilot_home"] = copilot_home
-            self._client = CopilotClient(SubprocessConfig(**subprocess_kwargs))
+                client_kwargs["log_level"] = log_level
+            if base_directory:
+                client_kwargs["base_directory"] = base_directory
+            self._client = CopilotClient(**client_kwargs)
 
         try:
             await self._client.start()
