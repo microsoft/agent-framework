@@ -29,7 +29,7 @@ dependencies = [
 ]
 [dependency-groups]
 dev = [
-    "types-PyYaml==6.0.12.20250915"
+    "types-PyYaml==6.0.12.20260518"
 ]
 
 [tool.uv]

@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-toolbox-mcp-skills
+displayName: "Hosted Toolbox MCP Skills Agent"
+
+description: >
+  A hosted agent that discovers MCP-based skills from a Foundry Toolbox
+  and makes them available to the agent via the agent skills provider.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Agent Framework
+    - MCP
+    - Model Context Protocol
+    - Agent Skills
+    - Foundry Toolbox
+    - Foundry Toolbox Skills
+
+template:
+  name: hosted-toolbox-mcp-skills
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+    - name: FOUNDRY_TOOLBOX_NAME
+      value: "{{FOUNDRY_TOOLBOX_NAME}}"
+parameters:
+  properties:
+    - name: FOUNDRY_TOOLBOX_NAME
+      secret: false
+      description: Name of the Foundry Toolbox to connect to for MCP skill discovery
+resources:
+  - kind: model
+    id: gpt-5
+    name: AZURE_AI_MODEL_DEPLOYMENT_NAME
