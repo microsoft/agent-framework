@@ -88,6 +88,21 @@ def _text_result(text: str) -> HostedRunResult[AgentResponse]:
     return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
+def _is_echo_payload(payload: HostedRunResult[AgentResponse]) -> bool:
+    """Return ``True`` when a push payload is an echoed user turn.
+
+    Per the :class:`~agent_framework_hosting.ChannelPush` contract the host
+    mirrors the originating user's input as a one-or-more message
+    :class:`~agent_framework.AgentResponse` with every ``role == "user"``,
+    delivered *before* the agent's (``role == "assistant"``) reply. Treating a
+    payload whose messages are all user-role as an echo lets the channel pick
+    echo-only delivery options (e.g. silent notifications) without the host
+    having to thread an explicit ``is_echo`` flag through ``push``.
+    """
+    messages = getattr(payload.result, "messages", None) or []
+    return bool(messages) and all(getattr(m, "role", None) == "user" for m in messages)
+
+
 def _telegram_media_file_id(message: Mapping[str, Any]) -> tuple[str, str] | None:
     """Return ``(file_id, fallback_media_type)`` for any media on the message."""
     photo = message.get("photo")
@@ -854,7 +869,17 @@ class TelegramChannel:
             raise ValueError(f"Telegram push requires an int chat_id, got {identity.native_id!r}") from exc
         if self._http is None:
             raise RuntimeError("TelegramChannel.push called before startup")
-        await self._send(chat_id, payload.result.text)
+        # The Bot API can only ever send AS the bot, so there is no way to
+        # impersonate the user for an echo (the MTProto ``send_as`` field is
+        # not exposed to bots). The next best UX is to deliver echoes
+        # *silently* (``disable_notification``) so a mirrored input doesn't
+        # buzz the user's device the way a genuine reply does. Echo phases are
+        # identified per the ChannelPush contract: a payload whose messages are
+        # all ``role == "user"`` is the originating turn mirrored here.
+        extra: dict[str, Any] = {}
+        if _is_echo_payload(payload):
+            extra["disable_notification"] = True
+        await self._send(chat_id, payload.result.text, **extra)
 
     async def _send_photo(self, chat_id: int, photo_url: str, caption: str | None = None) -> None:
         """POST a ``sendPhoto`` to Telegram with an optional caption."""

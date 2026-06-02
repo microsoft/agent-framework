@@ -926,7 +926,7 @@ class ActivityProtocolChannel:
             "channelId": inbound.get("channelId"),
             "serviceUrl": inbound.get("serviceUrl"),
             "text": text,
-            "textFormat": "plain",
+            "textFormat": "markdown",
         }
 
     async def _send_message(self, inbound: Mapping[str, Any], text: str) -> str | None:
@@ -1027,7 +1027,7 @@ class ActivityProtocolChannel:
             "channelId": attrs.get("channel_id"),
             "serviceUrl": attrs.get("service_url"),
             "text": text,
-            "textFormat": "plain",
+            "textFormat": "markdown",
         }
         if attrs.get("locale"):
             activity["locale"] = attrs["locale"]

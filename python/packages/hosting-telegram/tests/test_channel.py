@@ -231,6 +231,23 @@ class TestPushAndCommand:
         assert args[0].endswith("/sendMessage")
         assert kwargs["json"]["chat_id"] in ("42", 42)
         assert kwargs["json"]["text"] == "hi"
+        # Agent replies must stay loud: no silent flag on a non-echo push.
+        assert "disable_notification" not in kwargs["json"]
+
+    async def test_push_echo_is_silent(self) -> None:
+        ch, _agent = _make_telegram()
+        from agent_framework_hosting import ChannelIdentity
+
+        echo = HostedRunResult(
+            AgentResponse(messages=[Message(role="user", contents=[Content.from_text(text="said via X")])])
+        )
+        await ch.push(ChannelIdentity(channel="telegram", native_id="42"), echo)
+        assert ch._http is not None
+        _args, kwargs = ch._http.post.call_args  # type: ignore[attr-defined]
+        # Bots cannot impersonate the user (no MTProto send_as), so the echo is
+        # delivered silently instead of buzzing the device like a real reply.
+        assert kwargs["json"]["disable_notification"] is True
+        assert kwargs["json"]["text"] == "said via X"
 
     async def test_command_handler_invoked(self) -> None:
         captured: list[ChannelCommandContext] = []
