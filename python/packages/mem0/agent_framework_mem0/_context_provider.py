@@ -126,7 +126,7 @@ class Mem0ContextProvider(ContextProvider):
                 app_kwargs["app_id"] = self.application_id
             else:
                 app_kwargs["filters"] = {"app_id": self.application_id}
-            search_tasks.append(self.mem0_client.search(**app_kwargs))  # type: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+            search_tasks.append(self.mem0_client.search(**app_kwargs))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         if not search_tasks:
             return
 
