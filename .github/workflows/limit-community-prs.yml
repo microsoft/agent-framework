@@ -1,0 +1,83 @@
+name: Limit community pull requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-limit-${{ github.repository }}-${{ github.event.pull_request.user.login }}
+  cancel-in-progress: false
+
+env:
+  MAX_OPEN_PULL_REQUESTS: '10'
+  PR_LIMIT_EXEMPT_LABEL: pr-limit-exempt
+  TOO_MANY_PRS_LABEL: too-many-prs
+
+jobs:
+  team_check:
+    runs-on: ubuntu-latest
+    outputs:
+      is_team_member: ${{ steps.check.outputs.is_team_member }}
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check PR author team membership
+        id: check
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        with:
+          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          script: |
+            const checkTeamMembership = require('./.github/scripts/check_team_membership.js');
+            const { author, isTeamMember } = await checkTeamMembership({
+              github,
+              context,
+              core,
+              teamSlug: process.env.TEAM_NAME,
+              issueNumber: process.env.PR_NUMBER,
+            });
+            core.setOutput('is_team_member', isTeamMember ? 'true' : 'false');
+            if (isTeamMember) {
+              core.info(`Author ${author} is a team member; skipping open PR limit.`);
+            } else {
+              core.info(`Author ${author} is not a team member; checking open PR limit.`);
+            }
+
+  limit_open_prs:
+    runs-on: ubuntu-latest
+    needs: team_check
+    if: ${{ needs.team_check.outputs.is_team_member == 'false' }}
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Enforce open PR limit
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          script: |
+            const { enforcePrLimit } = require('./.github/scripts/pr_limit_moderation.js');
+            await enforcePrLimit({
+              github,
+              context,
+              core,
+              exemptLabelName: process.env.PR_LIMIT_EXEMPT_LABEL,
+              maxOpenPrs: Number.parseInt(process.env.MAX_OPEN_PULL_REQUESTS, 10),
+              labelName: process.env.TOO_MANY_PRS_LABEL,
+            });

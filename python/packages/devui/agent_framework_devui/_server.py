@@ -375,13 +375,15 @@ class DevServer:
             logger.info("Starting Agent Framework Server")
             await self._ensure_executor()
             await self._ensure_openai_executor()  # Initialize OpenAI executor
-            yield
-            # Shutdown
-            logger.info("Shutting down Agent Framework Server")
+            try:
+                yield
+            finally:
+                # Shutdown
+                logger.info("Shutting down Agent Framework Server")
 
-            # Cleanup entity resources (e.g., close credentials, clients)
-            if self.executor:
-                await self._cleanup_entities()
+                # Cleanup entity resources (e.g., close credentials, clients)
+                if self.executor:
+                    await self._cleanup_entities()
 
         app = FastAPI(
             title="Agent Framework Server",

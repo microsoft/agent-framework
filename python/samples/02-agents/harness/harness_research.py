@@ -109,7 +109,10 @@ async def main() -> None:
                         print(f"\n  [calling tool: {content.name}]", flush=True)
                         print("  ", end="", flush=True)
                     # Show web search activity when the result arrives with action details.
-                    elif content.type in ("search_tool_call", "search_tool_result") and getattr(content, "tool_name", None) == "web_search":
+                    elif (
+                        content.type in ("search_tool_call", "search_tool_result")
+                        and getattr(content, "tool_name", None) == "web_search"
+                    ):
                         action = None
                         if content.type == "search_tool_result" and isinstance(content.result, dict):
                             action = content.result.get("action", {})

@@ -248,3 +248,4 @@ dotnet/filtered-*.slnx
 .omx/
 
 **/issues/
+.test_*

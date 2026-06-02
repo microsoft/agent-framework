@@ -81,7 +81,6 @@ internal sealed record StateRef<TState>(string Key, string? ScopeName)
 }
 
 /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 internal sealed class HandoffAgentExecutor :
     StatefulExecutor<HandoffAgentHostState, HandoffState>
 {

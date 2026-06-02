@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -104,7 +103,6 @@ public static partial class AgentWorkflowBuilder
     /// The <see cref="AIAgent"/> must be capable of understanding those <see cref="AgentRunOptions"/> provided. If the agent
     /// ignores the tools or is otherwise unable to advertize them to the underlying provider, handoffs will not occur.
     /// </remarks>
-    [Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
     public static HandoffWorkflowBuilder CreateHandoffBuilderWith(AIAgent initialAgent)
     {
         Throw.IfNull(initialAgent);
@@ -150,7 +148,6 @@ public static partial class AgentWorkflowBuilder
     /// <summary>Creates a new <see cref="MagenticWorkflowBuilder"/> with the given <paramref name="managerAgent"/>.</summary>
     /// <param name="managerAgent">The LLM-powered manager agent that coordinates the team.</param>
     /// <returns>The builder for creating a Magentic workflow.</returns>
-    [Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
     public static MagenticWorkflowBuilder CreateMagenticBuilderWith(AIAgent managerAgent)
     {
         Throw.IfNull(managerAgent);
