@@ -13,10 +13,11 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
-  <!-- disable baseline validation until first release -->
+  <!-- First GA after the RC milestone. Baseline against the latest published RC so package
+       validation catches accidental breaking changes between RC and GA. Future GAs should
+       bump this to the previous GA version. -->
   <PropertyGroup>
-    <PackageValidationBaselineVersion />
-    <EnablePackageValidation>false</EnablePackageValidation>
+    <PackageValidationBaselineVersion>1.8.0-rc1</PackageValidationBaselineVersion>
   </PropertyGroup>
 
   <PropertyGroup>
