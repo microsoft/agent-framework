@@ -761,6 +761,115 @@ def test_get_exporters_from_env_missing_grpc_dependency(monkeypatch):
         _get_exporters_from_env()
 
 
+# region Test OTLP endpoint computation (base-URL auto-append for HTTP)
+
+
+def test_get_exporters_from_env_http_base_endpoint_appends_signal_paths(monkeypatch):
+    """OTEL_EXPORTER_OTLP_ENDPOINT is a base URL for HTTP; SDK auto-appends
+    /v1/{traces,metrics,logs}. Because we read the env var and forward it as the
+    constructor ``endpoint=`` arg (which the SDK treats as a full URL), we must
+    replicate the auto-append ourselves.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["protocol"] == "http/protobuf"
+    assert kwargs["traces_endpoint"] == "http://localhost:4318/v1/traces"
+    assert kwargs["metrics_endpoint"] == "http://localhost:4318/v1/metrics"
+    assert kwargs["logs_endpoint"] == "http://localhost:4318/v1/logs"
+
+
+def test_get_exporters_from_env_http_base_endpoint_trailing_slash(monkeypatch):
+    """A trailing slash on the base endpoint should not produce a doubled slash."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["traces_endpoint"] == "http://localhost:4318/v1/traces"
+    assert kwargs["metrics_endpoint"] == "http://localhost:4318/v1/metrics"
+    assert kwargs["logs_endpoint"] == "http://localhost:4318/v1/logs"
+
+
+def test_get_exporters_from_env_http_signal_specific_used_verbatim(monkeypatch):
+    """Signal-specific endpoint env vars are full URLs and must be used verbatim,
+    even when a base endpoint is also set.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://traces.example.com/custom/path")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+    for key in (
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    # Signal-specific is verbatim — no path appended
+    assert kwargs["traces_endpoint"] == "http://traces.example.com/custom/path"
+    # Others fall back to base, with path appended
+    assert kwargs["metrics_endpoint"] == "http://localhost:4318/v1/metrics"
+    assert kwargs["logs_endpoint"] == "http://localhost:4318/v1/logs"
+
+
+def test_get_exporters_from_env_grpc_base_endpoint_unchanged(monkeypatch):
+    """For gRPC, the base endpoint applies to all signals as-is (no path append)."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["protocol"] == "grpc"
+    assert kwargs["traces_endpoint"] == "http://localhost:4317"
+    assert kwargs["metrics_endpoint"] == "http://localhost:4317"
+    assert kwargs["logs_endpoint"] == "http://localhost:4317"
+
+
 # region Test create_resource
 
 

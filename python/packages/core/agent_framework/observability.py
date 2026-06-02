@@ -498,13 +498,33 @@ def _get_exporters_from_env(
     # Get base endpoint
     base_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
-    # Get signal-specific endpoints (these override base endpoint)
-    traces_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or base_endpoint
-    metrics_endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") or base_endpoint
-    logs_endpoint = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") or base_endpoint
+    # Get signal-specific endpoints (these override base endpoint and are used verbatim)
+    traces_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+    metrics_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
+    logs_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
 
     # Get protocol (default is grpc)
     protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
+
+    # Per the OTel spec, OTEL_EXPORTER_OTLP_ENDPOINT is a *base* URL for HTTP — the SDK
+    # auto-appends /v1/{traces,metrics,logs} when it reads the env var directly. The
+    # signal-specific endpoint env vars are *full* URLs used verbatim. Because we read
+    # the env vars here and forward them as the ``endpoint=`` constructor argument
+    # (which the SDK always treats as a full URL), we must replicate the auto-append
+    # ourselves for HTTP when falling back to the base endpoint. For gRPC, the base
+    # endpoint is used as-is.
+    traces_endpoint: str | None
+    metrics_endpoint: str | None
+    logs_endpoint: str | None
+    if protocol in ("http/protobuf", "http") and base_endpoint:
+        base_for_http = base_endpoint.rstrip("/")
+        traces_endpoint = traces_endpoint_specific or f"{base_for_http}/v1/traces"
+        metrics_endpoint = metrics_endpoint_specific or f"{base_for_http}/v1/metrics"
+        logs_endpoint = logs_endpoint_specific or f"{base_for_http}/v1/logs"
+    else:
+        traces_endpoint = traces_endpoint_specific or base_endpoint
+        metrics_endpoint = metrics_endpoint_specific or base_endpoint
+        logs_endpoint = logs_endpoint_specific or base_endpoint
 
     # Get base headers
     base_headers_str = os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "")
