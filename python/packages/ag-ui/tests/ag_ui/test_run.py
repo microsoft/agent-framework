@@ -684,6 +684,8 @@ class TestBuildMessagesSnapshot:
 
         # The text message should have a different ID than the tool call message
         assert assistant_text_msg.id != assistant_tool_msg.id
+        assert assistant_text_msg.id == "msg-123"
+        assert assistant_tool_msg.id != "msg-123"
 
     def test_only_tool_calls_no_text(self):
         """Test snapshot with only tool calls and no accumulated text."""
