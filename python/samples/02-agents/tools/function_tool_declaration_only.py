@@ -69,6 +69,7 @@ Result: {
     "input_token_count": 63,
     "output_token_count": 145,
     "total_token_count": 208,
+    "openai.reasoning_tokens": 128,
     "reasoning_output_token_count": 128
   },
   "additional_properties": {}
