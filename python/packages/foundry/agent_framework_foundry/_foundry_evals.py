@@ -28,8 +28,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
 
 from agent_framework._evaluation import (
     AgentEvalConverter,
@@ -39,6 +40,7 @@ from agent_framework._evaluation import (
     EvalItemResult,
     EvalResults,
     EvalScoreResult,
+    RubricScore,
 )
 from agent_framework._feature_stage import ExperimentalFeature, experimental
 from openai import AsyncOpenAI
@@ -51,6 +53,54 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# region Generated rubric evaluator references
+
+
+@experimental(feature_id=ExperimentalFeature.EVALS)
+@dataclass(frozen=True)
+class GeneratedEvaluatorRef:
+    """A reference to a rubric evaluator that already exists in Foundry.
+
+    Pass instances of this class to :class:`FoundryEvals` to score items
+    with a pre-existing rubric evaluator (manually authored or
+    auto-generated through the Foundry portal).  agent-framework is a
+    consumer here: it does not create or modify the evaluator definition;
+    it only references the persisted version by name.
+
+    Pinning ``version`` is strongly recommended so evaluation runs are
+    reproducible.  ``version=None`` resolves to whichever version is
+    current at execution time; :class:`FoundryEvals` emits a warning when
+    a versionless reference is used.  CI gates should always pass a
+    concrete version.
+
+    Attributes:
+        name: Evaluator name as stored in the Foundry project (for
+            example ``"reservation-policy-rubric"``).  Distinct from
+            built-in evaluators such as ``"builtin.relevance"``.
+        version: Pinned evaluator version.  ``None`` means "latest" —
+            this is discouraged for CI/repro and :class:`FoundryEvals`
+            will emit a warning when used.
+        display_name: Optional human-readable name used in result
+            summaries.  Defaults to ``name`` when unset.
+    """
+
+    name: str
+    version: str | None = None
+    display_name: str | None = None
+
+    @classmethod
+    def latest(cls, name: str, *, display_name: str | None = None) -> GeneratedEvaluatorRef:
+        """Construct a versionless reference (resolves to the latest version at run time).
+
+        Discouraged for reproducible runs.  Prefer the constructor with
+        an explicit ``version`` so CI and replay evaluations stay stable
+        when the evaluator is updated in Foundry.
+        """
+        return cls(name=name, version=None, display_name=display_name)
+
+
+# endregion
 # Agent evaluators that accept query/response as conversation arrays.
 # Maintained manually — check https://learn.microsoft.com/en-us/azure/ai-studio/how-to/develop/evaluate-sdk
 # for the latest evaluator list. These are the evaluators that need conversation-format input.
@@ -166,7 +216,7 @@ def _resolve_evaluator(name: str) -> str:
 
 
 def _build_testing_criteria(
-    evaluators: Sequence[str],
+    evaluators: Sequence[str | GeneratedEvaluatorRef],
     model: str,
     *,
     include_data_mapping: bool = False,
@@ -175,7 +225,9 @@ def _build_testing_criteria(
     """Build ``testing_criteria`` for ``evals.create()``.
 
     Args:
-        evaluators: Evaluator names.
+        evaluators: Evaluator names (built-in shorts / fully-qualified
+            ``builtin.*`` names) or :class:`GeneratedEvaluatorRef`
+            instances for generated rubric evaluators.
         model: Model deployment for the LLM judge.
         include_data_mapping: Whether to include field-level data mapping
             (required for the JSONL data source, not needed for response-based).
@@ -183,7 +235,38 @@ def _build_testing_criteria(
             definitions.
     """
     criteria: list[dict[str, Any]] = []
-    for name in evaluators:
+    for entry_spec in evaluators:
+        if isinstance(entry_spec, GeneratedEvaluatorRef):
+            short = entry_spec.display_name or entry_spec.name
+            ref_entry: dict[str, Any] = {
+                "type": "azure_ai_evaluator",
+                "name": short,
+                "evaluator_name": entry_spec.name,
+                "initialization_parameters": {"deployment_name": model},
+            }
+            if entry_spec.version is not None:
+                ref_entry["evaluator_version"] = entry_spec.version
+            else:
+                logger.warning(
+                    "GeneratedEvaluatorRef '%s' has no pinned version; the eval run "
+                    "will resolve to whichever version is current at execution time. "
+                    "Pin the version for reproducible runs.",
+                    entry_spec.name,
+                )
+            if include_data_mapping:
+                # Rubric evaluators accept conversation arrays like agent
+                # evaluators, plus tool_definitions when items are tool-aware.
+                ref_mapping: dict[str, str] = {
+                    "query": "{{item.query_messages}}",
+                    "response": "{{item.response_messages}}",
+                }
+                if include_tool_definitions:
+                    ref_mapping["tool_definitions"] = "{{item.tool_definitions}}"
+                ref_entry["data_mapping"] = ref_mapping
+            criteria.append(ref_entry)
+            continue
+
+        name = entry_spec
         qualified = _resolve_evaluator(name)
         short = name if not name.startswith("builtin.") else name.split(".")[-1]
 
@@ -247,9 +330,9 @@ def _build_item_schema(
 
 
 def _resolve_default_evaluators(
-    evaluators: Sequence[str] | None,
+    evaluators: Sequence[str | GeneratedEvaluatorRef] | None,
     items: Sequence[EvalItem | dict[str, Any]] | None = None,
-) -> list[str]:
+) -> list[str | GeneratedEvaluatorRef]:
     """Resolve evaluators, applying defaults when ``None``.
 
     Defaults to relevance + coherence + task_adherence. Automatically adds
@@ -258,7 +341,7 @@ def _resolve_default_evaluators(
     if evaluators is not None:
         return list(evaluators)
 
-    result = list(_DEFAULT_EVALUATORS)
+    result: list[str | GeneratedEvaluatorRef] = list(_DEFAULT_EVALUATORS)
     if items is not None:
         has_tools = any((item.tools if isinstance(item, EvalItem) else item.get("tool_definitions")) for item in items)
         if has_tools:
@@ -267,14 +350,24 @@ def _resolve_default_evaluators(
 
 
 def _filter_tool_evaluators(
-    evaluators: list[str],
+    evaluators: list[str | GeneratedEvaluatorRef],
     items: Sequence[EvalItem | dict[str, Any]],
-) -> list[str]:
-    """Remove tool evaluators if no items have tool definitions."""
+) -> list[str | GeneratedEvaluatorRef]:
+    """Remove tool evaluators if no items have tool definitions.
+
+    Generated rubric evaluators are tool-aware but not tool-required; they
+    are preserved regardless of whether items carry tool definitions.
+    """
     has_tools = any((item.tools if isinstance(item, EvalItem) else item.get("tool_definitions")) for item in items)
     if has_tools:
         return evaluators
-    filtered = [e for e in evaluators if _resolve_evaluator(e) not in _TOOL_EVALUATORS]
+
+    def _is_tool_only(spec: str | GeneratedEvaluatorRef) -> bool:
+        if isinstance(spec, GeneratedEvaluatorRef):
+            return False
+        return _resolve_evaluator(spec) in _TOOL_EVALUATORS
+
+    filtered = [e for e in evaluators if not _is_tool_only(e)]
     if not filtered:
         raise ValueError(
             f"All requested evaluators {evaluators} require tool definitions, "
@@ -282,7 +375,7 @@ def _filter_tool_evaluators(
             "or choose evaluators that do not require tools."
         )
     if len(filtered) < len(evaluators):
-        removed = [e for e in evaluators if _resolve_evaluator(e) in _TOOL_EVALUATORS]
+        removed = [e for e in evaluators if _is_tool_only(e)]
         logger.info("Removed tool evaluators %s (no items have tools)", removed)
     return filtered
 
@@ -354,6 +447,114 @@ def _extract_per_evaluator(run: RunRetrieveResponse) -> dict[str, dict[str, int]
     return per_eval
 
 
+_RUBRIC_DIMENSION_KEYS: tuple[str, ...] = ("dimension_scores", "rubric_scores")
+"""Property keys that may carry per-dimension rubric breakdowns.
+
+The published Foundry rubric-evaluator output format uses
+``properties.dimension_scores`` (see the Microsoft Learn "Rubric
+evaluators" reference).  Earlier preview builds and some SDK shapes
+used ``rubric_scores``; we accept both for defensive forward/backward
+compatibility.
+"""
+
+
+def _parse_dimension_entries(raw: Any) -> list[RubricScore]:
+    """Parse a raw list-like payload into ``RubricScore`` instances.
+
+    Returns an empty list when ``raw`` is falsy, not iterable, or
+    contains no well-formed entries.
+    """
+    if not raw:
+        return []
+    try:
+        raw_iter: Iterable[Any] = iter(raw)
+    except TypeError:
+        return []
+
+    parsed: list[RubricScore] = []
+    for raw_entry in raw_iter:
+        entry: Any = raw_entry
+        try:
+            rid: Any
+            score_val: Any
+            applicable: Any
+            weight: Any
+            reason: Any
+            if isinstance(entry, dict):
+                entry_any = cast("dict[str, Any]", entry)
+                rid = entry_any.get("id")
+                score_val = entry_any.get("score")
+                applicable = entry_any.get("applicable")
+                weight = entry_any.get("weight")
+                reason = entry_any.get("reason", "")
+            else:
+                rid = getattr(entry, "id", None)
+                score_val = getattr(entry, "score", None)
+                applicable = getattr(entry, "applicable", None)
+                weight = getattr(entry, "weight", None)
+                reason = getattr(entry, "reason", "") or ""
+            if rid is None or weight is None or applicable is None:
+                continue
+            parsed.append(
+                RubricScore(
+                    id=str(rid),
+                    score=int(score_val) if isinstance(score_val, (int, float)) else None,
+                    applicable=bool(applicable),
+                    weight=int(weight),
+                    reason=str(reason) if reason is not None else "",
+                )
+            )
+        except (TypeError, ValueError):
+            logger.debug("Skipping malformed rubric dimension entry: %s", cast("Any", entry), exc_info=True)
+    return parsed
+
+
+def _extract_rubric_scores(sample: Any) -> list[RubricScore] | None:
+    """Extract typed ``RubricScore`` instances from an evaluator's raw sample payload.
+
+    Foundry rubric evaluators include a per-dimension breakdown under
+    ``properties.dimension_scores`` on each result (preview builds used
+    ``rubric_scores``; both keys are accepted, with the canonical
+    ``dimension_scores`` taking priority).  The exact location may
+    vary across SDK versions, so this helper accepts a few shapes:
+
+    * The SDK ``sample`` object exposes
+      ``properties.dimension_scores`` / ``properties.rubric_scores``.
+    * The ``sample`` is a dict containing the same under
+      ``properties.<key>``.
+    * The ``sample`` is a dict with ``dimension_scores`` /
+      ``rubric_scores`` at the top level.
+
+    Returns ``None`` when no rubric scores are present (i.e. the
+    evaluator was not a rubric evaluator).
+    """
+    if sample is None:
+        return None
+
+    containers: list[Any] = []
+    properties: Any = getattr(sample, "properties", None)
+    if properties is not None:
+        containers.append(properties)
+    if isinstance(sample, dict):
+        sample_any = cast("dict[str, Any]", sample)
+        props_dict: Any = sample_any.get("properties")
+        if props_dict is not None and props_dict is not properties:
+            containers.append(props_dict)
+        containers.append(sample_any)
+
+    for container in containers:
+        for key in _RUBRIC_DIMENSION_KEYS:
+            raw: Any = None
+            if isinstance(container, dict):
+                raw = cast("dict[str, Any]", container).get(key)
+            elif hasattr(container, key):
+                raw = getattr(container, key, None)
+            parsed = _parse_dimension_entries(raw)
+            if parsed:
+                return parsed
+    return None
+
+
 async def _fetch_output_items(
     client: AsyncOpenAI,
     eval_id: str,
@@ -377,12 +578,15 @@ async def _fetch_output_items(
             # Extract per-evaluator scores
             scores: list[EvalScoreResult] = []
             for r in oi.results or []:
+                sample = r.sample
+                dimensions = _extract_rubric_scores(sample)
                 scores.append(
                     EvalScoreResult(
                         name=r.name,
                         score=r.score,
                         passed=r.passed,
-                        sample=r.sample,
+                        sample=sample,
+                        dimensions=dimensions,
                     )
                 )
 
@@ -394,15 +598,18 @@ async def _fetch_output_items(
             output_text: str | None = None
             response_id: str | None = None
 
-            sample = oi.sample
-            if sample is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                err = sample.error
-                if err is not None and (err.code or err.message):  # pyright: ignore[reportUnnecessaryComparison]
+            # mypy infers oi.sample as dict[str, object] | None, but the
+            # OpenAI SDK actually returns a typed Sample model. Cast to Any so
+            # both type checkers accept the attribute access pattern.
+            oi_sample: Any = oi.sample
+            if oi_sample is not None:
+                err = oi_sample.error
+                if err is not None and (err.code or err.message):
                     error_code = err.code or None
                     error_message = err.message or None
 
-                usage = sample.usage
-                if usage is not None and usage.total_tokens:  # pyright: ignore[reportUnnecessaryComparison]
+                usage = oi_sample.usage
+                if usage is not None and usage.total_tokens:
                     token_usage = {
                         "prompt_tokens": usage.prompt_tokens,
                         "completion_tokens": usage.completion_tokens,
@@ -411,13 +618,13 @@ async def _fetch_output_items(
                     }
 
                 # Extract input/output text
-                if sample.input:
-                    parts = [si.content for si in sample.input if si.role == "user"]
+                if oi_sample.input:
+                    parts = [si.content for si in oi_sample.input if si.role == "user"]
                     if parts:
                         input_text = " ".join(parts)
 
-                if sample.output:
-                    parts = [so.content or "" for so in sample.output if so.role == "assistant"]
+                if oi_sample.output:
+                    parts = [so.content or "" for so in oi_sample.output if so.role == "assistant"]
                     if parts:
                         output_text = " ".join(parts)
 
@@ -472,7 +679,7 @@ async def _evaluate_via_responses_impl(
     *,
     client: AsyncOpenAI,
     response_ids: Sequence[str],
-    evaluators: list[str],
+    evaluators: list[str | GeneratedEvaluatorRef],
     model: str,
     eval_name: str,
     poll_interval: float,
@@ -573,8 +780,11 @@ class FoundryEvals:
             (from ``azure.ai.projects.aio``).  Provide this or *client*.
         model: Model deployment name for the evaluator LLM judge.
             Resolved from ``client.model`` when omitted.
-        evaluators: Evaluator names (e.g. ``["relevance", "tool_call_accuracy"]``).
-            When ``None`` (default), uses smart defaults based on item data.
+        evaluators: Evaluator specifications.  Entries may be built-in
+            short names (e.g. ``"relevance"``), fully-qualified
+            ``"builtin.*"`` names, or :class:`GeneratedEvaluatorRef`
+            instances for previously generated rubric evaluators.  When
+            ``None`` (default), uses smart defaults based on item data.
         conversation_split: How to split multi-turn conversations into
             query/response halves.  Defaults to ``LAST_TURN``.  Pass a
             ``ConversationSplit`` enum value or a custom callable — see
@@ -623,7 +833,7 @@ class FoundryEvals:
         client: FoundryChatClient | None = None,
         project_client: AIProjectClient | None = None,
         model: str | None = None,
-        evaluators: Sequence[str] | None = None,
+        evaluators: Sequence[str | GeneratedEvaluatorRef] | None = None,
         conversation_split: ConversationSplitter = ConversationSplit.LAST_TURN,
         poll_interval: float = 5.0,
         timeout: float = 180.0,
@@ -642,7 +852,9 @@ class FoundryEvals:
                 "Model is required. Pass model= explicitly or use a FoundryChatClient that has a model configured."
             )
         self._model = resolved_model
-        self._evaluators = list(evaluators) if evaluators is not None else None
+        self._evaluators: list[str | GeneratedEvaluatorRef] | None = (
+            list(evaluators) if evaluators is not None else None
+        )
         self._conversation_split = conversation_split
         self._poll_interval = poll_interval
         self._timeout = timeout
@@ -678,7 +890,7 @@ class FoundryEvals:
     async def _evaluate_via_dataset(
         self,
         items: Sequence[EvalItem],
-        evaluators: list[str],
+        evaluators: list[str | GeneratedEvaluatorRef],
         eval_name: str,
     ) -> EvalResults:
         """Evaluate using JSONL dataset upload path."""

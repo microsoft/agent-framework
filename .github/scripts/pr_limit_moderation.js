@@ -63,19 +63,22 @@ function buildLimitMessage({ author, exemptLabelName, maxOpenPrs, openPrCount })
 }
 
 async function getOpenPrCount({ github, owner, repo, author, pullRequestNumber }) {
-  const query = `repo:${owner}/${repo} is:pr is:open author:${author}`;
-  const response = await github.rest.search.issuesAndPullRequests({
-    q: query,
+  const openPullRequests = await github.paginate(github.rest.pulls.list, {
+    owner,
+    repo,
+    state: 'open',
     per_page: 100,
   });
 
-  const indexedPrNumbers = response.data.items.map((item) => item.number);
-  const currentPrIsIndexed = indexedPrNumbers.includes(pullRequestNumber);
-  if (currentPrIsIndexed || response.data.total_count >= 100) {
-    return response.data.total_count;
-  }
+  const authorOpenPullRequestNumbers = openPullRequests
+    .filter((pullRequest) => pullRequest.user?.login === author)
+    .map((pullRequest) => pullRequest.number);
+  const currentPrIsOpen = authorOpenPullRequestNumbers.includes(pullRequestNumber);
+  const existingOpenPrCount = currentPrIsOpen
+    ? authorOpenPullRequestNumbers.length - 1
+    : authorOpenPullRequestNumbers.length;
 
-  return response.data.total_count + 1;
+  return existingOpenPrCount + 1;
 }
 
 async function enforcePrLimit({ github, context, core, exemptLabelName, maxOpenPrs, labelName }) {

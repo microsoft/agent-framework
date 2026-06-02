@@ -287,9 +287,7 @@ class A2AExecutor(AgentExecutor):
                     artifact_id=artifact_id,
                     metadata=metadata,
                     append=(
-                        True
-                        if streamed_artifact_ids is not None and artifact_id in streamed_artifact_ids
-                        else None
+                        True if streamed_artifact_ids is not None and artifact_id in streamed_artifact_ids else None
                     ),
                 )
                 if artifact_id and streamed_artifact_ids is not None:
