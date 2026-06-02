@@ -70,9 +70,10 @@ internal static class ItemContentConverter
             ItemContentOutputAudio outputAudio =>
                 new DataContent(outputAudio.Data, "audio/*"),
 
-            // Function approval response - preserve raw representation for downstream processing
-            ItemContentFunctionApprovalResponse approvalResponse =>
-                new TextContent($"[Function approval response: request_id={approvalResponse.RequestId}, approved={approvalResponse.Approved}]"),
+            // Function approval response — omit from content to avoid leaking request_id in user-visible text.
+            // The raw representation is preserved separately for downstream processing.
+            ItemContentFunctionApprovalResponse =>
+                null,
 
             _ => null
         };

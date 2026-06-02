@@ -461,10 +461,11 @@ internal sealed class ItemContentFunctionApprovalResponse : ItemContent
     public required string RequestId { get; init; }
 
     /// <summary>
-    /// Whether the request was approved.
+    /// Whether the request was approved. <see langword="null"/> when the approval
+    /// state is not present, distinguishing missing data from explicit <c>false</c>.
     /// </summary>
     [JsonPropertyName("approved")]
-    public bool Approved { get; init; }
+    public bool? Approved { get; init; }
 }
 
 // Additional ItemResource types from TypeSpec

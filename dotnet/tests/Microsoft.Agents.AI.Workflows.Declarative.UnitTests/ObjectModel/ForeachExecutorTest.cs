@@ -321,6 +321,11 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
 
         // Assert — the value must be present (all fields preserved, not collapsed to first field).
         Assert.True(action.HasValue);
+        FormulaValue currentValue = this.State.Get("CurrentValue");
+        Assert.IsAssignableFrom<RecordValue>(currentValue);
+        RecordValue record = (RecordValue)currentValue;
+        Assert.Contains(record.Fields, f => f.Name == "name");
+        Assert.Contains(record.Fields, f => f.Name == "role");
     }
 
     /// <summary>
