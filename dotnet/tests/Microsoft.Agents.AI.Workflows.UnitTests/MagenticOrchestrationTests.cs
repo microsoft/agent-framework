@@ -362,6 +362,64 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
+    public async Task RunCoordinationRound_Forwards_Participant_Reply_To_ManagerAsync()
+    {
+        // Regression: MagenticOrchestrator.TakeTurnAsync used to drop the `messages`
+        // parameter on subsequent turns, so participant replies never reached the
+        // manager's ChatHistory. The manager then re-dispatched the same speaker
+        // every round until MaxRounds. Assert that round-2's progress-ledger call
+        // actually sees the worker's reply in its input.
+
+        const string TaskPrompt = "Echo back this exact magentic-regression-marker";
+
+        List<ChatMessage> factsResponse = CreatePlanResponse("Facts");
+        List<ChatMessage> planResponse = CreatePlanResponse("Plan");
+        List<ChatMessage> round1Ledger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: TaskPrompt);
+        List<ChatMessage> round2Ledger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswer = CreateFinalAnswerResponse("All good");
+
+        RecordingReplayAgent manager = new(
+            [factsResponse, planResponse, round1Ledger, round2Ledger, finalAnswer],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, TaskPrompt)]);
+
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("All good");
+
+        // Calls in order: facts, plan, ledger1, ledger2, finalAnswer.
+        manager.RecordedInputs.Should().HaveCount(5);
+
+        manager.RecordedInputs[3].Should().Contain(
+            m => m.Role == ChatRole.Assistant
+              && m.AuthorName == "Worker"
+              && m.Text.Contains(TaskPrompt),
+            "round-2 progress ledger must see the worker's reply; without it the manager loops to MaxRounds");
+
+        manager.RecordedInputs[4].Should().Contain(
+            m => m.Role == ChatRole.Assistant && m.AuthorName == "Worker",
+            "final-answer synthesis must see what participants actually said");
+    }
+
+    [Fact]
     public async Task PlanReview_Revised_Triggers_ReplanAsync()
     {
         // Arrange: Human rejects initial plan with revision, triggering a replan.

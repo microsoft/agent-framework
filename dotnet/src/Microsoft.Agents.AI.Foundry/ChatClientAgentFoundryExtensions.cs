@@ -1,13 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry;
@@ -17,7 +15,6 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <c>to_prompt_agent(agent)</c> function for agents whose underlying chat client is a
 /// <see cref="FoundryChatClient"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class ChatClientAgentFoundryExtensions
 {
     /// <summary>

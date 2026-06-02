@@ -73,7 +73,8 @@ async def run_agent_framework() -> None:
 
     # Create agent with tool
     client = OpenAIChatClient(model="gpt-4.1-mini")
-    agent = Agent(client=client,
+    agent = Agent(
+        client=client,
         name="assistant",
         instructions="You are a helpful assistant. Use available tools to answer questions.",
         tools=[get_weather],

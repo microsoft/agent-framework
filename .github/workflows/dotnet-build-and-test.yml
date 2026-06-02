@@ -121,6 +121,9 @@ jobs:
               python
               declarative-agents
 
+      - name: Free runner disk space
+        uses: ./.github/actions/free-runner-disk-space
+
       - name: Setup dotnet
         uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
         with:
@@ -190,6 +193,9 @@ jobs:
               dotnet
               python
               declarative-agents
+
+      - name: Free runner disk space
+        uses: ./.github/actions/free-runner-disk-space
 
       # Start Cosmos DB Emulator for all integration tests and only for unit tests when CosmosDB changes happened)
       - name: Start Azure Cosmos DB Emulator
@@ -365,6 +371,9 @@ jobs:
             dotnet
             python
 
+      - name: Free runner disk space
+        uses: ./.github/actions/free-runner-disk-space
+
       - name: Setup dotnet
         uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
         with:
@@ -451,6 +460,9 @@ jobs:
             dotnet
             python
             declarative-agents
+
+      - name: Free runner disk space
+        uses: ./.github/actions/free-runner-disk-space
 
       - name: Setup dotnet
         uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0

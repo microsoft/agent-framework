@@ -1691,6 +1691,65 @@ def test_to_otel_part_function_call():
     }
 
 
+def test_to_otel_part_function_call_reuses_prepared_arguments():
+    """Test _to_otel_part does not re-serialize function-call arguments in the observability hot path."""
+    from agent_framework import Content
+    from agent_framework.observability import _to_otel_part
+
+    arguments = {"payload": object()}
+    content = Content(type="function_call", call_id="call_789", name="handoff", arguments=arguments)
+    result = _to_otel_part(content)
+
+    assert result is not None
+    assert result["arguments"] is arguments
+
+
+def test_make_json_safe_non_callable_method_attribute():
+    """Test make_json_safe handles objects where model_dump/to_dict/dict are non-callable attributes."""
+    from agent_framework._serialization import make_json_safe
+
+    class ObjWithNonCallableModelDump:
+        model_dump = 42  # not callable
+
+    obj = ObjWithNonCallableModelDump()
+    result = make_json_safe(obj)
+    assert result == {}
+
+
+def test_make_json_safe_callable_method_type_error_falls_through():
+    """Test make_json_safe falls through when serializer-like methods require arguments."""
+    from agent_framework._serialization import make_json_safe
+
+    class ObjWithRequiredArgModelDump:
+        def __init__(self) -> None:
+            self.value = "fallback"
+
+        def model_dump(self, required: str) -> dict[str, str]:
+            return {"required": required}
+
+    obj = ObjWithRequiredArgModelDump()
+    result = make_json_safe(obj)
+    assert result == {"value": "fallback"}
+
+
+def test_make_json_safe_dict_with_non_string_keys():
+    """Test make_json_safe converts non-primitive dict keys to strings."""
+    import json
+    from datetime import datetime
+
+    from agent_framework._serialization import make_json_safe
+
+    dt_key = datetime(2024, 1, 1)
+    obj = {dt_key: "value", 42: "num_value", "str_key": "normal"}
+    result = make_json_safe(obj)
+    # json.dumps must not raise TypeError
+    serialized = json.dumps(result)
+    parsed = json.loads(serialized)
+    assert parsed[str(dt_key)] == "value"
+    assert parsed["42"] == "num_value"
+    assert parsed["str_key"] == "normal"
+
+
 def test_to_otel_part_function_result():
     """Test _to_otel_part with function_result content."""
     from agent_framework import Content
@@ -3019,6 +3078,49 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_with_prepared_request_info_function_call_arguments(span_exporter: InMemorySpanExporter):
+    """Test _capture_messages handles request-info function-call arguments prepared at Content creation."""
+    import dataclasses
+    import json
+
+    from opentelemetry import trace
+
+    from agent_framework import WorkflowAgent
+
+    @dataclasses.dataclass
+    class HandoffRequest:
+        target_agent: str
+        reason: str
+
+    arguments = WorkflowAgent.RequestInfoFunctionArgs(
+        request_id="call_dc",
+        data=HandoffRequest(target_agent="helper", reason="overflow"),
+    ).to_dict()
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content(
+                type="function_call",
+                call_id="call_dc",
+                name="request_info",
+                arguments=arguments,
+            )
+        ],
+    )
+    span_exporter.clear()
+    tracer = trace.get_tracer("test")
+    with tracer.start_as_current_span("test_span") as span:
+        _capture_messages(span=span, provider_name="test_provider", messages=[msg])
+
+    spans = span_exporter.get_finished_spans()
+    span = spans[0]
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    tool_part = input_messages[0]["parts"][0]
+    assert tool_part["type"] == "tool_call"
+    assert tool_part["arguments"]["data"] == {"target_agent": "helper", "reason": "overflow"}
+
+
 def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_messages(
     span_exporter: InMemorySpanExporter,
 ):
@@ -3447,6 +3549,140 @@ def test_capture_response_with_error_type(span_exporter: InMemorySpanExporter):
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     assert spans[0].attributes.get(OtelAttr.ERROR_TYPE) == "ValueError"
+
+
+def test_backfill_request_model_when_unknown(span_exporter: InMemorySpanExporter):
+    """_backfill_request_model updates the span name and REQUEST_MODEL attribute when unknown."""
+    from agent_framework.observability import OtelAttr, get_tracer
+
+    span_exporter.clear()
+    tracer = get_tracer()
+
+    attrs: dict[str, Any] = {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.REQUEST_MODEL: "unknown",
+        OtelAttr.RESPONSE_MODEL: "gpt-4o-mini",
+    }
+
+    with tracer.start_as_current_span("chat unknown") as span:
+        ChatTelemetryLayer._backfill_request_model(span, attrs)
+
+    assert attrs[OtelAttr.REQUEST_MODEL] == "gpt-4o-mini"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].name == "chat gpt-4o-mini"
+
+
+def test_backfill_request_model_noop_when_request_model_known(span_exporter: InMemorySpanExporter):
+    """_backfill_request_model leaves a known REQUEST_MODEL and span name untouched."""
+    from agent_framework.observability import OtelAttr, get_tracer
+
+    span_exporter.clear()
+    tracer = get_tracer()
+
+    attrs: dict[str, Any] = {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.REQUEST_MODEL: "gpt-4o",
+        OtelAttr.RESPONSE_MODEL: "gpt-4o-mini",
+    }
+
+    with tracer.start_as_current_span("chat gpt-4o") as span:
+        ChatTelemetryLayer._backfill_request_model(span, attrs)
+
+    assert attrs[OtelAttr.REQUEST_MODEL] == "gpt-4o"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].name == "chat gpt-4o"
+
+
+def test_backfill_request_model_noop_when_response_model_missing(span_exporter: InMemorySpanExporter):
+    """_backfill_request_model is a no-op when no RESPONSE_MODEL is available."""
+    from agent_framework.observability import OtelAttr, get_tracer
+
+    span_exporter.clear()
+    tracer = get_tracer()
+
+    attrs: dict[str, Any] = {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.REQUEST_MODEL: "unknown",
+    }
+
+    with tracer.start_as_current_span("chat unknown") as span:
+        ChatTelemetryLayer._backfill_request_model(span, attrs)
+
+    assert attrs[OtelAttr.REQUEST_MODEL] == "unknown"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].name == "chat unknown"
+
+
+async def test_chat_client_backfills_request_model_from_response(span_exporter: InMemorySpanExporter):
+    """Non-streaming chat: when REQUEST_MODEL is unknown, the response model backfills it."""
+
+    class BackfillingChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _get() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message("assistant", ["Test response"])],
+                    model="resolved-model",
+                )
+
+            return _get()
+
+    client = BackfillingChatClient()
+    span_exporter.clear()
+    # Note: no "model" in options, so REQUEST_MODEL starts as "unknown".
+    await client.get_response(messages=[Message(role="user", contents=["Hi"])], options={})
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "chat resolved-model"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "resolved-model"
+    assert span.attributes[OtelAttr.RESPONSE_MODEL] == "resolved-model"
+
+
+async def test_chat_client_streaming_backfills_request_model_from_response(
+    span_exporter: InMemorySpanExporter,
+):
+    """Streaming chat: when REQUEST_MODEL is unknown, the response model backfills it."""
+
+    class BackfillingStreamingChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text(" world")], role="assistant", finish_reason="stop")
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response = ChatResponse.from_updates(updates)
+                response.model = "resolved-stream-model"
+                return response
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+    client = BackfillingStreamingChatClient()
+    span_exporter.clear()
+    stream = client.get_response(stream=True, messages=[Message(role="user", contents=["Hi"])], options={})
+    async for _ in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "chat resolved-stream-model"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "resolved-stream-model"
+    assert span.attributes[OtelAttr.RESPONSE_MODEL] == "resolved-stream-model"
 
 
 def test_configure_otel_providers_with_env_file_path(monkeypatch, tmp_path):

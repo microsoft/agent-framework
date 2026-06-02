@@ -841,6 +841,88 @@ async def test_served_model_header_not_captured_for_streaming_text_format() -> N
         assert update.model == "test-model"
 
 
+async def test_streaming_response_without_headers_attribute_does_not_crash() -> None:
+    """Regression for #6028.
+
+    Some telemetry instrumentors (e.g. ``azure-ai-projects`` experimental GenAI tracing,
+    activated by ``AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING=true``) monkey-patch
+    ``openai.resources.responses.AsyncResponses.create`` at the class level and return
+    an ``AsyncStreamWrapper`` whose class genuinely has no ``headers`` attribute. The
+    ``with_raw_response.create`` wrapper does not re-wrap the return value
+    (``async_to_raw_response_wrapper`` only injects an extra header into the request),
+    so ``raw_create_response`` in ``_inner_get_response`` ends up being the wrapper
+    itself. Reading ``raw_create_response.headers`` used to raise ``AttributeError``
+    and bubble up as ``ChatClientException``, breaking every streaming call. The
+    defensive ``getattr(..., "headers", None)`` should now degrade gracefully:
+    no served-model surfacing, but the stream still completes.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta="Hello",
+        ),
+    ]
+
+    class _StreamWrapperWithoutHeaders:
+        """Mimics ``azure.ai.projects.telemetry._responses_instrumentor.AsyncStreamWrapper``:
+        an async iterator that proxies the stream contents but does not expose ``.headers``.
+        ``hasattr(wrapper, "headers")`` returns ``False`` so ``getattr(..., "headers", None)``
+        falls through to the default — matching the real instrumentor's class layout.
+        """
+
+        def __init__(self, events: list[object]) -> None:
+            self._events = events
+            self._iterator = iter(())
+
+        def __aiter__(self) -> "_StreamWrapperWithoutHeaders":
+            self._iterator = iter(self._events)
+            return self
+
+        async def __anext__(self) -> object:
+            try:
+                return next(self._iterator)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+        def parse(self) -> "_StreamWrapperWithoutHeaders":
+            return self
+
+        async def __aenter__(self) -> "_StreamWrapperWithoutHeaders":
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: object | None,
+        ) -> None:
+            return None
+
+    headerless_stream = _StreamWrapperWithoutHeaders(events)
+    # Sanity-check the simulation: the real instrumentor's wrapper genuinely lacks ``.headers``.
+    assert not hasattr(headerless_stream, "headers")
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=headerless_stream)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        updates = [update async for update in stream]
+
+    assert updates, "Expected the stream to complete even when the wrapper lacks .headers"
+    for update in updates:
+        # No header => no override => model stays the deployment alias.
+        assert update.model == "test-model"
+
+
 async def test_streaming_text_format_preserves_final_structured_output() -> None:
     """Streaming structured output should still parse into the final ChatResponse value."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -3407,9 +3489,11 @@ def test_streaming_annotation_added_with_url_citation() -> None:
     mock_event = MagicMock()
     mock_event.type = "response.output_text.annotation.added"
     mock_event.annotation_index = 0
+    get_url = "https://example.search.windows.net/indexes/docs/documents/doc-123?api-version=2024-07-01"
     mock_event.annotation = {
         "type": "url_citation",
         "url": "https://example.sharepoint.com/sites/my-site/doc.pdf",
+        "get_url": get_url,
         "title": "doc.pdf",
         "start_index": 100,
         "end_index": 112,
@@ -3427,6 +3511,7 @@ def test_streaming_annotation_added_with_url_citation() -> None:
     assert annotation["title"] == "doc.pdf"
     assert annotation["url"] == "https://example.sharepoint.com/sites/my-site/doc.pdf"
     assert annotation["additional_properties"]["annotation_index"] == 0
+    assert annotation["additional_properties"]["get_url"] == get_url
     assert annotation["raw_representation"] == mock_event.annotation
     assert annotation["annotated_regions"] is not None
     assert len(annotation["annotated_regions"]) == 1

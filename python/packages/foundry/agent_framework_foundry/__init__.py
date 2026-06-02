@@ -12,10 +12,12 @@ from ._embedding_client import (
 )
 from ._foundry_evals import (
     FoundryEvals,
+    GeneratedEvaluatorRef,
     evaluate_foundry_target,
     evaluate_traces,
 )
 from ._memory_provider import FoundryMemoryProvider
+from ._to_prompt_agent import to_prompt_agent
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -32,6 +34,7 @@ __all__ = [
     "FoundryEmbeddingSettings",
     "FoundryEvals",
     "FoundryMemoryProvider",
+    "GeneratedEvaluatorRef",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",
@@ -39,4 +42,5 @@ __all__ = [
     "__version__",
     "evaluate_foundry_target",
     "evaluate_traces",
+    "to_prompt_agent",
 ]

@@ -4,7 +4,6 @@ using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -13,7 +12,6 @@ using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Files;
 using OpenAI.Responses;
@@ -53,7 +51,6 @@ namespace Microsoft.Agents.AI.Foundry;
 /// behind an Agent Endpoint. It is not synonymous with the Agent Endpoint mode itself.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryChatClient : DelegatingChatClient
 {
     private readonly ChatClientMetadata _metadata;
@@ -652,6 +649,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
     /// <summary>Best-effort registration of <see cref="AgentFrameworkUserAgentPolicy"/> via the MEAI <see cref="OpenAIRequestPolicies"/> hook with at-most-once dedup per pipeline.</summary>
     private static void TryRegisterAgentFrameworkUserAgentPolicy(IChatClient? innerClient)
     {
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         if (innerClient?.GetService<OpenAIRequestPolicies>() is { } policies)
         {
             // OpenAIRequestPoliciesReflection.AddPolicyIfMissing performs a check-then-add against
@@ -663,6 +661,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
                 AgentFrameworkUserAgentPolicy.Instance,
                 PipelinePosition.PerCall);
         }
+#pragma warning restore MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
     }
 
     /// <summary>
@@ -675,6 +674,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
     /// </summary>
     private static void TryRegisterServedModelPolicy(IChatClient? innerClient)
     {
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         if (innerClient?.GetService<OpenAIRequestPolicies>() is { } policies)
         {
             OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
@@ -682,6 +682,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
                 ServedModelPolicy.Instance,
                 PipelinePosition.PerCall);
         }
+#pragma warning restore MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
     }
 
     /// <summary>Default OAuth scope for the Azure AI resource. Matches the scope used by <c>Azure.AI.Extensions.OpenAI</c>'s internal authentication helper so the bearer token is accepted by the Foundry control plane.</summary>
