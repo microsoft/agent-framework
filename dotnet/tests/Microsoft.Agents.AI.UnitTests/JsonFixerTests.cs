@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable RCS1118, RCS1192
+
 using Xunit;
 
 namespace Microsoft.Agents.AI.UnitTests;
@@ -113,6 +115,35 @@ public class JsonFixerTests
         bool result = JsonFixer.TryFixTruncatedJson(ref text);
         Assert.True(result);
         Assert.Equal(expected, text);
+    }
+
+    // ---------- Nested JSON Unstringifying ----------
+
+    [Fact]
+    public void TryUnstringifyNestedJson_ValidNestedJson_GetsInlined()
+    {
+        // Arrange
+        string text = @"{""arguments"": ""{}""}";
+
+        // Act
+        bool result = JsonFixer.TryUnstringifyNestedJson(ref text);
+
+        // Assert
+        Assert.True(result);
+        Assert.Equal(@"{""arguments"": {}}", text);
+    }
+
+    [Fact]
+    public void TryUnstringifyNestedJson_InvalidJsonValue_LeftUntouched()
+    {
+        // Arrange
+        string text = @"{""arguments"": ""not-valid-json""}";
+
+        // Act
+        bool result = JsonFixer.TryUnstringifyNestedJson(ref text);
+
+        // Assert
+        Assert.False(result);
     }
 
     // ---------- Combined TryFix ----------

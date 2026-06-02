@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -60,8 +62,8 @@ internal static class JsonFixer
 
         int contentStart = fenceEnd + 1;
 
-        // Find closing fence
-        int closeFence = text.LastIndexOf(FenceMarker, StringComparison.Ordinal);
+        // Find closing fence — search forward from contentStart
+        int closeFence = text.IndexOf(FenceMarker, contentStart, StringComparison.Ordinal);
         if (closeFence >= contentStart)
         {
             // Extract content between fences
@@ -78,17 +80,67 @@ internal static class JsonFixer
 
     /// <summary>
     /// Removes trailing commas before '}', ']', or at the end of the string.
+    /// Uses a state machine to track string/escape state so comma removal
+    /// only applies outside string literals.
     /// </summary>
     public static bool TryFixTrailingCommas(ref string text)
     {
         string original = text;
+        var sb = new StringBuilder(text.Length);
+        bool inString = false;
+        bool escaped = false;
 
-        // Remove trailing comma before closing brace/bracket
-        text = Regex.Replace(text, @",(\s*[}\]])", "$1");
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
 
-        // Remove trailing comma at end of string (truncated after comma)
-        text = Regex.Replace(text, @",\s*$", "");
+            if (inString)
+            {
+                sb.Append(c);
+                if (escaped)
+                {
+                    escaped = false;
+                }
+                else if (c == '\\')
+                {
+                    escaped = true;
+                }
+                else if (c == '"')
+                {
+                    inString = false;
+                }
+            }
+            else
+            {
+                if (c == '"')
+                {
+                    inString = true;
+                    sb.Append(c);
+                }
+                else if (c == ',')
+                {
+                    int j = i + 1;
+                    while (j < text.Length && char.IsWhiteSpace(text[j]))
+                    {
+                        j++;
+                    }
+                    if (j >= text.Length || text[j] == '}' || text[j] == ']')
+                    {
+                        i = j - 1;
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+        }
 
+        text = sb.ToString();
         return text != original;
     }
 
@@ -176,17 +228,27 @@ internal static class JsonFixer
     {
         string original = text;
 
-        // Match pattern: "propertyName": "{...}" or "propertyName": "{\\...}"
-        text = Regex.Replace(
+        // Match pattern: "propertyName": "{...}"
+        var inlineRegex = new Regex(@"""(\w+)""\s*:\s*""({.*?})""");
+        text = inlineRegex.Replace(
             text,
-            @"\""(\w+)\\"":\s*\""(\{.*?\})\""",
             m =>
             {
                 string propertyName = m.Groups[1].Value;
                 string potentialJson = m.Groups[2].Value;
 
-                // Unescape the string
-                potentialJson = Regex.Unescape(potentialJson);
+                // Unescape using proper JSON string parsing
+                try
+                {
+#pragma warning disable IL2026, IL3050 // JSON deserialization of a known primitive type
+                    potentialJson = System.Text.Json.JsonSerializer.Deserialize<string>(
+                        "\"" + potentialJson + "\"") ?? potentialJson;
+#pragma warning restore IL2026, IL3050
+                }
+                catch
+                {
+                    // Fall back to original value if JSON parsing fails
+                }
 
                 // Check if it's valid JSON
                 try
