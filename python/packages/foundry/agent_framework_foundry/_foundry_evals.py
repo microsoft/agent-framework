@@ -541,6 +541,8 @@ def _extract_rubric_scores(sample: Any) -> list[RubricScore] | None:
         if props_dict is not None and props_dict is not properties:
             containers.append(props_dict)
         containers.append(sample_any)
+    else:
+        containers.append(sample)
 
     for container in containers:
         for key in _RUBRIC_DIMENSION_KEYS:

@@ -2619,6 +2619,44 @@ class TestExtractRubricScores:
         assert result[0].id == "policy_enforcement"
         assert result[0].score == 1
 
+    def test_dimension_scores_directly_on_typed_sample_no_properties_wrapper(self) -> None:
+        """Typed SDK sample with ``dimension_scores`` directly on the instance (no ``properties``)."""
+
+        rs = MagicMock()
+        rs.id = "intent_recognition"
+        rs.score = 4
+        rs.applicable = True
+        rs.weight = 2
+        rs.reason = "ok"
+
+        # spec= restricts available attributes — no `properties`, just `dimension_scores`.
+        sample = MagicMock(spec=["dimension_scores"])
+        sample.dimension_scores = [rs]
+
+        result = _extract_rubric_scores(sample)
+        assert result is not None
+        assert result[0].id == "intent_recognition"
+        assert result[0].score == 4
+        assert result[0].weight == 2
+
+    def test_rubric_scores_directly_on_typed_sample_legacy_key(self) -> None:
+        """Same fallback works for the legacy ``rubric_scores`` key."""
+
+        rs = MagicMock()
+        rs.id = "policy"
+        rs.score = 2
+        rs.applicable = True
+        rs.weight = 1
+        rs.reason = "partial"
+
+        sample = MagicMock(spec=["rubric_scores"])
+        sample.rubric_scores = [rs]
+
+        result = _extract_rubric_scores(sample)
+        assert result is not None
+        assert result[0].id == "policy"
+        assert result[0].score == 2
+
 
 # ---------------------------------------------------------------------------
 # _poll_eval_run — timeout / failed / canceled paths
