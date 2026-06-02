@@ -139,4 +139,5 @@ try
 catch (InvalidOperationException ex)
 {
     Console.WriteLine($"[FAIL] {results.ProviderName}: dimension gate tripped: {ex.Message}");
+    System.Environment.ExitCode = 1;
 }
