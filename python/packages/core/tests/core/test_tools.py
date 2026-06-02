@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-import asyncio
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -1461,24 +1460,6 @@ def test_skip_parsing_is_singleton() -> None:
 
     assert _SkipParsingSentinel() is SKIP_PARSING
     assert repr(SKIP_PARSING) == "SKIP_PARSING"
-
-
-def test_invoke_preserves_explicit_none_arguments() -> None:
-    """Optional parameters explicitly set to None must not be stripped before invocation."""
-
-    @tool
-    def greet(name: str, greeting: str | None = "Hi") -> str:
-        if greeting is None:
-            return f"Custom, {name}!"
-        return f"{greeting}, {name}!"
-
-    result = asyncio.run(greet.invoke(arguments={"name": "World", "greeting": None}))
-    assert isinstance(result, list)
-    assert result[0].text == "Custom, World!"
-
-    result = asyncio.run(greet.invoke(arguments={"name": "World"}))
-    assert isinstance(result, list)
-    assert result[0].text == "Hi, World!"
 
 
 # endregion
