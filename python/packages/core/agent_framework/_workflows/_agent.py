@@ -487,19 +487,23 @@ class WorkflowAgent(BaseAgent):
     def _process_request_info_event(
         self,
         event: WorkflowEvent[Any],
-    ) -> tuple[Content, Content]:
-        """Convert a request_info event to FunctionCallContent and FunctionApprovalRequestContent.
+    ) -> Content:
+        """Convert a request_info event to FunctionApprovalRequestContent.
 
         Args:
             event: A WorkflowEvent with type='request_info'.
 
         Returns:
-            A tuple of (FunctionCallContent, FunctionApprovalRequestContent).
-        """
-        request_id = event.request_id
-        if not request_id:
-            raise ValueError("request_info event must have a request_id")
+            A FunctionApprovalRequestContent.
 
+        Note:
+            If the event data is already a FunctionApprovalRequestContent, it will be returned as-is.
+        """
+        if isinstance(event.data, Content) and event.data.user_input_request:
+            # Return the event data as-is if it's already a properly formed FunctionApprovalRequestContent
+            return event.data
+
+        request_id = event.request_id
         args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
 
         function_call = Content.from_function_call(
@@ -507,12 +511,10 @@ class WorkflowAgent(BaseAgent):
             name=self.REQUEST_INFO_FUNCTION_NAME,
             arguments=args,
         )
-        approval_request = Content.from_function_approval_request(
+        return Content.from_function_approval_request(
             id=request_id,
             function_call=function_call,
-            additional_properties={"request_id": request_id},
         )
-        return function_call, approval_request
 
     def _convert_workflow_events_to_agent_response(
         self,
@@ -531,10 +533,10 @@ class WorkflowAgent(BaseAgent):
 
         for output_event in output_events:
             if output_event.type == "request_info":
-                function_call, approval_request = self._process_request_info_event(output_event)
+                approval_request = self._process_request_info_event(output_event)
                 messages.append(
                     Message(
-                        contents=[function_call, approval_request],
+                        contents=[approval_request],
                         role="assistant",
                         author_name=output_event.source_executor_id,
                         message_id=str(uuid.uuid4()),
@@ -702,10 +704,10 @@ class WorkflowAgent(BaseAgent):
             ]
 
         if event.type == "request_info":
-            function_call, approval_request = self._process_request_info_event(event)
+            approval_request = self._process_request_info_event(event)
             return [
                 AgentResponseUpdate(
-                    contents=[function_call, approval_request],
+                    contents=[approval_request],
                     role="assistant",
                     author_name=self.name,
                     response_id=response_id,
@@ -724,27 +726,30 @@ class WorkflowAgent(BaseAgent):
         for message in input_messages:
             for content in message.contents:
                 if content.type == "function_approval_response":
-                    request_id = content.additional_properties.get("request_id")
-                    if not request_id:
-                        raise AgentInvalidResponseException(
-                            "FunctionApprovalResponseContent must have a request_id in additional_properties."
-                        )
+                    request_id: str = content.id  # pyright: ignore[reportAssignmentType]
+                    function_call: Content = content.function_call  # type: ignore[attr-defined]
                     # Parse the function arguments to recover request payload
-                    arguments_payload = content.function_call.arguments  # type: ignore[attr-defined, union-attr]
-                    if isinstance(arguments_payload, str):
-                        try:
-                            parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
-                        except ValueError as exc:
-                            raise AgentInvalidResponseException(
-                                "FunctionApprovalResponseContent arguments must decode to a mapping."
-                            ) from exc
-                    elif isinstance(arguments_payload, dict):
-                        parsed_args = self.RequestInfoFunctionArgs.from_dict(arguments_payload)
+                    if function_call.name != self.REQUEST_INFO_FUNCTION_NAME:
+                        # This response is for a raw approval request that is itself already an
+                        # approval request.
+                        function_responses[request_id] = content
                     else:
-                        raise AgentInvalidResponseException(
-                            "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
-                        )
-                    function_responses[request_id] = parsed_args.data
+                        # This response is for an approval request constructed from a request_info event.
+                        arguments_payload = content.function_call.arguments  # type: ignore[attr-defined, union-attr]
+                        if isinstance(arguments_payload, str):
+                            try:
+                                parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
+                            except ValueError as exc:
+                                raise AgentInvalidResponseException(
+                                    "FunctionApprovalResponseContent arguments must decode to a mapping."
+                                ) from exc
+                        elif isinstance(arguments_payload, dict):
+                            parsed_args = self.RequestInfoFunctionArgs.from_dict(arguments_payload)
+                        else:
+                            raise AgentInvalidResponseException(
+                                "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
+                            )
+                        function_responses[request_id] = parsed_args.data
                 elif content.type == "function_result":
                     response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
                     function_responses[content.call_id] = response_data  # pyright: ignore[reportArgumentType]

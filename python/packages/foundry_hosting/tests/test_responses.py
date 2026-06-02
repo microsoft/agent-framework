@@ -11,24 +11,33 @@ the registered _handle_create handler.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from typing import Literal, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from agent_framework import (
+    AgentExecutorRequest,
     AgentResponse,
     AgentResponseUpdate,
+    AgentSession,
     Content,
     FileCheckpointStorage,
     HistoryProvider,
     Message,
     RawAgent,
     ResponseStream,
+    SupportsAgentRun,
+    WorkflowAgent,
+    WorkflowBuilder,
     WorkflowCheckpoint,
     WorkflowCheckpointException,
+    WorkflowContext,
     WorkflowMessage,
+    executor,
 )
 from azure.ai.agentserver.responses import InMemoryResponseProvider
 from mcp import McpError
@@ -101,7 +110,7 @@ def _make_agent(
     return agent
 
 
-def _make_server(agent: MagicMock, **kwargs: Any) -> ResponsesHostServer:
+def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     """Create a ResponsesHostServer with an in-memory store."""
     return ResponsesHostServer(agent, store=InMemoryResponseProvider(), **kwargs)
 
@@ -3245,6 +3254,500 @@ class TestOAuthConsentSurfacing:
         assert any(it["type"] == "message" for it in body2["output"])
         assert agent.__aenter__.await_count == 2
         agent.run.assert_awaited_once()
+
+
+# endregion
+
+# region Workflow agent hosting (end-to-end)
+
+
+class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
+    """Inner agent for a hosted ``WorkflowAgent`` whose first run emits a
+    ``FunctionApprovalRequestContent`` and whose follow-up run (after
+    receiving a ``FunctionApprovalResponseContent`` in its inputs) returns a
+    final assistant text response.
+
+    Mirrors a real agent whose tool invocation requires user approval. Used
+    here to exercise the full HTTP pipeline through ``ResponsesHostServer``
+    when the hosted agent is a ``WorkflowAgent`` containing a tool-approval
+    flow.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        tool_name: str = "delete_file",
+        tool_arguments: dict[str, Any] | None = None,
+        approval_request_ids: Sequence[str] | None = None,
+        final_text: str = "done",
+    ) -> None:
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.description: str | None = None
+        self._tool_name = tool_name
+        self._tool_arguments = tool_arguments or {"path": "/tmp/example"}
+        self._approval_request_ids: list[str] = list(approval_request_ids) if approval_request_ids else []
+        self._final_text = final_text
+        self.run_count = 0
+        self.last_run_messages: list[Message] = []
+
+    def create_session(self, **kwargs: Any) -> AgentSession:
+        return AgentSession()
+
+    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+        return AgentSession()
+
+    def _next_request_id(self) -> str:
+        # Stable across calls: when the workflow checkpoint round-trips through
+        # restore, ``AgentExecutor`` re-invokes the inner agent during replay.
+        # We must surface the *same* approval request id on each invocation so
+        # the workflow's pending-request id matches the id the test echoes
+        # back as ``mcp_approval_response``.
+        if self._approval_request_ids:
+            return self._approval_request_ids[0]
+        return str(uuid.uuid4())
+
+    def _build_approval_request(self) -> Content:
+        request_id = self._next_request_id()
+        function_call = Content.from_function_call(
+            call_id=request_id,
+            name=self._tool_name,
+            arguments=self._tool_arguments,
+            additional_properties={"server_label": "test_server"},
+        )
+        return Content.from_function_approval_request(id=request_id, function_call=function_call)
+
+    @overload
+    def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        if stream:
+            return self._run_stream(messages=messages, **kwargs)
+        return self._run(messages=messages, **kwargs)
+
+    @staticmethod
+    def _normalize(
+        messages: str | Content | Message | Sequence[str | Content | Message] | None,
+    ) -> list[Message]:
+        if messages is None:
+            return []
+        if isinstance(messages, str):
+            return [Message(role="user", contents=[Content.from_text(text=messages)])]
+        if isinstance(messages, Message):
+            return [messages]
+        if isinstance(messages, Content):
+            return [Message(role="user", contents=[messages])]
+        result: list[Message] = []
+        for item in messages:
+            if isinstance(item, Message):
+                result.append(item)
+            elif isinstance(item, Content):
+                result.append(Message(role="user", contents=[item]))
+            else:
+                result.append(Message(role="user", contents=[Content.from_text(text=item)]))
+        return result
+
+    @staticmethod
+    def _approval_responses_in(messages: list[Message]) -> list[Content]:
+        return [c for m in messages for c in m.contents if c.type == "function_approval_response"]
+
+    async def _run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse:
+        normalized = self._normalize(messages)
+        self.last_run_messages = normalized
+        self.run_count += 1
+        if self._approval_responses_in(normalized):
+            return AgentResponse(messages=[Message("assistant", [Content.from_text(text=self._final_text)])])
+        approval = self._build_approval_request()
+        return AgentResponse(messages=[Message("assistant", [approval])])
+
+    def _run_stream(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        normalized = self._normalize(messages)
+        self.last_run_messages = normalized
+        self.run_count += 1
+        approvals = self._approval_responses_in(normalized)
+
+        async def _iter() -> AsyncIterator[AgentResponseUpdate]:
+            if approvals:
+                yield AgentResponseUpdate(
+                    contents=[Content.from_text(text=self._final_text)],
+                    role="assistant",
+                    author_name=self.name,
+                )
+                return
+            yield AgentResponseUpdate(
+                contents=[self._build_approval_request()],
+                role="assistant",
+                author_name=self.name,
+            )
+
+        return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
+
+
+def _build_text_workflow_agent(text: str) -> WorkflowAgent:
+    """Build a minimal ``WorkflowAgent`` whose inner agent emits a fixed text."""
+
+    class _TextAgent(SupportsAgentRun):
+        def __init__(self, name: str, text: str) -> None:
+            self.id = str(uuid.uuid4())
+            self.name = name
+            self.description: str | None = None
+            self._text = text
+
+        def create_session(self, **kwargs: Any) -> AgentSession:
+            return AgentSession()
+
+        def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+            return AgentSession()
+
+        @overload
+        def run(
+            self,
+            messages: Any = ...,
+            *,
+            stream: Literal[False] = ...,
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]]: ...
+
+        @overload
+        def run(
+            self,
+            messages: Any = ...,
+            *,
+            stream: Literal[True],
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+        def run(
+            self,
+            messages: Any = None,
+            *,
+            stream: bool = False,
+            session: AgentSession | None = None,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+            text = self._text
+            name = self.name
+
+            async def _aresult() -> AgentResponse:
+                return AgentResponse(messages=[Message("assistant", [Content.from_text(text=text)])])
+
+            async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
+                yield AgentResponseUpdate(
+                    contents=[Content.from_text(text=text)],
+                    role="assistant",
+                    author_name=name,
+                )
+
+            if stream:
+                return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
+            return _aresult()
+
+    inner = _TextAgent("text-agent", text)
+
+    @executor
+    async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+
+    workflow = WorkflowBuilder(start_executor=start).add_edge(start, inner).build()
+    return WorkflowAgent(workflow=workflow, name="Text Workflow Agent")
+
+
+def _build_approval_workflow_agent(
+    *,
+    approval_request_id: str,
+    tool_name: str = "delete_file",
+    tool_arguments: dict[str, Any] | None = None,
+    final_text: str = "done",
+) -> tuple[WorkflowAgent, _ToolApprovalWorkflowAgentMock]:
+    """Build a ``WorkflowAgent`` whose inner agent emits a tool approval request."""
+    mock_agent = _ToolApprovalWorkflowAgentMock(
+        name="approval-agent",
+        tool_name=tool_name,
+        tool_arguments=tool_arguments or {"path": "/tmp/secret.txt"},
+        approval_request_ids=[approval_request_id],
+        final_text=final_text,
+    )
+
+    @executor
+    async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+
+    workflow = WorkflowBuilder(start_executor=start).add_edge(start, mock_agent).build()
+    workflow_agent = WorkflowAgent(workflow=workflow, name="Approval Workflow Agent")
+    return workflow_agent, mock_agent
+
+
+class TestWorkflowAgentHosting:
+    """End-to-end HTTP tests for ``ResponsesHostServer`` hosting a ``WorkflowAgent``.
+
+    These tests drive ``_handle_inner_workflow`` through the ASGI stack:
+    they exercise checkpoint write/restore (multi-turn) and the
+    tool-approval round-trip path, which is the primary differentiator
+    relative to the regular agent path.
+    """
+
+    async def test_basic_text_response(self) -> None:
+        workflow_agent = _build_text_workflow_agent("hello from workflow")
+        server = _make_server(workflow_agent)
+
+        resp = await _post(server, input_text="hi", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        text_found = any(
+            part.get("type") == "output_text" and part.get("text") == "hello from workflow"
+            for item in body["output"]
+            if item["type"] == "message"
+            for part in item.get("content", [])
+        )
+        assert text_found, f"Expected workflow output text in {body['output']}"
+
+    async def test_basic_text_response_streaming(self) -> None:
+        workflow_agent = _build_text_workflow_agent("hello stream")
+        server = _make_server(workflow_agent)
+
+        resp = await _post(server, input_text="hi", stream=True)
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+        assert types[0] == "response.created"
+        assert types[-1] == "response.completed"
+        assert "response.output_text.delta" in types
+        text_done = [e for e in events if e["event"] == "response.output_text.done"]
+        assert any(e["data"]["text"] == "hello stream" for e in text_done)
+
+    async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
+        workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")
+        server = _make_server(workflow_agent)
+
+        resp = await _post(server, stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        approval_items = [it for it in body["output"] if it["type"] == "mcp_approval_request"]
+        assert len(approval_items) == 1
+        assert approval_items[0]["name"] == "delete_file"
+        assert approval_items[0]["server_label"] == "test_server"
+        approval_request_id = approval_items[0]["id"]
+
+        # The id surfaced over the wire is generated by the response stream
+        # builder; the original approval ``Content`` (carrying the inner
+        # ``function_call``) must be persisted under that id so the next
+        # turn can reconstruct it.
+        loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
+            approval_request_id
+        )
+        assert loaded.type == "function_approval_request"
+        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        assert mock_agent.run_count == 1
+
+    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
+        workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_st")
+        server = _make_server(workflow_agent)
+
+        resp = await _post(server, stream=True)
+        assert resp.status_code == 200
+
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+        assert types[0] == "response.created"
+        assert types[-1] == "response.completed"
+
+        approval_request_id: str | None = None
+        for e in events:
+            if e["event"] != "response.output_item.added":
+                continue
+            item = e["data"].get("item") or {}
+            if item.get("type") == "mcp_approval_request":
+                approval_request_id = item.get("id")
+                break
+        assert approval_request_id is not None
+
+        loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
+            approval_request_id
+        )
+        assert loaded.type == "function_approval_request"
+        assert mock_agent.run_count == 1
+
+    async def test_round_trip_approval_response_resumes_workflow_agent(self) -> None:
+        """Two-turn HTTP round-trip:
+
+        Turn 1 emits ``mcp_approval_request`` and writes a workflow
+        checkpoint under the response id. Turn 2 sends the
+        ``mcp_approval_response`` with ``previous_response_id`` set, so the
+        host restores the checkpoint, the WorkflowAgent routes the
+        approval response back to the paused inner agent, and the inner
+        agent emits the final assistant text.
+        """
+        workflow_agent, mock_agent = _build_approval_workflow_agent(
+            approval_request_id="apr_wf_rt",
+            final_text="done with approval",
+        )
+        server = _make_server(workflow_agent)
+
+        first = await _post(server, stream=False)
+        assert first.status_code == 200
+        first_body = first.json()
+        first_response_id = first_body["id"]
+        approval_items = [it for it in first_body["output"] if it["type"] == "mcp_approval_request"]
+        assert len(approval_items) == 1
+        approval_request_id = approval_items[0]["id"]
+        assert mock_agent.run_count == 1
+
+        second_payload: dict[str, Any] = {
+            "model": "test-model",
+            "input": [
+                {
+                    "type": "mcp_approval_response",
+                    "approval_request_id": approval_request_id,
+                    "approve": True,
+                }
+            ],
+            "stream": False,
+            "previous_response_id": first_response_id,
+        }
+        second = await _post_json(server, second_payload)
+        assert second.status_code == 200
+        second_body = second.json()
+        assert second_body["status"] == "completed"
+
+        # The inner agent must have been resumed (restore replay + new turn).
+        # Restore call is a no-op for the mock (no input); the new-turn call
+        # delivers the approval response, so run_count grows by at least 1.
+        assert mock_agent.run_count >= 2
+
+        # The final assistant text from the resumed inner agent surfaces in
+        # the HTTP output.
+        text_pieces = [
+            part.get("text", "")
+            for item in second_body["output"]
+            if item["type"] == "message"
+            for part in item.get("content", [])
+            if part.get("type") == "output_text"
+        ]
+        assert any("done with approval" in t for t in text_pieces), (
+            f"expected resumed workflow output, got {second_body['output']}"
+        )
+
+        # The new-turn invocation of the inner agent must have received the
+        # approval response routed back through WorkflowAgent.
+        approval_responses = [
+            c for m in mock_agent.last_run_messages for c in m.contents if c.type == "function_approval_response"
+        ]
+        assert len(approval_responses) == 1
+        assert approval_responses[0].approved is True  # type: ignore[attr-defined]
+
+    async def test_round_trip_approval_response_streaming(self) -> None:
+        """Streaming variant of the round-trip: turn 2 is requested with
+        ``stream=true`` and surfaces the resumed text as SSE events."""
+        workflow_agent, mock_agent = _build_approval_workflow_agent(
+            approval_request_id="apr_wf_rt_st",
+            final_text="streamed-done",
+        )
+        server = _make_server(workflow_agent)
+
+        first = await _post(server, stream=False)
+        first_body = first.json()
+        first_response_id = first_body["id"]
+        approval_request_id = next(it["id"] for it in first_body["output"] if it["type"] == "mcp_approval_request")
+
+        second = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "mcp_approval_response",
+                        "approval_request_id": approval_request_id,
+                        "approve": True,
+                    }
+                ],
+                "stream": True,
+                "previous_response_id": first_response_id,
+            },
+        )
+        assert second.status_code == 200
+        events = _parse_sse_events(second.text)
+        types = _sse_event_types(events)
+        assert types[0] == "response.created"
+        assert types[-1] == "response.completed"
+
+        text_done = [e for e in events if e["event"] == "response.output_text.done"]
+        assert any("streamed-done" in e["data"]["text"] for e in text_done)
+        assert mock_agent.run_count >= 2
+
+    async def test_round_trip_approval_response_rejected(self) -> None:
+        """Sending ``approve=False`` must surface as ``approved=False`` to the
+        inner agent on resume."""
+        workflow_agent, mock_agent = _build_approval_workflow_agent(
+            approval_request_id="apr_wf_reject",
+            final_text="acknowledged",
+        )
+        server = _make_server(workflow_agent)
+
+        first = await _post(server, stream=False)
+        first_body = first.json()
+        first_response_id = first_body["id"]
+        approval_request_id = next(it["id"] for it in first_body["output"] if it["type"] == "mcp_approval_request")
+
+        second = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "mcp_approval_response",
+                        "approval_request_id": approval_request_id,
+                        "approve": False,
+                    }
+                ],
+                "stream": False,
+                "previous_response_id": first_response_id,
+            },
+        )
+        assert second.status_code == 200
+
+        approval_responses = [
+            c for m in mock_agent.last_run_messages for c in m.contents if c.type == "function_approval_response"
+        ]
+        assert len(approval_responses) == 1
+        assert approval_responses[0].approved is False  # type: ignore[attr-defined]
 
 
 # endregion

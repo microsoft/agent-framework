@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
-from random import randint
 
-from agent_framework import Agent, AgentExecutor, WorkflowBuilder, tool
+from agent_framework import Agent, AgentExecutor, WorkflowBuilder
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
@@ -11,13 +10,6 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
-
-
-@tool(approval_mode="always_require")
-def get_locale() -> str:
-    """Get the weather for a given location."""
-    conditions = ["CZ", "US", "FR", "DE"]
-    return f"The locale is {conditions[randint(0, 3)]}."
 
 
 def main():
@@ -30,7 +22,6 @@ def main():
     writer_agent = Agent(
         client=client,
         instructions=("You are an excellent slogan writer. You create new slogans based on the given topic."),
-        tools=[get_locale],
         name="writer",
     )
 
