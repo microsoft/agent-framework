@@ -1542,10 +1542,8 @@ async def _auto_invoke_function(
             raise
         except Exception as exc:
             logger.warning(
-                "Function '%s' raised an exception; returning an error result to the model. "
-                "Set include_detailed_errors=True or inspect this log for details.",
-                tool.name,
-                exc_info=exc,
+                f"Function '{tool.name}' raised an exception; returning an error result to the "
+                f"model. Set include_detailed_errors=True for the full detail. Exception: {exc!r}"
             )
             message = "Error: Function failed."
             if config.get("include_detailed_errors", False):
@@ -1620,10 +1618,8 @@ async def _auto_invoke_function(
         raise
     except Exception as exc:
         logger.warning(
-            "Function '%s' raised an exception; returning an error result to the model. "
-            "Set include_detailed_errors=True or inspect this log for details.",
-            tool.name,
-            exc_info=exc,
+            f"Function '{tool.name}' raised an exception; returning an error result to the "
+            f"model. Set include_detailed_errors=True for the full detail. Exception: {exc!r}"
         )
         message = "Error: Function failed."
         if config.get("include_detailed_errors", False):
