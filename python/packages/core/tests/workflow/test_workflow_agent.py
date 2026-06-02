@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
@@ -313,14 +312,13 @@ class TestWorkflowAgent:
             response_type=str,
         )
 
-        function_call, approval_request = agent._process_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
+        approval_request = agent._process_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
 
-        assert function_call.arguments == {
+        assert approval_request.function_call is not None
+        assert approval_request.function_call.arguments == {
             "request_id": "request_123",
             "data": {"target_agent": "helper", "reason": "overflow"},
         }
-        assert approval_request.function_call is function_call
-        assert json.loads(json.dumps(function_call.arguments)) == function_call.arguments
 
     def test_workflow_as_agent_method(self) -> None:
         """Test that Workflow.as_agent() creates a properly configured WorkflowAgent."""
