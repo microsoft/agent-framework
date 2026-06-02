@@ -13,9 +13,9 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
-  <!-- First GA after the RC milestone. Baseline against the latest published RC so package
-       validation catches accidental breaking changes between RC and GA. Future GAs should
-       bump this to the previous GA version. -->
+  <!-- First Stable release after the RC milestone. Baseline against the latest 
+       published RC so package validation catches accidental breaking changes. 
+       Future releases should bump this to the previous stable version. -->
   <PropertyGroup>
     <PackageValidationBaselineVersion>1.8.0-rc1</PackageValidationBaselineVersion>
   </PropertyGroup>
