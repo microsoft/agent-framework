@@ -2980,9 +2980,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             total_token_count=usage.total_tokens,
         )
         if usage.input_tokens_details and usage.input_tokens_details.cached_tokens:
-            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens  # type: ignore[typeddict-unknown-key]
+            details["cache_read_input_token_count"] = usage.input_tokens_details.cached_tokens
         if usage.output_tokens_details and usage.output_tokens_details.reasoning_tokens:
-            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens  # type: ignore[typeddict-unknown-key]
+            details["reasoning_output_token_count"] = usage.output_tokens_details.reasoning_tokens
         return details
 
     def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:

@@ -3300,7 +3300,7 @@ def test_usage_details_with_cached_tokens() -> None:
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
     assert details["input_token_count"] == 200
-    assert details["openai.cached_input_tokens"] == 25
+    assert details["cache_read_input_token_count"] == 25
 
 
 def test_usage_details_with_reasoning_tokens() -> None:
@@ -3318,7 +3318,7 @@ def test_usage_details_with_reasoning_tokens() -> None:
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
     assert details["output_token_count"] == 80
-    assert details["openai.reasoning_tokens"] == 30
+    assert details["reasoning_output_token_count"] == 30
 
 
 def test_get_metadata_from_response() -> None:

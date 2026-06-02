@@ -201,6 +201,9 @@ class OtelAttr(str, Enum):
     # Usage attributes
     INPUT_TOKENS = "gen_ai.usage.input_tokens"
     OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+    CACHE_CREATION_INPUT_TOKENS = "gen_ai.usage.cache_creation.input_tokens"
+    CACHE_READ_INPUT_TOKENS = "gen_ai.usage.cache_read.input_tokens"
+    REASONING_OUTPUT_TOKENS = "gen_ai.usage.reasoning.output_tokens"
     # Tool attributes
     TOOL_CALL_ID = "gen_ai.tool.call.id"
     TOOL_DESCRIPTION = "gen_ai.tool.description"
@@ -224,8 +227,8 @@ class OtelAttr(str, Enum):
     LLM_OPERATION_DURATION = "gen_ai.client.operation.duration"
     LLM_TOKEN_USAGE = "gen_ai.client.token.usage"  # nosec B105 # noqa: S105 - OpenTelemetry metric name, not a secret.
 
-    # Usage attribute prefix for dynamically constructed span attributes
-    GEN_AI_USAGE_PREFIX = "gen_ai.usage."
+    # Usage field to standard OTel attribute name mapping is in
+    # _USAGE_FIELD_TO_OTEL_ATTR (module-level, defined below).
 
     # Agent attributes
     AGENT_NAME = "gen_ai.agent.name"
@@ -329,6 +332,14 @@ FINISH_REASON_MAP = {
     "content_filter": "content_filter",
     "tool_calls": "tool_call",
     "length": "length",
+}
+
+_USAGE_FIELD_TO_OTEL_ATTR: dict[str, str] = {
+    "input_token_count": "gen_ai.usage.input_tokens",
+    "output_token_count": "gen_ai.usage.output_tokens",
+    "cache_creation_input_token_count": "gen_ai.usage.cache_creation.input_tokens",
+    "cache_read_input_token_count": "gen_ai.usage.cache_read.input_tokens",
+    "reasoning_output_token_count": "gen_ai.usage.reasoning.output_tokens",
 }
 
 
@@ -2384,12 +2395,13 @@ def _get_response_attributes(
         for key, value in usage.items():
             if not isinstance(value, int) or isinstance(value, bool):
                 continue
-            if key == "input_token_count":
-                attributes[OtelAttr.INPUT_TOKENS] = value
-            elif key == "output_token_count":
-                attributes[OtelAttr.OUTPUT_TOKENS] = value
-            else:
-                attributes[f"{OtelAttr.GEN_AI_USAGE_PREFIX}{key}"] = value
+            attr_name = _USAGE_FIELD_TO_OTEL_ATTR.get(key)
+            if attr_name is not None:
+                attributes[attr_name] = value
+                continue
+            # Fall back to prefix-based attribute for provider-specific fields
+            # not yet covered by the standard mapping.
+            attributes[f"gen_ai.usage.{key}"] = value
     return attributes
 
 

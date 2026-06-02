@@ -1023,9 +1023,9 @@ class RawAnthropicClient(
         if usage.input_tokens is not None:
             usage_details["input_token_count"] = usage.input_tokens
         if usage.cache_creation_input_tokens is not None:
-            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens  # type: ignore[typeddict-unknown-key]
+            usage_details["cache_creation_input_token_count"] = usage.cache_creation_input_tokens
         if usage.cache_read_input_tokens is not None:
-            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens  # type: ignore[typeddict-unknown-key]
+            usage_details["cache_read_input_token_count"] = usage.cache_read_input_tokens
         return usage_details
 
     def _parse_contents_from_anthropic(

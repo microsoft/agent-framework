@@ -400,12 +400,18 @@ class UsageDetails(TypedDict, total=False, extra_items=int):  # type: ignore[cal
         input_token_count: The number of input tokens used.
         output_token_count: The number of output tokens generated.
         total_token_count: The total number of tokens (input + output).
+        cache_creation_input_token_count: Tokens written to a provider-managed cache.
+        cache_read_input_token_count: Tokens served from a provider-managed cache.
+        reasoning_output_token_count: Output tokens used for reasoning (chain-of-thought, extended thinking).
 
     """
 
     input_token_count: int | None
     output_token_count: int | None
     total_token_count: int | None
+    cache_creation_input_token_count: int | None
+    cache_read_input_token_count: int | None
+    reasoning_output_token_count: int | None
 
 
 def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) -> UsageDetails:
