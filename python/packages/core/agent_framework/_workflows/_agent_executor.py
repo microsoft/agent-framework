@@ -436,7 +436,7 @@ class AgentExecutor(Executor):
             total_message_content_count = sum(len(msg.contents) for msg in response.messages)
             if user_input_request_count != total_message_content_count:
                 logger.warning(
-                    "Response %d contains %d user input requests but total message contents are %d. "
+                    "Response %s contains %d user input requests but total message contents are %d. "
                     "This indicates the response contains both user input requests and message contents. "
                     "Double check if this is the intended behavior, as non user input request contents in "
                     "this response will not be emitted.",
@@ -492,7 +492,7 @@ class AgentExecutor(Executor):
                 total_message_content_count = len(update.contents)
                 if user_input_request_count != total_message_content_count:
                     logger.warning(
-                        "Response update %d contains %d user input requests but total message contents are %d. "
+                        "Response update %s contains %d user input requests but total message contents are %d. "
                         "This indicates the response update contains both user input requests and message contents. "
                         "Double check if this is the intended behavior, as non user input request contents will "
                         "not be emitted.",

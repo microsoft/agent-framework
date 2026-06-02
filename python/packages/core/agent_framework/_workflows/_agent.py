@@ -727,8 +727,8 @@ class WorkflowAgent(BaseAgent):
         for message in input_messages:
             for content in message.contents:
                 if content.type == "function_approval_response":
-                    request_id: str = content.id  # pyright: ignore[reportAssignmentType]
-                    function_call: Content = content.function_call  # type: ignore[attr-defined]
+                    request_id: str = content.id  # type: ignore[assignment]
+                    function_call: Content = content.function_call  # type: ignore[assignment]
                     # Parse the function arguments to recover request payload
                     if function_call.name != self.REQUEST_INFO_FUNCTION_NAME:
                         # This response is for a raw approval request that is itself already an
@@ -753,7 +753,7 @@ class WorkflowAgent(BaseAgent):
                         function_responses[request_id] = parsed_args.data
                 elif content.type == "function_result":
                     response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
-                    function_responses[content.call_id] = response_data  # pyright: ignore[reportArgumentType]
+                    function_responses[content.call_id] = response_data  # type: ignore[argument-type]
                 else:
                     raise AgentInvalidResponseException(
                         "Unexpected content type while awaiting request info responses."
