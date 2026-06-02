@@ -78,7 +78,8 @@ def _make_client(**read_resource_responses: ReadResourceResult) -> AsyncMock:
 
     Args:
         **read_resource_responses: Mapping of URI string to ReadResourceResult.
-            Any URI not in this mapping raises McpError (resource not found).
+            Any URI not in this mapping raises McpError with the MCP-spec
+            "Resource not found" code (-32002).
     """
     client = AsyncMock()
 
@@ -509,3 +510,111 @@ class TestMCPSkillsSource:
         assert resource is not None
         content = await resource.read()
         assert content == data
+
+
+# ---------------------------------------------------------------------------
+# McpError code branching tests
+# ---------------------------------------------------------------------------
+
+
+class TestMCPSkillsSourceErrorCodeBranching:
+    """Tests that MCPSkillsSource and MCPSkill branch on McpError.error.code.
+
+    Only "not found" codes (RESOURCE_NOT_FOUND -32002, METHOD_NOT_FOUND -32601)
+    should be silently swallowed as "no skills available." Other McpError codes
+    and non-McpError exceptions must propagate so that auth failures, server
+    crashes, and connection drops are visible.
+    """
+
+    @pytest.mark.asyncio
+    async def test_index_method_not_found_returns_empty(self) -> None:
+        """METHOD_NOT_FOUND (-32601) -> server doesn't support resources/read."""
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32601, message="Method not found")))
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills()
+        assert skills == []
+
+    @pytest.mark.asyncio
+    async def test_index_resource_not_found_returns_empty(self) -> None:
+        """MCP-spec "Resource not found" (-32002) -> server has no index."""
+        client = AsyncMock()
+        client.read_resource = AsyncMock(
+            side_effect=McpError(error=ErrorData(code=-32002, message="Resource not found"))
+        )
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills()
+        assert skills == []
+
+    @pytest.mark.asyncio
+    async def test_index_invalid_params_propagates(self) -> None:
+        """INVALID_PARAMS (-32602) is a real bug, must propagate (not "not found")."""
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32602, message="Invalid params")))
+        source = MCPSkillsSource(client=client)
+        with pytest.raises(McpError):
+            await source.get_skills()
+
+    @pytest.mark.asyncio
+    async def test_index_internal_error_propagates(self) -> None:
+        """INTERNAL_ERROR (-32603) must propagate, not silently return empty."""
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32603, message="Internal error")))
+        source = MCPSkillsSource(client=client)
+        with pytest.raises(McpError):
+            await source.get_skills()
+
+    @pytest.mark.asyncio
+    async def test_index_connection_closed_propagates(self) -> None:
+        """CONNECTION_CLOSED (-32000) must propagate."""
+        client = AsyncMock()
+        client.read_resource = AsyncMock(
+            side_effect=McpError(error=ErrorData(code=-32000, message="Connection closed"))
+        )
+        source = MCPSkillsSource(client=client)
+        with pytest.raises(McpError):
+            await source.get_skills()
+
+    @pytest.mark.asyncio
+    async def test_index_generic_error_code_propagates(self) -> None:
+        """Generic handler error (code 0) must propagate."""
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=0, message="Some handler error")))
+        source = MCPSkillsSource(client=client)
+        with pytest.raises(McpError):
+            await source.get_skills()
+
+    @pytest.mark.asyncio
+    async def test_index_non_mcp_error_propagates(self) -> None:
+        """Non-McpError exceptions (connection drop, timeout) must propagate."""
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=ConnectionError("connection lost"))
+        source = MCPSkillsSource(client=client)
+        with pytest.raises(ConnectionError):
+            await source.get_skills()
+
+    @pytest.mark.asyncio
+    async def test_get_resource_internal_error_propagates(self) -> None:
+        """McpError with INTERNAL_ERROR on get_resource must propagate."""
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32603, message="Server crashed")))
+        fm = SkillFrontmatter(name="test-skill", description="Test.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
+        with pytest.raises(McpError):
+            await skill.get_resource("references/file.md")
+
+    @pytest.mark.asyncio
+    async def test_get_resource_not_found_returns_none(self) -> None:
+        """McpError with RESOURCE_NOT_FOUND (-32002) on get_resource returns None."""
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource = AsyncMock(
+            side_effect=McpError(error=ErrorData(code=-32002, message="Resource not found"))
+        )
+        fm = SkillFrontmatter(name="test-skill", description="Test.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
+        result = await skill.get_resource("references/file.md")
+        assert result is None

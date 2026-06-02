@@ -3303,6 +3303,33 @@ def _mcp_any_url(uri: str) -> AnyUrl:
     return _AnyUrl(uri)
 
 
+def _is_mcp_resource_not_found(ex: Exception) -> bool:
+    """Return ``True`` when *ex* is an :class:`McpError` indicating a missing resource.
+
+    Two codes are treated as "not found":
+
+    * ``-32002`` — the MCP-spec "Resource not found" code returned by a
+      compliant server when the URI does not exist. Not exported as a
+      constant from ``mcp.types`` but defined by the resources subprotocol.
+    * ``METHOD_NOT_FOUND`` (``-32601``) — the server does not implement
+      ``resources/read`` at all, which for the skills source is functionally
+      equivalent to "no skills available."
+
+    All other codes — ``INVALID_PARAMS``, ``INTERNAL_ERROR``, ``PARSE_ERROR``,
+    ``CONNECTION_CLOSED``, auth rejections, and generic handler errors
+    (code ``0``) — are treated as real failures so that a misconfigured
+    token or crashing server is not silently mistaken for "the server has no
+    skills."
+    """
+    from mcp.shared.exceptions import McpError as _McpError
+
+    if not isinstance(ex, _McpError):
+        return False
+    from mcp.types import METHOD_NOT_FOUND as _METHOD_NOT_FOUND
+
+    return ex.error.code in {-32002, _METHOD_NOT_FOUND}
+
+
 def _mcp_join_text(result: ReadResourceResult) -> str:
     """Join all :class:`TextResourceContents` items in a result into a single string."""
     from mcp.types import TextResourceContents as _TextResourceContents
@@ -3523,9 +3550,7 @@ class MCPSkill(Skill):
         try:
             result = await self._client.read_resource(_mcp_any_url(uri))
         except Exception as ex:
-            from mcp.shared.exceptions import McpError
-
-            if isinstance(ex, McpError):
+            if _is_mcp_resource_not_found(ex):
                 logger.debug("MCP resource '%s' not available: %s", uri, ex)
                 return None
             raise
@@ -3651,13 +3676,11 @@ class MCPSkillsSource(SkillsSource):
         try:
             result = await self._client.read_resource(_mcp_any_url(self._INDEX_URI))
         except Exception as ex:
-            from mcp.shared.exceptions import McpError
-
-            if isinstance(ex, McpError):
+            if _is_mcp_resource_not_found(ex):
                 logger.debug("No skill://index.json resource available on MCP server: %s", ex)
-            else:
-                logger.warning("Failed to read skill://index.json from MCP server.", exc_info=True)
-            return None
+                return None
+            logger.warning("Failed to read skill://index.json from MCP server.", exc_info=True)
+            raise
 
         index_text = _mcp_join_text(result)
         if not index_text:
