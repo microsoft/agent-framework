@@ -684,6 +684,13 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
     def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> ChatResponse:
         """Parse a response from OpenAI into a ChatResponse."""
+        if isinstance(response, str):
+            raise ChatClientException(
+                maybe_append_azure_endpoint_guidance(
+                    f"{type(self)} service returned an invalid response (str instead of ChatCompletion): {response!r}",
+                    azure_endpoint=self.azure_endpoint,
+                ),
+            )
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[Message] = []
         finish_reason: FinishReason | None = None
@@ -788,7 +795,7 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
         """Get metadata from a chat response."""
         return {
-            "system_fingerprint": response.system_fingerprint,
+            "system_fingerprint": getattr(response, "system_fingerprint", None),
         }
 
     def _get_metadata_from_streaming_chat_response(self, response: ChatCompletionChunk) -> dict[str, Any]:
