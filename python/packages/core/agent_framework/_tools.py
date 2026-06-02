@@ -636,7 +636,7 @@ class FunctionTool(SerializationMixin):
                     parsed_arguments = dict(arguments)
                     if self.input_model is not None and not self._schema_supplied:
                         parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
-                            exclude_none=False
+                            exclude_unset=True, exclude_none=False
                         )
                 elif isinstance(arguments, BaseModel):
                     if (
@@ -645,7 +645,7 @@ class FunctionTool(SerializationMixin):
                         and not isinstance(arguments, self.input_model)
                     ):
                         raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                    parsed_arguments = arguments.model_dump(exclude_none=False)
+                    parsed_arguments = arguments.model_dump(exclude_unset=True, exclude_none=False)
                 else:
                     raise TypeError(
                         f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"

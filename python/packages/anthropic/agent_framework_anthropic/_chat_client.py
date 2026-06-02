@@ -710,10 +710,10 @@ class RawAnthropicClient(
         result = [self._prepare_message_for_anthropic(msg) for msg in msgs]
 
         # Anthropic requires the conversation to end with a user message.
-        # Re-role a trailing assistant message as user so chained agent
-        # outputs work as valid context for the next agent.
+        # Append a synthetic user turn so chained agent outputs work as
+        # valid context for the next agent without rewriting the assistant message.
         if result and result[-1].get("role") == "assistant":
-            result[-1] = {**result[-1], "role": "user"}
+            result.append({"role": "user", "content": "Continue"})
 
         return result
 

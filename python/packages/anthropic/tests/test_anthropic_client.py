@@ -618,9 +618,11 @@ def test_prepare_messages_for_anthropic_without_system(
 
     result = client._prepare_messages_for_anthropic(messages)
 
-    assert len(result) == 2
+    assert len(result) == 3
     assert result[0]["role"] == "user"
     assert result[1]["role"] == "assistant"
+    assert result[2]["role"] == "user"
+    assert result[2]["content"] == "Continue"
 
 
 # Tool Conversion Tests

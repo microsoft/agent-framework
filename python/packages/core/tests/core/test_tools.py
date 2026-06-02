@@ -1467,16 +1467,18 @@ def test_invoke_preserves_explicit_none_arguments() -> None:
     """Optional parameters explicitly set to None must not be stripped before invocation."""
 
     @tool
-    def greet(name: str, greeting: str | None = None) -> str:
-        return f"{greeting or 'Hello'}, {name}!"
+    def greet(name: str, greeting: str | None = "Hi") -> str:
+        if greeting is None:
+            return f"Custom, {name}!"
+        return f"{greeting}, {name}!"
 
     result = asyncio.run(greet.invoke(arguments={"name": "World", "greeting": None}))
     assert isinstance(result, list)
-    assert result[0].text == "Hello, World!"
+    assert result[0].text == "Custom, World!"
 
     result = asyncio.run(greet.invoke(arguments={"name": "World"}))
     assert isinstance(result, list)
-    assert result[0].text == "Hello, World!"
+    assert result[0].text == "Hi, World!"
 
 
 # endregion
