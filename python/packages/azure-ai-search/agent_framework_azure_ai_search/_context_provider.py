@@ -550,6 +550,7 @@ class AzureAISearchContextProvider(ContextProvider):
             )
 
         self._knowledge_base_initialized = False
+        self._knowledge_source_names: list[str] = []
 
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
@@ -737,6 +738,7 @@ class AzureAISearchContextProvider(ContextProvider):
         knowledge_base_name = self.knowledge_base_name
 
         if self._use_existing_knowledge_base:
+            self._knowledge_source_names = []
             if _agentic_retrieval_available and self._retrieval_client is None:
                 self._retrieval_client = KnowledgeBaseRetrievalClient(
                     endpoint=self.endpoint,
@@ -744,6 +746,9 @@ class AzureAISearchContextProvider(ContextProvider):
                     credential=self.credential,
                     user_agent=get_user_agent(),
                 )
+            if self._index_client is not None:
+                kb = await self._index_client.get_knowledge_base(knowledge_base_name)
+                self._knowledge_source_names = [ks.name for ks in (kb.knowledge_sources or [])]
             self._knowledge_base_initialized = True
             return
 
@@ -757,6 +762,7 @@ class AzureAISearchContextProvider(ContextProvider):
             raise ValueError("index_name is required when creating Knowledge Base from index")
 
         knowledge_source_name = f"{self.index_name}-source"
+        self._knowledge_source_names = [knowledge_source_name]
         try:
             await self._index_client.get_knowledge_source(knowledge_source_name)
         except ResourceNotFoundError:
@@ -823,6 +829,13 @@ class AzureAISearchContextProvider(ContextProvider):
             if self.knowledge_base_output_mode == "extractive_data"
             else KBRetrievalOutputMode.ANSWER_SYNTHESIS
         )
+        source_params = [
+            KnowledgeSourceParams(
+                knowledge_source_name=name,
+                include_reference_source_data=True,
+            )
+            for name in self._knowledge_source_names
+        ]
 
         if self.retrieval_reasoning_effort == "minimal":
             query = "\n".join(msg.text for msg in messages if msg.text)
@@ -832,12 +845,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 retrieval_reasoning_effort=reasoning_effort,
                 output_mode=output_mode,
                 include_activity=True,
-                knowledge_source_params=[
-                    KnowledgeSourceParams(
-                        knowledge_source_name=f"{self.index_name}-source",
-                        include_reference_source_data=True,
-                    ),
-                ],
+                knowledge_source_params=source_params,
             )
         else:
             kb_messages = self._prepare_messages_for_kb_search(messages)
@@ -846,12 +854,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 retrieval_reasoning_effort=reasoning_effort,
                 output_mode=output_mode,
                 include_activity=True,
-                knowledge_source_params=[
-                    KnowledgeSourceParams(
-                        knowledge_source_name=f"{self.index_name}-source",
-                        include_reference_source_data=True,
-                    ),
-                ],
+                knowledge_source_params=source_params,
             )
 
         if not self._retrieval_client:
