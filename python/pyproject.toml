@@ -40,7 +40,7 @@ dev = [
     "mypy==1.20.0",
     "pyright==1.1.408",
     "mcp[ws]==1.27.2",
-    "opentelemetry-sdk==1.40.0",
+    "opentelemetry-sdk==1.42.1",
     "azure-monitor-opentelemetry==1.8.8",
     #tasks
     "poethepoet==0.46.0",
