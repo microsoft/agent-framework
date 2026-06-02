@@ -44,23 +44,20 @@ function createCore() {
   };
 }
 
-function createGithub({ totalCount, itemNumbers, labelExists = true }) {
+function createGithub({
+  itemNumbers,
+  labelExists = true,
+  pullRequests = createPullRequestPage({ numbers: itemNumbers }),
+}) {
   const calls = [];
 
   return {
     calls,
+    async paginate(method, params) {
+      calls.push({ api: 'paginate', method, params });
+      return pullRequests;
+    },
     rest: {
-      search: {
-        async issuesAndPullRequests(params) {
-          calls.push({ api: 'search.issuesAndPullRequests', params });
-          return {
-            data: {
-              total_count: totalCount,
-              items: itemNumbers.map((number) => ({ number })),
-            },
-          };
-        },
-      },
       issues: {
         async getLabel(params) {
           calls.push({ api: 'issues.getLabel', params });
@@ -85,6 +82,10 @@ function createGithub({ totalCount, itemNumbers, labelExists = true }) {
         },
       },
       pulls: {
+        async list(params) {
+          calls.push({ api: 'pulls.list', params });
+          return { data: pullRequests };
+        },
         async update(params) {
           calls.push({ api: 'pulls.update', params });
           return { data: { state: params.state } };
@@ -92,6 +93,15 @@ function createGithub({ totalCount, itemNumbers, labelExists = true }) {
       },
     },
   };
+}
+
+function createPullRequestPage({ author = 'community-user', numbers }) {
+  return numbers.map((number) => ({
+    number,
+    user: {
+      login: author,
+    },
+  }));
 }
 
 
@@ -102,7 +112,6 @@ function createGithub({ totalCount, itemNumbers, labelExists = true }) {
 describe('PR limit enforcement', () => {
   it('does not close the PR when the author is at the open PR limit', async () => {
     const github = createGithub({
-      totalCount: 10,
       itemNumbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 123],
     });
 
@@ -119,14 +128,13 @@ describe('PR limit enforcement', () => {
     assert.equal(result.openPrCount, 10);
     assert.deepEqual(
       github.calls.map((call) => call.api),
-      ['search.issuesAndPullRequests'],
+      ['paginate'],
     );
   });
 
-  it('counts the new PR when search has not indexed it yet', async () => {
+  it('counts the new PR when the pull list includes it', async () => {
     const github = createGithub({
-      totalCount: 10,
-      itemNumbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      itemNumbers: [123, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
     });
 
     const result = await enforcePrLimit({
@@ -143,7 +151,7 @@ describe('PR limit enforcement', () => {
     assert.deepEqual(
       github.calls.map((call) => call.api),
       [
-        'search.issuesAndPullRequests',
+        'paginate',
         'issues.getLabel',
         'issues.addLabels',
         'issues.createComment',
@@ -152,9 +160,31 @@ describe('PR limit enforcement', () => {
     );
   });
 
+  it('counts the current PR on top of existing open PRs', async () => {
+    const github = createGithub({
+      itemNumbers: [123, ...Array.from({ length: 24 }, (_, index) => index + 1)],
+      pullRequests: createPullRequestPage({
+        numbers: [123, ...Array.from({ length: 25 }, (_, index) => index + 1)],
+      }),
+    });
+
+    const result = await enforcePrLimit({
+      github,
+      context: createContext(),
+      core: createCore(),
+      exemptLabelName: 'pr-limit-exempt',
+      maxOpenPrs: 10,
+      labelName: 'too-many-prs',
+    });
+
+    assert.equal(result.closed, true);
+    assert.equal(result.openPrCount, 26);
+    const comment = github.calls.find((call) => call.api === 'issues.createComment').params.body;
+    assert.match(comment, /This PR would put you at 26 open pull requests/);
+  });
+
   it('creates the label when it does not already exist', async () => {
     const github = createGithub({
-      totalCount: 11,
       itemNumbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 123],
       labelExists: false,
     });
@@ -172,7 +202,7 @@ describe('PR limit enforcement', () => {
     assert.deepEqual(
       github.calls.map((call) => call.api),
       [
-        'search.issuesAndPullRequests',
+        'paginate',
         'issues.getLabel',
         'issues.createLabel',
         'issues.addLabels',
@@ -188,7 +218,6 @@ describe('PR limit enforcement', () => {
 
   it('tolerates a 422 race when creating the label', async () => {
     const github = createGithub({
-      totalCount: 11,
       itemNumbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 123],
       labelExists: false,
     });
@@ -212,7 +241,7 @@ describe('PR limit enforcement', () => {
     assert.deepEqual(
       github.calls.map((call) => call.api),
       [
-        'search.issuesAndPullRequests',
+        'paginate',
         'issues.getLabel',
         'issues.createLabel',
         'issues.addLabels',
@@ -224,8 +253,11 @@ describe('PR limit enforcement', () => {
 
   it('uses a diplomatic close message with the configured limit', async () => {
     const github = createGithub({
-      totalCount: 11,
       itemNumbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 123],
+      pullRequests: createPullRequestPage({
+        author: 'octo-contributor',
+        numbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 123],
+      }),
     });
 
     await enforcePrLimit({
@@ -246,7 +278,6 @@ describe('PR limit enforcement', () => {
 
   it('does not close an exempt PR when it is reopened', async () => {
     const github = createGithub({
-      totalCount: 11,
       itemNumbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 123],
     });
 
@@ -265,10 +296,9 @@ describe('PR limit enforcement', () => {
     assert.deepEqual(github.calls, []);
   });
 
-  it('does not over-count when the current PR is not on the first search page', async () => {
+  it('counts the current PR when the author has more than one page of open PRs', async () => {
     const github = createGithub({
-      totalCount: 101,
-      itemNumbers: Array.from({ length: 100 }, (_, index) => index + 1),
+      itemNumbers: [123, ...Array.from({ length: 100 }, (_, index) => index + 1)],
     });
 
     const result = await enforcePrLimit({
