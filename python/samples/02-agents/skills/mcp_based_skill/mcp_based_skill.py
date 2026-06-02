@@ -7,12 +7,10 @@ import os
 # using the sample's Skills APIs.
 # import warnings
 # warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
-from agent_framework import Agent, MCPSkillsSource, SkillsProvider
+from agent_framework import Agent, MCPSkillsSource, MCPStreamableHTTPTool, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from mcp.client.session import ClientSession
-from mcp.client.streamable_http import streamable_http_client
 
 """
 MCP-Based Agent Skills
@@ -42,15 +40,14 @@ async def main() -> None:
     print("Discovering MCP-based skills")
     print("-" * 60)
 
-    # 1. Connect to the MCP server over streamable HTTP.
-    async with streamable_http_client(url=mcp_url) as (read, write, _), ClientSession(read, write) as session:
-        await session.initialize()
-
+    # 1. Connect to the MCP server using the framework's MCP client.
+    mcp_tool = MCPStreamableHTTPTool(name="skills-server", url=mcp_url, load_tools=False)
+    async with mcp_tool:
         # 2. Build a SkillsProvider that discovers skills over MCP.
         #    MCPSkillsSource reads skill://index.json and creates one
         #    MCPSkill per skill-md entry; SKILL.md bodies are fetched
         #    on demand via resources/read.
-        skills_provider = SkillsProvider(MCPSkillsSource(client=session))
+        skills_provider = SkillsProvider(MCPSkillsSource(client=mcp_tool.session))  # type: ignore[arg-type]
 
         # 3. Run the agent.
         client = FoundryChatClient(
