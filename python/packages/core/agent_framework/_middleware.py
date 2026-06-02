@@ -315,7 +315,11 @@ class FunctionInvocationContext:
                 "agent run. add_tools is only available for functions invoked within an "
                 "agent's function-calling loop."
             )
-        _append_unique_tools(self.tools, normalize_tools(tools))
+        # Validate the whole batch against a throwaway copy first, so a duplicate-name
+        # clash partway through the batch raises before the live tool list is mutated
+        # (all-or-nothing semantics).
+        merged = _append_unique_tools(list(self.tools), normalize_tools(tools))
+        self.tools[:] = merged
 
     def remove_tools(
         self,

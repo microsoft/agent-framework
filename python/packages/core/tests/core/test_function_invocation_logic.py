@@ -4332,6 +4332,29 @@ def test_add_tools_duplicate_name_different_object_raises():
         ctx.add_tools(dup_b)
 
 
+def test_add_tools_batch_with_duplicate_is_atomic():
+    """A duplicate-name clash partway through a batch must leave the live list unchanged."""
+
+    @tool(name="existing", approval_mode="never_require")
+    def existing(x: int) -> int:
+        return x
+
+    @tool(name="fresh", approval_mode="never_require")
+    def fresh(x: int) -> int:
+        return x
+
+    @tool(name="existing", approval_mode="never_require")
+    def clashing(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=existing, arguments={}, tools=[existing])
+    with pytest.raises(ValueError):
+        ctx.add_tools([fresh, clashing])
+    assert ctx.tools is not None
+    # The valid "fresh" tool must not have been committed before the clash raised.
+    assert ctx.tools == [existing]
+
+
 def test_remove_tools_by_name_and_object():
     @tool(name="a", approval_mode="never_require")
     def a(x: int) -> int:
