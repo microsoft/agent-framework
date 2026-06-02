@@ -30,11 +30,7 @@ for _mod_name in _MISSING_MODULES:
 # Load the two sample modules by file path to avoid needing them on sys.path.
 # ---------------------------------------------------------------------------
 _RESPONSES_DIR = (
-    Path(__file__).parent.parent.parent.parent
-    / "samples"
-    / "04-hosting"
-    / "foundry-hosted-agents"
-    / "responses"
+    Path(__file__).parent.parent.parent.parent / "samples" / "04-hosting" / "foundry-hosted-agents" / "responses"
 )
 
 

@@ -4086,8 +4086,8 @@ class TestClassSkill:
 
     async def test_content_is_cached(self) -> None:
         skill = _MinimalClassSkill()
-        content1 = (await skill.get_content())
-        content2 = (await skill.get_content())
+        content1 = await skill.get_content()
+        content2 = await skill.get_content()
         assert content1 is content2
 
     def test_resources_are_lazy_cached(self) -> None:
@@ -5587,8 +5587,8 @@ class TestInlineSkillContentCaching:
     async def test_content_cached_after_first_access(self) -> None:
         """InlineSkill.content returns the same object on subsequent accesses."""
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
-        first = (await skill.get_content())
-        second = (await skill.get_content())
+        first = await skill.get_content()
+        second = await skill.get_content()
         assert first is second  # Same object (cached)
         assert "<name>test-skill</name>" in first
 

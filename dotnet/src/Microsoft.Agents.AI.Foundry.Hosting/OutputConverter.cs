@@ -281,14 +281,19 @@ internal static class OutputConverter
 
                         var outputText = EncodeFunctionResultAsJsonStringPayload(functionResult.Result);
 
-                        var itemId = GenerateItemId("fc");
-                        var outputItem = new OutputItemFunctionToolCallOutput(
+                        // Use the SDK's convenience method so the OutputItemFunctionToolCallOutput
+                        // is constructed with a populated Id. The public OutputItemFunctionToolCallOutput
+                        // ctor only sets CallId/Output (Id is read-only), and AddOutputItem<T>+EmitAdded
+                        // does not auto-stamp Id — only ResponseId/AgentReference. Without this, the
+                        // serialized item arrives at the Foundry storage layer with id=null and is
+                        // rejected with "ID cannot be null or empty (Parameter 'id')".
+                        foreach (var evt in stream.OutputItemFunctionCallOutput(
                             functionResult.CallId,
-                            BinaryData.FromString(outputText));
+                            BinaryData.FromString(outputText)))
+                        {
+                            yield return evt;
+                        }
 
-                        var outputBuilder = stream.AddOutputItem<OutputItemFunctionToolCallOutput>(itemId);
-                        yield return outputBuilder.EmitAdded(outputItem);
-                        yield return outputBuilder.EmitDone(outputItem);
                         break;
                     }
 

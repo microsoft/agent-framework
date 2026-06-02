@@ -195,7 +195,12 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         }
         else
         {
-            // Subsequent turns: agent returned control, go directly to coordination (progress ledger only, no replan)
+            // Subsequent turns: agent returned control, go directly to coordination (progress ledger only, no replan).
+            // Capture the participant's reply into the manager-visible chat history so the progress ledger can see it.
+            if (messages is { Count: > 0 })
+            {
+                this._taskContext.ChatHistory.AddRange(messages);
+            }
             await this.RunCoordinationRoundAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
         }
     }
