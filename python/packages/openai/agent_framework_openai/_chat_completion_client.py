@@ -85,6 +85,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.openai")
 
+# Error message shared with tests — extracted to a constant to keep the
+# implementation and its assertions in sync.
+_AZURE_WEB_SEARCH_UNSUPPORTED_MSG = (
+    "Web search is not supported by the Azure OpenAI Chat Completions API. "
+    "Use agent_framework.openai.OpenAIChatClient (Responses API) for "
+    "web search support on Azure."
+)
+
 DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-12-01-preview"
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -592,9 +600,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
         Note:
             Azure OpenAI Chat Completions API does not support ``web_search_options``.
-            When configured with an Azure endpoint, web search tools are silently
-            excluded. Use :class:`~agent_framework.openai.OpenAIChatClient` (Responses
-            API) for web search support on Azure.
+            When configured with an Azure endpoint, passing web search tools raises
+            :class:`ValueError`. Use :class:`~agent_framework.openai.OpenAIChatClient`
+            (Responses API) for web search support on Azure.
 
         Args:
             tools: Tool(s) to prepare.
@@ -611,11 +619,7 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                 typed_tool = cast(MutableMapping[str, Any], tool)
                 if typed_tool.get("type") == "web_search":
                     if self._use_azure_client:
-                        logger.warning(
-                            "Web search is not supported by the Azure OpenAI Chat Completions API "
-                            "and will be ignored. Use agent_framework.openai.OpenAIChatClient "
-                            "(Responses API) for web search support on Azure."
-                        )
+                        raise ValueError(_AZURE_WEB_SEARCH_UNSUPPORTED_MSG)
                     else:
                         # Web search is handled via web_search_options, not tools array
                         web_search_options = {k: v for k, v in typed_tool.items() if k != "type"}
