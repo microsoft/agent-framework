@@ -1113,3 +1113,114 @@ class TestRubricAssertions:
         )
         # The low-scoring "other" evaluator is filtered out; "policy" passes.
         results.assert_dimension_score_at_least("clarity", 3, evaluator="policy")
+
+
+def _score_results(
+    *scores_per_item: list[EvalScoreResult],
+    sub_results: dict[str, EvalResults] | None = None,
+) -> EvalResults:
+    """Build an EvalResults shaped for score / status assertion tests."""
+    items = [
+        EvalItemResult(item_id=f"item-{i}", status="pass", scores=scores) for i, scores in enumerate(scores_per_item)
+    ]
+    return EvalResults(
+        provider="test",
+        eval_id="ev1",
+        run_id="run1",
+        result_counts={"passed": len(items), "failed": 0, "errored": 0, "total": len(items)},
+        items=items,
+        sub_results=sub_results or {},
+    )
+
+
+class TestAssertScoreAtLeast:
+    """Tests for EvalResults.assert_score_at_least (mirrors .NET coverage)."""
+
+    def test_all_above_threshold_passes(self) -> None:
+        results = _score_results(
+            [EvalScoreResult(name="relevance", score=0.9)],
+            [EvalScoreResult(name="relevance", score=0.85)],
+        )
+        # Should not raise.
+        results.assert_score_at_least(0.8)
+
+    def test_below_threshold_raises_with_offenders(self) -> None:
+        results = _score_results(
+            [EvalScoreResult(name="relevance", score=0.4)],
+            [EvalScoreResult(name="relevance", score=0.9)],
+        )
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_score_at_least(0.5)
+        msg = str(exc.value)
+        assert "item-0" in msg
+        assert "relevance" in msg
+        assert "0.400" in msg
+
+    def test_evaluator_filter_isolates_offenders(self) -> None:
+        results = _score_results(
+            [
+                EvalScoreResult(name="other", score=0.1),
+                EvalScoreResult(name="relevance", score=0.95),
+            ],
+        )
+        # The low-scoring "other" evaluator is filtered out; "relevance" passes.
+        results.assert_score_at_least(0.8, evaluator="relevance")
+
+    def test_recursion_into_sub_results(self) -> None:
+        sub = _score_results([EvalScoreResult(name="relevance", score=0.2)])
+        parent = _score_results(
+            [EvalScoreResult(name="relevance", score=0.9)],
+            sub_results={"sub_executor": sub},
+        )
+        with pytest.raises(EvalNotPassedError) as exc:
+            parent.assert_score_at_least(0.5)
+        # Offender from sub-result is surfaced.
+        assert "0.200" in str(exc.value)
+
+
+class TestAssertNoFailedItems:
+    """Tests for EvalResults.assert_no_failed_items (mirrors .NET coverage)."""
+
+    def test_all_passing_does_not_raise(self) -> None:
+        results = _score_results(
+            [EvalScoreResult(name="relevance", score=0.9)],
+            [EvalScoreResult(name="relevance", score=0.85)],
+        )
+        # Should not raise.
+        results.assert_no_failed_items()
+
+    def test_failed_and_errored_items_raise_with_statuses(self) -> None:
+        items = [
+            EvalItemResult(item_id="ok", status="pass", scores=[]),
+            EvalItemResult(item_id="bad", status="fail", scores=[]),
+            EvalItemResult(item_id="boom", status="error", scores=[], error_code="timeout"),
+        ]
+        results = EvalResults(
+            provider="test",
+            eval_id="ev1",
+            run_id="run1",
+            result_counts={"passed": 1, "failed": 1, "errored": 1, "total": 3},
+            items=items,
+        )
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_no_failed_items()
+        msg = str(exc.value)
+        assert "bad:fail" in msg
+        assert "boom:error" in msg
+
+    def test_recursion_into_sub_results(self) -> None:
+        sub_items = [EvalItemResult(item_id="sub-bad", status="fail", scores=[])]
+        sub = EvalResults(
+            provider="test",
+            eval_id="ev2",
+            run_id="run2",
+            result_counts={"passed": 0, "failed": 1, "errored": 0, "total": 1},
+            items=sub_items,
+        )
+        parent = _score_results(
+            [EvalScoreResult(name="relevance", score=0.9)],
+            sub_results={"sub_executor": sub},
+        )
+        with pytest.raises(EvalNotPassedError) as exc:
+            parent.assert_no_failed_items()
+        assert "sub-bad:fail" in str(exc.value)
