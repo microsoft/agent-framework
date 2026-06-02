@@ -57,8 +57,6 @@ if TYPE_CHECKING:
     from agent_framework import (
         Agent,
         AgentRunInputs,
-        ChatAndFunctionMiddlewareTypes,
-        ContextProvider,
         MiddlewareTypes,
         ToolTypes,
     )
