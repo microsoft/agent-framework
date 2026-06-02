@@ -8,7 +8,7 @@ import httpx
 from agent_framework import Agent, MCPSkillsSource, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import TokenCredential
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.identity import AzureCliCredential, get_bearer_token_provider
 from dotenv import load_dotenv
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -47,11 +47,7 @@ class _BearerAuth(httpx.Auth):
 
 async def main() -> None:
     """Example showing toolbox-hosted MCP skills for a Foundry Chat Client agent."""
-    # WARNING: DefaultAzureCredential is convenient for development but requires careful
-    # consideration in production. Consider using a specific credential (e.g.,
-    # ManagedIdentityCredential) to avoid latency, unintended credential probing, and
-    # potential security risks from fallback mechanisms.
-    credential = DefaultAzureCredential()
+    credential = AzureCliCredential()
 
     # HTTP client that signs every request with a fresh Foundry bearer token
     # and advertises the toolbox preview feature flag, plus the MCP streamable
