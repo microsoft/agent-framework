@@ -618,3 +618,50 @@ class TestMCPSkillsSourceErrorCodeBranching:
         skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
         result = await skill.get_resource("references/file.md")
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_resource_connection_error_propagates(self) -> None:
+        """A plain ConnectionError on get_resource must propagate, not return None."""
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=ConnectionError("connection lost"))
+        fm = SkillFrontmatter(name="test-skill", description="Test.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
+        with pytest.raises(ConnectionError):
+            await skill.get_resource("references/file.md")
+
+    @pytest.mark.asyncio
+    async def test_get_resource_timeout_error_propagates(self) -> None:
+        """A TimeoutError on get_resource must propagate, not return None."""
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=TimeoutError("read timed out"))
+        fm = SkillFrontmatter(name="test-skill", description="Test.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
+        with pytest.raises(TimeoutError):
+            await skill.get_resource("references/file.md")
+
+    @pytest.mark.asyncio
+    async def test_get_resource_generic_mcp_error_propagates(self) -> None:
+        """McpError with a generic code (0) on get_resource must propagate."""
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource = AsyncMock(
+            side_effect=McpError(error=ErrorData(code=0, message="Handler error"))
+        )
+        fm = SkillFrontmatter(name="test-skill", description="Test.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
+        with pytest.raises(McpError):
+            await skill.get_resource("references/file.md")
+
+    @pytest.mark.asyncio
+    async def test_index_timeout_error_propagates(self) -> None:
+        """A TimeoutError reading skill://index.json must propagate."""
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=TimeoutError("read timed out"))
+        source = MCPSkillsSource(client=client)
+        with pytest.raises(TimeoutError):
+            await source.get_skills()
