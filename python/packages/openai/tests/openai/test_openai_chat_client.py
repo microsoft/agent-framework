@@ -554,6 +554,34 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
         assert response.model == "test-model"
 
 
+@pytest.mark.parametrize(
+    ("options", "raw_method"),
+    [
+        ({"response_format": OutputStruct}, "parse"),
+        ({}, "create"),
+    ],
+)
+async def test_non_response_payload_raises_actionable_error(options: dict[str, Any], raw_method: str) -> None:
+    """Non-conformant OpenAI-compatible backends should not leak AttributeError."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    raw_response = MagicMock()
+    raw_response.headers = {}
+    raw_response.parse = MagicMock(return_value="backend returned plain text")
+
+    with (
+        patch.object(client.client.responses, raw_method, return_value=raw_response),
+        pytest.raises(ChatClientException) as exc_info,
+    ):
+        await client.get_response(messages=[Message(role="user", contents=["Hi"])], options=options)
+
+    message = str(exc_info.value)
+    assert "invalid response object" in message
+    assert "got str" in message
+    assert "backend returned plain text" in message
+    assert "'str' object has no attribute 'output'" not in message
+
+
 async def test_response_format_dict_parse_path() -> None:
     """Test get_response response_format parsing path for runtime JSON schema mappings."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

@@ -1966,6 +1966,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         options: dict[str, Any],
     ) -> ChatResponse:
         """Parse an OpenAI Responses API response into a ChatResponse."""
+        if not hasattr(response, "output"):
+            payload = repr(response)
+            if len(payload) > 500:
+                payload = f"{payload[:497]}..."
+            self._handle_request_error(
+                TypeError(
+                    "OpenAI Responses API returned an invalid response object; "
+                    f"expected an object with an 'output' field, got {type(response).__name__}: {payload}"
+                )
+            )
+
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
         metadata: dict[str, Any] = response.metadata or {}
