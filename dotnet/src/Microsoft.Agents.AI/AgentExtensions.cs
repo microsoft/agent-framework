@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -68,17 +70,76 @@ public static partial class AIAgentExtensions
     {
         Throw.IfNull(agent);
 
+        var gate = new object();
+        var pendingApprovalsByParentCallId = new Dictionary<string, PendingAgentToolApproval>(StringComparer.Ordinal);
+
         [Description("Invoke an agent to retrieve some information.")]
         async Task<string> InvokeAgentAsync(
             [Description("Input query to invoke the agent.")] string query,
             CancellationToken cancellationToken)
         {
+            // Get the parent function call context.
+            var functionInvocationContext = FunctionInvokingChatClient.CurrentContext;
+            var parentFunctionCall = functionInvocationContext?.CallContent;
+
             // Propagate any additional properties from the parent agent's run to the child agent if the parent is using a FunctionInvokingChatClient.
-            AgentRunOptions? agentRunOptions = FunctionInvokingChatClient.CurrentContext?.Options?.AdditionalProperties is AdditionalPropertiesDictionary dict
+            AgentRunOptions? agentRunOptions = functionInvocationContext?.Options?.AdditionalProperties is AdditionalPropertiesDictionary dict
                 ? new AgentRunOptions { AdditionalProperties = dict }
                 : null;
 
-            var response = await agent.RunAsync(query, session: session, options: agentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
+            PendingAgentToolApproval? pendingApproval = null;
+            if (parentFunctionCall is not null)
+            {
+                lock (gate)
+                {
+                    if (pendingApprovalsByParentCallId.TryGetValue(parentFunctionCall.CallId, out pendingApproval))
+                    {
+                        pendingApprovalsByParentCallId.Remove(parentFunctionCall.CallId);
+                    }
+                }
+            }
+
+            AgentResponse response;
+            if (pendingApproval is not null)
+            {
+                var approved = GetApprovalForParentCall(functionInvocationContext, parentFunctionCall);
+                var approvalResponseMessages = CreateChildApprovalResponseMessages(pendingApproval, approved);
+                response = await agent.RunAsync(approvalResponseMessages, session: pendingApproval.Session, options: agentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                AgentSession? invocationSession = session ?? await TryCreateSessionAsync(agent, cancellationToken).ConfigureAwait(false);
+                response = await agent.RunAsync(query, session: invocationSession, options: agentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                if (parentFunctionCall is not null)
+                {
+                    var childApprovalRequests = response.Messages
+                        .SelectMany(static message => message.Contents)
+                        .OfType<ToolApprovalRequestContent>()
+                        .ToList();
+
+                    if (childApprovalRequests.Count > 0)
+                    {
+                        lock (gate)
+                        {
+                            pendingApprovalsByParentCallId[parentFunctionCall.CallId] =
+                                new PendingAgentToolApproval(invocationSession, childApprovalRequests);
+                        }
+
+                        var parentApprovalRequest = new ToolApprovalRequestContent(
+                            childApprovalRequests[0].RequestId,
+                            parentFunctionCall);
+
+                        ToolApprovalRequestPropagator.Attach(parentFunctionCall, [parentApprovalRequest]);
+
+                        if (functionInvocationContext is not null)
+                        {
+                            functionInvocationContext.Terminate = true;
+                        }
+                    }
+                }
+            }
+
             return response.Text;
         }
 
@@ -101,6 +162,58 @@ public static partial class AIAgentExtensions
         return agentName is null
             ? agentName
             : InvalidNameCharsRegex().Replace(agentName, "_");
+    }
+
+    private static async ValueTask<AgentSession?> TryCreateSessionAsync(AIAgent agent, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (NotImplementedException)
+        {
+            return null;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private static ToolApprovalResponseContent? GetApprovalForParentCall(FunctionInvocationContext? context, FunctionCallContent? parentFunctionCall)
+    {
+        if (context?.Messages is null || parentFunctionCall is null)
+        {
+            return null;
+        }
+
+        return context.Messages
+            .SelectMany(static message => message.Contents)
+            .OfType<ToolApprovalResponseContent>()
+            .LastOrDefault(response => response.ToolCall is FunctionCallContent functionCall &&
+                string.Equals(functionCall.CallId, parentFunctionCall.CallId, StringComparison.Ordinal));
+    }
+
+    private static List<ChatMessage> CreateChildApprovalResponseMessages(
+        PendingAgentToolApproval pendingApproval,
+        ToolApprovalResponseContent? parentApproval)
+    {
+        bool approved = parentApproval?.Approved ?? true;
+        string? reason = parentApproval?.Reason;
+
+        return
+        [
+            new(ChatRole.User, [.. pendingApproval.ChildApprovalRequests.Select(request => request.CreateResponse(approved, reason))])
+        ];
+    }
+
+    private sealed class PendingAgentToolApproval(
+        AgentSession? session,
+        IReadOnlyList<ToolApprovalRequestContent> childApprovalRequests)
+    {
+        public AgentSession? Session { get; } = session;
+
+        public IReadOnlyList<ToolApprovalRequestContent> ChildApprovalRequests { get; } = childApprovalRequests;
     }
 
     /// <summary>Regex that flags any character other than ASCII digits or letters.</summary>
