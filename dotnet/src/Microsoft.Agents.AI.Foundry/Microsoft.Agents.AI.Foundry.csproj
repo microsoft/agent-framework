@@ -24,11 +24,13 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
+    <PackageReference Include="Azure.Core" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="Microsoft.Extensions.Compliance.Abstractions" />
     <PackageReference Include="OpenAI" />
+    <PackageReference Include="System.ClientModel" />
   </ItemGroup>
 
   <!-- Evaluation support requires net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->

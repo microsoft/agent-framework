@@ -36,11 +36,10 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from ._agents import SupportsAgentRun
-    from ._clients import SupportsChatGetResponse
     from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._sessions import AgentSession
     from ._tools import FunctionTool, ToolTypes
-    from ._types import ChatOptions, ChatResponse, ChatResponseUpdate
+    from ._types import ChatOptions
 
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 

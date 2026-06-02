@@ -2134,9 +2134,7 @@ class SkillsProvider(ContextProvider):
             ),
             FunctionTool(
                 name="read_skill_resource",
-                description=(
-                    "Reads a resource associated with a skill, such as references, assets, or dynamic data."
-                ),
+                description=("Reads a resource associated with a skill, such as references, assets, or dynamic data."),
                 func=_read_resource,
                 input_model={
                     "type": "object",
@@ -2173,8 +2171,7 @@ class SkillsProvider(ContextProvider):
                                     "type": "object",
                                     "additionalProperties": True,
                                     "description": (
-                                        "Named arguments as key-value pairs "
-                                        '(e.g. {"length": 24, "uppercase": true}).'
+                                        'Named arguments as key-value pairs (e.g. {"length": 24, "uppercase": true}).'
                                     ),
                                 },
                                 {

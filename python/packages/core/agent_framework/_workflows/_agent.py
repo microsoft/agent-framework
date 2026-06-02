@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 from .._agents import BaseAgent
+from .._serialization import make_json_safe
 from .._sessions import (
     AgentSession,
     ContextProvider,
@@ -61,7 +62,7 @@ class WorkflowAgent(BaseAgent):
         data: Any
 
         def to_dict(self) -> dict[str, Any]:
-            return {"request_id": self.request_id, "data": self.data}
+            return {"request_id": self.request_id, "data": make_json_safe(self.data)}
 
         def to_json(self) -> str:
             return json.dumps(self.to_dict())

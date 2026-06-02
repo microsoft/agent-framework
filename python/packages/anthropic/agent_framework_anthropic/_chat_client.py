@@ -804,6 +804,15 @@ class RawAnthropicClient(
                     }
                     a_content.append(mcp_result)
                 case "text_reasoning":
+                    if content.text is None:
+                        if (
+                            content.protected_data
+                            and a_content
+                            and a_content[-1].get("type") == "thinking"
+                            and "signature" not in a_content[-1]
+                        ):
+                            a_content[-1]["signature"] = content.protected_data
+                        continue
                     thinking_block: dict[str, Any] = {"type": "thinking", "thinking": content.text}
                     if content.protected_data:
                         thinking_block["signature"] = content.protected_data
