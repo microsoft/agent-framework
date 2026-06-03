@@ -19,6 +19,11 @@ builder.Services.AddHttpClient().AddLogging();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Add(AGUIDojoServerSerializerContext.Default));
 builder.Services.AddAGUI();
 
+// WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
+// make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
+// deployments, e.g.:
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+
 WebApplication app = builder.Build();
 
 app.UseHttpLogging();
