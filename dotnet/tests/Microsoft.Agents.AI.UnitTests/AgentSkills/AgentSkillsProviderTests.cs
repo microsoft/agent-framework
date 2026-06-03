@@ -722,6 +722,33 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task RunSkillScript_ExecutorThrows_ExceptionBubblesUpAsync()
+    {
+        // Arrange
+        string skillDir = Path.Combine(this._testRoot, "throw-script-skill");
+        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
+        File.WriteAllText(Path.Combine(skillDir, "SKILL.md"), "---\nname: throw-script-skill\ndescription: Test\n---\nBody.");
+        File.WriteAllText(Path.Combine(skillDir, "scripts", "run.py"), "print('hi')");
+
+        var expectedException = new InvalidOperationException("Script execution failed with details the LLM can use to self-correct.");
+        var provider = new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot,
+            (skill, script, args, sp, ct) => throw expectedException));
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var runScriptTool = result.Tools!.First(t => t.Name == "run_skill_script") as AIFunction;
+
+        // Act & Assert — exception must bubble up so the LLM can self-correct from the error details
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runScriptTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+            {
+                ["skillName"] = "throw-script-skill",
+                ["scriptName"] = "scripts/run.py",
+            })).AsTask());
+
+        Assert.Same(expectedException, ex);
+    }
+
+    [Fact]
     public async Task Builder_UseFileScriptRunnerAfterUseFileSkills_RunnerIsUsedAsync()
     {
         // Arrange — create a skill with a script file
