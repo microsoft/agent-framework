@@ -604,10 +604,11 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 and dict literals are accepted without specialized option typing.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            require_per_service_call_history_persistence: Whether to require per-service-call
-                chat history persistence. When enabled, history providers are invoked around
-                each model call instead of once per ``run()`` when the service is not already
-                storing history.
+            require_per_service_call_history_persistence: When enabled (and a HistoryProvider is
+                present), the provider always persists history. If the client does not store
+                history server-side, history providers are invoked around each model call;
+                if it does, providers persist once per ``run()`` while loading is skipped and
+                the service-managed conversation is the source of truth.
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level compaction override. When omitted,
                 client-level compaction defaults remain in effect for each call.
