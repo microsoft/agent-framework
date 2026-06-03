@@ -357,7 +357,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         catch (Exception ex)
         {
             LogScriptExecutionError(this._logger, skillName, scriptName, ex);
-            return $"Error: Failed to execute script '{scriptName}' from skill '{skillName}'.";
+            throw;
         }
     }
 
