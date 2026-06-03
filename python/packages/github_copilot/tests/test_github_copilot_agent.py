@@ -1869,6 +1869,13 @@ class TestGitHubCopilotAgentErrorHandling:
 class TestGitHubCopilotAgentPermissions:
     """Test cases for permission handling."""
 
+    def test_deny_all_permissions_returns_user_not_available(self) -> None:
+        """Test that the default deny handler returns user-not-available."""
+        from agent_framework_github_copilot._agent import _deny_all_permissions
+
+        result = _deny_all_permissions(MagicMock(), {})
+        assert result.kind == "user-not-available"
+
     def test_no_permission_handler_when_not_provided(self) -> None:
         """Test that no handler is set when on_permission_request is not provided."""
         agent = GitHubCopilotAgent()

@@ -14,16 +14,20 @@ URL fetching allows the agent to access any URL accessible from your network.
 import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
+from copilot.generated.rpc import PermissionDecisionUserNotAvailable
 from copilot.session import PermissionHandler, PermissionRequestResult
 from copilot.session_events import PermissionRequest
 
 
 def approve_and_log(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
-    """Permission handler that auto-approves and logs the requested URL."""
-    print(f"\n  [Permission: {request.kind}]", flush=True)
-    if request.url is not None:
-        print(f"  URL: {request.url}", flush=True)
-    return PermissionHandler.approve_all(request, context)
+    """Permission handler that approves only URL requests and logs them."""
+    if request.kind == "url":
+        print(f"\n  [Permission: {request.kind}]", flush=True)
+        url = getattr(request, "url", None)
+        if url is not None:
+            print(f"  URL: {url}", flush=True)
+        return PermissionHandler.approve_all(request, context)
+    return PermissionDecisionUserNotAvailable()
 
 
 async def main() -> None:

@@ -14,16 +14,20 @@ Shell commands have full access to your system within the permissions of the run
 import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
+from copilot.generated.rpc import PermissionDecisionUserNotAvailable
 from copilot.session import PermissionHandler, PermissionRequestResult
 from copilot.session_events import PermissionRequest
 
 
 def approve_and_log(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
-    """Permission handler that auto-approves and logs shell commands."""
-    print(f"\n  [Permission: {request.kind}]", flush=True)
-    if request.full_command_text is not None:
-        print(f"  Command: {request.full_command_text}", flush=True)
-    return PermissionHandler.approve_all(request, context)
+    """Permission handler that approves only shell commands and logs them."""
+    if request.kind == "shell":
+        print(f"\n  [Permission: {request.kind}]", flush=True)
+        command = getattr(request, "full_command_text", None)
+        if command is not None:
+            print(f"  Command: {command}", flush=True)
+        return PermissionHandler.approve_all(request, context)
+    return PermissionDecisionUserNotAvailable()
 
 
 async def main() -> None:

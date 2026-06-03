@@ -58,8 +58,10 @@ else:
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
 """Default timeout in seconds for Copilot requests."""
 
-PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], PermissionRequestResult]
-"""Type for permission request handlers."""
+PermissionHandlerType = Callable[
+    [PermissionRequest, dict[str, str]], "PermissionRequestResult | Awaitable[PermissionRequestResult]"
+]
+"""Type for permission request handlers. Supports both sync and async callbacks."""
 
 
 FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
