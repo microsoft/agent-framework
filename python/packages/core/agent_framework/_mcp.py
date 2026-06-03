@@ -544,7 +544,7 @@ class MCPTool:
     @property
     def functions(self) -> list[FunctionTool]:
         """Get the list of functions that are allowed."""
-        if not self.allowed_tools:
+        if self.allowed_tools is None:
             return self._functions
         allowed_names = set(self.allowed_tools)
         filtered_functions: list[FunctionTool] = []

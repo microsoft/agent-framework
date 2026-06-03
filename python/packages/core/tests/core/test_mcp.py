@@ -1465,6 +1465,7 @@ def test_mcp_tool_approval_mode_returns_none_for_unmatched_names() -> None:
             3,
             ["tool_one", "tool_two", "tool_three"],
         ),  # None means all tools are allowed
+        ([], 0, []),  # Empty list means no tools are allowed
         (["tool_one"], 1, ["tool_one"]),  # Only tool_one is allowed
         (
             ["tool_one", "tool_three"],
