@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -92,8 +92,11 @@ def _is_reasoning_only_assistant(message: Message) -> bool:
     return all(content.type == "text_reasoning" for content in message.contents)
 
 
-def _ensure_message_ids(messages: list[Message], *, id_offset: int = 0) -> None:
-    existing_ids = {message.message_id for message in messages if message.message_id}
+def _ensure_message_ids(
+    messages: list[Message], *, id_offset: int = 0, reserved_ids: Iterable[str] | None = None
+) -> None:
+    existing_ids: set[str] = set(reserved_ids) if reserved_ids is not None else set()
+    existing_ids.update(message.message_id for message in messages if message.message_id)
     for index, message in enumerate(messages):
         if message.message_id:
             continue
@@ -114,7 +117,9 @@ def _group_id_for(message: Message, group_index: int) -> str:
     return f"group_index_{group_index}"
 
 
-def group_messages(messages: list[Message], *, id_offset: int = 0) -> list[dict[str, Any]]:
+def group_messages(
+    messages: list[Message], *, id_offset: int = 0, reserved_ids: Iterable[str] | None = None
+) -> list[dict[str, Any]]:
     """Compute group spans and metadata for annotation.
 
     Args:
@@ -124,12 +129,15 @@ def group_messages(messages: list[Message], *, id_offset: int = 0) -> list[dict[
         id_offset: Absolute starting index used when auto-assigning ``message_id``
             values, so incremental annotation of a list slice produces ids that
             stay unique across the full list.
+        reserved_ids: Message ids that already exist outside ``messages`` (for
+            example in a preserved prefix). Auto-assigned ids are guaranteed not
+            to collide with these, preventing duplicate ids across the full list.
 
     Returns:
         Ordered list of lightweight span dicts with keys:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
     """
-    _ensure_message_ids(messages, id_offset=id_offset)
+    _ensure_message_ids(messages, id_offset=id_offset, reserved_ids=reserved_ids)
     spans: list[dict[str, Any]] = []
     i = 0
     group_index = 0
@@ -457,7 +465,8 @@ def annotate_message_groups(
         if previous_group_index is not None:
             group_index_offset = previous_group_index + 1
 
-    spans = group_messages(messages[start_index:], id_offset=start_index)
+    reserved_ids = {message.message_id for message in messages[:start_index] if message.message_id}
+    spans = group_messages(messages[start_index:], id_offset=start_index, reserved_ids=reserved_ids)
     for span_index, span in enumerate(spans):
         group_id = str(span["group_id"])
         kind = _coerce_group_kind(span["kind"])

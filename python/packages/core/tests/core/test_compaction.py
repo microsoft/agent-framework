@@ -228,6 +228,32 @@ def test_ensure_message_ids_avoids_existing_id_collisions() -> None:
     assert len(set(message_ids)) == len(message_ids), f"duplicate message ids: {message_ids}"
 
 
+def test_incremental_annotation_avoids_prefix_id_collision() -> None:
+    # Regression for the PR review on #5237: when only a suffix is re-annotated,
+    # an auto-assigned ``msg_{index}`` in the suffix must not collide with a
+    # preexisting id carried by a message in the *preserved prefix* (a group
+    # before the one re-annotation pulls back to). Otherwise ``_group_id_for``
+    # derives the same group id and merges groups across the boundary.
+    messages = [
+        # Out-of-position, user-supplied id that matches the ``msg_{index}`` the
+        # suffix pass would assign to the appended message below. This message is
+        # two groups back, so it stays outside the re-annotated slice.
+        Message(role="user", contents=["zero"], message_id="msg_2"),
+        Message(role="user", contents=["one"]),
+    ]
+    annotate_message_groups(messages)
+    assert messages[0].message_id == "msg_2"
+    assert messages[1].message_id == "msg_1"
+
+    messages.append(Message(role="user", contents=["two"]))
+    annotate_message_groups(messages, from_index=2)
+
+    message_ids = [message.message_id for message in messages]
+    assert all(message_ids), "every message should receive an id"
+    assert len(set(message_ids)) == len(message_ids), f"duplicate message ids: {message_ids}"
+    assert messages[0].message_id == "msg_2"
+
+
 async def test_truncation_strategy_keeps_system_anchor() -> None:
     messages = [
         Message(role="system", contents=["you are helpful"]),
