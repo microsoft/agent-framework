@@ -321,6 +321,7 @@ class FunctionInvocationContext:
         merged = _append_unique_tools(list(self.tools), normalize_tools(tools))
         self.tools[:] = merged
 
+    @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)
     def remove_tools(
         self,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | str | Sequence[str],
