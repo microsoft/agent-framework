@@ -91,9 +91,13 @@ class _RecordingPushChannel:
 # --------------------------------------------------------------------------- #
 
 
-def _make_client(agent: _FakeAgent | None = None) -> tuple[TestClient, AgentFrameworkHost, _FakeAgent]:
+def _make_client(
+    agent: _FakeAgent | None = None,
+    *,
+    path: str = "/responses",
+) -> tuple[TestClient, AgentFrameworkHost, _FakeAgent]:
     agent = agent or _FakeAgent()
-    host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel()])
+    host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel(path=path)])
     return TestClient(host.app), host, agent
 
 
@@ -109,6 +113,13 @@ class TestResponsesChannelNonStreaming:
         assert body["id"].startswith("resp_")
         assert body["output"][0]["content"][0]["text"] == "hi back"
         assert len(agent.calls) == 1
+
+    def test_empty_path_mounts_at_app_root(self) -> None:
+        client, _host, _agent = _make_client(_FakeAgent(reply="hi back"), path="")
+        with client:
+            r = client.post("/", json={"input": "hi"})
+        assert r.status_code == 200
+        assert r.json()["output"][0]["content"][0]["text"] == "hi back"
 
     def test_invalid_json_returns_400(self) -> None:
         client, *_ = _make_client()

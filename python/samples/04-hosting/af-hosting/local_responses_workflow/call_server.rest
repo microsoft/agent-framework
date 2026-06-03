@@ -45,7 +45,7 @@ Content-Type: application/json
 
 ###
 # 4. Invocations API — structured brief
-POST {{host}}/invocations/invoke
+POST {{host}}/invocations
 Content-Type: application/json
 
 {
@@ -55,7 +55,7 @@ Content-Type: application/json
 
 ###
 # 5. Invocations API — plain topic
-POST {{host}}/invocations/invoke
+POST {{host}}/invocations
 Content-Type: application/json
 
 {
@@ -66,7 +66,7 @@ Content-Type: application/json
 ###
 # 6. Invocations API — resume the same session_id to reuse the
 #    workflow's per-conversation checkpoint store.
-POST {{host}}/invocations/invoke
+POST {{host}}/invocations
 Content-Type: application/json
 
 {
@@ -77,7 +77,7 @@ Content-Type: application/json
 ###
 # 7. Invocations API — streaming (SSE; one `data:` line per chunk,
 #    terminated by `data: [DONE]`).
-POST {{host}}/invocations/invoke
+POST {{host}}/invocations
 Content-Type: application/json
 Accept: text/event-stream
 

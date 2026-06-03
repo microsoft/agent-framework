@@ -3,7 +3,7 @@
 """Call the foundry_hosted_agent server three ways.
 
 The foundry_hosted_agent host exposes ``POST /responses`` (OpenAI Responses-shaped) and
-``POST /invocations/invoke`` (host-native), and that minimal contract is
+``POST /invocations`` (host-native), and that minimal contract is
 **runtime-compatible with the Foundry Hosted Agents platform** — so the same
 agent code that calls the local server also calls the same image deployed
 as a Hosted Agent.

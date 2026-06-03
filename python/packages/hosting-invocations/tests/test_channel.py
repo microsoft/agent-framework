@@ -60,9 +60,9 @@ class _FakeAgent:
         return _coro()
 
 
-def _make_client(agent: _FakeAgent | None = None) -> tuple[TestClient, _FakeAgent]:
+def _make_client(agent: _FakeAgent | None = None, *, path: str = "/invocations") -> tuple[TestClient, _FakeAgent]:
     agent = agent or _FakeAgent()
-    host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel()])
+    host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel(path=path)])
     return TestClient(host.app), agent
 
 
@@ -70,14 +70,21 @@ class TestInvocations:
     def test_post_invoke_returns_response(self) -> None:
         client, _agent = _make_client(_FakeAgent(reply="pong"))
         with client:
-            r = client.post("/invocations/invoke", json={"message": "ping"})
+            r = client.post("/invocations", json={"message": "ping"})
+        assert r.status_code == 200
+        assert r.json() == {"response": "pong", "session_id": None}
+
+    def test_empty_path_mounts_at_app_root(self) -> None:
+        client, _agent = _make_client(_FakeAgent(reply="pong"), path="")
+        with client:
+            r = client.post("/", json={"message": "ping"})
         assert r.status_code == 200
         assert r.json() == {"response": "pong", "session_id": None}
 
     def test_session_id_propagates_to_target(self) -> None:
         client, agent = _make_client()
         with client:
-            r = client.post("/invocations/invoke", json={"message": "x", "session_id": "s1"})
+            r = client.post("/invocations", json={"message": "x", "session_id": "s1"})
         assert r.status_code == 200
         assert r.json()["session_id"] == "s1"
         sess = agent.calls[0]["kwargs"].get("session")
@@ -90,7 +97,7 @@ class TestInvocations:
         client, _ = _make_client()
         with client:
             r = client.post(
-                "/invocations/invoke",
+                "/invocations",
                 content=b"{not json",
                 headers={"content-type": "application/json"},
             )
@@ -99,26 +106,26 @@ class TestInvocations:
     def test_empty_message_returns_422(self) -> None:
         client, _ = _make_client()
         with client:
-            r = client.post("/invocations/invoke", json={"message": ""})
+            r = client.post("/invocations", json={"message": ""})
         assert r.status_code == 422
 
     def test_non_string_session_id_returns_422(self) -> None:
         client, _ = _make_client()
         with client:
-            r = client.post("/invocations/invoke", json={"message": "x", "session_id": 1})
+            r = client.post("/invocations", json={"message": "x", "session_id": 1})
         assert r.status_code == 422
 
     def test_non_object_body_returns_422(self) -> None:
         client, _ = _make_client()
         with client:
-            r = client.post("/invocations/invoke", json=[])
+            r = client.post("/invocations", json=[])
         assert r.status_code == 422
 
     def test_streaming_emits_data_lines_and_done(self) -> None:
         agent = _FakeAgent(chunks=["hel", "lo"])
         host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel()])
         with TestClient(host.app) as client:
-            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+            r = client.post("/invocations", json={"message": "x", "stream": True})
         assert r.status_code == 200
         body = r.text
         assert "data: hel" in body
@@ -136,7 +143,7 @@ class TestInvocations:
         agent = _FakeAgent(reply="ok")
         host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel(run_hook=hook)])
         with TestClient(host.app) as client:
-            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+            r = client.post("/invocations", json={"message": "x", "stream": True})
         assert r.status_code == 200
         # Even though caller asked for stream=True, hook flipped it off — so
         # we get JSON back, not SSE.
@@ -154,7 +161,7 @@ class TestInvocations:
         host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel(response_hook=hook)])
 
         with TestClient(host.app) as client:
-            r = client.post("/invocations/invoke", json={"message": "ping"})
+            r = client.post("/invocations", json={"message": "ping"})
 
         assert r.status_code == 200
         assert r.json() == {"response": "hooked:pong", "session_id": None}
@@ -174,7 +181,7 @@ class TestInvocations:
             channels=[InvocationsChannel(stream_transform_hook=transform)],
         )
         with TestClient(host.app) as client:
-            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+            r = client.post("/invocations", json={"message": "x", "stream": True})
         assert r.status_code == 200
         body = r.text
         assert "data: FOO" in body
@@ -192,7 +199,7 @@ class TestInvocations:
             channels=[InvocationsChannel(stream_transform_hook=transform)],
         )
         with TestClient(host.app) as client:
-            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+            r = client.post("/invocations", json={"message": "x", "stream": True})
         assert r.status_code == 200
         body = r.text
         assert "data: keep" in body
@@ -210,7 +217,7 @@ class TestInvocations:
             channels=[InvocationsChannel(stream_transform_hook=transform)],
         )
         with TestClient(host.app) as client:
-            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+            r = client.post("/invocations", json={"message": "x", "stream": True})
         assert r.status_code == 200
         assert "data: aa!" in r.text
 
@@ -221,7 +228,7 @@ class TestInvocations:
         agent = _FakeAgent(chunks=["line1\r\nline2"])
         host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel()])
         with TestClient(host.app) as client:
-            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+            r = client.post("/invocations", json={"message": "x", "stream": True})
         assert r.status_code == 200
         body = r.text
         assert "data: line1\n" in body
@@ -247,7 +254,7 @@ class TestInvocations:
         agent = _AgentWithFailingFinal()
         host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel()])
         with TestClient(host.app) as client:
-            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+            r = client.post("/invocations", json={"message": "x", "stream": True})
         assert r.status_code == 200
         body = r.text
         assert "data: partial" in body

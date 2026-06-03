@@ -123,10 +123,13 @@ def _run_result(text: str) -> HostedRunResult[AgentResponse]:
     return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
-def _make_telegram(stream_default: bool = False) -> tuple[TelegramChannel, _FakeAgent]:
+def _make_telegram(
+    stream_default: bool = False, *, path: str = "/telegram/webhook"
+) -> tuple[TelegramChannel, _FakeAgent]:
     agent = _FakeAgent("hi")
     ch = TelegramChannel(
         bot_token="123:abc",
+        path=path,
         webhook_url="https://example.com/hook",
         secret_token="s3cr3t",
         stream=stream_default,
@@ -152,6 +155,18 @@ class TestTelegramWebhook:
         with TestClient(host.app) as client:
             r = client.post(
                 "/telegram/webhook",
+                json={"update_id": 1, "message": {"chat": {"id": 99}, "text": "hello"}},
+                headers={"x-telegram-bot-api-secret-token": "s3cr3t"},
+            )
+        assert r.status_code == 200
+        assert agent.runs, "expected the agent to be invoked"
+
+    def test_empty_path_mounts_at_app_root(self) -> None:
+        ch, agent = _make_telegram(path="")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post(
+                "/",
                 json={"update_id": 1, "message": {"chat": {"id": 99}, "text": "hello"}},
                 headers={"x-telegram-bot-api-secret-token": "s3cr3t"},
             )
@@ -216,6 +231,23 @@ class TestPushAndCommand:
         assert args[0].endswith("/sendMessage")
         assert kwargs["json"]["chat_id"] in ("42", 42)
         assert kwargs["json"]["text"] == "hi"
+        # Agent replies must stay loud: no silent flag on a non-echo push.
+        assert "disable_notification" not in kwargs["json"]
+
+    async def test_push_echo_is_silent(self) -> None:
+        ch, _agent = _make_telegram()
+        from agent_framework_hosting import ChannelIdentity
+
+        echo = HostedRunResult(
+            AgentResponse(messages=[Message(role="user", contents=[Content.from_text(text="said via X")])])
+        )
+        await ch.push(ChannelIdentity(channel="telegram", native_id="42"), echo)
+        assert ch._http is not None
+        _args, kwargs = ch._http.post.call_args  # type: ignore[attr-defined]
+        # Bots cannot impersonate the user (no MTProto send_as), so the echo is
+        # delivered silently instead of buzzing the device like a real reply.
+        assert kwargs["json"]["disable_notification"] is True
+        assert kwargs["json"]["text"] == "said via X"
 
     async def test_command_handler_invoked(self) -> None:
         captured: list[ChannelCommandContext] = []
@@ -387,3 +419,39 @@ class TestShutdownDrainsWorkers:
         await ch._on_shutdown()
         assert not ch._chat_workers
         assert not ch._update_tasks
+
+
+def _deletewebhook_called(http_mock: MagicMock) -> bool:
+    return any(
+        call.args and str(call.args[0]).endswith("/deleteWebhook") for call in http_mock.post.call_args_list
+    )
+
+
+class TestWebhookShutdownTeardown:
+    async def test_shutdown_keeps_webhook_by_default(self) -> None:
+        """Default: shutdown must NOT delete the webhook (avoids redeploy races)."""
+        ch, _ = _make_telegram()
+        assert ch._transport == "webhook"
+        await ch._on_shutdown()
+        assert not _deletewebhook_called(ch._http)  # type: ignore[arg-type]
+        ch._http.aclose.assert_awaited()  # type: ignore[union-attr]
+
+    async def test_shutdown_deletes_webhook_when_opted_in(self) -> None:
+        """Opt-in: ``delete_webhook_on_shutdown=True`` performs best-effort teardown."""
+        ch = TelegramChannel(
+            bot_token="123:abc",
+            webhook_url="https://example.com/hook",
+            secret_token="s3cr3t",
+            delete_webhook_on_shutdown=True,
+            stream=False,
+        )
+        fake_http = MagicMock()
+        response_mock = MagicMock()
+        response_mock.json = MagicMock(return_value={"ok": True, "result": {}})
+        fake_http.post = AsyncMock(return_value=response_mock)
+        fake_http.get = AsyncMock(return_value=response_mock)
+        fake_http.aclose = AsyncMock()
+        ch._http = fake_http
+        await ch._on_shutdown()
+        assert _deletewebhook_called(fake_http)
+        fake_http.aclose.assert_awaited()

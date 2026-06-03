@@ -4,7 +4,7 @@
 
 This sample is intentionally minimal and is **runtime-compatible with the
 Foundry Hosted Agents platform**: a host that exposes the Responses and
-Invocations channels under their default mount roots can be packaged as a
+Invocations channels under their default endpoints can be packaged as a
 container image and deployed to Foundry Hosted Agents without any protocol
 shim. The same image runs locally, behind any ASGI server, or as a Hosted
 Agent.
@@ -52,7 +52,7 @@ Run
 Routes
 ------
 - ``POST /responses``           — OpenAI Responses-shaped surface.
-- ``POST /invocations/invoke``  — host-native JSON envelope.
+- ``POST /invocations``         — host-native JSON envelope.
 """
 
 from __future__ import annotations

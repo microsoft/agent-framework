@@ -109,10 +109,10 @@ The hosting core is deliberately **not** a replacement for the existing protocol
 After we deliver `agent-framework-hosting` and its first channel packages, users will be able to:
 
 1. **Compose one host with one or more channels** — instantiate `AgentFrameworkHost(target=..., channels=[...])` where `target` is either a `SupportsAgentRun`-compatible agent or a `Workflow`, and get one Starlette application with all channels mounted.
-2. **Expose the Responses API** — add `ResponsesChannel()` and serve `/responses/v1` (and conversation routes) without writing protocol handlers.
-3. **Expose the Invocations API** — add `InvocationsChannel()` and serve `/invocations/invoke` without writing protocol handlers.
+2. **Expose the Responses API** — add `ResponsesChannel()` and serve `/responses` without writing protocol handlers.
+3. **Expose the Invocations API** — add `InvocationsChannel()` and serve `/invocations` without writing protocol handlers.
 4. **Expose a Telegram bot** — add `TelegramChannel(bot_token=...)` with either `polling` or `webhook` transport, and register native commands declaratively with `ChannelCommand`.
-5. **Override mount roots without breaking protocol paths** — pass `path="/public/responses"` and the channel still owns the protocol-relative suffix (`/v1`, `/invoke`, `/webhook`).
+5. **Override endpoint paths** — pass `path="/public/responses"` to move a channel endpoint, or `path=""` when an external platform must call the app root.
 6. **Customize per-request invocation behavior** — pass a `run_hook` to any built-in channel. The hook receives the channel-produced `ChannelRequest` (the host-neutral envelope each channel builds from its own protocol parsing — see [Key Types](#key-types)) and returns a possibly-modified `ChannelRequest`. Use it to validate, rewrite, or strip channel-derived options (e.g. enforce or drop `temperature`, override `session_mode`) before the host calls the target's execution seam. It is also the **adapter** that reshapes the channel's default `ChannelRequest.input` into the typed inputs a workflow target requires.
 7. **Control session use per request** — built-in channels set `ChannelRequest.session_mode` to `auto`, `required`, or `disabled`; the host honors that when resolving `AgentSession`.
 8. **Partition sessions by isolation key** — channels populate `ChannelSession.isolation_key` (user, tenant, chat, …) using hosted-agent terminology.
@@ -121,7 +121,7 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 11. **Link a new channel to an existing identity through a well-known ceremony** — the host accepts a host-level `identity_linker` (e.g. `OAuthIdentityLinker(...)`, `OneTimeCodeIdentityLinker(...)`) which contributes its own routes/lifecycle and exposes a `begin(channel_identity) -> LinkChallenge` / `complete(challenge_id, proof) -> isolation_key` flow. Channels surface a `link`/`connect` `ChannelCommand` that delegates to the linker; on success the resolver subsequently maps the new channel-native identity to the existing `isolation_key`. Mechanism (OAuth provider, signed one-time code, future linker types) is pluggable; the contract is fixed.
 12. **Route the response to a chosen channel** — `ChannelRequest.response_target` accepts `ResponseTarget.originating` (default — synchronous response on the originating channel), `ResponseTarget.active` (the channel most recently observed for the resolved `isolation_key`), `ResponseTarget.channel("activity")` (specific channel id, recipient resolved from the link store), `ResponseTarget.channels([...])` (a list), `ResponseTarget.identities([ChannelIdentity(...)])` (one or more **explicit channel-native identities** — bypasses the link store, used when the caller already knows the recipient's channel-native id), `ResponseTarget.all_linked` (every channel where this `isolation_key` is known), or `ResponseTarget.none` (background-only — caller must poll the `ContinuationToken`). When the target is not the originating channel, the host delivers via the destination channel's `ChannelPush` capability.
 13. **Push proactively from a channel** — channels that can deliver outbound messages without a prior request (Telegram bot proactive message, Activity Protocol proactive message via Azure Bot Service, webhook callbacks, SSE broadcasts) implement an optional `ChannelPush` capability on top of the base `Channel` protocol. Channels without push can only be the `originating` target.
-14. **Submit background runs as a first-class operation** — `host.run_in_background(request) -> ContinuationToken` returns immediately with an opaque, URL-safe `token` and a status (`queued` | `running` | `completed` | `failed`). The host invokes the target asynchronously and, when complete, both delivers the result via the configured `ResponseTarget` push **and** records it against the token so callers can poll `host.get_continuation(token)`. Built-in channels expose poll routes (`/responses/v1/{continuation_token}`, `/invocations/{continuation_token}`) that surface this without app code. Continuation tokens are persisted via a `HostStateStore` (file-based by default — see [Host state storage](#host-state-storage)) so background runs survive host restarts.
+14. **Submit background runs as a first-class operation** — `host.run_in_background(request) -> ContinuationToken` returns immediately with an opaque, URL-safe `token` and a status (`queued` | `running` | `completed` | `failed`). The host invokes the target asynchronously and, when complete, both delivers the result via the configured `ResponseTarget` push **and** records it against the token so callers can poll `host.get_continuation(token)`. Built-in channels expose poll routes (`/responses/{continuation_token}`, `/invocations/{continuation_token}`) that surface this without app code. Continuation tokens are persisted via a `HostStateStore` (file-based by default — see [Host state storage](#host-state-storage)) so background runs survive host restarts.
 15. **Track the active channel per `isolation_key`** — the host records `(isolation_key, last_seen_channel, last_seen_at)` on every successfully resolved request so `ResponseTarget.active` resolves correctly. Apps can override in the `run_hook` (e.g. force `active` to a specific channel for a particular request).
 16. **Add Starlette middleware at the host level** — pass `middleware=[Middleware(CORSMiddleware, ...)]` to `AgentFrameworkHost`.
 17. **Serve with one call** — call `host.serve(host="localhost", port=8000)` without manually importing `uvicorn`, while `host.app` remains the canonical ASGI surface for any other server (Hypercorn, Daphne, Granian, Gunicorn+uvicorn workers).
@@ -253,20 +253,20 @@ The split is between distribution packages. The **public import path stays stabl
 
 ### Built-in routes
 
-For built-in channels, `path` is the configurable mount root, not the full final endpoint. The channel package owns the fixed protocol-relative suffix.
+For built-in channels, `path` is the configurable endpoint root. Use `path=""` when an external platform requires that channel at the app root.
 
 | Channel | Default `path` | Default exposed route(s) |
 | --- | --- | --- |
-| `ResponsesChannel` | `/responses` | `/responses/v1` and nested responses/conversation routes below it |
-| `InvocationsChannel` | `/invocations` | `/invocations/invoke` |
-| `TelegramChannel` | `/telegram` | webhook mode: `/telegram/webhook`; polling mode: no required HTTP route |
+| `ResponsesChannel` | `/responses` | `/responses` |
+| `InvocationsChannel` | `/invocations` | `/invocations` |
+| `TelegramChannel` | `/telegram/webhook` | webhook mode: `/telegram/webhook`; polling mode: no required HTTP route |
 
-Overrides only replace the outer mount root:
+Overrides replace the endpoint path:
 
 ```python
-ResponsesChannel(path="/public/responses")        # -> /public/responses/v1
-InvocationsChannel(path="/internal/invocations")  # -> /internal/invocations/invoke
-TelegramChannel(path="/bots/telegram", bot_token=token)  # -> /bots/telegram/webhook
+ResponsesChannel(path="/public/responses")        # -> /public/responses
+InvocationsChannel(path="/internal/invocations")  # -> /internal/invocations
+TelegramChannel(path="/bots/telegram/webhook", bot_token=token)  # -> /bots/telegram/webhook
 ```
 
 ### Key Types
@@ -695,7 +695,7 @@ When `response_target` is anything other than `originating`, the originating cha
 | `error` | `str?` | Populated on `failed`. |
 | `response_target` | `ResponseTarget` | The configured delivery target (recorded for diagnostics). |
 
-The host stores `ContinuationToken`s through a `HostStateStore` (see [Host state storage](#host-state-storage)). The v1 default is **`FileHostStateStore`** — one JSON file per token under a configurable directory (default `./.af-hosting/continuations/`), written atomically (`.tmp` + `os.replace`) so a host crash mid-write doesn't corrupt the record. This means background runs **survive host restarts**: a caller that polls `/responses/v1/{continuation_token}` after the process recycles still gets a valid status (and the result if the run had completed before the crash). Completed/failed entries are evicted by a configurable TTL (default 24h). `InMemoryHostStateStore` is available for tests / ephemeral hosts. Built-in channels expose poll routes that surface the token in their native shape (`/responses/v1/{continuation_token}` returns a Responses-shaped object; `/invocations/{continuation_token}` returns the Invocations status envelope).
+The host stores `ContinuationToken`s through a `HostStateStore` (see [Host state storage](#host-state-storage)). The v1 default is **`FileHostStateStore`** — one JSON file per token under a configurable directory (default `./.af-hosting/continuations/`), written atomically (`.tmp` + `os.replace`) so a host crash mid-write doesn't corrupt the record. This means background runs **survive host restarts**: a caller that polls `/responses/{continuation_token}` after the process recycles still gets a valid status (and the result if the run had completed before the crash). Completed/failed entries are evicted by a configurable TTL (default 24h). `InMemoryHostStateStore` is available for tests / ephemeral hosts. Built-in channels expose poll routes that surface the token in their native shape (`/responses/{continuation_token}` returns a Responses-shaped object; `/invocations/{continuation_token}` returns the Invocations status envelope).
 
 #### Host state storage
 
@@ -1058,7 +1058,7 @@ if __name__ == "__main__":
     host.serve(host="localhost", port=8000)
 ```
 
-This exposes the Responses routes under `/responses/v1`. No manual `uvicorn` import, no protocol handlers written by the user.
+This exposes the Responses route under `/responses`. No manual `uvicorn` import, no protocol handlers written by the user.
 
 ### Scenario 2: Expose Responses + Invocations on one host with shared Starlette middleware
 
@@ -1090,8 +1090,8 @@ agent = Agent(
 host = AgentFrameworkHost(
     target=agent,
     channels=[
-        ResponsesChannel(),         # -> /responses/v1
-        InvocationsChannel(),       # -> /invocations/invoke
+        ResponsesChannel(),         # -> /responses
+        InvocationsChannel(),       # -> /invocations
     ],
     middleware=[
         Middleware(
@@ -1211,8 +1211,8 @@ Same agent, three channels, one Starlette app, one process.
 host = AgentFrameworkHost(
     target=agent,
     channels=[
-        ResponsesChannel(),                          # -> /responses/v1
-        InvocationsChannel(),                        # -> /invocations/invoke
+        ResponsesChannel(),                          # -> /responses
+        InvocationsChannel(),                        # -> /invocations
         TelegramChannel(
             bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
             transport="webhook",                     # -> /telegram/webhook
@@ -1417,7 +1417,7 @@ async def telegram_promote_app_user(request: ChannelRequest, **_) -> ChannelRequ
     )
 
 
-# The application backend POSTs to /responses/v1/responses with
+# The application backend POSTs to /responses with
 #
 #   {
 #     "model": "...",
@@ -1862,7 +1862,7 @@ channel /link command
 
 | Concern | Owned by | Notes |
 |---|---|---|
-| HTTP / WebSocket route shape | Channel package | e.g. `/responses/v1`, `/responses/ws`, `/invocations/invoke`, `/telegram/webhook` — channels may contribute either or both |
+| HTTP / WebSocket route shape | Channel package | e.g. `/responses`, `/responses/ws`, `/invocations`, `/telegram/webhook` — channels may contribute either or both |
 | Protocol request model | Channel package | e.g. Responses items (HTTP body or WS frames), Invocations body, Telegram webhook payload |
 | Signature/auth validation | Channel package or host middleware | channel-specific unless generic Starlette middleware |
 | Request-to-agent invocation mapping | Channel package + optional `run_hook` | forwards caller parameters into `ChannelRequest.options`, chooses `session_mode`, can enforce extra app policy |
@@ -1882,7 +1882,7 @@ channel /link command
 | Proactive outbound delivery | Channel package via optional `ChannelPush` capability | channels that can push (Telegram, Activity Protocol via Bot Service, webhook, SSE) implement `push(identity, result)`; channels that can't are only valid as `originating` targets |
 | Per-delivery audit + replay state | Host core writes intent-only — the resolved destination set onto the assistant `Message.additional_properties["hosting"]["intended_targets"]` (immutable, single write). Operational state (attempts, retries, last error, success timestamp) lives in the `DurableTaskRunner` and is observed via the runner's own backend. | Replay across host restarts is a property of the configured runner (native for durable adapters; not supported for `InProcessTaskRunner`). See [Intended targets + durable delivery](#intended-targets--durable-delivery) and [Durable task runner](#durable-task-runner). |
 | Background-run lifecycle | Host core | owns `ContinuationToken` issuance, async execution, completion notification; persists via `HostStateStore` (file-based default — survives restarts) |
-| Run poll routes | Channel package | each channel exposes its own protocol-shaped poll route (`/responses/v1/{continuation_token}`, `/invocations/{continuation_token}`) backed by `host.get_continuation(token)` |
+| Run poll routes | Channel package | each channel exposes its own protocol-shaped poll route (`/responses/{continuation_token}`, `/invocations/{continuation_token}`) backed by `host.get_continuation(token)` |
 | Conversation history (all channels — Responses, Invocations, Telegram, Activity Protocol, …) | Agent's core `HistoryProvider` (`agent_framework._sessions.HistoryProvider`) | Channels project their wire id (`previous_response_id`, `conversation_id`, request body `session_id`, host-tracked alias, …) into `ChannelSession.key`; the host resolves an `AgentSession` and the agent's `HistoryProvider` does the load / append. No channel-specific history seam. Multi-provider composition (with a single `load_messages=True`) is the standard AF convention; see [Conversation history for the Responses channel](#conversation-history-for-the-responses-channel) for the Foundry-backed variant. |
 | Channel-owned non-message per-thread state (e.g. AG-UI `client_state`) | Channel-shipped `ContextProvider` subclass written into the same per-source state slot | Reuses the existing `ContextProvider` seam — *not* a new storage protocol. Channel reads `ChannelRequest.client_state` in `before_run`, lets the agent observe/mutate the slot, then reads the post-run value in `after_run` to emit channel-specific events (e.g. AG-UI `StateSnapshotEvent` / `StateDeltaEvent`). Composition rules unchanged (one `HistoryProvider` carries `load_messages=True`; additional `ContextProvider`s attach alongside). See [Channel-owned per-thread state](#channel-owned-per-thread-state). |
 | Agent invocation | Host core | always through the target's execution seam — `SupportsAgentRun.run(...)` for agent targets, `Workflow.run(...)` for workflow targets |

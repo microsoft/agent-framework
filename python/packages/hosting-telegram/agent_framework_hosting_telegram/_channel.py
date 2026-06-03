@@ -88,6 +88,21 @@ def _text_result(text: str) -> HostedRunResult[AgentResponse]:
     return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
+def _is_echo_payload(payload: HostedRunResult[AgentResponse]) -> bool:
+    """Return ``True`` when a push payload is an echoed user turn.
+
+    Per the :class:`~agent_framework_hosting.ChannelPush` contract the host
+    mirrors the originating user's input as a one-or-more message
+    :class:`~agent_framework.AgentResponse` with every ``role == "user"``,
+    delivered *before* the agent's (``role == "assistant"``) reply. Treating a
+    payload whose messages are all user-role as an echo lets the channel pick
+    echo-only delivery options (e.g. silent notifications) without the host
+    having to thread an explicit ``is_echo`` flag through ``push``.
+    """
+    messages = getattr(payload.result, "messages", None) or []
+    return bool(messages) and all(getattr(m, "role", None) == "user" for m in messages)
+
+
 def _telegram_media_file_id(message: Mapping[str, Any]) -> tuple[str, str] | None:
     """Return ``(file_id, fallback_media_type)`` for any media on the message."""
     photo = message.get("photo")
@@ -151,7 +166,7 @@ class TelegramChannel:
         self,
         *,
         bot_token: str,
-        path: str = "/telegram",
+        path: str = "/telegram/webhook",
         commands: Sequence[ChannelCommand] = (),
         register_native_commands: bool = True,
         run_hook: ChannelRunHook | None = None,
@@ -159,6 +174,7 @@ class TelegramChannel:
         api_base: str = "https://api.telegram.org",
         webhook_url: str | None = None,
         secret_token: str | None = None,
+        delete_webhook_on_shutdown: bool = False,
         parse_mode: str | None = None,
         send_typing_action: bool = True,
         transport: Literal["auto", "polling", "webhook"] = "auto",
@@ -179,6 +195,7 @@ class TelegramChannel:
         self._api = f"{api_base}/bot{bot_token}"
         self._webhook_url = webhook_url
         self._secret_token = secret_token
+        self._delete_webhook_on_shutdown = delete_webhook_on_shutdown
         self._parse_mode = parse_mode
         self._send_typing_action = send_typing_action
         if transport == "auto":
@@ -210,7 +227,7 @@ class TelegramChannel:
         self._ctx = context
         routes: list[BaseRoute] = []
         if self._transport == "webhook":
-            routes.append(Route("/webhook", self._handle, methods=["POST"]))
+            routes.append(Route("/", self._handle, methods=["POST"]))
         return ChannelContribution(
             routes=routes,
             commands=self._commands,
@@ -258,7 +275,7 @@ class TelegramChannel:
             logger.info("Telegram polling started (long-poll timeout=%ss)", self._polling_timeout)
 
     async def _on_shutdown(self) -> None:
-        """Stop the polling task, drain in-flight workers, drop the webhook, close HTTP.
+        """Stop the polling task, drain in-flight workers, close HTTP.
 
         Drain order:
         1. Cancel the poll task so no new updates are admitted.
@@ -269,10 +286,17 @@ class TelegramChannel:
            ``_update_tasks`` (the webhook handler returns 200 immediately
            and runs the agent in a background task, which the previous
            shutdown ignored entirely).
-        4. Best-effort `deleteWebhook` and HTTP client close.
+        4. Close the HTTP client.
 
-        Webhook teardown is best-effort — failures (e.g. revoked token at
-        shutdown) are logged but never raised so app shutdown can complete.
+        The webhook registration is intentionally **left in place** on
+        shutdown. A Telegram webhook is a single global resource, so
+        deleting it here races rolling redeploys: the new revision calls
+        ``setWebhook`` on startup, then the old revision's shutdown would
+        delete it, silently breaking inbound delivery until the next boot.
+        ``setWebhook`` is overwriting/idempotent, so the next startup
+        re-asserts it anyway. Set ``delete_webhook_on_shutdown=True`` to opt
+        into best-effort teardown (e.g. for a one-off/ephemeral deployment);
+        failures are logged but never raised so app shutdown can complete.
         """
         if self._poll_task is not None:
             self._poll_task.cancel()
@@ -296,7 +320,7 @@ class TelegramChannel:
                 await task
         self._update_tasks.clear()
         if self._http is not None:
-            if self._transport == "webhook":
+            if self._transport == "webhook" and self._delete_webhook_on_shutdown:
                 try:
                     await self._http.post(f"{self._api}/deleteWebhook")
                 except Exception:  # pragma: no cover - best-effort cleanup
@@ -845,7 +869,17 @@ class TelegramChannel:
             raise ValueError(f"Telegram push requires an int chat_id, got {identity.native_id!r}") from exc
         if self._http is None:
             raise RuntimeError("TelegramChannel.push called before startup")
-        await self._send(chat_id, payload.result.text)
+        # The Bot API can only ever send AS the bot, so there is no way to
+        # impersonate the user for an echo (the MTProto ``send_as`` field is
+        # not exposed to bots). The next best UX is to deliver echoes
+        # *silently* (``disable_notification``) so a mirrored input doesn't
+        # buzz the user's device the way a genuine reply does. Echo phases are
+        # identified per the ChannelPush contract: a payload whose messages are
+        # all ``role == "user"`` is the originating turn mirrored here.
+        extra: dict[str, Any] = {}
+        if _is_echo_payload(payload):
+            extra["disable_notification"] = True
+        await self._send(chat_id, payload.result.text, **extra)
 
     async def _send_photo(self, chat_id: int, photo_url: str, caption: str | None = None) -> None:
         """POST a ``sendPhoto`` to Telegram with an optional caption."""

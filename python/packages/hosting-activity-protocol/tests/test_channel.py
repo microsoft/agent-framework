@@ -9,16 +9,24 @@ streaming edits and certificate paths are out of scope here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from agent_framework_hosting import AgentFrameworkHost, HostedRunResult
+from agent_framework_hosting import (
+    AgentFrameworkHost,
+    ChannelCommand,
+    ChannelCommandContext,
+    ChannelIdentity,
+    ChannelRequest,
+    ChannelSession,
+    HostedRunResult,
+)
 from starlette.testclient import TestClient
 
 from agent_framework_hosting_activity_protocol import ActivityProtocolChannel, activity_protocol_isolation_key
-from agent_framework_hosting_activity_protocol._channel import _parse_activity
+from agent_framework_hosting_activity_protocol._channel import _command_text, _parse_activity, _text_result
 
 
 def test_activity_protocol_isolation_key_format() -> None:
@@ -57,6 +65,74 @@ class TestParseActivity:
         # No URI content survived.
         assert not any(getattr(c, "uri", None) for c in msg.contents)
 
+    def test_skips_teams_text_html_inline_content(self) -> None:
+        # Teams attaches a text/html rendering whose inline ``content`` is raw
+        # HTML (not a URL). It must not be parsed as a URI.
+        msg = _parse_activity({
+            "type": "message",
+            "text": "hello there",
+            "attachments": [
+                {"contentType": "text/html", "content": "<p>hello there</p>"},
+            ],
+        })
+        assert msg.text == "hello there"
+        assert not any(getattr(c, "uri", None) for c in msg.contents)
+
+    def test_skips_attachment_contenturl_without_scheme(self) -> None:
+        msg = _parse_activity({
+            "type": "message",
+            "text": "hi",
+            "attachments": [
+                {"contentType": "image/png", "contentUrl": "/relative/path.png"},
+            ],
+        })
+        assert msg.text == "hi"
+        assert not any(getattr(c, "uri", None) for c in msg.contents)
+
+
+class TestCommandText:
+    def test_plain_text_unchanged(self) -> None:
+        assert _command_text({"text": "/help"}) == "/help"
+
+    def test_non_string_text_returns_empty(self) -> None:
+        assert _command_text({"text": None}) == ""
+        assert _command_text({}) == ""
+
+    def test_strips_bot_mention(self) -> None:
+        activity = {
+            "text": "<at>Personal Assistant</at> /todos",
+            "recipient": {"id": "bot-1"},
+            "entities": [
+                {"type": "mention", "text": "<at>Personal Assistant</at>", "mentioned": {"id": "bot-1"}},
+            ],
+        }
+        assert _command_text(activity) == "/todos"
+
+    def test_strips_bot_mention_without_space(self) -> None:
+        activity = {
+            "text": "<at>Bot</at>/help",
+            "recipient": {"id": "bot-1"},
+            "entities": [{"type": "mention", "text": "<at>Bot</at>", "mentioned": {"id": "bot-1"}}],
+        }
+        assert _command_text(activity) == "/help"
+
+    def test_keeps_other_user_mention(self) -> None:
+        activity = {
+            "text": "/whoami <at>Someone</at>",
+            "recipient": {"id": "bot-1"},
+            "entities": [{"type": "mention", "text": "<at>Someone</at>", "mentioned": {"id": "user-9"}}],
+        }
+        # Another user's mention must not be stripped.
+        assert _command_text(activity) == "/whoami <at>Someone</at>"
+
+    def test_malformed_entities_are_ignored(self) -> None:
+        activity = {
+            "text": "/help",
+            "recipient": {"id": "bot-1"},
+            "entities": ["not-a-mapping", {"type": "clientInfo"}, {"type": "mention"}],
+        }
+        assert _command_text(activity) == "/help"
+
 
 @dataclass
 class _FakeAgentResponse:
@@ -80,9 +156,11 @@ class _FakeAgent:
         return _coro()
 
 
-def _make_teams(stream: bool = False) -> tuple[ActivityProtocolChannel, _FakeAgent]:
+def _make_teams(
+    stream: bool = False, *, path: str = "/activity/messages"
+) -> tuple[ActivityProtocolChannel, _FakeAgent]:
     agent = _FakeAgent("hi there")
-    ch = ActivityProtocolChannel(stream=stream, send_typing_action=False)
+    ch = ActivityProtocolChannel(path=path, stream=stream, send_typing_action=False)
     fake_http = MagicMock()
     response_mock = MagicMock()
     response_mock.raise_for_status = MagicMock()
@@ -105,6 +183,11 @@ _VALID_ACTIVITY: dict[str, Any] = {
     "serviceUrl": "https://smba.trafficmanager.net/amer/",
 }
 
+# Minimal request envelope for direct ``_stream_to_conversation`` calls. The
+# channel only consults it for cross-channel fan-out, which is skipped when
+# ``_ctx`` is unset (as in these unit tests).
+_VALID_REQUEST = ChannelRequest(channel="activity", operation="message.create", input=[])
+
 
 class TestTeamsWebhook:
     def test_message_activity_dispatches_to_agent(self) -> None:
@@ -121,6 +204,14 @@ class TestTeamsWebhook:
         assert "/v3/conversations/" in ch._http.post.call_args[0][0]  # type: ignore[attr-defined]
         body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
         assert body["text"] == "hi there"
+
+    def test_empty_path_mounts_at_app_root(self) -> None:
+        ch, agent = _make_teams(path="")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/", json=_VALID_ACTIVITY)
+        assert r.status_code == 200
+        assert agent.runs, "expected the agent to be invoked"
 
     def test_response_hook_can_rewrite_originating_reply(self) -> None:
         contexts: list[Any] = []
@@ -181,6 +272,107 @@ class TestTeamsWebhook:
         assert not agent.runs
 
 
+class TestCommands:
+    def _make_with_commands(self, commands: list[ChannelCommand]) -> tuple[ActivityProtocolChannel, _FakeAgent]:
+        agent = _FakeAgent("hi there")
+        ch = ActivityProtocolChannel(send_typing_action=False, commands=commands)
+        fake_http = MagicMock()
+        response_mock = MagicMock()
+        response_mock.raise_for_status = MagicMock()
+        response_mock.json = MagicMock(return_value={"id": "act-1"})
+        fake_http.post = AsyncMock(return_value=response_mock)
+        fake_http.put = AsyncMock(return_value=response_mock)
+        fake_http.aclose = AsyncMock()
+        ch._http = fake_http
+        return ch, agent
+
+    def test_slash_command_bypasses_agent_and_replies(self) -> None:
+        seen: list[ChannelCommandContext] = []
+
+        async def handle(ctx: ChannelCommandContext) -> None:
+            seen.append(ctx)
+            await ctx.reply("listed")
+
+        ch, agent = self._make_with_commands([ChannelCommand("todos", "List", handle)])
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        activity = dict(_VALID_ACTIVITY, text="/todos")
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=activity)
+        assert r.status_code == 200
+        assert not agent.runs, "command must bypass the agent"
+        assert seen and seen[0].request.operation == "command.invoke"
+        assert seen[0].request.input == "/todos"
+        assert seen[0].request.session is not None
+        assert seen[0].request.session.isolation_key == activity_protocol_isolation_key("19:meeting_xyz@thread.v2")
+        assert ch._http is not None
+        assert ch._http.post.call_args[1]["json"]["text"] == "listed"  # type: ignore[attr-defined]
+
+    def test_command_match_is_case_insensitive(self) -> None:
+        ran = False
+
+        async def handle(ctx: ChannelCommandContext) -> None:
+            nonlocal ran
+            ran = True
+
+        ch, agent = self._make_with_commands([ChannelCommand("New", "reset", handle)])
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=dict(_VALID_ACTIVITY, text="/new"))
+        assert r.status_code == 200
+        assert ran
+        assert not agent.runs
+
+    def test_unknown_command_falls_through_to_agent(self) -> None:
+        async def handle(ctx: ChannelCommandContext) -> None:  # pragma: no cover - never called
+            raise AssertionError("should not run")
+
+        ch, agent = self._make_with_commands([ChannelCommand("todos", "List", handle)])
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=dict(_VALID_ACTIVITY, text="/unknown"))
+        assert r.status_code == 200
+        assert agent.runs, "unknown /command must reach the agent"
+
+    def test_command_failure_does_not_retry(self) -> None:
+        async def handle(ctx: ChannelCommandContext) -> None:
+            raise RuntimeError("boom")
+
+        ch, agent = self._make_with_commands([ChannelCommand("todos", "List", handle)])
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=dict(_VALID_ACTIVITY, text="/todos"))
+        # Best-effort: a failing command is swallowed and acked with 200 so Bot
+        # Service does not retry (and re-run a non-idempotent command).
+        assert r.status_code == 200
+        assert not agent.runs
+
+    def test_run_hook_applied_to_command_request(self) -> None:
+        def hook(request: ChannelRequest, **_: Any) -> ChannelRequest:
+            return replace(request, session=ChannelSession(isolation_key="resolved-key"))
+
+        captured: list[str] = []
+
+        async def handle(ctx: ChannelCommandContext) -> None:
+            assert ctx.request.session is not None
+            captured.append(ctx.request.session.isolation_key)
+
+        agent = _FakeAgent("hi")
+        ch = ActivityProtocolChannel(send_typing_action=False, commands=[ChannelCommand("todos", "x", handle)])
+        ch._hook = hook
+        fake_http = MagicMock()
+        response_mock = MagicMock()
+        response_mock.raise_for_status = MagicMock()
+        response_mock.json = MagicMock(return_value={"id": "act-1"})
+        fake_http.post = AsyncMock(return_value=response_mock)
+        fake_http.aclose = AsyncMock()
+        ch._http = fake_http
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=dict(_VALID_ACTIVITY, text="/todos"))
+        assert r.status_code == 200
+        assert captured == ["resolved-key"]
+
+
 class TestOutbound:
     async def test_send_message_posts_to_conversation_url(self) -> None:
         ch, _agent = _make_teams()
@@ -191,6 +383,103 @@ class TestOutbound:
         assert "/v3/conversations/" in url
         body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
         assert body["text"] == "hi"
+
+
+class TestPush:
+    """The channel implements ``host.ChannelPush`` so it can be a
+    non-originating destination for cross-channel fan-out / echo replay."""
+
+    def test_is_channel_push_instance(self) -> None:
+        from agent_framework_hosting import ChannelPush
+
+        ch, _agent = _make_teams()
+        assert isinstance(ch, ChannelPush)
+
+    def _identity(self) -> ChannelIdentity:
+        return ChannelIdentity(
+            channel="activity",
+            native_id="19:meeting_xyz@thread.v2",
+            attributes={
+                "service_url": "https://smba.trafficmanager.net/amer/",
+                "conversation": {"id": "19:meeting_xyz@thread.v2"},
+                "bot": {"id": "bot-1"},
+                "user": {"id": "user-1"},
+                "channel_id": "msteams",
+                "locale": "en-US",
+            },
+        )
+
+    async def test_push_posts_proactive_activity(self) -> None:
+        ch, _agent = _make_teams()
+        await ch.push(self._identity(), _text_result("broadcast hello"))
+        assert ch._http is not None
+        ch._http.post.assert_called()  # type: ignore[attr-defined]
+        url = ch._http.post.call_args[0][0]  # type: ignore[attr-defined]
+        assert url == ("https://smba.trafficmanager.net/amer/v3/conversations/19:meeting_xyz@thread.v2/activities")
+        body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert body["text"] == "broadcast hello"
+        # Outbound activity speaks AS the bot: inbound recipient -> from,
+        # inbound from -> recipient.
+        assert body["from"] == {"id": "bot-1"}
+        assert body["recipient"] == {"id": "user-1"}
+        assert body["conversation"] == {"id": "19:meeting_xyz@thread.v2"}
+
+    async def test_push_requires_service_url(self) -> None:
+        ch, _agent = _make_teams()
+        identity = ChannelIdentity(
+            channel="activity",
+            native_id="conv-x",
+            attributes={"conversation": {"id": "conv-x"}},
+        )
+        with pytest.raises(ValueError, match="service_url"):
+            await ch.push(identity, _text_result("hi"))
+
+    async def test_push_rejects_disallowed_service_url(self) -> None:
+        # ``push`` runs out-of-band against a persisted identity, so it must
+        # re-validate the service_url against the allow-list rather than trust
+        # the value captured (possibly hours) earlier.
+        ch, _agent = _make_teams()
+        identity = ChannelIdentity(
+            channel="activity",
+            native_id="conv-x",
+            attributes={
+                "service_url": "https://attacker.example.com/",
+                "conversation": {"id": "conv-x"},
+                "bot": {"id": "bot-1"},
+                "user": {"id": "user-1"},
+            },
+        )
+        with pytest.raises(ValueError, match="not in the allowed hosts"):
+            await ch.push(identity, _text_result("hi"))
+        assert ch._http is not None
+        ch._http.post.assert_not_called()  # type: ignore[attr-defined]
+
+
+class TestIdentityRecording:
+    """``_process_activity`` must stamp the inbound conversation reference
+    onto ``ChannelRequest.identity`` so the host can record it for fan-out."""
+
+    async def test_inbound_sets_request_identity(self) -> None:
+        ch, agent = _make_teams()
+        captured: dict[str, Any] = {}
+
+        async def hook(req: ChannelRequest, **_: Any) -> ChannelRequest:
+            captured["request"] = req
+            return req
+
+        ch._hook = hook  # type: ignore[assignment]
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=_VALID_ACTIVITY)
+        assert r.status_code == 200
+        request = captured["request"]
+        assert request.identity is not None
+        assert request.identity.channel == "activity"
+        assert request.identity.native_id == "19:meeting_xyz@thread.v2"
+        attrs = request.identity.attributes
+        assert attrs["service_url"] == "https://smba.trafficmanager.net/amer/"
+        assert attrs["bot"] == {"id": "bot-1"}
+        assert attrs["user"] == {"id": "user-1"}
 
 
 class TestConfig:
@@ -371,7 +660,7 @@ class TestStreaming:
 
         # Use a tight throttle so the test doesn't sit on `wait_for`.
         ch._stream_edit_min_interval = 0.0
-        await ch._stream_to_conversation(_VALID_ACTIVITY, _Stream())  # type: ignore[arg-type]
+        await ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _Stream())  # type: ignore[arg-type]
         assert ch._http is not None
         # Placeholder POST + at least one final PUT.
         ch._http.post.assert_called()  # type: ignore[attr-defined]
@@ -420,7 +709,7 @@ class TestStreaming:
         import asyncio as _asyncio
 
         await _asyncio.wait_for(
-            ch._stream_to_conversation(_VALID_ACTIVITY, _Stream()),  # type: ignore[arg-type]
+            ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _Stream()),  # type: ignore[arg-type]
             timeout=2.0,
         )
         # Two POSTs total: placeholder (failed) + fallback final.
@@ -444,9 +733,150 @@ class TestStreaming:
                 return _FakeAgentResponse(text="")
 
         ch._stream_edit_min_interval = 0.0
-        await ch._stream_to_conversation(_VALID_ACTIVITY, _EmptyStream())  # type: ignore[arg-type]
+        await ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
         # The placeholder PUT-replaces with "(no response)" so the user
         # isn't left staring at "…".
         assert ch._http is not None
         last_put_body = ch._http.put.call_args[1]["json"]  # type: ignore[attr-defined]
         assert last_put_body["text"] == "(no response)"
+
+    async def test_non_edit_channel_buffers_and_posts_single_message(self) -> None:
+        # Web Chat (and every non-Teams channel) does not support
+        # PUT /activities/{id}; the channel must buffer the stream and POST
+        # a single final message rather than the placeholder+edit dance.
+        ch, _agent = _make_teams(stream=True)
+        webchat_activity = {**_VALID_ACTIVITY, "channelId": "webchat"}
+
+        @dataclass
+        class _Up:
+            text: str
+
+        class _Stream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    yield _Up("hel")
+                    yield _Up("lo")
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="hello")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(webchat_activity, _VALID_REQUEST, _Stream())  # type: ignore[arg-type]
+        assert ch._http is not None
+        # No PUT (no editing); exactly one POST with the full text.
+        ch._http.put.assert_not_called()  # type: ignore[attr-defined]
+        assert ch._http.post.await_count == 1  # type: ignore[attr-defined]
+        body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert body["text"] == "hello"
+
+    async def test_non_edit_channel_empty_stream_posts_no_response(self) -> None:
+        ch, _agent = _make_teams(stream=True)
+        webchat_activity = {**_VALID_ACTIVITY, "channelId": "directline"}
+
+        class _EmptyStream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    if False:
+                        yield None  # type: ignore[unreachable]
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(webchat_activity, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
+        assert ch._http is not None
+        ch._http.put.assert_not_called()  # type: ignore[attr-defined]
+        body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert body["text"] == "(no response)"
+
+    async def test_buffer_empty_stream_consults_host_and_can_suppress(self) -> None:
+        # Empty streamed replies must still consult the host so that
+        # ``ResponseTarget.none`` (deliver_response -> False) suppresses the
+        # originating message instead of posting "(no response)".
+        ch, _agent = _make_teams(stream=True)
+        webchat_activity = {**_VALID_ACTIVITY, "channelId": "directline"}
+        ctx = MagicMock()
+        ctx.deliver_response = AsyncMock(return_value=False)
+        ch._ctx = ctx
+
+        class _EmptyStream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    if False:
+                        yield None  # type: ignore[unreachable]
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(webchat_activity, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
+        assert ch._http is not None
+        ctx.deliver_response.assert_awaited_once()
+        ch._http.post.assert_not_called()  # type: ignore[attr-defined]
+        ch._http.put.assert_not_called()  # type: ignore[attr-defined]
+
+    async def test_edit_empty_stream_consults_host_and_can_suppress(self) -> None:
+        # Same contract for the edit-capable (Teams) progressive path.
+        ch, _agent = _make_teams(stream=True)
+        ctx = MagicMock()
+        ctx.deliver_response = AsyncMock(return_value=False)
+        ch._ctx = ctx
+
+        class _EmptyStream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    if False:
+                        yield None  # type: ignore[unreachable]
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
+        ctx.deliver_response.assert_awaited_once()
+
+    async def test_edit_405_falls_back_to_single_post(self) -> None:
+        # Defensive: a channel advertised as edit-capable that nonetheless
+        # rejects the PUT with 405 must stop editing and POST the final
+        # text as a fresh message instead of silently leaving "…".
+        import httpx as _httpx
+
+        ch, _agent = _make_teams(stream=True)
+        assert ch._http is not None
+
+        request_405 = _httpx.Request("PUT", "https://smba.trafficmanager.net/amer/v3/x")
+        response_405 = _httpx.Response(405, request=request_405)
+        ch._http.put = AsyncMock(  # type: ignore[attr-defined]
+            side_effect=_httpx.HTTPStatusError("405", request=request_405, response=response_405)
+        )
+
+        @dataclass
+        class _Up:
+            text: str
+
+        class _Stream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    yield _Up("hel")
+                    yield _Up("lo")
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="hello")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _Stream())  # type: ignore[arg-type]
+        # Placeholder POST + fallback final POST = 2 POSTs; the final one
+        # carries the full text.
+        assert ch._http.post.await_count == 2  # type: ignore[attr-defined]
+        final_body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
+        assert final_body["text"] == "hello"

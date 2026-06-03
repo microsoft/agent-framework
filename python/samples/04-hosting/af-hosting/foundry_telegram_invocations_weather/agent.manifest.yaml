@@ -1,0 +1,38 @@
+name: agent-framework-telegram-invocations-weather
+description: >
+  Telegram weather bot sample hosted by Agent Framework. The Telegram webhook
+  handler is mounted at /invocations so the Foundry Hosted Agents Invocations
+  protocol endpoint can be registered as the bot's webhook URL.
+metadata:
+  tags:
+    - Agent Framework
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Invocations Protocol
+    - Telegram
+template:
+  name: agent-framework-telegram-invocations-weather
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+    - protocol: invocations
+      version: 1.0.0
+  environment_variables:
+    - name: MODEL_DEPLOYMENT_NAME
+      value: "{{MODEL_DEPLOYMENT_NAME}}"
+    - name: TELEGRAM_BOT_TOKEN
+      value: "{{TELEGRAM_BOT_TOKEN}}"
+    - name: HOSTING_INVOCATIONS_API_VERSION
+      value: "{{HOSTING_INVOCATIONS_API_VERSION}}"
+resources:
+  - kind: model
+    id: gpt-5.4-nano
+    name: MODEL_DEPLOYMENT_NAME
+parameters:
+  properties:
+    - name: TELEGRAM_BOT_TOKEN
+      secret: true
+    - name: HOSTING_INVOCATIONS_API_VERSION
+      secret: false
