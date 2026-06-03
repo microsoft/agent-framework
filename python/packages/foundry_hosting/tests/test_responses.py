@@ -3520,6 +3520,7 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         session: AgentSession | None = ...,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
+
     @overload
     def run(
         self,

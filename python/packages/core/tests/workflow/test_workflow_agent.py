@@ -29,6 +29,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework._workflows._typing_utils import deserialize_type
 
 
 class SimpleExecutor(Executor):
@@ -239,50 +240,38 @@ class TestWorkflowAgent:
         # Should have received an approval request for the request info
         assert len(updates) > 0
 
-        approval_update: AgentResponseUpdate | None = None
+        request_update: AgentResponseUpdate | None = None
         for update in updates:
-            if any(content.type == "function_approval_request" for content in update.contents):
-                approval_update = update
+            if any(content.type == "function_call" for content in update.contents):
+                request_update = update
                 break
 
-        assert approval_update is not None, "Should have received a request_info approval request"
+        assert request_update is not None, "Should have received a request_info wrapped in a function_call content"
 
-        approval_request = next(
-            content for content in approval_update.contents if content.type == "function_approval_request"
-        )
-        assert approval_request.id is not None
-        assert approval_request.function_call is not None
-
-        function_call = approval_request.function_call
+        request_function_call = next(content for content in request_update.contents if content.type == "function_call")
+        assert request_function_call.call_id is not None
 
         # Verify the function call has expected structure
-        assert function_call.call_id is not None
-        assert function_call.name == "request_info"
-        assert isinstance(function_call.arguments, dict)
-        assert function_call.arguments.get("request_id") == approval_request.id
+        assert request_function_call.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME
+        assert isinstance(request_function_call.arguments, dict)
+        assert request_function_call.arguments.get("request_id") is not None
+        assert request_function_call.arguments.get("data") is not None
+        request_data = request_function_call.arguments["data"]
+        assert request_data.get("type") == "request_info"
+        assert deserialize_type(request_data.get("response_type")) is str
 
         # Verify the request is tracked in pending_requests
         pending_requests = await workflow._runner_context.get_pending_request_info_events()
         assert len(pending_requests) == 1
-        assert function_call.call_id in pending_requests
+        assert request_function_call.call_id in pending_requests
 
-        # Now provide an approval response with updated arguments to test continuation
-        response_args = WorkflowAgent.RequestInfoFunctionArgs(
-            request_id=approval_request.id,
-            data="User provided answer",
-        ).to_dict()
-
-        approval_response = Content.from_function_approval_response(
-            approved=True,
-            id=approval_request.id,
-            function_call=Content.from_function_call(
-                call_id=function_call.call_id,
-                name=function_call.name,
-                arguments=response_args,
-            ),
+        # Now provide a function result response with updated arguments to test continuation
+        function_result = Content.from_function_result(
+            call_id=request_function_call.call_id,
+            result="Mock response to request info",
         )
 
-        response_message = Message(role="user", contents=[approval_response])
+        response_message = Message(role="user", contents=[function_result])
 
         # Continue the workflow with the response
         continuation_result = await agent.run(response_message)
@@ -312,13 +301,359 @@ class TestWorkflowAgent:
             response_type=str,
         )
 
-        approval_request = agent._process_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
+        request_function_call = agent._process_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
 
-        assert approval_request.function_call is not None
-        assert approval_request.function_call.arguments == {
-            "request_id": "request_123",
-            "data": {"target_agent": "helper", "reason": "overflow"},
-        }
+        assert request_function_call.call_id == "request_123"
+        assert isinstance(request_function_call.arguments, dict)
+        assert request_function_call.arguments.get("data") is not None
+        data = request_function_call.arguments["data"]
+        assert data.get("type") == "request_info"
+        assert data.get("request_id") == "request_123"
+        assert data.get("source_executor_id") == "executor1"
+        assert deserialize_type(data.get("response_type")) is str
+        assert data.get("data") == {"target_agent": "helper", "reason": "overflow"}
+
+    def test_process_request_info_event_passes_through_function_approval_request(self) -> None:
+        """If the event data is already a function approval request, it is forwarded unchanged.
+
+        Tool-approval requests emitted by an inner agent surface as ``Content``
+        objects with ``user_input_request=True``. ``WorkflowAgent`` must not
+        re-wrap these inside a synthesized ``request_info`` function call;
+        instead it should return the original content as-is so callers can
+        respond with a matching ``function_approval_response``.
+        """
+        executor = SimpleExecutor(id="executor1", response_text="Response")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Approval Passthrough Agent")
+
+        approval_id = "approval-passthrough-1"
+        inner_function_call = Content.from_function_call(
+            call_id="tool-call-1",
+            name="delete_file",
+            arguments={"path": "/tmp/x"},
+        )
+        approval_request = Content.from_function_approval_request(
+            id=approval_id,
+            function_call=inner_function_call,
+        )
+        event = WorkflowEvent.request_info(
+            request_id=approval_id,
+            source_executor_id="executor1",
+            request_data=approval_request,
+            response_type=Content,
+        )
+
+        result = agent._process_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
+
+        # The original FunctionApprovalRequestContent is returned as-is — same
+        # instance, with the original tool name preserved (NOT replaced by the
+        # synthesized REQUEST_INFO_FUNCTION_NAME).
+        assert result is approval_request
+        assert result.type == "function_approval_request"
+        assert result.id == approval_id
+        assert result.user_input_request is True
+        assert result.function_call is inner_function_call  # type: ignore[attr-defined]
+        assert result.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        assert result.function_call.name != WorkflowAgent.REQUEST_INFO_FUNCTION_NAME  # type: ignore[attr-defined]
+
+    def test_extract_function_responses_passes_through_approval_response_approved(self) -> None:
+        """A function_approval_response with approved=True is keyed by content.id and forwarded as-is.
+
+        After the refactor, ``WorkflowAgent`` no longer unwraps a synthesized
+        ``request_info`` function call from approval responses — the response
+        content is routed straight back to the workflow under its own ``id``,
+        which matches the pending request id surfaced by
+        ``_process_request_info_event``.
+        """
+        executor = SimpleExecutor(id="executor1", response_text="Response")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Approval Response Agent")
+
+        approval_id = "approval-response-approved-1"
+        inner_function_call = Content.from_function_call(
+            call_id="tool-call-1",
+            name="delete_file",
+            arguments={"path": "/tmp/x"},
+        )
+        approval_request = Content.from_function_approval_request(
+            id=approval_id,
+            function_call=inner_function_call,
+        )
+        approval_response = approval_request.to_function_approval_response(approved=True)  # type: ignore[attr-defined]
+        message = Message(role="user", contents=[approval_response])
+
+        responses = agent._extract_function_responses([message])  # pyright: ignore[reportPrivateUsage]
+
+        assert set(responses.keys()) == {approval_id}
+        assert responses[approval_id] is approval_response
+        assert responses[approval_id].approved is True  # type: ignore[attr-defined]
+
+    def test_extract_function_responses_passes_through_approval_response_denied(self) -> None:
+        """A function_approval_response with approved=False is forwarded the same way as an approval.
+
+        Only the ``approved`` flag changes — routing back to the workflow is
+        identical for accept and reject paths.
+        """
+        executor = SimpleExecutor(id="executor1", response_text="Response")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Approval Response Agent")
+
+        approval_id = "approval-response-denied-1"
+        inner_function_call = Content.from_function_call(
+            call_id="tool-call-2",
+            name="send_email",
+            arguments={"to": "alice@example.com"},
+        )
+        approval_request = Content.from_function_approval_request(
+            id=approval_id,
+            function_call=inner_function_call,
+        )
+        approval_response = approval_request.to_function_approval_response(approved=False)  # type: ignore[attr-defined]
+        message = Message(role="user", contents=[approval_response])
+
+        responses = agent._extract_function_responses([message])  # pyright: ignore[reportPrivateUsage]
+
+        assert set(responses.keys()) == {approval_id}
+        assert responses[approval_id] is approval_response
+        assert responses[approval_id].approved is False  # type: ignore[attr-defined]
+
+    async def test_function_approval_request_flows_end_to_end_approved(self) -> None:
+        """End-to-end: an executor emits a function_approval_request, the agent
+        forwards it unchanged, and an ``approved=True`` response resumes the workflow.
+
+        This exercises the full pass-through path:
+        ``ctx.request_info(approval_content, ...)`` -> ``WorkflowAgent`` surfaces
+        the original ``FunctionApprovalRequestContent`` -> caller responds with a
+        ``FunctionApprovalResponseContent`` -> ``WorkflowAgent`` routes it back
+        to the workflow which delivers it to the executor's ``@response_handler``.
+        """
+        approval_id = "e2e-approval-1"
+        inner_function_call = Content.from_function_call(
+            call_id="tool-call-e2e-1",
+            name="delete_file",
+            arguments={"path": "/tmp/x"},
+        )
+        approval_request = Content.from_function_approval_request(
+            id=approval_id,
+            function_call=inner_function_call,
+        )
+
+        class ApprovalRequestingExecutor(Executor):
+            @handler
+            async def handle_message(self, _: list[Message], ctx: WorkflowContext) -> None:
+                await ctx.request_info(approval_request, Content, request_id=approval_id)
+
+            @response_handler
+            async def handle_response(
+                self,
+                original_request: Content,
+                response: Content,
+                ctx: WorkflowContext[Never, AgentResponse],
+            ) -> None:
+                assert response.type == "function_approval_response"
+                assert response.id == approval_id  # type: ignore[attr-defined]
+                approved = bool(response.approved)  # type: ignore[attr-defined]
+                tool_name = original_request.function_call.name  # type: ignore[attr-defined]
+                await ctx.yield_output(
+                    AgentResponse(
+                        messages=[
+                            Message(
+                                role="assistant",
+                                contents=[Content.from_text(text=f"{tool_name} approved={approved}")],
+                            )
+                        ]
+                    )
+                )
+
+        executor = ApprovalRequestingExecutor(id="approval_requester")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="E2E Approval Agent")
+
+        # First run: workflow pauses with the approval request.
+        first = await agent.run("please delete it")
+        assert isinstance(first, AgentResponse)
+
+        forwarded = next(
+            (
+                c
+                for m in first.messages
+                for c in m.contents
+                if c.type == "function_approval_request" and c.id == approval_id
+            ),
+            None,
+        )
+        assert forwarded is approval_request, "Approval request must surface unchanged"
+
+        pending = await workflow._runner_context.get_pending_request_info_events()
+        assert approval_id in pending
+
+        # Respond with approved=True.
+        approval_response = approval_request.to_function_approval_response(approved=True)  # type: ignore[attr-defined]
+        final = await agent.run(Message(role="user", contents=[approval_response]))
+
+        assert isinstance(final, AgentResponse)
+        final_text = " ".join(m.text or "" for m in final.messages)
+        assert "delete_file approved=True" in final_text
+
+        pending = await workflow._runner_context.get_pending_request_info_events()
+        assert approval_id not in pending
+
+    async def test_function_approval_request_flows_end_to_end_denied(self) -> None:
+        """End-to-end denied path: ``approved=False`` is delivered to the executor's
+        response handler so the workflow can branch on the rejection."""
+        approval_id = "e2e-approval-deny-1"
+        inner_function_call = Content.from_function_call(
+            call_id="tool-call-e2e-deny-1",
+            name="send_email",
+            arguments={"to": "alice@example.com"},
+        )
+        approval_request = Content.from_function_approval_request(
+            id=approval_id,
+            function_call=inner_function_call,
+        )
+
+        class ApprovalRequestingExecutor(Executor):
+            @handler
+            async def handle_message(self, _: list[Message], ctx: WorkflowContext) -> None:
+                await ctx.request_info(approval_request, Content, request_id=approval_id)
+
+            @response_handler
+            async def handle_response(
+                self,
+                original_request: Content,
+                response: Content,
+                ctx: WorkflowContext[Never, AgentResponse],
+            ) -> None:
+                assert response.type == "function_approval_response"
+                assert response.id == approval_id  # type: ignore[attr-defined]
+                approved = bool(response.approved)  # type: ignore[attr-defined]
+                tool_name = original_request.function_call.name  # type: ignore[attr-defined]
+                await ctx.yield_output(
+                    AgentResponse(
+                        messages=[
+                            Message(
+                                role="assistant",
+                                contents=[Content.from_text(text=f"{tool_name} approved={approved}")],
+                            )
+                        ]
+                    )
+                )
+
+        executor = ApprovalRequestingExecutor(id="approval_requester_deny")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="E2E Approval Deny Agent")
+
+        first = await agent.run("please send")
+        assert isinstance(first, AgentResponse)
+        forwarded = next(
+            (
+                c
+                for m in first.messages
+                for c in m.contents
+                if c.type == "function_approval_request" and c.id == approval_id
+            ),
+            None,
+        )
+        assert forwarded is approval_request
+
+        # Respond with approved=False.
+        approval_response = approval_request.to_function_approval_response(approved=False)  # type: ignore[attr-defined]
+        final = await agent.run(Message(role="user", contents=[approval_response]))
+
+        assert isinstance(final, AgentResponse)
+        final_text = " ".join(m.text or "" for m in final.messages)
+        assert "send_email approved=False" in final_text
+
+        pending = await workflow._runner_context.get_pending_request_info_events()
+        assert approval_id not in pending
+
+    async def test_request_info_non_approval_flows_end_to_end(self) -> None:
+        """End-to-end: when request data is not a function approval content, the
+        agent surfaces a synthesized ``function_call`` (name=REQUEST_INFO_FUNCTION_NAME)
+        and routes a matching ``function_result`` back to the executor.
+        """
+
+        @dataclass
+        class HandoffRequest:
+            target_agent: str
+            reason: str
+
+        captured: dict[str, Any] = {}
+
+        class HandoffRequestingExecutor(Executor):
+            @handler
+            async def handle_message(self, _: list[Message], ctx: WorkflowContext) -> None:
+                await ctx.request_info(
+                    HandoffRequest(target_agent="helper", reason="overflow"),
+                    str,
+                )
+
+            @response_handler
+            async def handle_response(
+                self,
+                original_request: HandoffRequest,
+                response: str,
+                ctx: WorkflowContext[Never, AgentResponse],
+            ) -> None:
+                captured["original"] = original_request
+                captured["response"] = response
+                await ctx.yield_output(
+                    AgentResponse(
+                        messages=[
+                            Message(
+                                role="assistant",
+                                contents=[
+                                    Content.from_text(text=f"handoff to {original_request.target_agent}: {response}")
+                                ],
+                            )
+                        ]
+                    )
+                )
+
+        executor = HandoffRequestingExecutor(id="handoff_requester")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="E2E Handoff Agent")
+
+        # First run: workflow pauses with a synthesized request_info function_call.
+        first = await agent.run("start handoff")
+        assert isinstance(first, AgentResponse)
+
+        function_call = next(
+            (
+                c
+                for m in first.messages
+                for c in m.contents
+                if c.type == "function_call" and c.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME
+            ),
+            None,
+        )
+        assert function_call is not None, "Expected a synthesized request_info function_call"
+        assert function_call.call_id is not None
+        assert isinstance(function_call.arguments, dict)
+        request_id = function_call.arguments["request_id"]
+        assert function_call.call_id == request_id
+        request_payload = function_call.arguments["data"]
+        assert request_payload.get("type") == "request_info"
+        assert request_payload.get("data") == {"target_agent": "helper", "reason": "overflow"}
+
+        pending = await workflow._runner_context.get_pending_request_info_events()
+        assert request_id in pending
+
+        # Respond with a function_result keyed by the call_id.
+        function_result = Content.from_function_result(call_id=request_id, result="ok-do-it")
+        final = await agent.run(Message(role="user", contents=[function_result]))
+
+        assert isinstance(final, AgentResponse)
+        final_text = " ".join(m.text or "" for m in final.messages)
+        assert "handoff to helper: ok-do-it" in final_text
+
+        # The executor's response handler received the original request and the response.
+        assert isinstance(captured.get("original"), HandoffRequest)
+        assert captured["original"].target_agent == "helper"
+        assert captured["response"] == "ok-do-it"
+
+        pending = await workflow._runner_context.get_pending_request_info_events()
+        assert request_id not in pending
 
     def test_workflow_as_agent_method(self) -> None:
         """Test that Workflow.as_agent() creates a properly configured WorkflowAgent."""

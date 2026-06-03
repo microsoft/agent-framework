@@ -485,38 +485,6 @@ class WorkflowAgent(BaseAgent):
 
     # endregion Run Methods
 
-    def _process_request_info_event(
-        self,
-        event: WorkflowEvent[Any],
-    ) -> Content:
-        """Convert a request_info event to FunctionApprovalRequestContent.
-
-        Args:
-            event: A WorkflowEvent with type='request_info'.
-
-        Returns:
-            A FunctionApprovalRequestContent.
-
-        Note:
-            If the event data is already a FunctionApprovalRequestContent, it will be returned as-is.
-        """
-        if isinstance(event.data, Content) and event.data.user_input_request:
-            # Return the event data as-is if it's already a properly formed FunctionApprovalRequestContent
-            return event.data
-
-        request_id = event.request_id
-        args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
-
-        function_call = Content.from_function_call(
-            call_id=request_id,
-            name=self.REQUEST_INFO_FUNCTION_NAME,
-            arguments=args,
-        )
-        return Content.from_function_approval_request(
-            id=request_id,
-            function_call=function_call,
-        )
-
     def _convert_workflow_events_to_agent_response(
         self,
         response_id: str,
@@ -534,10 +502,10 @@ class WorkflowAgent(BaseAgent):
 
         for output_event in output_events:
             if output_event.type == "request_info":
-                approval_request = self._process_request_info_event(output_event)
+                request_content = self._process_request_info_event(output_event)
                 messages.append(
                     Message(
-                        contents=[approval_request],
+                        contents=[request_content],
                         role="assistant",
                         author_name=output_event.source_executor_id,
                         message_id=str(uuid.uuid4()),
@@ -705,10 +673,10 @@ class WorkflowAgent(BaseAgent):
             ]
 
         if event.type == "request_info":
-            approval_request = self._process_request_info_event(event)
+            request_content = self._process_request_info_event(event)
             return [
                 AgentResponseUpdate(
-                    contents=[approval_request],
+                    contents=[request_content],
                     role="assistant",
                     author_name=self.name,
                     response_id=response_id,
@@ -721,36 +689,48 @@ class WorkflowAgent(BaseAgent):
         # Ignore workflow-internal events
         return []
 
+    def _process_request_info_event(
+        self,
+        event: WorkflowEvent[Any],
+    ) -> Content:
+        """Convert a request_info event to FunctionApprovalRequestContent.
+
+        Args:
+            event: A WorkflowEvent with type='request_info'.
+
+        Returns:
+            A content object representing the request info. The content can be a `function_approval_request`
+            or a `function_call` depending on the structure of the event data.
+
+        Note:
+            If the event data is already a FunctionApprovalRequestContent, it will be returned as-is.
+        """
+        if isinstance(event.data, Content) and event.data.user_input_request:
+            # Return the event data as-is if it's already a properly formed FunctionApprovalRequestContent
+            return event.data
+
+        request_id = event.request_id
+        args = self.RequestInfoFunctionArgs(request_id=request_id, data=event).to_dict()
+
+        return Content.from_function_call(
+            call_id=request_id,
+            name=self.REQUEST_INFO_FUNCTION_NAME,
+            arguments=args,
+        )
+
     def _extract_function_responses(self, input_messages: Sequence[Message]) -> dict[str, Any]:
-        """Extract function responses from input messages."""
+        """Extract function responses from input messages.
+
+        The responses are for pending requests that the workflow is waiting on, and
+        will be passed to the workflow. The pending requests are processed to either
+        `function_approval_request` or `function_call` content by `_process_request_info_event`.
+        """
         function_responses: dict[str, Any] = {}
         for message in input_messages:
             for content in message.contents:
                 if content.type == "function_approval_response":
                     request_id: str = content.id  # type: ignore[assignment]
-                    function_call: Content = content.function_call  # type: ignore[assignment]
-                    # Parse the function arguments to recover request payload
-                    if function_call.name != self.REQUEST_INFO_FUNCTION_NAME:
-                        # This response is for a raw approval request that is itself already an
-                        # approval request.
-                        function_responses[request_id] = content
-                    else:
-                        # This response is for an approval request constructed from a request_info event.
-                        arguments_payload = content.function_call.arguments  # type: ignore[attr-defined, union-attr]
-                        if isinstance(arguments_payload, str):
-                            try:
-                                parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
-                            except ValueError as exc:
-                                raise AgentInvalidResponseException(
-                                    "FunctionApprovalResponseContent arguments must decode to a mapping."
-                                ) from exc
-                        elif isinstance(arguments_payload, dict):
-                            parsed_args = self.RequestInfoFunctionArgs.from_dict(arguments_payload)
-                        else:
-                            raise AgentInvalidResponseException(
-                                "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
-                            )
-                        function_responses[request_id] = parsed_args.data
+                    function_responses[request_id] = content
                 elif content.type == "function_result":
                     response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
                     function_responses[content.call_id] = response_data  # type: ignore[argument-type]

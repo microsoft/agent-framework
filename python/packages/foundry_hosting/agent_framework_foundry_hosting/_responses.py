@@ -618,7 +618,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 checkpoint_storage=write_storage,
             )
 
-            async for item in _to_outputs_for_messages(response_event_stream, response.messages):
+            async for item in _to_outputs_for_messages(
+                response_event_stream,
+                response.messages,
+                approval_storage=self._approval_storage,
+            ):
                 yield item
 
             await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
