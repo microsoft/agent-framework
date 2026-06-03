@@ -2,6 +2,7 @@
 
 # ruff: noqa: E402
 
+import os
 import unittest.mock
 from datetime import datetime, timezone
 from typing import Any
@@ -20,8 +21,10 @@ from agent_framework import (
     ContextProvider,
     HistoryProvider,
     Message,
+    tool,
 )
 from agent_framework.exceptions import AgentException
+from copilot.session import PermissionHandler
 from copilot.session_events import (
     Data,
     SessionEvent,
@@ -2716,3 +2719,163 @@ class TestGitHubCopilotAgentContextProviders:
         assert call_kwargs.get("tools") is not None
         tool_names = [t.name for t in call_kwargs["tools"]]
         assert "load_skill" in tool_names
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — require COPILOT_GITHUB_TOKEN env var
+# ---------------------------------------------------------------------------
+
+skip_if_copilot_integration_tests_disabled = pytest.mark.skipif(
+    os.getenv("COPILOT_GITHUB_TOKEN", "") == "",
+    reason="No COPILOT_GITHUB_TOKEN provided; skipping integration tests.",
+)
+
+
+@tool(approval_mode="never_require")
+def get_weather(location: str) -> str:
+    """Get the weather for a given location."""
+    return f"The weather in {location} is sunny with a high of 25C."
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_copilot_integration_tests_disabled
+async def test_integration_run_with_simple_prompt_returns_response() -> None:
+    """Integration test: basic non-streaming response."""
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful assistant. Keep your answers short.",
+        default_options={"on_permission_request": PermissionHandler.approve_all},
+    )
+
+    async with agent:
+        session = agent.create_session()
+        response = await agent.run("What is 2 + 2? Answer with just the number.", session=session)
+
+        assert response is not None
+        assert len(response.messages) > 0
+        assert "4" in response.text
+
+        if session.service_session_id and agent._client:
+            await agent._client.delete_session(session.service_session_id)
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_copilot_integration_tests_disabled
+async def test_integration_run_streaming_returns_updates() -> None:
+    """Integration test: streaming response yields updates."""
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful assistant. Keep your answers short.",
+        default_options={"on_permission_request": PermissionHandler.approve_all},
+    )
+
+    async with agent:
+        session = agent.create_session()
+        updates = []
+        async for chunk in agent.run("Count from 1 to 5.", stream=True, session=session):
+            updates.append(chunk)
+
+        assert len(updates) > 0
+        full_text = "".join(u.text for u in updates if u.text)
+        assert len(full_text) > 0
+
+        if session.service_session_id and agent._client:
+            await agent._client.delete_session(session.service_session_id)
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_copilot_integration_tests_disabled
+async def test_integration_run_with_function_tool_invokes_tool() -> None:
+    """Integration test: function tool is invoked by the agent."""
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful weather agent. Use the get_weather tool to answer weather questions.",
+        tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
+    )
+
+    async with agent:
+        session = agent.create_session()
+        response = await agent.run("What's the weather like in Seattle?", session=session)
+
+        assert response is not None
+        assert len(response.messages) > 0
+        assert any(word in response.text.lower() for word in ["sunny", "25", "weather", "seattle"])
+
+        if session.service_session_id and agent._client:
+            await agent._client.delete_session(session.service_session_id)
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_copilot_integration_tests_disabled
+async def test_integration_run_with_session_maintains_context() -> None:
+    """Integration test: session maintains conversation context across turns."""
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful assistant. Keep your answers short.",
+        default_options={"on_permission_request": PermissionHandler.approve_all},
+    )
+
+    async with agent:
+        session = agent.create_session()
+
+        response1 = await agent.run("My name is Alice.", session=session)
+        assert response1 is not None
+
+        response2 = await agent.run("What is my name?", session=session)
+
+        assert response2 is not None
+        assert "alice" in response2.text.lower()
+
+        if session.service_session_id and agent._client:
+            await agent._client.delete_session(session.service_session_id)
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_copilot_integration_tests_disabled
+async def test_integration_run_with_session_resume_continues_conversation() -> None:
+    """Integration test: session can be resumed by ID."""
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful assistant. Keep your answers short.",
+        default_options={"on_permission_request": PermissionHandler.approve_all},
+    )
+
+    async with agent:
+        session1 = agent.create_session()
+        await agent.run("Remember this number: 42.", session=session1)
+
+        session_id = session1.service_session_id
+        assert session_id is not None
+
+        session2 = AgentSession()
+        session2.service_session_id = session_id
+
+        response = await agent.run("What number did I ask you to remember?", session=session2)
+
+        assert response is not None
+        assert "42" in response.text
+
+        if agent._client:
+            await agent._client.delete_session(session_id)
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_copilot_integration_tests_disabled
+async def test_integration_run_with_shell_permissions_executes_command() -> None:
+    """Integration test: shell commands can be executed with permission handler."""
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful assistant that can execute shell commands.",
+        default_options={"on_permission_request": PermissionHandler.approve_all},
+    )
+
+    async with agent:
+        session = agent.create_session()
+        response = await agent.run("Run a shell command to print 'hello world'", session=session)
+
+        assert response is not None
+        assert "hello" in response.text.lower()
+
+        if session.service_session_id and agent._client:
+            await agent._client.delete_session(session.service_session_id)
