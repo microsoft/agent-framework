@@ -3416,7 +3416,7 @@ def _parse_mcp_skill_index(text: str) -> _McpSkillIndex:
     return _McpSkillIndex(schema=raw.get("$schema"), skills=entries)
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
+@experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkillResource(SkillResource):
     """A :class:`SkillResource` backed by content fetched from an MCP server.
 
@@ -3458,7 +3458,7 @@ class MCPSkillResource(SkillResource):
         return text if text else None
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
+@experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkill(Skill):
     """A :class:`Skill` discovered from an MCP server exposing the Agent Skills convention.
 
@@ -3598,7 +3598,7 @@ class MCPSkill(Skill):
         return skill_md_uri + "/"
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
+@experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkillsSource(SkillsSource):
     """A :class:`SkillsSource` that discovers Agent Skills served over MCP.
 
