@@ -34,9 +34,9 @@ Developers **must** ensure that:
    requests, message payloads, or other untrusted sources.
 3. The ``allowed_types`` parameter is specified whenever possible to restrict
    the set of reconstructible types to the minimum required by the application.
-4. Any code path that handles external input calls
-   :func:`~agent_framework_azurefunctions._serialization.strip_pickle_markers`
-   before passing data to deserialization functions.
+4. Never pass untrusted external input to ``decode_checkpoint_value``. If you
+   must accept external JSON that might contain checkpoint markers, sanitize it
+   first (for example, :func:`agent_framework_azurefunctions._serialization.strip_pickle_markers`).
 
 The allowlist is a mitigation that reduces attack surface but does not
 eliminate the inherent risks of deserializing untrusted pickle data.  Treat

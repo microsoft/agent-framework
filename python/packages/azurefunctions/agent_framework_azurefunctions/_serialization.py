@@ -27,8 +27,8 @@ type filtering, but checkpoint storage itself must be properly access-controlled
 - Never route untrusted user input directly into ``deserialize_value`` without
   first calling :func:`strip_pickle_markers` to neutralize injection of
   pickle markers into the data path.
-- Use ``allowed_types`` on your checkpoint storage configuration to restrict
-  the set of types that can be deserialized.
+- Configure your checkpoint storage with ``allowed_checkpoint_types`` (or call
+  ``decode_checkpoint_value(..., allowed_types=...)`` directly) to restrict the set of types that can be deserialized.
 
 See :mod:`agent_framework._workflows._checkpoint_encoding` for the full
 security model documentation.
