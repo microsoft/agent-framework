@@ -1,9 +1,10 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
@@ -17,7 +18,7 @@ public sealed class GitHubCopilotAgentTests
     public void Constructor_WithCopilotClient_InitializesPropertiesCorrectly()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         const string TestId = "test-id";
         const string TestName = "test-name";
         const string TestDescription = "test-description";
@@ -42,7 +43,7 @@ public sealed class GitHubCopilotAgentTests
     public void Constructor_WithDefaultParameters_UsesBaseProperties()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
 
         // Act
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
@@ -58,7 +59,7 @@ public sealed class GitHubCopilotAgentTests
     public async Task CreateSessionAsync_ReturnsGitHubCopilotAgentSessionAsync()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Act
@@ -73,7 +74,7 @@ public sealed class GitHubCopilotAgentTests
     public async Task CreateSessionAsync_WithSessionId_ReturnsSessionWithSessionIdAsync()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
         const string TestSessionId = "test-session-id";
 
@@ -90,7 +91,7 @@ public sealed class GitHubCopilotAgentTests
     public void Constructor_WithTools_InitializesCorrectly()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
@@ -105,12 +106,14 @@ public sealed class GitHubCopilotAgentTests
     public void CopySessionConfig_CopiesAllProperties()
     {
         // Arrange
-        List<AIFunction> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        ICollection<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
         var hooks = new SessionHooks();
         var infiniteSessions = new InfiniteSessionConfig();
         var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
-        PermissionRequestHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
-        UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
+#pragma warning disable GHCP001
+        Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> permissionHandler = (_, _) => Task.FromResult(PermissionDecision.ApproveOnce());
+#pragma warning restore GHCP001
+        Func<UserInputRequest, UserInputInvocation, Task<UserInputResponse>> userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
         var mcpServers = new Dictionary<string, McpServerConfig> { ["server1"] = new McpStdioServerConfig() };
 
         var source = new SessionConfig
@@ -149,19 +152,20 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
-        Assert.True(result.Streaming);
     }
 
     [Fact]
     public void CopyResumeSessionConfig_CopiesAllProperties()
     {
         // Arrange
-        List<AIFunction> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        ICollection<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
         var hooks = new SessionHooks();
         var infiniteSessions = new InfiniteSessionConfig();
         var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
-        PermissionRequestHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
-        UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
+#pragma warning disable GHCP001
+        Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> permissionHandler = (_, _) => Task.FromResult(PermissionDecision.ApproveOnce());
+#pragma warning restore GHCP001
+        Func<UserInputRequest, UserInputInvocation, Task<UserInputResponse>> userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
         var mcpServers = new Dictionary<string, McpServerConfig> { ["server1"] = new McpStdioServerConfig() };
 
         var source = new SessionConfig
@@ -200,7 +204,6 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
-        Assert.True(result.Streaming);
     }
 
     [Fact]
@@ -219,7 +222,6 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.Hooks);
         Assert.Null(result.WorkingDirectory);
         Assert.Null(result.ConfigDir);
-        Assert.True(result.Streaming);
     }
 
     [Fact]
@@ -233,7 +235,7 @@ public sealed class GitHubCopilotAgentTests
                 Content = "Some streamed content that was already delivered via delta events"
             }
         };
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         const string TestId = "agent-id";
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
         AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage);
@@ -242,5 +244,141 @@ public sealed class GitHubCopilotAgentTests
         // The content should be delivered through TextContent in the Contents collection instead.
         Assert.Empty(result.Text);
         Assert.DoesNotContain(result.Contents, c => c is TextContent);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_AssistantReasoningEvent_EmitsCopilotReasoningContent()
+    {
+        // Arrange
+        var reasoningEvent = new AssistantReasoningEvent
+        {
+            Data = new AssistantReasoningData
+            {
+                Content = "The user wants a sorted list, so I should use a merge sort.",
+                ReasoningId = "reasoning-1"
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: "agent-id", tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(reasoningEvent);
+
+        // Assert
+        var content = Assert.Single(result.Contents);
+        var reasoning = Assert.IsType<CopilotReasoningContent>(content);
+        Assert.Equal("The user wants a sorted list, so I should use a merge sort.", reasoning.Content);
+        Assert.Equal("reasoning-1", reasoning.ReasoningId);
+        Assert.Same(reasoningEvent, reasoning.RawRepresentation);
+        Assert.Equal(ChatRole.Assistant, result.Role);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_ToolExecutionStartEvent_EmitsCopilotToolExecutionContentStarted()
+    {
+        // Arrange
+        var toolStartEvent = new ToolExecutionStartEvent
+        {
+            Data = new ToolExecutionStartData
+            {
+                ToolCallId = "call-1",
+                ToolName = "shell"
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: "agent-id", tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(toolStartEvent);
+
+        // Assert
+        var content = Assert.Single(result.Contents);
+        var toolContent = Assert.IsType<CopilotToolExecutionContent>(content);
+        Assert.Equal(CopilotToolExecutionPhase.Started, toolContent.Phase);
+        Assert.Equal("call-1", toolContent.ToolCallId);
+        Assert.Equal("shell", toolContent.ToolName);
+        Assert.Same(toolStartEvent, toolContent.RawRepresentation);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_ToolExecutionProgressEvent_EmitsCopilotToolExecutionContentProgress()
+    {
+        // Arrange
+        var toolProgressEvent = new ToolExecutionProgressEvent
+        {
+            Data = new ToolExecutionProgressData
+            {
+                ToolCallId = "call-1",
+                ProgressMessage = "Building project..."
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: "agent-id", tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(toolProgressEvent);
+
+        // Assert
+        var content = Assert.Single(result.Contents);
+        var toolContent = Assert.IsType<CopilotToolExecutionContent>(content);
+        Assert.Equal(CopilotToolExecutionPhase.Progress, toolContent.Phase);
+        Assert.Equal("call-1", toolContent.ToolCallId);
+        Assert.Equal("Building project...", toolContent.ProgressMessage);
+        Assert.Same(toolProgressEvent, toolContent.RawRepresentation);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_ToolExecutionCompleteEvent_Success_EmitsSuccessContent()
+    {
+        // Arrange
+        var toolCompleteEvent = new ToolExecutionCompleteEvent
+        {
+            Data = new ToolExecutionCompleteData
+            {
+                ToolCallId = "call-1",
+                Success = true
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: "agent-id", tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(toolCompleteEvent);
+
+        // Assert
+        var content = Assert.Single(result.Contents);
+        var toolContent = Assert.IsType<CopilotToolExecutionContent>(content);
+        Assert.Equal(CopilotToolExecutionPhase.Completed, toolContent.Phase);
+        Assert.Equal("call-1", toolContent.ToolCallId);
+        Assert.True(toolContent.IsSuccess);
+        Assert.Null(toolContent.ErrorMessage);
+        Assert.Same(toolCompleteEvent, toolContent.RawRepresentation);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_ToolExecutionCompleteEvent_Failure_EmitsErrorContent()
+    {
+        // Arrange
+        var toolCompleteEvent = new ToolExecutionCompleteEvent
+        {
+            Data = new ToolExecutionCompleteData
+            {
+                ToolCallId = "call-1",
+                Success = false,
+                Error = new ToolExecutionCompleteError { Message = "Build failed" }
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: "agent-id", tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(toolCompleteEvent);
+
+        // Assert
+        var content = Assert.Single(result.Contents);
+        var toolContent = Assert.IsType<CopilotToolExecutionContent>(content);
+        Assert.Equal(CopilotToolExecutionPhase.Completed, toolContent.Phase);
+        Assert.False(toolContent.IsSuccess);
+        Assert.Equal("Build failed", toolContent.ErrorMessage);
     }
 }

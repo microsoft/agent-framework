@@ -9,7 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -145,10 +145,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         // Ensure the client is started
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
-        // Create or resume a session with streaming enabled
+        // Create or resume a session
         SessionConfig sessionConfig = this._sessionConfig != null
             ? CopySessionConfig(this._sessionConfig)
-            : new SessionConfig { Streaming = true };
+            : new SessionConfig();
 
         CopilotSession copilotSession;
         if (typedSession.SessionId is not null)
@@ -169,7 +169,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             Channel<AgentResponseUpdate> channel = Channel.CreateUnbounded<AgentResponseUpdate>();
 
             // Subscribe to session events
-            using IDisposable subscription = copilotSession.On(evt =>
+            using IDisposable subscription = copilotSession.On<SessionEvent>(evt =>
             {
                 switch (evt)
                 {
@@ -183,6 +183,22 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
                     case AssistantUsageEvent usageEvent:
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(usageEvent));
+                        break;
+
+                    case AssistantReasoningEvent reasoningEvent:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(reasoningEvent));
+                        break;
+
+                    case ToolExecutionStartEvent toolStartEvent:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolStartEvent));
+                        break;
+
+                    case ToolExecutionProgressEvent toolProgressEvent:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolProgressEvent));
+                        break;
+
+                    case ToolExecutionCompleteEvent toolCompleteEvent:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolCompleteEvent));
                         break;
 
                     case SessionIdleEvent idleEvent:
@@ -262,10 +278,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     private async Task EnsureClientStartedAsync(CancellationToken cancellationToken)
     {
-        if (this._copilotClient.State != ConnectionState.Connected)
-        {
-            await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
-        }
+        await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private ResumeSessionConfig CreateResumeConfig()
@@ -274,8 +287,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <summary>
-    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance
-    /// with <see cref="SessionConfig.Streaming"/> set to <c>true</c>.
+    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance.
     /// </summary>
     internal static SessionConfig CopySessionConfig(SessionConfig source)
     {
@@ -297,14 +309,13 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             CustomAgents = source.CustomAgents,
             SkillDirectories = source.SkillDirectories,
             DisabledSkills = source.DisabledSkills,
-            InfiniteSessions = source.InfiniteSessions,
-            Streaming = true
+            InfiniteSessions = source.InfiniteSessions
         };
     }
 
     /// <summary>
     /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new
-    /// <see cref="ResumeSessionConfig"/> with <see cref="ResumeSessionConfig.Streaming"/> set to <c>true</c>.
+    /// <see cref="ResumeSessionConfig"/>.
     /// </summary>
     internal static ResumeSessionConfig CopyResumeSessionConfig(SessionConfig? source)
     {
@@ -326,8 +337,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             CustomAgents = source?.CustomAgents,
             SkillDirectories = source?.SkillDirectories,
             DisabledSkills = source?.DisabledSkills,
-            InfiniteSessions = source?.InfiniteSessions,
-            Streaming = true
+            InfiniteSessions = source?.InfiniteSessions
         };
     }
 
@@ -394,25 +404,88 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
         AdditionalPropertiesDictionary<long>? additionalCounts = null;
 
-        if (usageEvent.Data.CacheWriteTokens is double cacheWriteTokens)
+        if (usageEvent.Data.CacheWriteTokens is long cacheWriteTokens)
         {
             additionalCounts ??= [];
-            additionalCounts[nameof(AssistantUsageData.CacheWriteTokens)] = (long)cacheWriteTokens;
+            additionalCounts[nameof(AssistantUsageData.CacheWriteTokens)] = cacheWriteTokens;
         }
 
+#pragma warning disable GHCP001
         if (usageEvent.Data.Cost is double cost)
         {
             additionalCounts ??= [];
             additionalCounts[nameof(AssistantUsageData.Cost)] = (long)cost;
         }
+#pragma warning restore GHCP001
 
-        if (usageEvent.Data.Duration is double duration)
+        if (usageEvent.Data.Duration is TimeSpan duration)
         {
             additionalCounts ??= [];
-            additionalCounts[nameof(AssistantUsageData.Duration)] = (long)duration;
+            additionalCounts[nameof(AssistantUsageData.Duration)] = (long)duration.TotalMilliseconds;
         }
 
         return additionalCounts;
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantReasoningEvent reasoningEvent)
+    {
+        CopilotReasoningContent content = new(reasoningEvent.Data.Content, reasoningEvent.Data.ReasoningId)
+        {
+            RawRepresentation = reasoningEvent
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = reasoningEvent.Timestamp
+        };
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionStartEvent toolStartEvent)
+    {
+        string? arguments = toolStartEvent.Data.Arguments?.ToString();
+        CopilotToolExecutionContent content = CopilotToolExecutionContent.ForStart(
+            toolStartEvent.Data.ToolCallId,
+            toolStartEvent.Data.ToolName,
+            arguments);
+        content.RawRepresentation = toolStartEvent;
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolStartEvent.Timestamp
+        };
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionProgressEvent toolProgressEvent)
+    {
+        CopilotToolExecutionContent content = CopilotToolExecutionContent.ForProgress(
+            toolProgressEvent.Data.ToolCallId,
+            toolProgressEvent.Data.ProgressMessage);
+        content.RawRepresentation = toolProgressEvent;
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolProgressEvent.Timestamp
+        };
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionCompleteEvent toolCompleteEvent)
+    {
+        bool isSuccess = toolCompleteEvent.Data.Success;
+        string? errorMessage = toolCompleteEvent.Data.Error?.Message;
+        CopilotToolExecutionContent content = CopilotToolExecutionContent.ForComplete(
+            toolCompleteEvent.Data.ToolCallId,
+            isSuccess,
+            errorMessage);
+        content.RawRepresentation = toolCompleteEvent;
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolCompleteEvent.Timestamp
+        };
     }
 
     private AgentResponseUpdate ConvertToAgentResponseUpdate(SessionEvent sessionEvent)
@@ -432,7 +505,9 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     private static SessionConfig? GetSessionConfig(IList<AITool>? tools, string? instructions)
     {
-        List<AIFunction>? mappedTools = tools is { Count: > 0 } ? tools.OfType<AIFunction>().ToList() : null;
+        List<AIFunctionDeclaration>? mappedTools = tools is { Count: > 0 }
+            ? tools.OfType<AIFunction>().Cast<AIFunctionDeclaration>().ToList()
+            : null;
         SystemMessageConfig? systemMessage = instructions is not null ? new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = instructions } : null;
 
         if (mappedTools is null && systemMessage is null)
