@@ -344,6 +344,9 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox/HostedToolbox.csproj" />
   </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-ToolboxMcpSkills/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-ToolboxMcpSkills/HostedToolboxMcpSkills.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-AzureSearchRag/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-AzureSearchRag/HostedAzureSearchRag.csproj" />
   </Folder>
@@ -605,6 +608,7 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AzureFunctions/Microsoft.Agents.AI.Hosting.AzureFunctions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.OpenAI/Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Hosting.AspNetCore/Microsoft.Agents.AI.Hosting.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hyperlight/Microsoft.Agents.AI.Hyperlight.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Mcp/Microsoft.Agents.AI.Mcp.csproj" />

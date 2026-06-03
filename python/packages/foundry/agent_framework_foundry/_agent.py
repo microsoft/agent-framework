@@ -57,8 +57,6 @@ if TYPE_CHECKING:
     from agent_framework import (
         Agent,
         AgentRunInputs,
-        ChatAndFunctionMiddlewareTypes,
-        ContextProvider,
         MiddlewareTypes,
         ToolTypes,
     )
@@ -353,6 +351,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         if _uses_foundry_agent_session(conversation_id):
             run_options.pop("previous_response_id", None)
             run_options.pop("conversation", None)
+            run_options.pop("model", None)
             extra_body["agent_session_id"] = conversation_id
         # Non-preview Prompt/Hosted Agent calls need agent_reference in the request body to
         # tell the Responses API which Foundry agent (and version) is in use, since ``model``
@@ -368,7 +367,6 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         # Strip tools from request body - Foundry API rejects requests with both
         # agent endpoint and tools present. FunctionTools are invoked client-side
         # by the function invocation layer, not sent to the service.
-        run_options.pop("model", None)
         if not self.allow_preview:
             run_options.pop("tools", None)
             run_options.pop("tool_choice", None)
@@ -507,10 +505,10 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
         .. code-block:: python
 
             from agent_framework import Agent
-            from agent_framework.foundry import FoundryAgentClient
+            from agent_framework.foundry import FoundryAgent
             from azure.identity import AzureCliCredential
 
-            client = FoundryAgentClient(
+            client = FoundryAgent(
                 project_endpoint="https://your-project.services.ai.azure.com",
                 agent_name="my-prompt-agent",
                 agent_version="1",

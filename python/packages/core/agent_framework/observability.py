@@ -498,13 +498,33 @@ def _get_exporters_from_env(
     # Get base endpoint
     base_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
-    # Get signal-specific endpoints (these override base endpoint)
-    traces_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or base_endpoint
-    metrics_endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") or base_endpoint
-    logs_endpoint = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") or base_endpoint
+    # Get signal-specific endpoints (these override base endpoint and are used verbatim)
+    traces_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+    metrics_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
+    logs_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
 
     # Get protocol (default is grpc)
     protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
+
+    # Per the OTel spec, OTEL_EXPORTER_OTLP_ENDPOINT is a *base* URL for HTTP — the SDK
+    # auto-appends /v1/{traces,metrics,logs} when it reads the env var directly. The
+    # signal-specific endpoint env vars are *full* URLs used verbatim. Because we read
+    # the env vars here and forward them as the ``endpoint=`` constructor argument
+    # (which the SDK always treats as a full URL), we must replicate the auto-append
+    # ourselves for HTTP when falling back to the base endpoint. For gRPC, the base
+    # endpoint is used as-is.
+    traces_endpoint: str | None
+    metrics_endpoint: str | None
+    logs_endpoint: str | None
+    if protocol in ("http/protobuf", "http") and base_endpoint:
+        base_for_http = base_endpoint.rstrip("/")
+        traces_endpoint = traces_endpoint_specific or f"{base_for_http}/v1/traces"
+        metrics_endpoint = metrics_endpoint_specific or f"{base_for_http}/v1/metrics"
+        logs_endpoint = logs_endpoint_specific or f"{base_for_http}/v1/logs"
+    else:
+        traces_endpoint = traces_endpoint_specific or base_endpoint
+        metrics_endpoint = metrics_endpoint_specific or base_endpoint
+        logs_endpoint = logs_endpoint_specific or base_endpoint
 
     # Get base headers
     base_headers_str = os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "")
@@ -1332,6 +1352,22 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         self.duration_histogram = _get_duration_histogram()
         self.otel_provider_name = otel_provider_name or getattr(self, "OTEL_PROVIDER_NAME", "unknown")
 
+    @staticmethod
+    def _backfill_request_model(span: trace.Span, attributes: dict[str, Any]) -> None:
+        """Backfill REQUEST_MODEL and the span name from RESPONSE_MODEL when unknown.
+
+        Chat-completion spans use REQUEST_MODEL as part of the span name. If the
+        request model was not known at span creation time (e.g. the client could
+        not resolve it before sending the request), update both the attribute and
+        the span name to the actual model returned in the response. Mutates
+        ``attributes`` in place.
+        """
+        response_model = attributes.get(OtelAttr.RESPONSE_MODEL)
+        if response_model and attributes.get(OtelAttr.REQUEST_MODEL, "unknown") == "unknown":
+            attributes[OtelAttr.REQUEST_MODEL] = response_model
+            operation = attributes.get(OtelAttr.OPERATION, "operation")
+            span.update_name(f"{operation} {response_model}")
+
     @overload
     def get_response(
         self,
@@ -1480,6 +1516,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     response: ChatResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(attributes, response)
+                    self._backfill_request_model(span, response_attributes)
                     _capture_response(
                         span=span,
                         attributes=response_attributes,
@@ -1549,6 +1586,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     raise
                 duration = perf_counter() - start_time_stamp
                 response_attributes = _get_response_attributes(attributes, response)
+                self._backfill_request_model(span, response_attributes)
                 _capture_response(
                     span=span,
                     attributes=response_attributes,

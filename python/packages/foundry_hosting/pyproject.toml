@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.7.0,<2",
     "azure-ai-agentserver-core>=2.0.0b3,<3",
-    "azure-ai-agentserver-responses>=1.0.0b5,<2",
+    "azure-ai-agentserver-responses>=1.0.0b7,<2",
     "azure-ai-agentserver-invocations>=1.0.0b3,<2",
 ]
 

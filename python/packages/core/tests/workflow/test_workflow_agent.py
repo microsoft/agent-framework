@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import uuid
 from collections.abc import Awaitable, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal, overload
 
 import pytest
@@ -23,6 +25,7 @@ from agent_framework import (
     WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowEvent,
     executor,
     handler,
     response_handler,
@@ -292,6 +295,33 @@ class TestWorkflowAgent:
 
         # Verify cleanup - pending requests should be cleared after function response handling
         assert len(agent.pending_requests) == 0
+
+    def test_request_info_dataclass_arguments_are_serialized_when_content_is_created(self) -> None:
+        """Test WorkflowAgent prepares request_info arguments before observability captures messages."""
+
+        @dataclass
+        class HandoffRequest:
+            target_agent: str
+            reason: str
+
+        executor = SimpleExecutor(id="executor1", response_text="Response")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Request Test Agent")
+        event = WorkflowEvent.request_info(
+            request_id="request_123",
+            source_executor_id="executor1",
+            request_data=HandoffRequest(target_agent="helper", reason="overflow"),
+            response_type=str,
+        )
+
+        function_call, approval_request = agent._process_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
+
+        assert function_call.arguments == {
+            "request_id": "request_123",
+            "data": {"target_agent": "helper", "reason": "overflow"},
+        }
+        assert approval_request.function_call is function_call
+        assert json.loads(json.dumps(function_call.arguments)) == function_call.arguments
 
     def test_workflow_as_agent_method(self) -> None:
         """Test that Workflow.as_agent() creates a properly configured WorkflowAgent."""
