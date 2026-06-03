@@ -52,6 +52,7 @@ members = [
     "agent-framework-hosting-activity-protocol",
     "agent-framework-hosting-discord",
     "agent-framework-hosting-invocations",
+    "agent-framework-hosting-mcp",
     "agent-framework-hosting-responses",
     "agent-framework-hosting-telegram",
     "agent-framework-hyperlight",
@@ -722,6 +723,28 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-hosting", editable = "packages/hosting" },
 ]
+
+[[package]]
+name = "agent-framework-hosting-mcp"
+version = "1.0.0a260424"
+source = { editable = "packages/hosting-mcp" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "starlette", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "mcp", specifier = ">=1.12,<2" },
+    { name = "starlette", specifier = ">=0.37" },
+]
+
+[package.metadata.requires-dev]
+dev = []
 
 [[package]]
 name = "agent-framework-hosting-responses"
