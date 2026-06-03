@@ -92,10 +92,20 @@ def _is_reasoning_only_assistant(message: Message) -> bool:
     return all(content.type == "text_reasoning" for content in message.contents)
 
 
-def _ensure_message_ids(messages: list[Message]) -> None:
+def _ensure_message_ids(messages: list[Message], *, id_offset: int = 0) -> None:
+    existing_ids = {message.message_id for message in messages if message.message_id}
     for index, message in enumerate(messages):
-        if not message.message_id:
-            message.message_id = f"msg_{index}"
+        if message.message_id:
+            continue
+        candidate = f"msg_{id_offset + index}"
+        if candidate in existing_ids:
+            counter = id_offset + len(messages)
+            candidate = f"msg_{counter}"
+            while candidate in existing_ids:
+                counter += 1
+                candidate = f"msg_{counter}"
+        message.message_id = candidate
+        existing_ids.add(candidate)
 
 
 def _group_id_for(message: Message, group_index: int) -> str:
@@ -104,14 +114,22 @@ def _group_id_for(message: Message, group_index: int) -> str:
     return f"group_index_{group_index}"
 
 
-def group_messages(messages: list[Message]) -> list[dict[str, Any]]:
+def group_messages(messages: list[Message], *, id_offset: int = 0) -> list[dict[str, Any]]:
     """Compute group spans and metadata for annotation.
+
+    Args:
+        messages: The messages (or a slice of them) to group.
+
+    Keyword Args:
+        id_offset: Absolute starting index used when auto-assigning ``message_id``
+            values, so incremental annotation of a list slice produces ids that
+            stay unique across the full list.
 
     Returns:
         Ordered list of lightweight span dicts with keys:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
     """
-    _ensure_message_ids(messages)
+    _ensure_message_ids(messages, id_offset=id_offset)
     spans: list[dict[str, Any]] = []
     i = 0
     group_index = 0
@@ -439,7 +457,7 @@ def annotate_message_groups(
         if previous_group_index is not None:
             group_index_offset = previous_group_index + 1
 
-    spans = group_messages(messages[start_index:])
+    spans = group_messages(messages[start_index:], id_offset=start_index)
     for span_index, span in enumerate(spans):
         group_id = str(span["group_id"])
         kind = _coerce_group_kind(span["kind"])
