@@ -194,7 +194,7 @@ class TestBeforeRun:
         assert "filters" not in call_kwargs
 
     @pytest.mark.asyncio
-    async def test_oss_client_all_scoping_params(self, mock_oss_mem0_client: AsyncMock) -> None:
+    async def test_oss_client_all_scoping_params_except_app_id(self, mock_oss_mem0_client: AsyncMock) -> None:
         """OSS client with all scoping parameters passes them as isolated concurrent kwargs."""
         mock_oss_mem0_client.search.return_value = []
 
@@ -202,8 +202,7 @@ class TestBeforeRun:
             source_id="mem0",
             mem0_client=mock_oss_mem0_client,
             user_id="u1",
-            agent_id="a1",
-            # application_id="app1"
+            agent_id="a1"
         )
 
         mock_context = MagicMock(spec=SessionContext)
@@ -222,7 +221,7 @@ class TestBeforeRun:
         mock_oss_mem0_client.search.assert_any_call(query="hello", agent_id="a1")
 
     @pytest.mark.asyncio
-    async def test_platform_client_passes_filters_dict(self, mock_mem0_client: AsyncMock) -> None:
+    async def test_platform_client_passes_filters_dict_except_app_id(self, mock_mem0_client: AsyncMock) -> None:
         """Platform client passes scoping parameters concurrently inside the nested filters dictionary."""
         mock_mem0_client.search.return_value = []
 
@@ -231,7 +230,6 @@ class TestBeforeRun:
             mem0_client=mock_mem0_client,
             user_id="u1",
             agent_id="a1",
-            # application_id="app1"
         )
 
         mock_context = MagicMock(spec=SessionContext)

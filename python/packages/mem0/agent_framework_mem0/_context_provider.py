@@ -140,13 +140,17 @@ class Mem0ContextProvider(ContextProvider):
         for search_response in results:
             if isinstance(search_response, asyncio.CancelledError):
                 raise search_response
-            
+
             if isinstance(search_response, BaseException):
                 failed_tasks_count += 1
                 logger.error(
                     "Mem0 partition search task failed: %s",
                     search_response,
-                    exc_info=search_response,
+                    exc_info=(
+                        type(search_response),
+                        search_response,
+                        search_response.__traceback__
+                    ),
                 )
                 continue
 
