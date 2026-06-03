@@ -340,8 +340,8 @@ class TestAfterRun:
         with pytest.raises(ValueError, match="At least one of the filters"):
             await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
-    async def test_stores_with_application_id_metadata(self, mock_mem0_client: AsyncMock) -> None:
-        """application_id is passed in metadata."""
+    async def test_stores_with_application_id_filters(self, mock_mem0_client: AsyncMock) -> None:
+        """application_id is passed in filters."""
         provider = Mem0ContextProvider(
             source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", application_id="app1"
         )
