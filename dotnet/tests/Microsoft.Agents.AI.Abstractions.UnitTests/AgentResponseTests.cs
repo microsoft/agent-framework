@@ -368,6 +368,7 @@ public class AgentResponseTests
         AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
 
         // Assert
+        Assert.Single(updates);
         Assert.Equal("bot", updates[0].AuthorName);
     }
 
@@ -382,6 +383,7 @@ public class AgentResponseTests
         AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
 
         // Assert
+        Assert.Single(updates);
         Assert.Same(messageProps, updates[0].AdditionalProperties);
     }
 
