@@ -569,6 +569,9 @@ class StandardMagenticManager(MagenticManagerBase):
         )
 
         self._agent: SupportsAgentRun = agent
+        # Retained only for checkpoint save/restore continuity. LLM calls in `_complete`
+        # use a fresh session each time so the agent's history provider cannot re-inject
+        # (and thereby duplicate) the conversation the manager already passes in full.
         self._session: AgentSession = self._agent.create_session()
         self.task_ledger: _MagenticTaskLedger | None = task_ledger
 
@@ -597,8 +600,19 @@ class StandardMagenticManager(MagenticManagerBase):
 
         The agent's run method is called which applies the agent's configured options
         (temperature, seed, instructions, etc.).
+
+        A *fresh* session is created for every call instead of reusing ``self._session``.
+        The manager already passes the complete conversation it wants the model to see
+        on each call (see ``plan``, ``replan`` and ``create_progress_ledger``, which all
+        build ``[*magentic_context.chat_history, ...]``). Reusing a single accumulating
+        session would make the agent's history provider (the default
+        ``InMemoryHistoryProvider`` for local sessions) reload every previously sent /
+        received message and prepend it to the input, so the task, facts and plan would
+        be duplicated and compound on every round. A throwaway session keeps each call
+        stateless while still propagating a non-``None`` session, so any context
+        providers configured on the manager agent are still invoked (regression #4371).
         """
-        response: AgentResponse = await self._agent.run(messages, session=self._session)
+        response: AgentResponse = await self._agent.run(messages, session=self._agent.create_session())
         if not response.messages:
             raise RuntimeError("Agent returned no messages in response.")
         if len(response.messages) > 1:
