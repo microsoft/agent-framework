@@ -48,7 +48,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
-from starlette.routing import BaseRoute, Mount, Route
+from starlette.routing import BaseRoute, Mount, Route, WebSocketRoute
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ._authorization import (
@@ -108,6 +108,21 @@ _EPHEMERAL_RUNTIME_MARKERS: tuple[str, ...] = (
 
 
 RuntimeMode = Literal["long_running", "ephemeral"]
+
+
+def _exact_path_route(path: str, route: BaseRoute) -> BaseRoute | None:
+    """Clone a root route so ``Mount('/x', Route('/'))`` also handles ``/x`` without a redirect."""
+    if isinstance(route, Route) and route.path == "/":
+        return Route(
+            path,
+            route.endpoint,
+            methods=route.methods,
+            name=route.name,
+            include_in_schema=route.include_in_schema,
+        )
+    if isinstance(route, WebSocketRoute) and route.path == "/":
+        return WebSocketRoute(path, route.endpoint, name=route.name)
+    return None
 
 
 def _detect_runtime_mode(env: Mapping[str, str] | None = None) -> tuple[RuntimeMode, str | None]:
@@ -257,7 +272,7 @@ def _workflow_event_to_update(event: WorkflowEvent[Any]) -> AgentResponseUpdate 
 
 
 @asynccontextmanager
-async def _suppress_already_consumed() -> AsyncIterator[None]:  # noqa: RUF029
+async def _suppress_already_consumed() -> AsyncIterator[None]:
     """Yield, swallowing finalizer failures so consumer cleanup never crashes the host.
 
     The bridge stream calls ``get_final_response()`` after iterating the
@@ -1233,7 +1248,7 @@ class AgentFrameworkHost:
 
         Mirrors the ``AgentServerHost`` convention from
         ``azure.ai.agentserver.core``: one INFO line that captures the
-        target type, every channel + its mount path, the bind address
+        target type, every channel + its endpoint path, the bind address
         (when known), whether we're running inside a Foundry Hosted
         Agents container, and the worker count. Keeps log noise low
         while still giving an operator a single grep-able anchor when
@@ -1290,11 +1305,19 @@ class AgentFrameworkHost:
         for channel in self.channels:
             contribution = channel.contribute(context)
             # Channels publish routes relative to their root; mount under channel.path.
-            # An empty path means "mount at the app root" — useful for single-channel hosts
-            # that don't want a prefix (e.g. ResponsesChannel exposing POST /responses directly).
+            # An empty path means "mount at the app root" — useful when an external
+            # platform requires the channel endpoint at "/" or at a route contributed
+            # by the channel.
             if contribution.routes:
                 if channel.path:
-                    routes.append(Mount(channel.path, routes=list(contribution.routes)))
+                    channel_routes = list(contribution.routes)
+                    exact_routes = [
+                        exact_route
+                        for route in channel_routes
+                        if (exact_route := _exact_path_route(channel.path, route)) is not None
+                    ]
+                    routes.extend(exact_routes)
+                    routes.append(Mount(channel.path, routes=channel_routes))
                 else:
                     routes.extend(contribution.routes)
             on_startup.extend(contribution.on_startup)

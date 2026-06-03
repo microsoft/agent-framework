@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
+
+kind: hosted
+name: agent-framework-telegram-invocations-weather
+description: |
+    Telegram weather bot sample hosted by Agent Framework. The Telegram webhook
+    handler is mounted at /invocations so the Foundry Hosted Agents Invocations
+    protocol endpoint can be registered as the bot's webhook URL.
+metadata:
+    tags:
+        - Agent Framework
+        - AI Agent Hosting
+        - Azure AI AgentServer
+        - Responses Protocol
+        - Invocations Protocol
+        - Telegram
+protocols:
+    - protocol: responses
+      version: 1.0.0
+    - protocol: invocations
+      version: 1.0.0
+resources:
+    cpu: "1"
+    memory: 2Gi
+environment_variables:
+    - name: MODEL_DEPLOYMENT_NAME
+      value: ${MODEL_DEPLOYMENT_NAME}
+    - name: TELEGRAM_BOT_TOKEN
+      value: ${TELEGRAM_BOT_TOKEN}
+    - name: HOSTING_INVOCATIONS_API_VERSION
+      value: ${HOSTING_INVOCATIONS_API_VERSION}

@@ -77,7 +77,7 @@ class ResponsesChannel:
 
     Mounts ``POST <path>/responses`` (default path ``/responses`` so the
     full route is ``/responses/responses`` when the channel is prefixed,
-    or just ``/responses`` when ``path=""``).
+    or just ``/`` when ``path=""``).
     """
 
     name = "responses"
@@ -85,7 +85,7 @@ class ResponsesChannel:
     def __init__(
         self,
         *,
-        path: str = "",
+        path: str = "/responses",
         run_hook: ChannelRunHook | None = None,
         response_hook: ChannelResponseHook | None = None,
         stream_transform_hook: ChannelStreamTransformHook | None = None,
@@ -94,9 +94,9 @@ class ResponsesChannel:
         """Create a Responses channel.
 
         Keyword Args:
-            path: Mount prefix on the host. Default ``""`` mounts the
-                ``POST /responses`` route at the app root, matching the
-                upstream OpenAI surface.
+            path: Endpoint path on the host. Default ``"/responses"`` matches
+                the upstream OpenAI surface; use ``""`` to expose this channel
+                at the app root.
             run_hook: Optional :data:`ChannelRunHook` invoked with the
                 parsed :class:`ChannelRequest` before the agent target
                 runs. May return a replacement request.
@@ -145,12 +145,12 @@ class ResponsesChannel:
         )
 
     def contribute(self, context: ChannelContext) -> ChannelContribution:
-        """Capture the host-supplied context and register ``POST /responses``."""
+        """Capture the host-supplied context and register the endpoint route."""
         self._ctx = context
-        return ChannelContribution(routes=[Route("/responses", self._handle, methods=["POST"])])
+        return ChannelContribution(routes=[Route("/", self._handle, methods=["POST"])])
 
     async def _handle(self, request: Request) -> Response:
-        """Handle a single ``POST /responses`` call.
+        """Handle a single Responses API call.
 
         Parses the OpenAI Responses-shaped body into ``Message`` /
         ``options`` / ``ChannelSession`` triples via :mod:`._parsing`,

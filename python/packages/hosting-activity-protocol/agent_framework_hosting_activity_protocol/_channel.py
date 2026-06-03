@@ -23,7 +23,10 @@ This channel handles:
 - inbound ``message`` activities — text and attachments resolved to URIs,
 - outbound replies via ``POST /v3/conversations/{id}/activities``,
 - streaming via ``PUT /v3/conversations/{id}/activities/{id}`` mid-stream
-  edits (Teams supports updateActivity in personal chats and groups),
+  edits on channels that support ``updateActivity`` (Teams personal chats
+  and groups); every other channel — Web Chat, Direct Line, the Emulator —
+  rejects the PUT with ``405``, so those buffer the stream and POST a
+  single final message instead,
 - typing indicators while the agent works,
 - per-conversation isolation key ``activity:<conversation_id>`` so a Responses
   caller can resume a Teams conversation by passing the conversation id,
@@ -67,7 +70,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 from urllib.parse import urlparse
 
@@ -79,9 +82,13 @@ from agent_framework import (
     Message,
     ResponseStream,
 )
+from agent_framework.exceptions import ContentError
 from agent_framework_hosting import (
+    ChannelCommand,
+    ChannelCommandContext,
     ChannelContext,
     ChannelContribution,
+    ChannelIdentity,
     ChannelRequest,
     ChannelResponseContext,
     ChannelResponseHook,
@@ -116,6 +123,16 @@ _DEFAULT_SERVICE_URL_HOSTS = (
     "smba.trafficmanager.net",
 )
 
+# Bot Framework channels that support editing an Activity in place via
+# ``PUT /v3/conversations/{id}/activities/{id}`` (the ``updateActivity``
+# REST operation). Progressive-edit streaming (POST a placeholder, then
+# repeatedly PUT it) only works on these. Every other channel — Web Chat,
+# Direct Line, the Emulator, etc. — returns ``405 Method Not Allowed`` on
+# the PUT, so those channels buffer the stream and POST a single final
+# message instead. Teams is the canonical (and effectively only) public
+# channel that supports the edit operation.
+_EDIT_CAPABLE_CHANNELS = frozenset({"msteams"})
+
 
 InboundAuthValidator = Callable[[Request], Awaitable[bool]]
 
@@ -134,13 +151,20 @@ class _OutboundError(RuntimeError):
     """Marker for transient outbound failures that should produce 502/retry."""
 
 
+def _text_result(text: str) -> HostedRunResult[AgentResponse]:
+    """Wrap plain text in a ``HostedRunResult`` for streaming fan-out delivery."""
+    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
+
+
 def _parse_activity(activity: Mapping[str, Any]) -> Message:
     """Translate one Bot Framework ``message`` Activity into an Agent Framework Message.
 
-    Pulls the activity's ``text`` plus any image/file attachments with a
-    ``contentType`` and resolvable URL into ``Content`` parts. If the
-    activity has no usable parts an empty text part is emitted so the
-    caller never sees a content-less message.
+    Pulls the activity's ``text`` plus any image/file attachments that expose a
+    resolvable ``contentUrl`` into ``Content`` parts. Bot Framework's inline
+    ``content`` field (e.g. the ``text/html`` rendering Teams attaches alongside
+    ``text``, or an Adaptive Card payload) is *not* a URI, so it is ignored here
+    to avoid mis-parsing it as a URL. If the activity has no usable parts an
+    empty text part is emitted so the caller never sees a content-less message.
     """
     parts: list[Content] = []
     if (text := activity.get("text")) and isinstance(text, str):
@@ -149,14 +173,54 @@ def _parse_activity(activity: Mapping[str, Any]) -> Message:
     for attachment in activity.get("attachments") or []:
         if not isinstance(attachment, Mapping):
             continue
-        url = attachment.get("contentUrl") or attachment.get("content")
+        url = attachment.get("contentUrl")
         content_type = attachment.get("contentType")
-        if isinstance(url, str) and isinstance(content_type, str) and "/" in content_type:
+        if not (isinstance(url, str) and isinstance(content_type, str) and "/" in content_type):
+            continue
+        # contentUrl is occasionally a relative reference or otherwise lacks a
+        # scheme; skip those so one odd attachment can't fail the whole turn.
+        if not urlparse(url).scheme:
+            logger.debug("Skipping attachment with non-absolute contentUrl: %r", url)
+            continue
+        try:
             parts.append(Content.from_uri(uri=url, media_type=content_type))
+        except ContentError:
+            logger.debug("Skipping attachment with unparseable contentUrl: %r", url)
+            continue
 
     if not parts:
         parts.append(Content.from_text(text=""))
     return Message("user", parts)
+
+
+def _command_text(activity: Mapping[str, Any]) -> str:
+    """Return the activity text with the bot's own @mention stripped.
+
+    Channels that require an @mention to address the bot (Teams team and
+    group-chat scopes) prefix the message ``text`` with a mention whose literal
+    rendering is carried in the matching ``entities[].text`` (e.g.
+    ``"<at>Personal Assistant</at> /todos"``). Personal 1:1 chats carry no
+    mention. We remove only the bot's own mention substring(s) — never other
+    users' mentions — so a leading ``/command`` can be detected in every scope.
+    """
+    text = activity.get("text")
+    if not isinstance(text, str):
+        return ""
+    bot_id = (activity.get("recipient") or {}).get("id")
+    for entity in activity.get("entities") or []:
+        if not isinstance(entity, Mapping) or entity.get("type") != "mention":
+            continue
+        mentioned = entity.get("mentioned")
+        mentioned_id = mentioned.get("id") if isinstance(mentioned, Mapping) else None
+        # Only strip the bot's own mention; leave mentions of other users intact.
+        # When the recipient id is unknown we cannot disambiguate, so fall back
+        # to stripping every mention to keep command detection working.
+        if bot_id is not None and mentioned_id != bot_id:
+            continue
+        mention_text = entity.get("text")
+        if isinstance(mention_text, str) and mention_text:
+            text = text.replace(mention_text, "")
+    return text.strip()
 
 
 class ActivityProtocolChannel:
@@ -176,7 +240,7 @@ class ActivityProtocolChannel:
     def __init__(
         self,
         *,
-        path: str = "/activity",
+        path: str = "/activity/messages",
         app_id: str | None = None,
         app_password: str | None = None,
         certificate_path: str | None = None,
@@ -184,6 +248,7 @@ class ActivityProtocolChannel:
         tenant_id: str = _BOTFRAMEWORK_TENANT,
         token_scope: str = _BOTFRAMEWORK_SCOPE,
         credential: AsyncTokenCredential | None = None,
+        commands: Sequence[ChannelCommand] = (),
         run_hook: ChannelRunHook | None = None,
         response_hook: ChannelResponseHook | None = None,
         send_typing_action: bool = True,
@@ -196,7 +261,8 @@ class ActivityProtocolChannel:
         """Configure the Teams channel.
 
         Keyword Args:
-            path: Mount path. The webhook lives at ``{path}/messages``.
+            path: Messages endpoint path on the host. Use ``""`` to expose the
+                webhook at the app root.
             app_id: Bot Framework / Entra application (client) id. Required
                 whenever any credential is supplied.
             app_password: Application secret for OAuth2 client credentials.
@@ -214,6 +280,16 @@ class ActivityProtocolChannel:
             credential: Bring your own ``AsyncTokenCredential`` (e.g. a
                 ``DefaultAzureCredential`` configured elsewhere). Overrides
                 ``app_password`` / ``certificate_path``.
+            commands: Discoverable ``/command`` handlers. An inbound message
+                whose text (after stripping the bot's own @mention) begins with
+                ``/`` and matches a command ``name`` (case-insensitive) is
+                dispatched to that handler instead of the agent, mirroring the
+                Telegram channel. The matching ``run_hook`` is applied to the
+                command request first, so command handlers observe the same
+                resolved ``session.isolation_key`` as ordinary messages.
+                Unknown ``/foo`` text falls through to the agent. Handlers reply
+                via ``ChannelCommandContext.reply``; surface them to users with
+                a Teams manifest ``commandLists`` entry.
             run_hook: Optional rewrite of ``ChannelRequest`` before invocation.
             response_hook: Optional rewrite of the
                 :class:`HostedRunResult` before the originating Activity
@@ -260,6 +336,7 @@ class ActivityProtocolChannel:
         self._app_id = app_id
         self._token_scope = token_scope
         self._tenant_id = tenant_id
+        self._commands = list(commands)
         self._hook = run_hook
         self.response_hook = response_hook
         self._send_typing_action = send_typing_action
@@ -292,10 +369,11 @@ class ActivityProtocolChannel:
             self._credential = None  # dev mode
 
     def contribute(self, context: ChannelContext) -> ChannelContribution:
-        """Capture the host context and register the ``POST /messages`` webhook."""
+        """Capture the host context and register the messages webhook."""
         self._ctx = context
         return ChannelContribution(
-            routes=[Route("/messages", self._handle, methods=["POST"])],
+            routes=[Route("/", self._handle, methods=["POST"])],
+            commands=self._commands,
             on_startup=[self._on_startup],
             on_shutdown=[self._on_shutdown],
         )
@@ -326,14 +404,14 @@ class ActivityProtocolChannel:
         else:
             cred_kind = type(self._credential).__name__
             logger.info(
-                "ActivityProtocolChannel listening on %s/messages (auth=%s, tenant=%s)",
+                "ActivityProtocolChannel listening on %s (auth=%s, tenant=%s)",
                 self.path,
                 cred_kind,
                 self._tenant_id,
             )
         if self._inbound_auth_validator is None:
             logger.warning(
-                "ActivityProtocolChannel %s/messages has no inbound_auth_validator — "
+                "ActivityProtocolChannel %s has no inbound_auth_validator — "
                 "the webhook will accept ANY caller. Plug an inbound_auth_validator "
                 "or terminate auth in front of the channel before exposing this "
                 "endpoint to a public network.",
@@ -464,12 +542,46 @@ class ActivityProtocolChannel:
             logger.warning("Teams activity missing conversation.id or serviceUrl — dropping")
             return
 
+        # Native command dispatch — a leading ``/command`` (after stripping the
+        # bot's own @mention) bypasses the agent, mirroring the Telegram channel.
+        # Unknown commands fall through to the agent as a normal message.
+        if self._commands:
+            command_text = _command_text(activity)
+            if command_text.startswith("/"):
+                tokens = command_text[1:].split()
+                if tokens:
+                    command_name = tokens[0].split("@", 1)[0].lower()
+                    handler = next((c for c in self._commands if c.name.lower() == command_name), None)
+                    if handler is not None:
+                        await self._invoke_command(activity, conversation_id, service_url, handler, command_text)
+                        return
+
         parsed = _parse_activity(activity)
+        # Store a Bot Framework conversation reference on the identity so the
+        # host can proactively ``push`` to this conversation later (fan-out
+        # from another channel). Recording the identity also registers this
+        # channel under the isolation key so ``ResponseTarget.all_linked`` /
+        # ``.active`` can resolve it.
+        identity = ChannelIdentity(
+            channel=self.name,
+            native_id=conversation_id,
+            attributes={
+                "service_url": service_url,
+                "conversation": dict(conversation),
+                # Inbound recipient is the bot → outbound ``from``; inbound
+                # ``from`` is the user → outbound ``recipient``.
+                "bot": dict(activity.get("recipient") or {}),
+                "user": dict(activity.get("from") or {}),
+                "channel_id": activity.get("channelId"),
+                "locale": activity.get("locale"),
+            },
+        )
         channel_request = ChannelRequest(
             channel=self.name,
             operation="message.create",
             input=[parsed],
             session=ChannelSession(isolation_key=activity_protocol_isolation_key(conversation_id)),
+            identity=identity,
             attributes={
                 "conversation_id": conversation_id,
                 "service_url": service_url,
@@ -488,6 +600,69 @@ class ActivityProtocolChannel:
             )
 
         await self._dispatch(activity, channel_request)
+
+    async def _invoke_command(
+        self,
+        activity: Mapping[str, Any],
+        conversation_id: str,
+        service_url: str,
+        handler: ChannelCommand,
+        command_text: str,
+    ) -> None:
+        """Run a matched ``/command`` handler and reply into the conversation.
+
+        The command request mirrors the message-path request (same isolation
+        key, identity and attributes) and is run through the channel ``run_hook``
+        first, so handlers observe the same resolved ``session.isolation_key`` as
+        ordinary messages. Handler/reply failures are logged but never raised:
+        commands are best-effort, and surfacing a 502 would make Bot Service
+        retry the inbound activity and re-run a non-idempotent command.
+        """
+        if self._ctx is None:  # pragma: no cover - guarded by lifecycle
+            raise RuntimeError("activity channel not started")
+        identity = ChannelIdentity(
+            channel=self.name,
+            native_id=conversation_id,
+            attributes={
+                "service_url": service_url,
+                "conversation": dict(activity.get("conversation") or {}),
+                "bot": dict(activity.get("recipient") or {}),
+                "user": dict(activity.get("from") or {}),
+                "channel_id": activity.get("channelId"),
+                "locale": activity.get("locale"),
+            },
+        )
+        request = ChannelRequest(
+            channel=self.name,
+            operation="command.invoke",
+            input=command_text,
+            session=ChannelSession(isolation_key=activity_protocol_isolation_key(conversation_id)),
+            identity=identity,
+            attributes={
+                "conversation_id": conversation_id,
+                "service_url": service_url,
+                "from_id": (activity.get("from") or {}).get("id"),
+                "channel_id": activity.get("channelId"),
+                "aad_object_id": (activity.get("from") or {}).get("aadObjectId"),
+            },
+            metadata={"reply_to_id": activity.get("id"), "recipient": activity.get("recipient")},
+        )
+        if self._hook is not None:
+            request = await apply_run_hook(
+                self._hook,
+                request,
+                target=self._ctx.target,
+                protocol_request=activity,
+            )
+
+        async def _reply(body: str) -> None:
+            await self._send_message(activity, body)
+
+        ctx = ChannelCommandContext(request=request, reply=_reply)
+        try:
+            await handler.handle(ctx)
+        except Exception:
+            logger.exception("ActivityProtocolChannel command %r failed", command_text)
 
     # -- outbound helpers -------------------------------------------------- #
 
@@ -513,7 +688,7 @@ class ActivityProtocolChannel:
             return
 
         stream = self._ctx.run_stream(request)
-        await self._stream_to_conversation(inbound, stream)
+        await self._stream_to_conversation(inbound, request, stream)
 
     async def _apply_response_hook(
         self,
@@ -535,22 +710,30 @@ class ActivityProtocolChannel:
     async def _stream_to_conversation(
         self,
         inbound: Mapping[str, Any],
+        request: ChannelRequest,
         stream: ResponseStream[AgentResponseUpdate, AgentResponse],
     ) -> None:
-        """Iterate the stream and progressively edit a single Teams activity.
+        """Stream the reply back into the originating conversation.
 
-        If the initial placeholder POST fails we fall back to buffering
-        the whole stream and POSTing a single final message at the end.
-        Without that fallback the edit-loop's exit condition
-        ``accumulated == last_sent`` is unreachable while ``activity_id``
-        is ``None`` (no PUT possible), and the worker would deadlock
-        forever on ``wake.wait()`` after ``worker_done`` is set.
+        Channels that support the ``updateActivity`` REST operation (see
+        ``_EDIT_CAPABLE_CHANNELS`` — effectively only Teams) get the
+        progressive-edit experience: a ``…`` placeholder is POSTed, then
+        repeatedly PUT-edited as text accumulates. Every other channel —
+        Web Chat, Direct Line, the Emulator, etc. — returns ``405 Method
+        Not Allowed`` on the PUT, so those buffer the whole stream and POST
+        a single final message (``_buffer_and_send``); attempting the
+        edit path there would leave the user staring at a stray ``…``.
         """
+        if str(inbound.get("channelId") or "").lower() not in _EDIT_CAPABLE_CHANNELS:
+            await self._buffer_and_send(inbound, request, stream)
+            return
+
         accumulated = ""
         last_sent = ""
         last_edit_at = 0.0
         activity_id: str | None = None
         placeholder_ok = False
+        edit_unsupported = False
         worker_done = asyncio.Event()
         wake = asyncio.Event()
 
@@ -567,7 +750,7 @@ class ActivityProtocolChannel:
                 placeholder_ok = False
 
         async def edit_worker() -> None:
-            nonlocal last_sent, last_edit_at
+            nonlocal last_sent, last_edit_at, edit_unsupported
             # When the placeholder failed we have no activity_id to PUT
             # into; the loop's only useful work is exiting cleanly. Skip
             # straight to that — the final flush below will POST the
@@ -591,8 +774,23 @@ class ActivityProtocolChannel:
                     continue
                 try:
                     await self._update_activity(inbound, activity_id or "", snapshot)
+                except httpx.HTTPStatusError as exc:
+                    # Some channels advertised as edit-capable may still
+                    # reject the PUT (405). Stop editing and let the final
+                    # flush POST the accumulated text as a new message;
+                    # don't advance ``last_sent`` so that flush still fires.
+                    if exc.response.status_code == 405:
+                        edit_unsupported = True
+                        logger.warning(
+                            "Activity edit not supported by channel %r — sending a single final message instead",
+                            inbound.get("channelId"),
+                        )
+                        return
+                    logger.exception("Activity interim edit failed")
+                    continue
                 except Exception:  # pragma: no cover
                     logger.exception("Activity interim edit failed")
+                    continue
                 last_sent = snapshot
                 last_edit_at = time.monotonic()
 
@@ -627,10 +825,24 @@ class ActivityProtocolChannel:
         except Exception:  # pragma: no cover
             logger.exception("Stream finalize failed")
 
+        # Fan the final reply out to any non-originating linked destinations
+        # (e.g. ``ResponseTarget.all_linked``) and learn whether this channel
+        # should still render on its own wire. For the default
+        # ``ResponseTarget.originating`` this is a no-op that returns True.
+        # Always consult the host even when nothing streamed so that
+        # ``ResponseTarget.none`` is honoured and non-originating targets are
+        # still fanned out for empty replies.
+        include_originating = True
+        if self._ctx is not None:
+            include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
+        if not include_originating:
+            return
+
         # Final flush — make sure the user sees everything that arrived after
-        # the worker's last edit. If the placeholder failed we POST a fresh
-        # activity here with whatever accumulated.
-        if not placeholder_ok:
+        # the worker's last edit. If the placeholder failed, or the channel
+        # turned out not to support edits (405), POST a fresh activity here
+        # with whatever accumulated rather than PUT-editing the placeholder.
+        if not placeholder_ok or edit_unsupported:
             text = accumulated or "(no response)"
             try:
                 await self._send_message(inbound, text)
@@ -649,6 +861,62 @@ class ActivityProtocolChannel:
             except Exception:  # pragma: no cover
                 logger.exception("Activity placeholder replace failed")
 
+    async def _buffer_and_send(
+        self,
+        inbound: Mapping[str, Any],
+        request: ChannelRequest,
+        stream: ResponseStream[AgentResponseUpdate, AgentResponse],
+    ) -> None:
+        """Consume the whole stream and POST a single final message.
+
+        Used for Bot Framework channels that do not support editing an
+        activity in place (everything except Teams — see
+        ``_EDIT_CAPABLE_CHANNELS``). Those channels return ``405`` to
+        ``PUT /v3/conversations/{id}/activities/{id}``, so the progressive
+        in-place edit cannot be used; we buffer the stream and ``POST`` a
+        single message at the end. Mirrors the non-streaming path's
+        fan-out + response-hook semantics so behaviour is consistent
+        regardless of whether the target streamed.
+        """
+        accumulated = ""
+        try:
+            async for update in stream:
+                if self._stream_transform_hook is not None:
+                    transformed = self._stream_transform_hook(update)
+                    if isinstance(transformed, Awaitable):
+                        transformed = await transformed
+                    if transformed is None:
+                        continue
+                    update = transformed
+                chunk = getattr(update, "text", None)
+                if chunk:
+                    accumulated += chunk
+        except Exception:
+            logger.exception("Activity streaming consumption failed")
+
+        try:
+            await stream.get_final_response()
+        except Exception:  # pragma: no cover
+            logger.exception("Stream finalize failed")
+
+        # Fan the final reply out to any non-originating linked destinations
+        # and learn whether this channel should still render on its own wire.
+        # Always consult the host even when nothing streamed so that
+        # ``ResponseTarget.none`` is honoured and non-originating targets are
+        # still fanned out for empty replies.
+        include_originating = True
+        if self._ctx is not None:
+            include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
+        if not include_originating:
+            return
+
+        result = await self._apply_response_hook(_text_result(accumulated), request)
+        text = getattr(result.result, "text", None) or "(no response)"
+        try:
+            await self._send_message(inbound, text)
+        except Exception:  # pragma: no cover
+            logger.exception("Activity buffered final send failed")
+
     # -- Bot Framework REST helpers --------------------------------------- #
 
     def _activity_payload(self, inbound: Mapping[str, Any], text: str) -> dict[str, Any]:
@@ -664,7 +932,7 @@ class ActivityProtocolChannel:
             "channelId": inbound.get("channelId"),
             "serviceUrl": inbound.get("serviceUrl"),
             "text": text,
-            "textFormat": "plain",
+            "textFormat": "markdown",
         }
 
     async def _send_message(self, inbound: Mapping[str, Any], text: str) -> str | None:
@@ -729,6 +997,57 @@ class ActivityProtocolChannel:
             )
         except Exception:  # pragma: no cover - non-critical UX
             logger.exception("Teams typing send failed")
+
+    # -- ChannelPush -------------------------------------------------------- #
+
+    async def push(self, identity: ChannelIdentity, payload: HostedRunResult[Any]) -> None:
+        """Proactively deliver an out-of-band message into a Bot Framework conversation.
+
+        Implements :class:`host.ChannelPush` so this channel can be a
+        non-originating destination for ``ChannelRequest.response_target``
+        (e.g. ``ResponseTarget.all_linked`` fan-out from Telegram/Discord, or
+        ``echo_input`` replay). The conversation reference is reconstructed
+        from ``identity.attributes`` captured on the inbound activity:
+        ``service_url``, ``conversation``, ``bot`` (outbound ``from``),
+        ``user`` (outbound ``recipient``), and ``channel_id``.
+
+        Echo payloads (the user's mirrored input) carry ``role="user"``
+        messages; Bot Service channels can only send AS the bot, so the text
+        is delivered as a normal bot message.
+        """
+        if self._http is None:
+            raise RuntimeError("ActivityProtocolChannel.push called before startup")
+        attrs = identity.attributes
+        service_url = str(attrs.get("service_url") or "").rstrip("/")
+        conversation = dict(attrs.get("conversation") or {"id": identity.native_id})
+        conversation_id = conversation.get("id") or identity.native_id
+        if not service_url:
+            raise ValueError("ActivityProtocolChannel.push requires 'service_url' in identity attributes")
+        # Re-validate the persisted ``service_url`` against the allow-list. The
+        # identity may have been recorded hours earlier (push runs out-of-band),
+        # so the allow-list could have narrowed or the store been tampered with
+        # since; never send a bearer token to a now-disallowed host.
+        if not self._is_service_url_allowed(service_url):
+            raise ValueError(f"ActivityProtocolChannel.push: service_url {service_url!r} is not in the allowed hosts")
+
+        text = getattr(payload.result, "text", None) or "(no response)"
+        activity = {
+            "type": "message",
+            "from": dict(attrs.get("bot") or {}),
+            "recipient": dict(attrs.get("user") or {}),
+            "conversation": conversation,
+            "channelId": attrs.get("channel_id"),
+            "serviceUrl": attrs.get("service_url"),
+            "text": text,
+            "textFormat": "markdown",
+        }
+        if attrs.get("locale"):
+            activity["locale"] = attrs["locale"]
+
+        url = f"{service_url}/v3/conversations/{conversation_id}/activities"
+        token = await self._get_token()
+        response = await self._http.post(url, json=activity, headers=self._auth_headers(token))
+        response.raise_for_status()
 
 
 __all__ = ["ActivityProtocolChannel", "activity_protocol_isolation_key"]

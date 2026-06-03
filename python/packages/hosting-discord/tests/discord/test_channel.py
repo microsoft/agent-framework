@@ -126,9 +126,9 @@ def test_ping_requires_valid_signature_and_returns_pong() -> None:
     body = json.dumps({"type": 1}).encode("utf-8")
 
     with TestClient(app) as client:
-        ok = client.post("/interactions", content=body, headers=_headers(signing_key, body))
+        ok = client.post("/", content=body, headers=_headers(signing_key, body))
         bad = client.post(
-            "/interactions",
+            "/",
             content=body,
             headers={
                 **_headers(signing_key, body),
@@ -159,11 +159,11 @@ def test_request_validation_errors() -> None:
     unsupported_app = Starlette(routes=list(unsupported_channel.contribute(_FakeContext()).routes))  # type: ignore[arg-type]
 
     with TestClient(app) as client:
-        too_large = client.post("/interactions", content=b"{}x")
-        invalid_json = client.post("/interactions", content=b"{")
+        too_large = client.post("/", content=b"{}x")
+        invalid_json = client.post("/", content=b"{")
     with TestClient(unsupported_app) as client:
-        non_object = client.post("/interactions", json=[])
-        unsupported = client.post("/interactions", json={"type": 99})
+        non_object = client.post("/", json=[])
+        unsupported = client.post("/", json={"type": 99})
 
     assert too_large.status_code == 413
     assert invalid_json.status_code == 400
