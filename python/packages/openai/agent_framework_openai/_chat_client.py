@@ -1971,7 +1971,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         metadata: dict[str, Any] = response.metadata or {}
         contents: list[Content] = []
         local_shell_tool_name = self._get_local_shell_tool_name(options.get("tools"))
-        for item in getattr(response, "output", []):  # type: ignore[reportUnknownMemberType]
+        outputs: list = getattr(response, "output", None) or []
+        for item in outputs:
             match item.type:
                 # types:
                 # ParsedResponseOutputMessage[Unknown] |
