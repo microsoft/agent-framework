@@ -733,7 +733,7 @@ class WorkflowAgent(BaseAgent):
                     function_responses[request_id] = content
                 elif content.type == "function_result":
                     response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
-                    function_responses[content.call_id] = response_data  # type: ignore[argument-type]
+                    function_responses[content.call_id] = response_data  # type: ignore
                 else:
                     raise AgentInvalidResponseException(
                         "Unexpected content type while awaiting request info responses."
