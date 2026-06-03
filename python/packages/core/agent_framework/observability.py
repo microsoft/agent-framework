@@ -2093,6 +2093,15 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
     return None
 
 
+def _serialize_tool_definitions(tools: Any) -> list[str] | None:
+    from agent_framework._tools import _tools_to_dict
+
+    tools_dict = _tools_to_dict(tools)
+    if not tools_dict:
+        return None
+    return [json.dumps(tool_def, ensure_ascii=False) for tool_def in tools_dict]
+
+
 # Mapping configuration for extracting span attributes
 # Each entry: source_keys -> (otel_attribute_key, transform_func, check_options_first, default_value)
 # - source_keys: single key or list of keys to check (first non-None value wins)
@@ -2128,11 +2137,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     # Tools with validation - returns None if no valid tools
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
-        lambda tools: (
-            json.dumps(tools_dict, ensure_ascii=False)
-            if (tools_dict := __import__("agent_framework._tools", fromlist=["_tools_to_dict"])._tools_to_dict(tools))
-            else None
-        ),
+        _serialize_tool_definitions,
         True,
         None,
     ),

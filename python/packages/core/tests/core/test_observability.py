@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import logging
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any
@@ -2893,6 +2894,22 @@ def test_get_span_attributes_with_agent_info():
     assert attrs[OtelAttr.AGENT_ID] == "agent_1"
     assert attrs[OtelAttr.AGENT_NAME] == "Test Agent"
     assert attrs[OtelAttr.AGENT_DESCRIPTION] == "A test agent"
+
+
+def test_get_span_attributes_serializes_tool_definitions_individually():
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    @tool
+    def lookup_weather(city: str) -> str:
+        return f"sunny in {city}"
+
+    attrs = _get_span_attributes(tools=[lookup_weather])
+    definitions = attrs[OtelAttr.TOOL_DEFINITIONS]
+
+    assert isinstance(definitions, list)
+    assert len(definitions) == 1
+    definition = json.loads(definitions[0])
+    assert definition["function"]["name"] == "lookup_weather"
 
 
 # region Test _capture_response
