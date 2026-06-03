@@ -303,9 +303,7 @@ class TestCommands:
         assert seen and seen[0].request.operation == "command.invoke"
         assert seen[0].request.input == "/todos"
         assert seen[0].request.session is not None
-        assert seen[0].request.session.isolation_key == activity_protocol_isolation_key(
-            "19:meeting_xyz@thread.v2"
-        )
+        assert seen[0].request.session.isolation_key == activity_protocol_isolation_key("19:meeting_xyz@thread.v2")
         assert ch._http is not None
         assert ch._http.post.call_args[1]["json"]["text"] == "listed"  # type: ignore[attr-defined]
 
@@ -435,6 +433,26 @@ class TestPush:
         )
         with pytest.raises(ValueError, match="service_url"):
             await ch.push(identity, _text_result("hi"))
+
+    async def test_push_rejects_disallowed_service_url(self) -> None:
+        # ``push`` runs out-of-band against a persisted identity, so it must
+        # re-validate the service_url against the allow-list rather than trust
+        # the value captured (possibly hours) earlier.
+        ch, _agent = _make_teams()
+        identity = ChannelIdentity(
+            channel="activity",
+            native_id="conv-x",
+            attributes={
+                "service_url": "https://attacker.example.com/",
+                "conversation": {"id": "conv-x"},
+                "bot": {"id": "bot-1"},
+                "user": {"id": "user-1"},
+            },
+        )
+        with pytest.raises(ValueError, match="not in the allowed hosts"):
+            await ch.push(identity, _text_result("hi"))
+        assert ch._http is not None
+        ch._http.post.assert_not_called()  # type: ignore[attr-defined]
 
 
 class TestIdentityRecording:
@@ -774,6 +792,56 @@ class TestStreaming:
         ch._http.put.assert_not_called()  # type: ignore[attr-defined]
         body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
         assert body["text"] == "(no response)"
+
+    async def test_buffer_empty_stream_consults_host_and_can_suppress(self) -> None:
+        # Empty streamed replies must still consult the host so that
+        # ``ResponseTarget.none`` (deliver_response -> False) suppresses the
+        # originating message instead of posting "(no response)".
+        ch, _agent = _make_teams(stream=True)
+        webchat_activity = {**_VALID_ACTIVITY, "channelId": "directline"}
+        ctx = MagicMock()
+        ctx.deliver_response = AsyncMock(return_value=False)
+        ch._ctx = ctx
+
+        class _EmptyStream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    if False:
+                        yield None  # type: ignore[unreachable]
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(webchat_activity, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
+        assert ch._http is not None
+        ctx.deliver_response.assert_awaited_once()
+        ch._http.post.assert_not_called()  # type: ignore[attr-defined]
+        ch._http.put.assert_not_called()  # type: ignore[attr-defined]
+
+    async def test_edit_empty_stream_consults_host_and_can_suppress(self) -> None:
+        # Same contract for the edit-capable (Teams) progressive path.
+        ch, _agent = _make_teams(stream=True)
+        ctx = MagicMock()
+        ctx.deliver_response = AsyncMock(return_value=False)
+        ch._ctx = ctx
+
+        class _EmptyStream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    if False:
+                        yield None  # type: ignore[unreachable]
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="")
+
+        ch._stream_edit_min_interval = 0.0
+        await ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
+        ctx.deliver_response.assert_awaited_once()
 
     async def test_edit_405_falls_back_to_single_post(self) -> None:
         # Defensive: a channel advertised as edit-capable that nonetheless

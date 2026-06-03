@@ -829,8 +829,11 @@ class ActivityProtocolChannel:
         # (e.g. ``ResponseTarget.all_linked``) and learn whether this channel
         # should still render on its own wire. For the default
         # ``ResponseTarget.originating`` this is a no-op that returns True.
+        # Always consult the host even when nothing streamed so that
+        # ``ResponseTarget.none`` is honoured and non-originating targets are
+        # still fanned out for empty replies.
         include_originating = True
-        if self._ctx is not None and accumulated:
+        if self._ctx is not None:
             include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
         if not include_originating:
             return
@@ -898,8 +901,11 @@ class ActivityProtocolChannel:
 
         # Fan the final reply out to any non-originating linked destinations
         # and learn whether this channel should still render on its own wire.
+        # Always consult the host even when nothing streamed so that
+        # ``ResponseTarget.none`` is honoured and non-originating targets are
+        # still fanned out for empty replies.
         include_originating = True
-        if self._ctx is not None and accumulated:
+        if self._ctx is not None:
             include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
         if not include_originating:
             return
@@ -1017,6 +1023,12 @@ class ActivityProtocolChannel:
         conversation_id = conversation.get("id") or identity.native_id
         if not service_url:
             raise ValueError("ActivityProtocolChannel.push requires 'service_url' in identity attributes")
+        # Re-validate the persisted ``service_url`` against the allow-list. The
+        # identity may have been recorded hours earlier (push runs out-of-band),
+        # so the allow-list could have narrowed or the store been tampered with
+        # since; never send a bearer token to a now-disallowed host.
+        if not self._is_service_url_allowed(service_url):
+            raise ValueError(f"ActivityProtocolChannel.push: service_url {service_url!r} is not in the allowed hosts")
 
         text = getattr(payload.result, "text", None) or "(no response)"
         activity = {
