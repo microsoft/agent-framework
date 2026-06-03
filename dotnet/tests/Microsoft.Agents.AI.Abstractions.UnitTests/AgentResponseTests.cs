@@ -401,11 +401,10 @@ public class AgentResponseTests
 
         // Assert
         using JsonDocument doc = JsonDocument.Parse(json);
-        foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
-        {
-            Assert.NotEqual("text", prop.Name, StringComparer.OrdinalIgnoreCase);
-            Assert.NotEqual("rawRepresentation", prop.Name, StringComparer.OrdinalIgnoreCase);
-        }
+        JsonElement root = doc.RootElement;
+        Assert.True(root.TryGetProperty("messages", out _));
+        Assert.False(root.TryGetProperty("text", out _));
+        Assert.False(root.TryGetProperty("rawRepresentation", out _));
     }
 
     private sealed class DerivedAgentResponse(AgentResponse response) : AgentResponse(response);
