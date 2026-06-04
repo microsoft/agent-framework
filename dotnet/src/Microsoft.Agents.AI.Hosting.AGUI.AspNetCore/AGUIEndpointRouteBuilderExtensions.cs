@@ -103,7 +103,16 @@ public static class AGUIEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(aiAgent);
 
         var agentSessionStore = endpoints.ServiceProvider.GetKeyedService<AgentSessionStore>(aiAgent.Name);
-        var hostAgent = new AIHostAgent(aiAgent, agentSessionStore ?? new NoopAgentSessionStore());
+
+        // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
+        var isolationKeyProvider = endpoints.ServiceProvider.GetService<SessionIsolationKeyProvider>();
+        if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
+        {
+            agentSessionStore ??= new NoopAgentSessionStore();
+            agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
+        }
+
+        var hostAgent = new AIHostAgent(aiAgent, agentSessionStore);
 
         return endpoints.MapPost(pattern, async ([FromBody] RunAgentInput? input, HttpContext context, CancellationToken cancellationToken) =>
         {
