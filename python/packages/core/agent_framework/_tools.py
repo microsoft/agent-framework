@@ -292,6 +292,7 @@ class FunctionTool(SerializationMixin):
         "_cached_parameters",
         "_input_schema",
         "_schema_supplied",
+        "_invoke_sync_on_event_loop",
     }
 
     def __init__(
@@ -366,6 +367,7 @@ class FunctionTool(SerializationMixin):
         self.description = description
         self.kind = kind
         self.additional_properties = additional_properties
+        self._invoke_sync_on_event_loop = False
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -537,6 +539,16 @@ class FunctionTool(SerializationMixin):
             self.invocation_exception_count += 1
             raise
 
+    async def _invoke_function(self, call_kwargs: Mapping[str, Any]) -> Any:
+        """Run sync tools off the event loop during async invocation."""
+        func = self.func.func if isinstance(self.func, FunctionTool) else self.func
+        if inspect.iscoroutinefunction(func) or getattr(self, "_invoke_sync_on_event_loop", False):
+            res = self.__call__(**call_kwargs)
+            return await res if inspect.isawaitable(res) else res
+
+        res = await asyncio.to_thread(self.__call__, **call_kwargs)
+        return await res if inspect.isawaitable(res) else res
+
     @overload
     async def invoke(
         self,
@@ -679,8 +691,7 @@ class FunctionTool(SerializationMixin):
         if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {observable_kwargs}")
-            res = self.__call__(**call_kwargs)
-            result = await res if inspect.isawaitable(res) else res
+            result = await self._invoke_function(call_kwargs)
             if skip_parsing:
                 logger.info(f"Function {self.name} succeeded.")
                 logger.debug(f"Function result: {type(result).__name__}")
@@ -730,8 +741,7 @@ class FunctionTool(SerializationMixin):
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
             try:
-                res = self.__call__(**call_kwargs)
-                result = await res if inspect.isawaitable(res) else res
+                result = await self._invoke_function(call_kwargs)
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()

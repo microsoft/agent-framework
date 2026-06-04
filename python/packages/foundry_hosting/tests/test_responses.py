@@ -2118,15 +2118,11 @@ class TestMultiTurnMixedContent:
         assert resp2.json()["status"] == "completed"
 
         second_call_messages = agent.run.call_args_list[1].kwargs["messages"]
-        mcp_call_contents = [
-            c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_call"
-        ]
+        mcp_call_contents = [c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_call"]
         mcp_result_contents = [
             c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_result"
         ]
-        function_result_contents = [
-            c for m in second_call_messages for c in m.contents if c.type == "function_result"
-        ]
+        function_result_contents = [c for m in second_call_messages for c in m.contents if c.type == "function_result"]
 
         assert len(mcp_call_contents) >= 1
         assert len(mcp_result_contents) >= 1

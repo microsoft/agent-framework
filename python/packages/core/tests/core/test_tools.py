@@ -1,4 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
+import asyncio
+import threading
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -1344,6 +1346,45 @@ async def test_invoke_skip_parsing_awaits_async_functions() -> None:
 
     raw = await slow.invoke(arguments={"x": 21}, skip_parsing=True)
     assert raw == 42
+
+
+async def test_invoke_sync_tool_does_not_block_event_loop() -> None:
+    release_tool = threading.Event()
+    tool_thread_ids: list[int] = []
+    event_loop_thread_id = threading.get_ident()
+
+    @tool
+    def wait_for_release() -> str:
+        tool_thread_ids.append(threading.get_ident())
+        return "released" if release_tool.wait(timeout=0.2) else "timed out"
+
+    async def release_soon() -> None:
+        await asyncio.sleep(0.01)
+        release_tool.set()
+
+    tool_task = asyncio.create_task(wait_for_release.invoke(skip_parsing=True))
+    release_task = asyncio.create_task(release_soon())
+
+    assert await asyncio.wait_for(tool_task, timeout=1) == "released"
+    await release_task
+    assert tool_thread_ids
+    assert tool_thread_ids[0] != event_loop_thread_id
+
+
+async def test_invoke_sync_tool_can_stay_on_event_loop() -> None:
+    event_loop_thread_id = threading.get_ident()
+    tool_thread_ids: list[int] = []
+
+    @tool
+    def needs_event_loop() -> str:
+        tool_thread_ids.append(threading.get_ident())
+        asyncio.get_running_loop()
+        return "ok"
+
+    needs_event_loop._invoke_sync_on_event_loop = True
+
+    assert await needs_event_loop.invoke(skip_parsing=True) == "ok"
+    assert tool_thread_ids == [event_loop_thread_id]
 
 
 async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
