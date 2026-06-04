@@ -76,6 +76,16 @@ agent_framework/
 - **`SkillScriptRunner`** - Protocol for file-based script execution. Any callable matching `(skill, script, args) -> Any` satisfies it. Code-defined scripts do not use a runner.
 - **`SkillsProvider`** - Context provider (extends `ContextProvider`) that discovers file-based skills from `SKILL.md` files and/or accepts code-defined `Skill` instances. Follows progressive disclosure: advertise → load → read resources / run scripts.
 
+### Model Context Protocol (`_mcp.py`)
+
+- **`MCPTool`** - Base wrapper that owns the MCP `ClientSession` and exposes the remote server's tools as `FunctionTool`s.
+- **`MCPStdioTool`** / **`MCPStreamableHTTPTool`** / **`MCPWebsocketTool`** - Transport-specific subclasses.
+- **`MCPTaskOptions`** (experimental, `MCP_LONG_RUNNING_TASKS` feature) - Per-tool-instance options controlling the SEP-2663 long-running task lifecycle. When the server advertises a tool with `execution.taskSupport == "required"`, `MCPTool.call_tool` transparently routes through `call_tool_as_task`, which sends an augmented `tools/call`, polls `tasks/get` until terminal, and reinterprets `tasks/result` as a normal `CallToolResult`. Fields:
+  - `default_ttl: timedelta | None` — forwarded to the server as `params.task.ttl` (milliseconds). When `None`, the server's default applies.
+  - `cancel_remote_task_on_local_cancellation: bool = True` — on local `CancelledError`, spawn a best-effort `tasks/cancel` before re-raising.
+- **Permissive fallback**: servers that ignore the augmentation (return `CallToolResult` directly) or reject the unknown `task` field with `METHOD_NOT_FOUND` / `INVALID_PARAMS` fall back to the plain `session.call_tool(...)` path so legacy servers keep working.
+- **Phase-aware reconnect**: a dropped connection before a `task_id` is known retries the augmented `tools/call`; once a `task_id` exists, only `tasks/get` / `tasks/result` are retried for the same id so reconnects never create duplicate remote tasks.
+
 ### File Access Harness (`_harness/_file_access.py`)
 
 - **`AgentFileStore`** - Abstract async store backing the file-access harness. Implementations expose `write_file`, `read_file`, `delete_file`, `list_files`, `file_exists`, `search_files`, and `create_directory` over forward-slash relative paths.
