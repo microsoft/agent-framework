@@ -172,7 +172,7 @@ public abstract class AgentClassSkill<
     /// Override this property in derived classes to provide skill-specific scripts.
     /// </para>
     /// <para>
-    /// Scripts are not automatically included in the skill body.
+    /// Only script parameter schemas are included in the skill body (as a <c>&lt;script_schemas&gt;</c> block).
     /// To enable discovery, reference scripts by name in the skill's instructions or in a resource.
     /// </para>
     /// </remarks>
@@ -228,7 +228,7 @@ public abstract class AgentClassSkill<
     /// Creates a skill script backed by a delegate.
     /// </summary>
     /// <remarks>
-    /// Scripts are not automatically included in the skill body.
+    /// Only the script's parameter schema is included in the skill body (as a <c>&lt;script_schemas&gt;</c> block).
     /// To enable discovery, reference the script by name in the skill's instructions or in a resource.
     /// </remarks>
     /// <param name="name">The script name.</param>

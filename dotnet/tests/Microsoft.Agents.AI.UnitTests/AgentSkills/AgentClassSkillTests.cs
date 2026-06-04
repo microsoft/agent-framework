@@ -502,7 +502,7 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public async Task Content_IncludesDescription_ForReflectedResourcesAsync()
+    public async Task Content_DoesNotRenderResources_InBodyAsync()
     {
         // Arrange
         var skill = new AttributedResourcePropertiesSkill();

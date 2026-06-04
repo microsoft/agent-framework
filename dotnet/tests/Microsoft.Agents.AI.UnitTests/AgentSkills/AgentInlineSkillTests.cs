@@ -207,7 +207,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public async Task Content_IncludesResourcesAndScriptsAddedBeforeFirstAccessAsync()
+    public async Task Content_IncludesScriptSchemasAddedBeforeFirstAccessAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -233,7 +233,7 @@ public sealed class AgentInlineSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — JSON schema should be present as direct content (no wrapper element) with preserved quotes
+        // Assert — JSON schema should be present inside <schema> element (no extra wrapper) with preserved quotes
         Assert.Contains("<schema script=\"search\">", content);
         Assert.Contains("\"query\"", content);
         Assert.DoesNotContain("<![CDATA[", content);
@@ -461,7 +461,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public async Task Content_ScriptWithDescription_IncludesDescriptionAttributeAsync()
+    public async Task Content_ScriptWithDescription_DoesNotEmitDescriptionAttributeAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");

@@ -49,7 +49,7 @@ public sealed class AgentFileSkill : AgentSkill
     /// <inheritdoc/>
     /// <remarks>
     /// Returns the raw SKILL.md content. When the skill has scripts, a
-    /// <c>&lt;script_schemas&gt;</c> block is appended describing the arguments format.
+    /// <c>&lt;script_schemas&gt;</c> block is appended describing the argument format.
     /// The result is cached after the first access.
     /// </remarks>
     public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)

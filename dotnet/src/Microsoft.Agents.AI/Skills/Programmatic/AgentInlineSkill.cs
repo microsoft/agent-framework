@@ -156,7 +156,7 @@ public sealed class AgentInlineSkill : AgentSkill
     /// The delegate's parameters and return type are automatically marshaled via <c>AIFunctionFactory</c>.
     /// </summary>
     /// <remarks>
-    /// Scripts are not automatically included in the skill body.
+    /// Only the script's parameter schema is included in the skill body (as a <c>&lt;script_schemas&gt;</c> block).
     /// To enable discovery, reference the script by name in the skill's instructions or in a resource.
     /// </remarks>
     /// <param name="name">The script name.</param>
