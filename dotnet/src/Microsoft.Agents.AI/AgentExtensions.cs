@@ -1,7 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -68,17 +72,59 @@ public static partial class AIAgentExtensions
     {
         Throw.IfNull(agent);
 
+        ConcurrentDictionary<string, PendingAgentToolApproval> pendingApprovals = [];
+
         [Description("Invoke an agent to retrieve some information.")]
-        async Task<string> InvokeAgentAsync(
+        async Task<string> InvokeAgentMetadataAsync(
             [Description("Input query to invoke the agent.")] string query,
             CancellationToken cancellationToken)
         {
+            return await InvokeAgentAsync(query, cancellationToken).ConfigureAwait(false) as string ?? string.Empty;
+        }
+
+        async Task<object?> InvokeAgentAsync(string query, CancellationToken cancellationToken)
+        {
+            var parentFunctionContext = FunctionInvokingChatClient.CurrentContext;
+            FunctionCallContent? parentToolCall =
+                parentFunctionContext?.CallContent is { } callContent &&
+                string.Equals(callContent.Name, options?.Name, StringComparison.Ordinal)
+                    ? CloneFunctionCall(callContent)
+                    : null;
+
             // Propagate any additional properties from the parent agent's run to the child agent if the parent is using a FunctionInvokingChatClient.
             AgentRunOptions? agentRunOptions = FunctionInvokingChatClient.CurrentContext?.Options?.AdditionalProperties is AdditionalPropertiesDictionary dict
                 ? new AgentRunOptions { AdditionalProperties = dict }
                 : null;
 
-            var response = await agent.RunAsync(query, session: session, options: agentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
+            AgentSession? agentSession = session;
+            IEnumerable<ChatMessage> inputMessages = [new ChatMessage(ChatRole.User, query)];
+
+            if (parentToolCall is not null &&
+                pendingApprovals.TryRemove(parentToolCall.CallId, out PendingAgentToolApproval? pendingApproval))
+            {
+                agentSession = pendingApproval.Session;
+                inputMessages = pendingApproval.ApprovalRequests.ConvertAll(
+                    request => new ChatMessage(ChatRole.User, [request.CreateResponse(approved: true)]));
+            }
+            else if (parentToolCall is not null && agentSession is null)
+            {
+                agentSession = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            var response = await agent.RunAsync(inputMessages, session: agentSession, options: agentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            if (parentToolCall is not null &&
+                agentSession is not null &&
+                response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList() is { Count: > 0 } approvalRequests)
+            {
+                pendingApprovals[parentToolCall.CallId] = new PendingAgentToolApproval(agentSession, approvalRequests);
+
+                // Agent-as-tool must surface the child agent's normal HITL pipeline; otherwise
+                // ToolApprovalRequestContent from the child would be flattened into a tool result.
+                return new AgentToolApprovalRequestResult(
+                    new ToolApprovalRequestContent(CreateAgentToolApprovalRequestId(parentToolCall.CallId), parentToolCall));
+            }
+
             return response.Text;
         }
 
@@ -86,7 +132,65 @@ public static partial class AIAgentExtensions
         options.Name ??= SanitizeAgentName(agent.Name);
         options.Description ??= agent.Description;
 
-        return AIFunctionFactory.Create(InvokeAgentAsync, options);
+        return new AgentAIFunction(AIFunctionFactory.Create(InvokeAgentMetadataAsync, options), InvokeAgentAsync);
+    }
+
+    internal static bool TryExtractAgentToolApprovalRequests(IList<ChatMessage> messages, out List<ToolApprovalRequestContent> approvalRequests)
+    {
+        approvalRequests = [];
+
+        foreach (var message in messages)
+        {
+            foreach (var content in message.Contents)
+            {
+                if (content is FunctionResultContent { Result: AgentToolApprovalRequestResult result })
+                {
+                    approvalRequests.Add(result.ApprovalRequest);
+                }
+            }
+        }
+
+        return approvalRequests.Count > 0;
+    }
+
+    private static FunctionCallContent? CloneFunctionCall(FunctionCallContent? functionCall)
+    {
+        if (functionCall is null)
+        {
+            return null;
+        }
+
+        return functionCall.Arguments is null
+            ? new FunctionCallContent(functionCall.CallId, functionCall.Name)
+            : new FunctionCallContent(functionCall.CallId, functionCall.Name, new Dictionary<string, object?>(functionCall.Arguments));
+    }
+
+    private static string CreateAgentToolApprovalRequestId(string callId) => $"agent_tool_{callId}";
+
+    private sealed record PendingAgentToolApproval(
+        AgentSession Session,
+        List<ToolApprovalRequestContent> ApprovalRequests);
+
+    internal sealed record AgentToolApprovalRequestResult(
+        ToolApprovalRequestContent ApprovalRequest);
+
+    private sealed class AgentAIFunction(
+        AIFunction metadataFunction,
+        Func<string, CancellationToken, Task<object?>> invokeAsync) : DelegatingAIFunction(metadataFunction)
+    {
+        protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
+        {
+            if (!arguments.TryGetValue("query", out object? queryValue) || queryValue is null)
+            {
+                throw new ArgumentException("The required 'query' argument was not provided.", nameof(arguments));
+            }
+
+            string query = queryValue is JsonElement { ValueKind: JsonValueKind.String } jsonString
+                ? jsonString.GetString()!
+                : queryValue.ToString() ?? string.Empty;
+
+            return await invokeAsync(query, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>

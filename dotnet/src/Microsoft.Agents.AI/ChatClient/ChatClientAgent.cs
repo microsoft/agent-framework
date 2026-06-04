@@ -249,6 +249,11 @@ public sealed partial class ChatClientAgent : AIAgent
             chatResponseMessage.AuthorName ??= this.Name;
         }
 
+        if (AIAgentExtensions.TryExtractAgentToolApprovalRequests(chatResponse.Messages, out var agentToolApprovalRequests))
+        {
+            chatResponse.Messages = [new ChatMessage(ChatRole.Assistant, [.. agentToolApprovalRequests]) { AuthorName = this.Name }];
+        }
+
         // Notify providers of all new messages unless persistence is handled per-service-call by the decorator.
         // When background responses are allowed, force notification since per-service-call persistence
         // is unreliable (the caller may stop consuming the stream before the decorator can persist).

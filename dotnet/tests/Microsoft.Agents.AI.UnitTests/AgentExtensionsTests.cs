@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -306,17 +307,130 @@ public class AgentExtensionsTests
         };
         SetFunctionInvokingChatClientCurrentContext(context);
 
-        // Act
-        var arguments = new AIFunctionArguments() { ["query"] = "Test query" };
-        var result = await aiFunction.InvokeAsync(arguments);
+        try
+        {
+            // Act
+            var arguments = new AIFunctionArguments() { ["query"] = "Test query" };
+            var result = await aiFunction.InvokeAsync(arguments);
 
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal("Complex response", result.ToString());
-        Assert.NotNull(testAgent.ReceivedAgentRunOptions);
-        Assert.NotNull(testAgent.ReceivedAgentRunOptions!.AdditionalProperties);
-        Assert.Equal("value1", testAgent.ReceivedAgentRunOptions!.AdditionalProperties["customProperty1"]);
-        Assert.Equal(42, testAgent.ReceivedAgentRunOptions!.AdditionalProperties["customProperty2"]);
+            // Assert
+            Assert.NotNull(result);
+            Assert.Equal("Complex response", result.ToString());
+            Assert.NotNull(testAgent.ReceivedAgentRunOptions);
+            Assert.NotNull(testAgent.ReceivedAgentRunOptions!.AdditionalProperties);
+            Assert.Equal("value1", testAgent.ReceivedAgentRunOptions!.AdditionalProperties["customProperty1"]);
+            Assert.Equal(42, testAgent.ReceivedAgentRunOptions!.AdditionalProperties["customProperty2"]);
+        }
+        finally
+        {
+            SetFunctionInvokingChatClientCurrentContext(null);
+        }
+    }
+
+    [Fact]
+    public async Task CreateFromAgent_ApprovalRequiredChildTool_AsParentToolSurfacesAndResumesApprovalAsync()
+    {
+        // Arrange
+        int dangerousFunctionCalls = 0;
+        var dangerousTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+            () =>
+            {
+                dangerousFunctionCalls++;
+                return "Dangerous function completed.";
+            },
+            name: "DangerousFunction"));
+
+        var childAgent = new ChatClientAgent(
+            CreateSequentialChatClient(
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("child-direct-call", "DangerousFunction")])),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("child-tool-call", "DangerousFunction")])),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Child agent completed."))).Object,
+            new ChatClientAgentOptions
+            {
+                Name = "AgentB",
+                ChatOptions = new() { Tools = [dangerousTool] },
+            });
+
+        var childAsTool = childAgent.AsAIFunction();
+        var parentAgent = new ChatClientAgent(
+            CreateSequentialChatClient(
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("parent-agent-b-call", "AgentB", new Dictionary<string, object?> { ["query"] = "Run child agent." })])),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Parent should wait for approval.")),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Parent completed after child approval."))).Object,
+            tools: [childAsTool]);
+
+        // Act - direct child invocation.
+        AgentResponse directResponse = await childAgent.RunAsync("Run the dangerous function.");
+
+        // Assert - direct child invocation requires approval and does not execute the dangerous function.
+        ToolApprovalRequestContent directApprovalRequest = Assert.Single(
+            directResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+        Assert.Equal("DangerousFunction", ((FunctionCallContent)directApprovalRequest.ToolCall).Name);
+        Assert.Equal(0, dangerousFunctionCalls);
+
+        // Act - invoke child agent as parent tool.
+        AgentSession parentSession = await parentAgent.CreateSessionAsync();
+        AgentResponse parentApprovalResponse = await parentAgent.RunAsync("Ask AgentB to run.", parentSession);
+
+        // Assert - the child approval is surfaced through the parent agent instead of being flattened into a tool result.
+        ToolApprovalRequestContent parentApprovalRequest = Assert.Single(
+            parentApprovalResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+        Assert.Equal("AgentB", ((FunctionCallContent)parentApprovalRequest.ToolCall).Name);
+        Assert.Equal(0, dangerousFunctionCalls);
+
+        // Act - approve the parent-surfaced request.
+        AgentResponse finalResponse = await parentAgent.RunAsync(
+            [new ChatMessage(ChatRole.User, [parentApprovalRequest.CreateResponse(approved: true)])],
+            parentSession);
+
+        // Assert - approval is routed back through AgentB's normal invocation pipeline.
+        Assert.Equal(1, dangerousFunctionCalls);
+        Assert.Contains(finalResponse.Messages, m => m.Text.Contains("Parent completed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CreateFromAgent_ApprovalRequiredChildTool_RejectedParentApprovalDoesNotInvokeChildToolAsync()
+    {
+        // Arrange
+        int dangerousFunctionCalls = 0;
+        var dangerousTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+            () =>
+            {
+                dangerousFunctionCalls++;
+                return "Dangerous function completed.";
+            },
+            name: "DangerousFunction"));
+
+        var childAgent = new ChatClientAgent(
+            CreateSequentialChatClient(
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("child-tool-call", "DangerousFunction")]))).Object,
+            new ChatClientAgentOptions
+            {
+                Name = "AgentB",
+                ChatOptions = new() { Tools = [dangerousTool] },
+            });
+
+        var parentAgent = new ChatClientAgent(
+            CreateSequentialChatClient(
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("parent-agent-b-call", "AgentB", new Dictionary<string, object?> { ["query"] = "Run child agent." })])),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Parent should wait for approval.")),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Parent handled the rejection."))).Object,
+            tools: [childAgent.AsAIFunction()]);
+
+        // Act - invoke child agent as parent tool.
+        AgentSession parentSession = await parentAgent.CreateSessionAsync();
+        AgentResponse parentApprovalResponse = await parentAgent.RunAsync("Ask AgentB to run.", parentSession);
+        ToolApprovalRequestContent parentApprovalRequest = Assert.Single(
+            parentApprovalResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+
+        // Act - reject the parent-surfaced request.
+        AgentResponse finalResponse = await parentAgent.RunAsync(
+            [new ChatMessage(ChatRole.User, [parentApprovalRequest.CreateResponse(approved: false, reason: "Denied")])],
+            parentSession);
+
+        // Assert - rejection does not resume AgentB or execute the dangerous function.
+        Assert.Equal(0, dangerousFunctionCalls);
+        Assert.Contains(finalResponse.Messages, m => m.Text.Contains("rejection", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -358,6 +472,20 @@ public class AgentExtensionsTests
         {
             asyncLocal.Value = context;
         }
+    }
+
+    private static Mock<IChatClient> CreateSequentialChatClient(params ChatResponse[] responses)
+    {
+        var responseQueue = new Queue<ChatResponse>(responses);
+        var mockChatClient = new Mock<IChatClient>();
+
+        mockChatClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => responseQueue.Count > 0 ? responseQueue.Dequeue() : responses.Last());
+
+        return mockChatClient;
     }
 
     /// <summary>

@@ -331,14 +331,22 @@ public abstract partial class AIAgent
     /// System-role messages must be developer-controlled and should never contain end-user input.
     /// </para>
     /// </remarks>
-    public Task<AgentResponse> RunAsync(
+    public async Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        var previousContext = CurrentRunContext;
         CurrentRunContext = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
-        return this.RunCoreAsync(messages, session, options, cancellationToken);
+        try
+        {
+            return await this.RunCoreAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            CurrentRunContext = previousContext;
+        }
     }
 
     /// <summary>
@@ -467,14 +475,22 @@ public abstract partial class AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var previousContext = CurrentRunContext;
         AgentRunContext context = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
         CurrentRunContext = context;
-        await foreach (var update in this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+        try
         {
-            yield return update;
+            await foreach (var update in this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+            {
+                yield return update;
 
-            // Restore context again when resuming after the caller code executes.
-            CurrentRunContext = context;
+                // Restore context again when resuming after the caller code executes.
+                CurrentRunContext = context;
+            }
+        }
+        finally
+        {
+            CurrentRunContext = previousContext;
         }
     }
 
