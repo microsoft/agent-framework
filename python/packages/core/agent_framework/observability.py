@@ -2053,8 +2053,8 @@ def create_mcp_client_span(
     with trace.use_span(
         span=span,
         end_on_exit=True,
-        record_exception=False,
-        set_status_on_exception=False,
+        record_exception=True,
+        set_status_on_exception=True,
     ) as current_span:
         yield current_span
 
