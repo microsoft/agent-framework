@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any, ClassVar, Generic, cast
+from typing import Any, ClassVar, Generic, TypeGuard, cast
 from uuid import uuid4
 
 from agent_framework import (
@@ -277,6 +277,17 @@ _JSON_SCHEMA_KEYWORDS: frozenset[str] = frozenset({
     "required",
     "type",
 })
+
+
+def _is_str_mapping(value: Any) -> TypeGuard[Mapping[str, Any]]:
+    """Narrow ``Any`` to ``Mapping[str, Any]`` (pyright doesn't infer key type from ``isinstance``)."""
+    return isinstance(value, Mapping)
+
+
+def _is_non_string_sequence(value: Any) -> TypeGuard[Sequence[Any]]:
+    """Narrow ``Any`` to ``Sequence[Any]``, excluding ``str``/``bytes``."""
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+
 
 _FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "STOP": "stop",
@@ -790,23 +801,31 @@ class RawGeminiChatClient(
         return types.GenerateContentConfig(**kwargs)
 
     @staticmethod
-    def _extract_response_schema(response_format: Any) -> dict[str, Any] | None:
-        """Extract a Gemini response schema from supported mapping response_format shapes."""
-        if not isinstance(response_format, Mapping):
+    def _extract_response_schema(response_format: Any) -> dict[str, Any] | type[BaseModel] | None:
+        """Extract a Gemini response schema from a Pydantic class or supported mapping envelope.
+
+        Pydantic classes are forwarded unchanged (google-genai's ``response_schema`` accepts ``type``).
+        Mapping envelopes (``format``, ``json_schema``, ``schema``, or a bare JSON Schema) are
+        returned as a ``dict``. Returns ``None`` for anything else (e.g. plain JSON-object mode).
+        """
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            return response_format
+
+        if not _is_str_mapping(response_format):
             return None
 
         if (
-            isinstance(format_config := response_format.get("format"), Mapping)
+            _is_str_mapping(format_config := response_format.get("format"))
             and (schema := RawGeminiChatClient._extract_response_schema(format_config)) is not None
         ):
             return schema
 
-        if isinstance(json_schema := response_format.get("json_schema"), Mapping) and isinstance(
-            schema := json_schema.get("schema"), Mapping
+        if _is_str_mapping(json_schema := response_format.get("json_schema")) and _is_str_mapping(
+            inner_schema := json_schema.get("schema")
         ):
-            return dict(schema)
+            return dict(inner_schema)
 
-        if isinstance(schema := response_format.get("schema"), Mapping):
+        if _is_str_mapping(schema := response_format.get("schema")):
             return dict(schema)
 
         if RawGeminiChatClient._is_json_schema_mapping(response_format):
@@ -825,7 +844,7 @@ class RawGeminiChatClient(
             return True
         if isinstance(schema_type, str):
             return schema_type in _JSON_SCHEMA_TYPES
-        if isinstance(schema_type, Sequence) and not isinstance(schema_type, (str, bytes)):
+        if _is_non_string_sequence(schema_type):
             return all(isinstance(item, str) and item in _JSON_SCHEMA_TYPES for item in schema_type)
 
         return False

@@ -965,6 +965,26 @@ async def test_response_format_raw_json_schema_added_to_config() -> None:
     assert config.response_schema == schema
 
 
+async def test_response_format_pydantic_class_added_to_config() -> None:
+    """A Pydantic model in response_format should be forwarded as Gemini's response_schema."""
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        answer: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text='{"answer": "hi"}')]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"response_format": Reply},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema is Reply
+
+
 async def test_agent_default_options_response_format_raw_schema_added_to_config() -> None:
     """Agent default_options is the path used by declarative outputSchema."""
     client, mock = _make_gemini_client()
@@ -1155,6 +1175,26 @@ async def test_response_schema_takes_precedence_over_response_format_schema() ->
     await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Hi")])],
         options={"response_format": response_format_schema, "response_schema": response_schema},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_schema == response_schema
+
+
+async def test_response_schema_takes_precedence_over_pydantic_response_format() -> None:
+    """An explicit Gemini response_schema should also win over a Pydantic response_format."""
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        name: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+    response_schema = {"type": "object", "properties": {"id": {"type": "integer"}}}
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"response_format": Reply, "response_schema": response_schema},
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
