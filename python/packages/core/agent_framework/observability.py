@@ -2026,11 +2026,6 @@ def get_function_span(
 # region MCP span helpers
 
 
-def mcp_tracer() -> trace.Tracer:
-    """Get a tracer for MCP operations, or a no-op tracer if observability is disabled."""
-    return get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
-
-
 @contextlib.contextmanager
 def create_mcp_client_span(
     method_name: str,
@@ -2053,7 +2048,8 @@ def create_mcp_client_span(
     attrs: dict[str, Any] = {OtelAttr.MCP_METHOD_NAME: method_name}
     if attributes:
         attrs.update(attributes)
-    span = mcp_tracer().start_span(span_name, kind=trace.SpanKind.CLIENT, attributes=attrs)
+    tracer = get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
+    span = tracer.start_span(span_name, kind=trace.SpanKind.CLIENT, attributes=attrs)
     with trace.use_span(
         span=span,
         end_on_exit=True,

@@ -735,8 +735,7 @@ class FunctionTool(SerializationMixin):
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
-                error_type = type(exception).__name__
-                attributes[OtelAttr.ERROR_TYPE] = error_type
+                attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 logger.error(f"Function failed. Error: {exception}")
                 raise

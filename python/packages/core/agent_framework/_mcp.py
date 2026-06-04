@@ -808,9 +808,7 @@ class MCPTool:
             try:
                 with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
                     initialize_result = await session.initialize()
-                    protocol_version = getattr(initialize_result, "protocolVersion", None)
-                    if protocol_version:
-                        init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, protocol_version)
+                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
                     self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
             except (Exception, asyncio.CancelledError) as ex:
                 if await self._close_and_check_cancelled(ex):
@@ -831,9 +829,7 @@ class MCPTool:
             # If the session is not initialized, we need to reinitialize it
             with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
                 initialize_result = await self.session.initialize()
-                protocol_version = getattr(initialize_result, "protocolVersion", None)
-                if protocol_version:
-                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, protocol_version)
+                init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
                 self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
         elif self._server_capabilities is None:
             self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
@@ -1387,11 +1383,12 @@ class MCPTool:
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
 
         # Build MCP span attributes for tools/call
-        mcp_attrs = self._mcp_base_span_attributes()
-        mcp_attrs[OtelAttr.TOOL_NAME] = tool_name
-        mcp_attrs[OtelAttr.OPERATION] = OtelAttr.TOOL_EXECUTION_OPERATION
-
-        with create_mcp_client_span("tools/call", target=tool_name, attributes=mcp_attrs) as span:
+        mcp_span_attrs = self._mcp_base_span_attributes()
+        mcp_span_attrs.update({
+            OtelAttr.TOOL_NAME: tool_name,
+            OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        })
+        with create_mcp_client_span("tools/call", target=tool_name, attributes=mcp_span_attrs) as span:  # type: ignore
             return await self._call_tool_with_retries(tool_name, filtered_kwargs, meta, parser, span)
 
     async def _call_tool_with_retries(
@@ -1499,10 +1496,10 @@ class MCPTool:
             )
 
         parser = self.parse_prompt_results or self._parse_prompt_result_from_mcp
-        mcp_attrs = self._mcp_base_span_attributes()
-        mcp_attrs[OtelAttr.PROMPT_NAME] = prompt_name
+        mcp_span_attrs = self._mcp_base_span_attributes()
+        mcp_span_attrs.update({OtelAttr.PROMPT_NAME: prompt_name})
 
-        with create_mcp_client_span("prompts/get", target=prompt_name, attributes=mcp_attrs) as span:
+        with create_mcp_client_span("prompts/get", target=prompt_name, attributes=mcp_span_attrs) as span:  # type: ignore
             for attempt in range(2):
                 try:
                     prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
