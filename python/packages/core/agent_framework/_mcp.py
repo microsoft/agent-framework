@@ -1439,7 +1439,8 @@ class MCPTool:
                         continue
                     except Exception as reconn_ex:
                         raise ToolExecutionException(
-                            "Failed to reconnect to MCP server.", inner_exception=reconn_ex
+                            "Failed to reconnect to MCP server.",
+                            inner_exception=reconn_ex,
                         ) from reconn_ex
 
                 # Second attempt also failed, give up.
