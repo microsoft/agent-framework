@@ -285,7 +285,6 @@ class MCPTool:
         self._supports_logging: bool | None = None
         self._ping_available: bool = True
         self._pending_reload_tasks: set[asyncio.Task[None]] = set()
-        self._mcp_protocol_version: str | None = None
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -295,10 +294,7 @@ class MCPTool:
 
         Subclasses override to add transport-specific attributes (server address, port, etc.).
         """
-        attrs: dict[str, Any] = {}
-        if self._mcp_protocol_version:
-            attrs[OtelAttr.MCP_PROTOCOL_VERSION] = self._mcp_protocol_version
-        return attrs
+        return {}
 
     def _parse_prompt_result_from_mcp(
         self,
@@ -812,9 +808,9 @@ class MCPTool:
             try:
                 with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
                     initialize_result = await session.initialize()
-                    self._mcp_protocol_version = getattr(initialize_result, "protocolVersion", None)
-                    if self._mcp_protocol_version:
-                        init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, self._mcp_protocol_version)
+                    protocol_version = getattr(initialize_result, "protocolVersion", None)
+                    if protocol_version:
+                        init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, protocol_version)
                     self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
             except (Exception, asyncio.CancelledError) as ex:
                 if await self._close_and_check_cancelled(ex):
@@ -835,9 +831,9 @@ class MCPTool:
             # If the session is not initialized, we need to reinitialize it
             with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
                 initialize_result = await self.session.initialize()
-                self._mcp_protocol_version = getattr(initialize_result, "protocolVersion", None)
-                if self._mcp_protocol_version:
-                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, self._mcp_protocol_version)
+                protocol_version = getattr(initialize_result, "protocolVersion", None)
+                if protocol_version:
+                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, protocol_version)
                 self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
         elif self._server_capabilities is None:
             self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))

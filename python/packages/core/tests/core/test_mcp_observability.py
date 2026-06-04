@@ -28,7 +28,6 @@ def _make_connected_mcp_tool(
     *,
     supports_tools: bool = True,
     supports_prompts: bool = True,
-    protocol_version: str | None = "2025-06-18",
 ) -> MCPTool:
     """Create an MCPTool with a mocked session, ready for testing."""
     tool = MCPTool(name=name)
@@ -38,7 +37,6 @@ def _make_connected_mcp_tool(
     tool._supports_prompts = supports_prompts
     tool.load_tools_flag = True
     tool.load_prompts_flag = True
-    tool._mcp_protocol_version = protocol_version
     return tool
 
 
@@ -129,7 +127,6 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
             from agent_framework.observability import OtelAttr
 
             with create_mcp_client_span("initialize", attributes=self_._mcp_base_span_attributes()) as init_span:
-                self_._mcp_protocol_version = "2025-06-18"
                 init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, "2025-06-18")
 
             self_.session = mock_session_cls
@@ -167,7 +164,6 @@ async def test_mcp_tools_list_span(span_exporter: InMemorySpanExporter):
     span = list_spans[0]
     assert span.kind == SpanKind.CLIENT
     assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "tools/list"
-    assert span.attributes.get(OtelAttr.MCP_PROTOCOL_VERSION) == "2025-06-18"
 
 
 # endregion
@@ -215,7 +211,6 @@ async def test_mcp_tools_call_creates_client_span_when_no_parent(span_exporter: 
     assert span.name == "tools/call get-weather"
     assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "tools/call"
     assert span.attributes[OtelAttr.TOOL_NAME] == "get-weather"
-    assert span.attributes.get(OtelAttr.MCP_PROTOCOL_VERSION) == "2025-06-18"
 
 
 async def test_mcp_tools_call_tool_error_sets_error_type(span_exporter: InMemorySpanExporter):
@@ -313,20 +308,6 @@ def test_mcp_websocket_tool_default_port():
     tool = MCPWebsocketTool(name="test", url="wss://ws.example.com/mcp")
     attrs = tool._mcp_base_span_attributes()
     assert attrs[OtelAttr.PORT] == 443
-
-
-def test_mcp_protocol_version_in_attributes():
-    """Protocol version should be included in span attributes."""
-    tool = _make_connected_mcp_tool(protocol_version="2025-06-18")
-    attrs = tool._mcp_base_span_attributes()
-    assert attrs[OtelAttr.MCP_PROTOCOL_VERSION] == "2025-06-18"
-
-
-def test_mcp_protocol_version_omitted_when_none():
-    """Protocol version should be omitted from span attributes when unknown."""
-    tool = _make_connected_mcp_tool(protocol_version=None)
-    attrs = tool._mcp_base_span_attributes()
-    assert OtelAttr.MCP_PROTOCOL_VERSION not in attrs
 
 
 # endregion
