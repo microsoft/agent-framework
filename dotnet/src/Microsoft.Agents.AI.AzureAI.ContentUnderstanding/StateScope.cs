@@ -10,9 +10,10 @@ public enum StateScope
 {
     /// <summary>
     /// Default. State is partitioned by <c>AgentSession</c>; multiple users sharing one
-    /// provider instance get isolated document caches. When the hosting layer creates a fresh
-    /// session per HTTP request, state is lost across turns — use <see cref="PerAgent"/>
-    /// instead.
+    /// provider instance get isolated document caches, including the built-in tools which are
+    /// rebuilt per turn against the calling session's partition (safe under concurrent use).
+    /// When the hosting layer creates a fresh session per HTTP request, state is lost across
+    /// turns — use <see cref="PerAgent"/> instead.
     /// </summary>
     PerSession = 0,
 

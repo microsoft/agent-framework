@@ -24,6 +24,17 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// <c>Operation.Rehydrate&lt;AnalysisResult&gt;</c> — there is no background task, so all
 /// state is fully JSON-serializable.
 /// </remarks>
+/// <remarks>
+/// <para><b>Concurrency.</b> A single provider instance is safe to share across multiple
+/// concurrent sessions. The tracked document registry is partitioned per session (see
+/// <see cref="StateScope.PerSession"/>) or per agent (see <see cref="StateScope.PerAgent"/>),
+/// and the built-in <c>list_documents</c> / <c>get_analyzed_document</c> tools are rebuilt on
+/// every turn bound to that turn's partition — so a tool surfaced for session A can never read
+/// session B's documents, even when both turns run concurrently. Choosing
+/// <see cref="StateScope.PerAgent"/> while sharing one provider across multiple end-users is
+/// the one exception: that mode deliberately ignores the session, so distinct users would then
+/// share a registry.</para>
+/// </remarks>
 public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAsyncDisposable
 {
     private const string SystemNoteText =
@@ -53,9 +64,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
 
     private readonly IContentUnderstandingClientFactory _clientFactory;
     private readonly SemaphoreSlim _clientInitLock = new(1, 1);
-    private readonly AITool[] _tools;
     private readonly ConcurrentBag<string> _uploadedFileIds = new();
-    private ContentUnderstandingProviderState? _activeState;
     private ContentUnderstandingClient? _client;
     // Cached default options instance reused by Operation.Rehydrate. Azure.Core's static
     // Rehydrate factory requires a non-null ClientOptions to seed the pipeline / retry / etc.
@@ -80,11 +89,6 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         this._state = new ProviderSessionState<ContentUnderstandingProviderState>(
             stateInitializer: static _ => new ContentUnderstandingProviderState(),
             stateKey: this.StateKeys[0]);
-        this._tools = new AITool[]
-        {
-            ToolFactory.CreateListDocumentsTool(() => this._activeState),
-            ToolFactory.CreateGetAnalyzedDocumentTool(() => this._activeState),
-        };
     }
 
     /// <summary>
@@ -153,9 +157,6 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         {
             providerState = this._state.GetOrInitializeState(context.Session);
         }
-        // Refresh the tool's view of the live state. Tools constructed in the ctor close over
-        // this field via Func<...> so they see whichever session most recently invoked us.
-        this._activeState = providerState;
 
         // Resume any in-flight CU operations from previous turns BEFORE deciding what to
         // promote. The resume step may flip an Analyzing entry to Ready (or Failed), which
@@ -417,9 +418,18 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             sanitized.Add(new ChatMessage(ChatRole.System, rejectionContents));
         }
 
+        // Build the built-in CU tools fresh each turn, closing over THIS turn's providerState
+        // local. A single provider instance can serve multiple sessions (state is keyed by
+        // session/agent above), so binding the tools to a per-turn local — rather than a shared
+        // field — guarantees session A's list_documents/get_analyzed_document never observe
+        // session B's registry when both turns are in flight concurrently.
         IEnumerable<AITool>? outTools = providerState.Documents.IsEmpty
             ? input.Tools
-            : MergeTools(input.Tools, this._tools);
+            : MergeTools(input.Tools, new AITool[]
+            {
+                ToolFactory.CreateListDocumentsTool(() => providerState),
+                ToolFactory.CreateGetAnalyzedDocumentTool(() => providerState),
+            });
         string? outInstructions = input.Instructions;
 
         if (fileSearchEnabled)
@@ -435,11 +445,11 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             Instructions = outInstructions,
             Messages = sanitized,
             // Per dev plan §Phase 7: only surface the built-in CU tools when there is at least
-            // one tracked document. The same AIFunction instances are returned every turn
-            // (they were constructed in the provider ctor); their closures pick up the
-            // freshly-assigned _activeState. Phase 9 additionally appends the caller-supplied
-            // FileSearchConfig.FileSearchTool unconditionally when FileSearch is enabled, so
-            // the LLM can use it on retrieval-only turns as well.
+            // one tracked document. The tools are rebuilt each turn bound to this turn's
+            // providerState (see above) so concurrent sessions stay isolated. Phase 9
+            // additionally appends the caller-supplied FileSearchConfig.FileSearchTool
+            // unconditionally when FileSearch is enabled, so the LLM can use it on
+            // retrieval-only turns as well.
             Tools = outTools,
         };
     }

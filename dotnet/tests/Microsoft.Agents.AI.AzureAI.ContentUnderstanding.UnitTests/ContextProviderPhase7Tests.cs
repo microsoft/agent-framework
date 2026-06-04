@@ -58,7 +58,7 @@ public sealed class ContextProviderPhase7Tests
     }
 
     [Fact]
-    public async Task InvokingAsync_SameToolInstances_AcrossTurns()
+    public async Task InvokingAsync_StableToolSurface_AcrossTurns()
     {
         FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
             "invoice.pdf",
@@ -77,10 +77,17 @@ public sealed class ContextProviderPhase7Tests
                 new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("More?")]) } }),
             CancellationToken.None);
 
+        // The tools are rebuilt each turn (bound to that turn's per-session state to keep
+        // concurrent sessions isolated), so they are NOT required to be the same reference.
+        // The contract the LLM relies on is a stable tool *surface*: same names present every
+        // turn with matching invocation schemas.
         Dictionary<string, AIFunction> t1 = turn1.Tools!.OfType<AIFunction>().ToDictionary(f => f.Name, f => f);
         Dictionary<string, AIFunction> t2 = turn2.Tools!.OfType<AIFunction>().ToDictionary(f => f.Name, f => f);
-        Assert.Same(t1["list_documents"], t2["list_documents"]);
-        Assert.Same(t1["get_analyzed_document"], t2["get_analyzed_document"]);
+        Assert.Contains("list_documents", t2.Keys);
+        Assert.Contains("get_analyzed_document", t2.Keys);
+        Assert.Equal(t1.Keys.OrderBy(k => k, StringComparer.Ordinal), t2.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.Equal(t1["list_documents"].JsonSchema.ToString(), t2["list_documents"].JsonSchema.ToString());
+        Assert.Equal(t1["get_analyzed_document"].JsonSchema.ToString(), t2["get_analyzed_document"].JsonSchema.ToString());
     }
 
     [Fact]

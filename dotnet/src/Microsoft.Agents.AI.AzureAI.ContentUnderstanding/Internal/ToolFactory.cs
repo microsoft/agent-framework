@@ -19,8 +19,9 @@ internal sealed record DocumentSummary(
 /// Builds the auto-registered <see cref="AIFunction"/>s surfaced by
 /// <see cref="ContentUnderstandingContextProvider"/> in <c>AIContext.Tools</c>. Both factories
 /// take a <c>stateAccessor</c> delegate so the returned <see cref="AIFunction"/> reflects the
-/// live document registry across turns (and background-runner promotions) without being
-/// reconstructed on every call.
+/// live document registry (including background-runner promotions) for the session it was built
+/// for. The provider rebuilds these tools each turn bound to that turn's per-session state, so a
+/// single provider instance shared across concurrent sessions never crosses registries.
 /// </summary>
 internal static class ToolFactory
 {
