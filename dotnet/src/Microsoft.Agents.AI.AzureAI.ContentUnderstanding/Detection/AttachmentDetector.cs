@@ -133,12 +133,18 @@ internal static class AttachmentDetector
 
     private static DetectedAttachment? TryDetectData(DataContent dc)
     {
-        byte[] bytes = dc.Data.ToArray();
-        string? sniffed = bytes.Length > 0 ? MimeSniffer.Detect(SliceHead(bytes)) : null;
-        string supplied = dc.MediaType ?? string.Empty;
+        // Resolve the media type from the head bytes BEFORE materializing the full payload, so an
+        // unsupported (or unknown-but-unsniffable) large attachment is rejected without copying
+        // potentially hundreds of MB. Sniffing is also skipped entirely when the supplied type is a
+        // concrete, non-octet-stream value (sniff only feeds the octet-stream / empty fallback).
+        ReadOnlyMemory<byte> data = dc.Data;
+        string supplied = BaseMediaType(dc.MediaType);
+        bool isOctetStream = string.Equals(supplied, OctetStream, StringComparison.OrdinalIgnoreCase);
+        bool needSniff = data.Length > 0 && (supplied.Length == 0 || isOctetStream);
+        string? sniffed = needSniff ? MimeSniffer.Detect(SliceHead(data.Span)) : null;
 
         // Treat octet-stream as "unknown — fall back to sniff".
-        string resolved = string.Equals(supplied, OctetStream, StringComparison.OrdinalIgnoreCase)
+        string resolved = isOctetStream
             ? (sniffed ?? string.Empty)
             : (!string.IsNullOrEmpty(supplied) ? supplied : sniffed ?? string.Empty);
 
@@ -148,13 +154,22 @@ internal static class AttachmentDetector
             return null;
         }
 
+        // Supported → now materialize a private copy (DetectedAttachment.Data is held across turns,
+        // so a defensive copy avoids aliasing the caller's buffer).
+        byte[] bytes = data.ToArray();
         string filename = ResolveDataFilename(dc, resolved, bytes);
         return new DetectedAttachment(dc, resolved, filename, bytes, null);
     }
 
     private static DetectedAttachment? TryDetectUri(UriContent uc)
     {
-        string resolved = uc.MediaType ?? string.Empty;
+        // A UriContent with no URI carries no fetchable payload → nothing to analyze; skip.
+        if (uc.Uri is null)
+        {
+            return null;
+        }
+
+        string resolved = BaseMediaType(uc.MediaType);
         if (!s_supportedMediaTypes.Contains(resolved))
         {
             return null;
@@ -162,6 +177,21 @@ internal static class AttachmentDetector
 
         string filename = ResolveUriFilename(uc, resolved);
         return new DetectedAttachment(uc, resolved, filename, null, uc.Uri);
+    }
+
+    // Strips any RFC 2045 parameters (e.g. "; charset=utf-8") from a media type so allow-list
+    // lookups match. Callers may supply parameterized types (especially UriContent.MediaType,
+    // which is passed through verbatim) that would otherwise miss the exact-match HashSet.
+    private static string BaseMediaType(string? mediaType)
+    {
+        if (string.IsNullOrEmpty(mediaType))
+        {
+            return string.Empty;
+        }
+
+        int semicolon = mediaType!.IndexOf(';');
+        string baseType = semicolon >= 0 ? mediaType.Substring(0, semicolon) : mediaType;
+        return baseType.Trim();
     }
 
     private static string ResolveDataFilename(DataContent dc, string mediaType, byte[] bytes)
@@ -180,16 +210,11 @@ internal static class AttachmentDetector
             }
         }
 
-        return Synthesize(bytes, mediaType);
+        return Synthesize(bytes, bytes.Length, mediaType);
     }
 
     private static string ResolveUriFilename(UriContent uc, string mediaType)
     {
-        if (uc.Uri is null)
-        {
-            return Synthesize(Encoding.UTF8.GetBytes(string.Empty), mediaType);
-        }
-
         string? fromProps = TryGetFilenameFromProperties(uc.AdditionalProperties);
         if (!string.IsNullOrEmpty(fromProps))
         {
@@ -214,7 +239,7 @@ internal static class AttachmentDetector
 
         // Synthesize from a hash of the URI string when no real filename can be derived.
         byte[] uriBytes = Encoding.UTF8.GetBytes(uc.Uri.ToString());
-        return Synthesize(uriBytes, mediaType);
+        return Synthesize(uriBytes, uriBytes.Length, mediaType);
     }
 
     private static string? TryGetFilenameFromProperties(AdditionalPropertiesDictionary? props)
@@ -316,11 +341,27 @@ internal static class AttachmentDetector
         return joined.Length > MaxFilenameLength ? joined.Substring(0, MaxFilenameLength) : joined;
     }
 
-    private static string Synthesize(byte[] bytes, string mediaType)
+    // Upper bound on bytes hashed when synthesizing a filename. The hash only needs to produce a
+    // stable, well-distributed dedup prefix — it is NOT a content integrity check — so hashing the
+    // head (plus the total length, mixed in to distinguish same-header / different-size payloads)
+    // avoids a full SHA256 over multi-hundred-MB media just to derive 6 hex chars.
+    private const int SynthesizeHashCap = 4096;
+
+    private static string Synthesize(ReadOnlySpan<byte> data, long totalLength, string mediaType)
     {
+        int count = Math.Min(data.Length, SynthesizeHashCap);
+        byte[] buffer = new byte[count + sizeof(long)];
+        data.Slice(0, count).CopyTo(buffer);
+#if NET8_0_OR_GREATER
+        BitConverter.TryWriteBytes(buffer.AsSpan(count), totalLength);
+#else
+        byte[] lengthBytes = BitConverter.GetBytes(totalLength);
+        Array.Copy(lengthBytes, 0, buffer, count, lengthBytes.Length);
+#endif
+
 #pragma warning disable CA1850 // Static SHA256.HashData is .NET 5+ only; this project multi-targets netstandard2.0 / net472 where only ComputeHash exists.
         using SHA256 sha = SHA256.Create();
-        byte[] hash = sha.ComputeHash(bytes);
+        byte[] hash = sha.ComputeHash(buffer);
 #pragma warning restore CA1850
 
         // First 3 bytes → 6 hex chars, lower-cased.
@@ -391,6 +432,6 @@ internal static class AttachmentDetector
         _ => "bin",
     };
 
-    private static ReadOnlySpan<byte> SliceHead(byte[] bytes)
-        => bytes.AsSpan(0, Math.Min(bytes.Length, 64));
+    private static ReadOnlySpan<byte> SliceHead(ReadOnlySpan<byte> bytes)
+        => bytes.Slice(0, Math.Min(bytes.Length, 64));
 }
