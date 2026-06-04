@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import logging
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any
@@ -235,6 +236,45 @@ async def test_chat_client_observability_accepts_model_option(
     assert len(spans) == 1
     span = spans[0]
     assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"
+
+
+async def test_chat_client_observability_emits_per_tool_definitions(
+    mock_chat_client, span_exporter: InMemorySpanExporter
+):
+    @tool(name="weather_tool", description="Gets weather")
+    def weather_tool(location: str) -> str:
+        return f"Weather for {location}"
+
+    @tool(name="time_tool", description="Gets time")
+    def time_tool(city: str) -> str:
+        return f"Time in {city}"
+
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test message"])]
+    span_exporter.clear()
+
+    await client.get_response(
+        messages=messages,
+        options={"model": "Test"},
+        client_kwargs={"tools": [weather_tool, time_tool]},
+    )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attributes = spans[0].attributes
+    assert attributes is not None
+    tool_definitions = attributes[OtelAttr.TOOL_DEFINITIONS]
+    assert isinstance(tool_definitions, tuple)
+    assert len(tool_definitions) == 2
+
+    tool_definition_strings: list[str] = []
+    for tool_definition in tool_definitions:
+        assert isinstance(tool_definition, str)
+        tool_definition_strings.append(tool_definition)
+
+    tools = [json.loads(tool_definition) for tool_definition in tool_definition_strings]
+    assert [tool["function"]["name"] for tool in tools] == ["weather_tool", "time_tool"]
+    assert all(tool["type"] == "function" for tool in tools)
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
