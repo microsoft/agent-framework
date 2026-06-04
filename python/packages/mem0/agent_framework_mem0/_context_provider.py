@@ -13,7 +13,7 @@ import logging
 import sys
 from collections.abc import Awaitable
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypedDict
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
@@ -28,8 +28,14 @@ if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
 logger = logging.getLogger(__name__)
-MemoryRecord: TypeAlias = dict[str, Any]
-SearchResponse: TypeAlias = list[MemoryRecord] | MemoryRecord
+MemoryRecord: TypeAlias = dict[str, object]
+
+
+class SearchResults(TypedDict):
+    results: list[MemoryRecord]
+
+
+SearchResponse: TypeAlias = list[MemoryRecord] | SearchResults
 
 
 class Mem0ContextProvider(ContextProvider):
@@ -146,11 +152,7 @@ class Mem0ContextProvider(ContextProvider):
                 logger.error(
                     "Mem0 partition search task failed: %s",
                     search_response,
-                    exc_info=(
-                        type(search_response),
-                        search_response,
-                        search_response.__traceback__
-                    ),
+                    exc_info=(type(search_response), search_response, search_response.__traceback__),
                 )
                 continue
 
@@ -161,10 +163,15 @@ class Mem0ContextProvider(ContextProvider):
                 results_field = search_response.get("results")
                 if isinstance(results_field, list):
                     current_memories = [
-                        item for item in results_field if isinstance(item, dict) # pyright: ignore[reportUnknownVariableType]
+                        item
+                        for item in results_field
+                        if isinstance(item, dict)  # pyright: ignore[reportUnknownVariableType]
                     ]
                 else:
-                    current_memories = [search_response]
+                    logger.warning(
+                        "Unexpected Mem0 search response format: %s",
+                        type(results_field).__name__,
+                    )
 
             for mem in current_memories:
                 mem_id = mem.get("id")
