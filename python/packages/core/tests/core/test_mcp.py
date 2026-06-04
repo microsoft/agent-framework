@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
+from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -5551,6 +5552,506 @@ async def test_call_tool_as_task_create_disconnect_does_not_retry() -> None:
     # so retry is unsafe and must be skipped.
     assert send_calls == 1
     reconnect_mock.assert_not_awaited()
+
+
+async def test_fetch_task_result_reconnects_during_fetch() -> None:
+    from anyio import ClosedResourceError
+
+    tool = _make_task_tool()
+
+    fetch_calls = 0
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal fetch_calls
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="r1")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="r1", status="completed")
+        if method == "tasks/result":
+            fetch_calls += 1
+            if fetch_calls == 1:
+                raise ClosedResourceError
+            return _make_payload("fetched after reconnect")
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    reconnect_calls = 0
+
+    async def fake_connect(reset: bool = False) -> None:
+        nonlocal reconnect_calls
+        reconnect_calls += 1
+        assert reset is True
+
+    with patch.object(MCPTool, "connect", side_effect=fake_connect):
+        result = await tool.call_tool("slow_op")
+
+    assert _mcp_result_to_text(result) == "fetched after reconnect"
+    assert reconnect_calls == 1
+    assert fetch_calls == 2
+
+
+async def test_fetch_task_result_second_disconnect_raises_task_state_unknown_and_cancels() -> None:
+    from anyio import ClosedResourceError
+
+    tool = _make_task_tool()
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="r2")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="r2", status="completed")
+        if method == "tasks/result":
+            raise ClosedResourceError
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    with (
+        patch.object(MCPTool, "connect", new=AsyncMock(return_value=None)),
+        pytest.raises(ToolExecutionException, match="task state unknown"),
+    ):
+        await tool.call_tool("slow_op")
+
+    # Drain the fire-and-forget cancel so the assertion is deterministic.
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_create_unparseable_success_raises() -> None:
+    """An unparseable success-shaped response must NOT silently retry tools/call."""
+    # Result with neither task.taskId nor a valid CallToolResult shape.
+    unparseable = types.Result.model_validate({"foo": "bar"})
+
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(return_value=unparseable)  # type: ignore[union-attr]
+    tool.session.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))  # type: ignore[union-attr]
+
+    with pytest.raises(ToolExecutionException, match="unparseable response"):
+        await tool.call_tool("slow_op")
+
+    # Critically: no plain tools/call fallback (would risk double execution).
+    tool.session.call_tool.assert_not_called()  # type: ignore[union-attr]
+
+
+async def test_call_tool_as_task_max_wait_exceeded_raises_and_cancels(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_framework import MCPTaskOptions
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool(task_options=MCPTaskOptions(max_task_wait=timedelta(milliseconds=50)))
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="mw")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="mw", status="working")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    with pytest.raises(ToolExecutionException, match="exceeded max_task_wait"):
+        await tool.call_tool("slow_op")
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_max_wait_cancels_even_when_local_cancel_option_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Locks contract: max_task_wait abandonment ignores the local-cancel option."""
+    from agent_framework import MCPTaskOptions
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool(
+        task_options=MCPTaskOptions(
+            cancel_remote_task_on_local_cancellation=False,
+            max_task_wait=timedelta(milliseconds=50),
+        ),
+    )
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="mw2")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="mw2", status="working")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    with pytest.raises(ToolExecutionException, match="exceeded max_task_wait"):
+        await tool.call_tool("slow_op")
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_poll_transient_request_timeout_keeps_polling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    poll_calls = 0
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal poll_calls, cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="t1")
+        if method == "tasks/get":
+            poll_calls += 1
+            if poll_calls == 1:
+                raise McpError(types.ErrorData(code=int(httpx.codes.REQUEST_TIMEOUT), message="slow poll"))
+            return _make_task_snapshot(task_id="t1", status="completed")
+        if method == "tasks/result":
+            return _make_payload("recovered after transient")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    result = await tool.call_tool("slow_op")
+    assert _mcp_result_to_text(result) == "recovered after transient"
+    assert poll_calls == 2
+    # Transient retry must not fire cancel.
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is False
+
+
+async def test_call_tool_as_task_poll_hard_mcperror_cancels_and_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="h1")
+        if method == "tasks/get":
+            raise McpError(types.ErrorData(code=types.INVALID_PARAMS, message="bad task id"))
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    with pytest.raises(ToolExecutionException, match="bad task id"):
+        await tool.call_tool("slow_op")
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_malformed_tasks_get_response_cancels_and_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed tasks/get response counts as abandonment (task may still be running)."""
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    # Result without a valid GetTaskResult shape (no taskId/status/etc.).
+    malformed = types.Result.model_validate({"some": "junk"})
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="m1")
+        if method == "tasks/get":
+            return malformed
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    with pytest.raises(ToolExecutionException, match="malformed tasks/get"):
+        await tool.call_tool("slow_op")
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_failed_terminal_does_not_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Terminal failures (server already done) must NOT fire tasks/cancel."""
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="f1")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="f1", status="failed", status_message="boom")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    with pytest.raises(ToolExecutionException, match="task failed: boom"):
+        await tool.call_tool("slow_op")
+
+    # Let any (incorrect) background work settle, then verify no cancel.
+    await asyncio.sleep(0.02)
+    assert cancel_called is False
+
+
+async def test_try_cancel_task_logs_warning_on_timeout(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_framework import _mcp as _mcp_module
+
+    # Shorten cancel timeout so the test is fast.
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_CANCEL_TIMEOUT", _mcp_module.timedelta(milliseconds=20))
+
+    tool = _make_task_tool()
+
+    async def hang(*_a: Any, **_kw: Any) -> Any:
+        await asyncio.sleep(10.0)
+
+    tool.session.send_request = AsyncMock(side_effect=hang)  # type: ignore[union-attr]
+
+    with caplog.at_level(logging.WARNING, logger=_mcp_module.logger.name):
+        await tool._try_cancel_task("hang-1")
+
+    assert any("timed out" in r.getMessage() and "hang-1" in r.getMessage() for r in caplog.records)
+
+
+async def test_mcp_task_options_is_frozen() -> None:
+    from dataclasses import FrozenInstanceError
+
+    from agent_framework import MCPTaskOptions
+
+    opts = MCPTaskOptions()
+    with pytest.raises(FrozenInstanceError):
+        opts.default_ttl = timedelta(seconds=5)  # type: ignore[misc]
+
+
+async def test_mcp_task_options_max_task_wait_rejects_non_positive() -> None:
+    from agent_framework import MCPTaskOptions
+
+    with pytest.raises(ValueError, match="positive"):
+        MCPTaskOptions(max_task_wait=timedelta(0))
+    with pytest.raises(ValueError, match="positive"):
+        MCPTaskOptions(max_task_wait=timedelta(seconds=-1))
+
+
+async def test_fetch_task_result_hard_mcperror_raises_without_cancel() -> None:
+    """tasks/result hard McpError must wrap as ToolExecutionException without cancel (server done)."""
+    tool = _make_task_tool()
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="hf")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="hf", status="completed")
+        if method == "tasks/result":
+            raise McpError(types.ErrorData(code=types.INTERNAL_ERROR, message="payload vanished"))
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    with pytest.raises(ToolExecutionException, match="payload vanished"):
+        await tool.call_tool("slow_op")
+
+    # No raw McpError leak and no cancel — server already reported the task as done.
+    await asyncio.sleep(0.02)
+    assert cancel_called is False
+
+
+async def test_completion_wait_timeout_without_max_wait_is_not_translated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stray asyncio.TimeoutError during the completion wait must not pretend the deadline
+    expired when max_task_wait is None (and must not fire a spurious tasks/cancel).
+    """
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    def boom_parser(_: Any) -> list[Content]:
+        raise asyncio.TimeoutError
+
+    tool.parse_tool_results = boom_parser
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="t2")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="t2", status="completed")
+        if method == "tasks/result":
+            return _make_payload("ok")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    with pytest.raises(asyncio.TimeoutError):
+        await tool.call_tool("slow_op")
+
+    # Must NOT translate to max_task_wait expiry and must NOT cancel.
+    await asyncio.sleep(0.02)
+    assert cancel_called is False
+
+
+async def test_completion_wait_inner_timeout_with_max_wait_set_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An asyncio.TimeoutError raised by the completion wait itself must propagate
+    unchanged even when max_task_wait IS set, and must NOT fire a spurious cancel.
+    """
+    from agent_framework import MCPTaskOptions
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    # Deadline set comfortably above the actual test run time.
+    tool = _make_task_tool(task_options=MCPTaskOptions(max_task_wait=timedelta(seconds=5)))
+
+    def boom_parser(_: Any) -> list[Content]:
+        raise asyncio.TimeoutError("inner parser timeout")
+
+    tool.parse_tool_results = boom_parser
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="t3")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="t3", status="completed")
+        if method == "tasks/result":
+            return _make_payload("ok")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    with pytest.raises(asyncio.TimeoutError, match="inner parser timeout"):
+        await tool.call_tool("slow_op")
+
+    # Inner TimeoutError must NOT be translated into "exceeded max_task_wait" and must NOT cancel.
+    await asyncio.sleep(0.02)
+    assert cancel_called is False
+
+
+async def test_max_wait_interrupts_long_poll_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deadline must cancel through a long ``asyncio.sleep`` (clamped to MAX), not wait it out."""
+    from agent_framework import MCPTaskOptions
+
+    tool = _make_task_tool(task_options=MCPTaskOptions(max_task_wait=timedelta(milliseconds=100)))
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        method = request.root.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="ds")
+        if method == "tasks/get":
+            # Suggest a 5s poll interval (gets clamped to MAX=5s); wait_for must cut through it.
+            return _make_task_snapshot(task_id="ds", status="working", poll_interval_ms=5000)
+        if method == "tasks/cancel":
+            return types.CancelTaskResult()
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[union-attr]
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(ToolExecutionException, match="exceeded max_task_wait"):
+        await tool.call_tool("slow_op")
+    elapsed = loop.time() - started
+
+    # Should fire near the 100ms deadline, well below the 5s clamped sleep.
+    assert elapsed < 1.0, f"deadline did not interrupt long sleep (elapsed={elapsed:.3f}s)"
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 # endregion

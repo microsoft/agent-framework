@@ -160,14 +160,28 @@ _MCP_TASK_CANCEL_TIMEOUT = timedelta(seconds=5)
 _MCP_TASK_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "cancelled", "input_required"})
 
 
+class _MCPTaskAbandoned(ToolExecutionException):
+    """Raised when the remote MCP task may still be running and must be cancelled.
+
+    Subclass of ToolExecutionException so callers see a normal tool failure.
+    """
+
+
+class _MCPDeadlineExpired(Exception):
+    """Internal marker for ``max_task_wait`` expiry; distinct from inner TimeoutError."""
+
+
 @experimental(feature_id=ExperimentalFeature.MCP_LONG_RUNNING_TASKS)
-@dataclass
+@dataclass(frozen=True)
 class MCPTaskOptions:
     """Options controlling how MCPTool drives the MCP long-running task lifecycle.
 
     When an MCP server advertises a tool with ``execution.taskSupport == "required"``,
     the framework transparently drives the SEP-2663 ``tools/call`` → ``tasks/get``
     (polled) → ``tasks/result`` lifecycle so the agent sees a normal tool result.
+
+    Instances are immutable; replace the whole object via
+    ``MCPTool.task_options = MCPTaskOptions(...)`` to change behavior.
 
     Attributes:
         default_ttl: Optional default time-to-live forwarded to the server as
@@ -176,14 +190,24 @@ class MCPTaskOptions:
         cancel_remote_task_on_local_cancellation: If True (default), a local
             cancellation of the awaiting coroutine triggers a best-effort
             ``tasks/cancel`` on the server before re-raising ``CancelledError``.
+            Only gates ``CancelledError``; abandonment paths (max-wait,
+            unrecoverable poll errors, lost connection after task_id is known)
+            always cancel regardless of this flag.
+        max_task_wait: Optional client-side deadline for the whole post-create
+            lifecycle (poll + result fetch). When exceeded, raises
+            ``ToolExecutionException`` and fires a best-effort ``tasks/cancel``.
+            ``None`` (default) means no client-side bound. Must be positive if set.
     """
 
     default_ttl: timedelta | None = None
     cancel_remote_task_on_local_cancellation: bool = True
+    max_task_wait: timedelta | None = None
 
     def __post_init__(self) -> None:
         if self.default_ttl is not None and self.default_ttl.total_seconds() < 0:
             raise ValueError("MCPTaskOptions.default_ttl must be non-negative.")
+        if self.max_task_wait is not None and self.max_task_wait.total_seconds() <= 0:
+            raise ValueError("MCPTaskOptions.max_task_wait must be positive.")
 
 
 def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextManager[Any, None]:
@@ -1532,10 +1556,10 @@ class MCPTool:
         filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
 
-        # Phase 1: issue augmented tools/call. Do NOT retry on connection loss here:
+        # Submit the task: issue augmented tools/call. Do NOT retry on connection loss here:
         # the server may have accepted the request and created a task before the
         # response was lost, so retrying could start the long-running operation twice.
-        # Reconnect-and-retry is only safe after task_id is known (phase 2).
+        # Reconnect-and-retry is only safe after the task_id is known.
         try:
             task_id, fallback_result = await self._call_tool_as_task_create(tool_name, filtered_kwargs, meta)
         except (ClosedResourceError, McpError) as ex:
@@ -1565,15 +1589,40 @@ class MCPTool:
 
         assert task_id is not None  # noqa: S101  # nosec B101 - protected by the branch above
 
-        # Phase 2: poll until terminal status, then fetch payload. Never re-issue tools/call
-        # past this point; reconnect-and-retry only against the same task_id.
-        try:
+        # Track to completion: poll until terminal, then fetch payload. Never re-issue
+        # tools/call past this point; reconnect-and-retry only against the same task_id.
+        opts = self._effective_task_options()
+        max_wait_s = opts.max_task_wait.total_seconds() if opts.max_task_wait is not None else None
+
+        async def _await_task_completion() -> str | list[Content]:
             terminal = await self._poll_task_until_terminal(task_id)
             return await self._handle_terminal_task(tool_name, task_id, terminal, parser)
+
+        try:
+            if max_wait_s is not None:
+                try:
+                    return await self._await_with_deadline(_await_task_completion(), max_wait_s)
+                except _MCPDeadlineExpired as ex:
+                    self._spawn_best_effort_cancel(task_id)
+                    raise ToolExecutionException(
+                        f"MCP task '{task_id}' exceeded max_task_wait of {max_wait_s}s.",
+                        inner_exception=ex,
+                    ) from ex
+            else:
+                return await _await_task_completion()
         except asyncio.CancelledError:
-            if self._effective_task_options().cancel_remote_task_on_local_cancellation:
+            if opts.cancel_remote_task_on_local_cancellation:
                 self._spawn_best_effort_cancel(task_id)
             raise
+        except _MCPTaskAbandoned:
+            # Pre-terminal abandonment (hard poll error, malformed get, second
+            # disconnect, reconnect failure): cancel + re-raise as plain
+            # ToolExecutionException to the function-calling loop.
+            self._spawn_best_effort_cancel(task_id)
+            raise
+        # Plain ToolExecutionException from terminal failures (failed/cancelled/
+        # input_required, completed+isError, malformed result post-completion)
+        # propagates without cancel — server is already done.
 
     async def _call_tool_as_task_create(
         self, tool_name: str, arguments: dict[str, Any], meta: dict[str, Any] | None
@@ -1636,54 +1685,50 @@ class MCPTool:
 
         try:
             legacy = types.CallToolResult.model_validate(raw)
-        except ValidationError:
-            logger.debug(
-                "Augmented tools/call for '%s' returned a non-CreateTaskResult/non-CallToolResult payload; "
-                "falling back to plain tools/call.",
-                tool_name,
-            )
-            fallback = await self.session.call_tool(tool_name, arguments=arguments, meta=meta)  # type: ignore[union-attr]
-            return None, fallback
+        except ValidationError as ex:
+            # Augmented call succeeded server-side; re-issuing a plain tools/call
+            # could double-execute a side-effecting tool.
+            raise ToolExecutionException(
+                f"MCP server returned an unparseable response to augmented tools/call "
+                f"for '{tool_name}'; cannot safely retry (server may have started the operation).",
+                inner_exception=ex,
+            ) from ex
 
         return None, legacy
 
     async def _poll_task_until_terminal(self, task_id: str) -> types.GetTaskResult:
         """Poll ``tasks/get`` until the task reaches a terminal status."""
-        from anyio import ClosedResourceError
+        import httpx
         from mcp import types
         from mcp.shared.exceptions import McpError
 
+        # SDK raises McpError(code=httpx.REQUEST_TIMEOUT=408) on session read timeout.
+        transient_codes: frozenset[int] = frozenset({int(httpx.codes.REQUEST_TIMEOUT)})
+
         while True:
-            for attempt in range(2):
-                try:
-                    request = types.ClientRequest(
-                        types.GetTaskRequest(params=types.GetTaskRequestParams(taskId=task_id))
+            request = types.ClientRequest(
+                types.GetTaskRequest(params=types.GetTaskRequestParams(taskId=task_id))
+            )
+            try:
+                # GetTaskResult.ttl is required-but-Optional in the SDK; coerce below.
+                lenient = await self._send_with_one_reconnect(
+                    request, types.Result, operation="tasks/get", task_id=task_id
+                )
+            except McpError as ex:
+                if ex.error.code in transient_codes:
+                    logger.debug(
+                        "Transient %s on tasks/get for '%s'; will retry.", ex.error.code, task_id
                     )
-                    # Use lenient Result then coerce: GetTaskResult.ttl is required by
-                    # schema but servers may legitimately omit it.
-                    lenient = await self.session.send_request(request, types.Result)  # type: ignore[union-attr]
-                    snapshot = self._coerce_get_task_result(lenient, task_id)
-                    break
-                except (ClosedResourceError, McpError) as ex:
-                    if not self._is_connection_lost(ex):
-                        error_message = ex.error.message if isinstance(ex, McpError) else str(ex)
-                        raise ToolExecutionException(error_message, inner_exception=ex) from ex
-                    if attempt == 0:
-                        logger.info("MCP connection lost during tasks/get; reconnecting (task_id=%s).", task_id)
-                        try:
-                            await self.connect(reset=True)
-                            continue
-                        except Exception as reconn_ex:
-                            raise ToolExecutionException(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
-                    raise ToolExecutionException(
-                        f"MCP connection lost; task state unknown (task_id={task_id}).",
-                        inner_exception=ex,
-                    ) from ex
-            else:  # pragma: no cover - defensive
-                raise ToolExecutionException(f"Failed to poll task '{task_id}'.")
+                    await asyncio.sleep(_MCP_TASK_MIN_POLL_INTERVAL.total_seconds())
+                    continue
+                # Hard server error mid-poll: task may still be running.
+                raise _MCPTaskAbandoned(ex.error.message, inner_exception=ex) from ex
+
+            try:
+                snapshot = self._coerce_get_task_result(lenient, task_id)
+            except ToolExecutionException as ex:
+                # Malformed tasks/get response; task may still be running.
+                raise _MCPTaskAbandoned(str(ex), inner_exception=ex) from ex
 
             if snapshot.status in _MCP_TASK_TERMINAL_STATUSES:
                 return snapshot
@@ -1750,40 +1795,22 @@ class MCPTool:
 
     async def _fetch_task_result(self, task_id: str) -> types.CallToolResult:
         """Send ``tasks/result`` and reinterpret the open-typed payload as a CallToolResult."""
-        from anyio import ClosedResourceError
         from mcp import types
         from mcp.shared.exceptions import McpError
         from pydantic import ValidationError
 
-        for attempt in range(2):
-            try:
-                request = types.ClientRequest(
-                    types.GetTaskPayloadRequest(params=types.GetTaskPayloadRequestParams(taskId=task_id))
-                )
-                payload = await self.session.send_request(  # type: ignore[union-attr]
-                    request, types.GetTaskPayloadResult
-                )
-                break
-            except (ClosedResourceError, McpError) as ex:
-                if not self._is_connection_lost(ex):
-                    error_message = ex.error.message if isinstance(ex, McpError) else str(ex)
-                    raise ToolExecutionException(error_message, inner_exception=ex) from ex
-                if attempt == 0:
-                    logger.info("MCP connection lost during tasks/result; reconnecting (task_id=%s).", task_id)
-                    try:
-                        await self.connect(reset=True)
-                        continue
-                    except Exception as reconn_ex:
-                        raise ToolExecutionException(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
-                        ) from reconn_ex
-                raise ToolExecutionException(
-                    f"MCP connection lost; task state unknown (task_id={task_id}).",
-                    inner_exception=ex,
-                ) from ex
-        else:  # pragma: no cover - defensive
-            raise ToolExecutionException(f"Failed to fetch result for task '{task_id}'.")
+        request = types.ClientRequest(
+            types.GetTaskPayloadRequest(params=types.GetTaskPayloadRequestParams(taskId=task_id))
+        )
+        # Connection-loss retry only via the helper; no transient-code retry — server
+        # has already completed the task, so a slow payload fetch is anomalous.
+        try:
+            payload = await self._send_with_one_reconnect(
+                request, types.GetTaskPayloadResult, operation="tasks/result", task_id=task_id
+            )
+        except McpError as ex:
+            # Server reported completed; a hard fetch error is a plain failure (no cancel).
+            raise ToolExecutionException(ex.error.message, inner_exception=ex) from ex
 
         # GetTaskPayloadResult carries the tool result via extra fields; reinterpret as CallToolResult.
         payload_dict = payload.model_dump(by_alias=True, exclude_none=True)
@@ -1791,9 +1818,77 @@ class MCPTool:
         try:
             return types.CallToolResult.model_validate(payload_dict)
         except ValidationError as ex:
+            # Server reported completed; malformed payload is a plain failure (no cancel needed).
             raise ToolExecutionException(
-                f"MCP task '{task_id}' result payload could not be parsed as a CallToolResult."
+                f"MCP task '{task_id}' result payload could not be parsed as a CallToolResult.",
+                inner_exception=ex,
             ) from ex
+
+    async def _send_with_one_reconnect(
+        self,
+        request: types.ClientRequest,
+        result_type: type[Any],
+        *,
+        operation: str,
+        task_id: str,
+    ) -> Any:
+        """Send ``request`` with one reconnect-and-retry on connection loss.
+
+        After a second loss (or reconnect failure), raise ``_MCPTaskAbandoned``.
+        Non-connection errors propagate unchanged.
+        """
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
+        for attempt in range(2):
+            try:
+                return await self.session.send_request(request, result_type)  # type: ignore[union-attr]
+            except (ClosedResourceError, McpError) as ex:
+                if not self._is_connection_lost(ex):
+                    raise
+                if attempt == 0:
+                    logger.info(
+                        "MCP connection lost during %s; reconnecting (task_id=%s).", operation, task_id
+                    )
+                    try:
+                        await self.connect(reset=True)
+                    except Exception as reconn_ex:
+                        # Reconnect failure: task may still be running.
+                        raise _MCPTaskAbandoned(
+                            "Failed to reconnect to MCP server.", inner_exception=reconn_ex
+                        ) from reconn_ex
+                    continue
+                # Second connection loss: task may still be running.
+                raise _MCPTaskAbandoned(
+                    f"MCP connection lost; task state unknown (task_id={task_id}).",
+                    inner_exception=ex,
+                ) from ex
+        raise AssertionError(f"unreachable: {operation} for {task_id}")  # pragma: no cover
+
+    @staticmethod
+    async def _await_with_deadline(coro: Coroutine[Any, Any, Any], timeout_s: float) -> Any:
+        """Await ``coro`` with a deadline; raise ``_MCPDeadlineExpired`` only on deadline.
+
+        Unlike ``asyncio.wait_for``, an ``asyncio.TimeoutError`` raised by ``coro``
+        itself propagates unchanged so callers can distinguish their own deadline
+        from a stray inner timeout.
+        """
+        inner = asyncio.ensure_future(coro)
+        try:
+            done, _pending = await asyncio.wait({inner}, timeout=timeout_s)
+        except BaseException:
+            # Outer caller cancelled (or another exception): cancel inner + drain.
+            inner.cancel()
+            with contextlib.suppress(BaseException):
+                await inner
+            raise
+        if inner in done:
+            return inner.result()
+        # Deadline fired before inner finished.
+        inner.cancel()
+        with contextlib.suppress(BaseException):
+            await inner
+        raise _MCPDeadlineExpired
 
     def _spawn_best_effort_cancel(self, task_id: str) -> None:
         """Fire-and-forget ``tasks/cancel`` so local cancellation propagates server-side."""
@@ -1807,18 +1902,35 @@ class MCPTool:
         cancel_task.add_done_callback(self._pending_reload_tasks.discard)
 
     async def _try_cancel_task(self, task_id: str) -> None:
-        """Send ``tasks/cancel`` swallowing every failure; bounded by ``_MCP_TASK_CANCEL_TIMEOUT``."""
+        """Send ``tasks/cancel``; bounded by ``_MCP_TASK_CANCEL_TIMEOUT``.
+
+        Failures log at warning so unattributed orphan tasks are debuggable.
+        """
         from mcp import types
 
-        async def _send() -> None:
-            request = types.ClientRequest(types.CancelTaskRequest(params=types.CancelTaskRequestParams(taskId=task_id)))
-            try:
-                await self.session.send_request(request, types.CancelTaskResult)  # type: ignore[union-attr]
-            except Exception:
-                logger.debug("Best-effort tasks/cancel for '%s' failed.", task_id, exc_info=True)
-
-        with contextlib.suppress(Exception, asyncio.CancelledError, asyncio.TimeoutError):
-            await asyncio.wait_for(_send(), timeout=_MCP_TASK_CANCEL_TIMEOUT.total_seconds())
+        request = types.ClientRequest(
+            types.CancelTaskRequest(params=types.CancelTaskRequestParams(taskId=task_id))
+        )
+        try:
+            await asyncio.wait_for(
+                self.session.send_request(request, types.CancelTaskResult),  # type: ignore[union-attr]
+                timeout=_MCP_TASK_CANCEL_TIMEOUT.total_seconds(),
+            )
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Best-effort tasks/cancel for '%s' timed out after %.1fs; "
+                "remote task may still be running.",
+                task_id,
+                _MCP_TASK_CANCEL_TIMEOUT.total_seconds(),
+            )
+        except Exception:
+            logger.warning(
+                "Best-effort tasks/cancel for '%s' failed; remote task may still be running.",
+                task_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _is_connection_lost(ex: BaseException) -> bool:
