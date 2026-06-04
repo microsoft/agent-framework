@@ -346,17 +346,15 @@ public sealed class ContextProviderPhase9Tests
         string vectorStoreId = "vs-abc",
         AnalysisSection outputSections = AnalysisSection.Default,
         FakeResumer? resumer = null) =>
-        new(SharedTestFixtures.TestEndpoint,
-            new FakeTokenCredential(),
-            opt =>
+        new(new ContentUnderstandingContextProviderOptions(SharedTestFixtures.TestEndpoint, new FakeTokenCredential())
             {
-                opt.OutputSections = outputSections;
-                opt.FileSearchConfig = new FileSearchConfig
+                OutputSections = outputSections,
+                FileSearchConfig = new FileSearchConfig
                 {
                     Backend = backend,
                     VectorStoreId = vectorStoreId,
                     FileSearchTool = fileSearchTool,
-                };
+                },
             })
         {
             ClientFactoryOverride = new CountingClientFactory(),

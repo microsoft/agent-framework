@@ -64,20 +64,18 @@ public sealed class ContextProviderTests
     }
 
     [Fact]
-    public void ConvenienceConstructor_AppliesConfigureCallback()
+    public void OptionsConstructor_AppliesOptions()
     {
         var provider = new ContentUnderstandingContextProvider(
-            s_testEndpoint,
-            new FakeTokenCredential(),
-            configure: o =>
+            new ContentUnderstandingContextProviderOptions(s_testEndpoint, new FakeTokenCredential())
             {
-                o.AnalyzerId = "prebuilt-invoice";
-                o.MaxWait = TimeSpan.FromSeconds(30);
-                o.OutputSections = AnalysisSection.Markdown;
+                AnalyzerId = "prebuilt-invoice",
+                MaxWait = TimeSpan.FromSeconds(30),
+                OutputSections = AnalysisSection.Markdown,
             });
 
         // No public accessor to inspect options yet — but constructing without throwing confirms
-        // the configure callback was invoked on a valid Options instance.
+        // the options were accepted on a valid Options instance.
         Assert.NotNull(provider);
     }
 

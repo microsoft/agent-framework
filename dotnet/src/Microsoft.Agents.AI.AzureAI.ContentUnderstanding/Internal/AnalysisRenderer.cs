@@ -55,6 +55,29 @@ internal static class AnalysisRenderer
     }
 
     /// <summary>
+    /// Renders the payload uploaded to a file-search vector store, or <see langword="null"/>
+    /// when <paramref name="config"/> is <see langword="null"/> (file-search disabled — the
+    /// caller injects the rendered block into the message stream instead).
+    /// </summary>
+    /// <remarks>
+    /// Uses the same <paramref name="sections"/> selection as <see cref="Render"/>, so the
+    /// vector-store copy honors the caller's <see cref="ContentUnderstandingContextProviderOptions.OutputSections"/>.
+    /// </remarks>
+    public static string? RenderSearchPayload(
+        AnalysisResult result,
+        string filename,
+        AnalysisSection sections,
+        FileSearchConfig? config)
+    {
+        if (config is null)
+        {
+            return null;
+        }
+
+        return Render(result, filename, sections);
+    }
+
+    /// <summary>
     /// Removes <c>- LLMStats: ...</c> telemetry lines from an already-rendered block.
     /// Exposed <c>internal</c> for direct regex coverage in unit tests.
     /// </summary>

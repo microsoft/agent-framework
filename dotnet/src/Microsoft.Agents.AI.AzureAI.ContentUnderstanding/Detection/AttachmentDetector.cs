@@ -185,6 +185,11 @@ internal static class AttachmentDetector
 
     private static string ResolveUriFilename(UriContent uc, string mediaType)
     {
+        if (uc.Uri is null)
+        {
+            return Synthesize(Encoding.UTF8.GetBytes(string.Empty), mediaType);
+        }
+
         string? fromProps = TryGetFilenameFromProperties(uc.AdditionalProperties);
         if (!string.IsNullOrEmpty(fromProps))
         {

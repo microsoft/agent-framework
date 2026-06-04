@@ -242,15 +242,14 @@ public sealed class CoverageGapTests
                 new AnalysisOutcome(true, SharedTestFixtures.MakeInvoiceResult(), "op-2", null, TimeSpan.FromMilliseconds(20)));
 
         await using ContentUnderstandingContextProvider provider = new(
-            s_testEndpoint, new FakeTokenCredential(),
-            opt =>
+            new ContentUnderstandingContextProviderOptions(s_testEndpoint, new FakeTokenCredential())
             {
-                opt.FileSearchConfig = new FileSearchConfig
+                FileSearchConfig = new FileSearchConfig
                 {
                     Backend = backend,
                     VectorStoreId = "vs-xyz",
                     FileSearchTool = fileSearchTool,
-                };
+                },
             })
         {
             ClientFactoryOverride = new CountingClientFactory(),
