@@ -62,6 +62,15 @@ public sealed class ContentUnderstandingContextProviderOptions
     /// stores a rehydration token and re-polls the operation at the start of the next call to
     /// the same provider instance. Default: 5 seconds.
     /// </summary>
+    /// <remarks>
+    /// This budget applies only to the server-side analysis polling step. It does NOT include the
+    /// time to upload the request body: for a binary (<see cref="Microsoft.Extensions.AI.DataContent"/>)
+    /// attachment the initial submit POST streams the full payload (potentially hundreds of MB),
+    /// which is bounded only by the caller's <see cref="System.Threading.CancellationToken"/>, not by
+    /// <see cref="MaxWait"/>. The upload is intentionally excluded so that a slow upload cannot be
+    /// cancelled mid-flight (which would leave no operation to rehydrate and force a full re-upload
+    /// next turn).
+    /// </remarks>
     public TimeSpan MaxWait { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>

@@ -695,8 +695,11 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         ContentUnderstandingClient client = await this.EnsureClientAsync(cancellationToken).ConfigureAwait(false);
         Stopwatch stopwatch = Stopwatch.StartNew();
 
-        // Submit the LRO with the caller's CT only; the initial POST is fast and we must
-        // honor caller cancellation. The MaxWait deadline applies to the polling step below.
+        // Submit the LRO with the caller's CT only. For a URI input the submit POST is small
+        // (metadata only); for a binary input it streams the full payload (potentially hundreds of
+        // MB), so it is deliberately bounded by the caller's CT rather than MaxWait. Cancelling the
+        // upload under MaxWait would leave no server-side operation to rehydrate and force a full
+        // re-upload next turn. The MaxWait deadline applies only to the polling step below.
         Operation<AnalysisResult> op;
         if (attachment.Data is not null)
         {
