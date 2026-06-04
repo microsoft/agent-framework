@@ -71,8 +71,8 @@ public sealed class AttachmentDetectorTests
 
         Assert.StartsWith("attachment-", one.Filename);
         Assert.EndsWith(".pdf", one.Filename);
-        // 6 hex chars between "attachment-" and ".pdf"
-        Assert.Matches("^attachment-[0-9a-f]{6}\\.pdf$", one.Filename);
+        // 12 hex chars (6 bytes) between "attachment-" and ".pdf"
+        Assert.Matches("^attachment-[0-9a-f]{12}\\.pdf$", one.Filename);
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public sealed class AttachmentDetectorTests
         ChatMessage msg = new(ChatRole.User, [uc]);
 
         DetectedAttachment one = Assert.Single(AttachmentDetector.Detect([msg]));
-        Assert.Matches("^attachment-[0-9a-f]{6}\\.mp4$", one.Filename);
+        Assert.Matches("^attachment-[0-9a-f]{12}\\.mp4$", one.Filename);
     }
 
     [Fact]
@@ -238,6 +238,6 @@ public sealed class AttachmentDetectorTests
         ChatMessage msg = new(ChatRole.User, [dc]);
 
         DetectedAttachment one = Assert.Single(AttachmentDetector.Detect([msg]));
-        Assert.Matches("^attachment-[0-9a-f]{6}\\.pdf$", one.Filename);
+        Assert.Matches("^attachment-[0-9a-f]{12}\\.pdf$", one.Filename);
     }
 }

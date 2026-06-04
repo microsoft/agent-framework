@@ -33,7 +33,7 @@ internal sealed record DetectedAttachment(
 /// <remarks>
 /// Unsupported content silently skips (must never block the agent run). Filename resolution
 /// order: <see cref="DataContent.Name"/> → <see cref="AIContent.AdditionalProperties"/>["filename"]
-/// → synthesized <c>attachment-{sha256[0..6]}.{ext}</c>. Supported media types cover documents,
+/// → synthesized <c>attachment-{sha256[0..12]}.{ext}</c>. Supported media types cover documents,
 /// images, text, audio, and video per the Azure CU input file limits:
 /// https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits.
 /// </remarks>
@@ -349,9 +349,18 @@ internal static class AttachmentDetector
 
     private static string Synthesize(ReadOnlySpan<byte> data, long totalLength, string mediaType)
     {
-        int count = Math.Min(data.Length, SynthesizeHashCap);
+        int headCount = Math.Min(data.Length, SynthesizeHashCap);
+        // When the payload is larger than what we hashed from the head, also sample an equal-sized
+        // tail window. This distinguishes same-header / same-length payloads that differ only in
+        // their middle/tail bytes, which a head-only hash would otherwise collide.
+        int tailCount = data.Length > headCount ? Math.Min(data.Length - headCount, SynthesizeHashCap) : 0;
+        int count = headCount + tailCount;
         byte[] buffer = new byte[count + sizeof(long)];
-        data.Slice(0, count).CopyTo(buffer);
+        data.Slice(0, headCount).CopyTo(buffer);
+        if (tailCount > 0)
+        {
+            data.Slice(data.Length - tailCount, tailCount).CopyTo(buffer.AsSpan(headCount));
+        }
 #if NET8_0_OR_GREATER
         BitConverter.TryWriteBytes(buffer.AsSpan(count), totalLength);
 #else
@@ -364,8 +373,9 @@ internal static class AttachmentDetector
         byte[] hash = sha.ComputeHash(buffer);
 #pragma warning restore CA1850
 
-        // First 3 bytes → 6 hex chars, lower-cased.
-        string prefix = ToLowerHex(hash, 3);
+        // First 6 bytes → 12 hex chars, lower-cased. 48 bits of prefix keeps the
+        // birthday-collision probability negligible even for very large attachment counts.
+        string prefix = ToLowerHex(hash, 6);
         return $"attachment-{prefix}.{ExtensionFor(mediaType)}";
     }
 
