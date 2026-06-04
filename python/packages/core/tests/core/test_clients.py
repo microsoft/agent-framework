@@ -77,6 +77,31 @@ async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_
         mock_inner_get_response.assert_called_once()
 
 
+async def test_base_client_as_agent_forwards_function_invocation_configuration(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    captured_config: dict[str, Any] = {}
+
+    async def fake_get_response(
+        *,
+        function_invocation_configuration: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        assert function_invocation_configuration is not None
+        captured_config.update(function_invocation_configuration)
+        return ChatResponse(messages=[Message(role="assistant", contents=["ok"])])
+
+    chat_client_base.get_response = fake_get_response  # type: ignore[method-assign,attr-defined]
+
+    agent = chat_client_base.as_agent(function_invocation_configuration={"include_detailed_errors": True})
+
+    await agent.run("hello")
+
+    assert captured_config["include_detailed_errors"] is True
+    assert captured_config["enabled"] is True
+    assert chat_client_base.function_invocation_configuration["include_detailed_errors"] is False  # type: ignore[attr-defined]
+
+
 async def test_base_client_get_response(chat_client_base: SupportsChatGetResponse):
     response = await chat_client_base.get_response([Message(role="user", contents=["Hello"])])
     assert response.messages[0].role == "assistant"

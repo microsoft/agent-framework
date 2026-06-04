@@ -2294,6 +2294,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
@@ -2308,6 +2309,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -2322,6 +2324,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -2335,6 +2338,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         from ._middleware import categorize_middleware
@@ -2358,11 +2362,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 *middleware,
             ]
         runtime_middleware = categorize_middleware(effective_client_kwargs.pop("middleware", []))
+        effective_function_invocation_configuration = (
+            normalize_function_invocation_configuration(function_invocation_configuration)
+            if function_invocation_configuration is not None
+            else self.function_invocation_configuration
+        )
 
         function_middleware_pipeline = self._get_function_middleware_pipeline(runtime_middleware["function"])
         if runtime_middleware["chat"]:
             effective_client_kwargs["middleware"] = runtime_middleware["chat"]
-        max_errors = self.function_invocation_configuration.get(
+        max_errors = effective_function_invocation_configuration.get(
             "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
         )
         additional_function_arguments = (
@@ -2377,7 +2386,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
-            config=self.function_invocation_configuration,
+            config=effective_function_invocation_configuration,
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
@@ -2388,7 +2397,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Remove additional_function_arguments from options passed to underlying chat client
         # It's for tool invocation only and not recognized by chat service APIs
         mutable_options.pop("additional_function_arguments", None)
-        if not self.function_invocation_configuration.get("enabled", True):
+        if not effective_function_invocation_configuration.get("enabled", True):
             return super_get_response(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
@@ -2412,14 +2421,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 nonlocal filtered_kwargs
                 errors_in_a_row: int = 0
                 total_function_calls: int = 0
-                max_function_calls: int | None = self.function_invocation_configuration.get("max_function_calls")
+                max_function_calls: int | None = effective_function_invocation_configuration.get("max_function_calls")
                 prepped_messages = list(messages)
                 fcc_messages: list[Message] = []
                 response: ChatResponse[Any] | None = None
                 aggregated_usage: UsageDetails | None = None
 
-                loop_enabled = self.function_invocation_configuration.get("enabled", True)
-                max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+                loop_enabled = effective_function_invocation_configuration.get("enabled", True)
+                max_iterations = effective_function_invocation_configuration.get(
+                    "max_iterations", DEFAULT_MAX_ITERATIONS
+                )
                 for attempt_idx in range(max_iterations if loop_enabled else 0):
                     approval_result = await _process_function_requests(
                         response=None,
@@ -2509,10 +2520,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 # Make a final model call with tool_choice="none" so the model
                 # produces a plain text answer instead of leaving orphaned
                 # function_call items without matching results.
-                if response is not None and self.function_invocation_configuration.get("enabled", True):
+                if response is not None and effective_function_invocation_configuration.get("enabled", True):
                     logger.info(
                         "Maximum iterations reached (%d). Requesting final response without tools.",
-                        self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
+                        effective_function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
                     )
                 mutable_options["tool_choice"] = "none"
                 response = cast(
@@ -2550,13 +2561,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             nonlocal stream_result_hooks
             errors_in_a_row: int = 0
             total_function_calls: int = 0
-            max_function_calls: int | None = self.function_invocation_configuration.get("max_function_calls")
+            max_function_calls: int | None = effective_function_invocation_configuration.get("max_function_calls")
             prepped_messages = list(messages)
             fcc_messages: list[Message] = []
             response: ChatResponse[Any] | None = None
 
-            loop_enabled = self.function_invocation_configuration.get("enabled", True)
-            max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+            loop_enabled = effective_function_invocation_configuration.get("enabled", True)
+            max_iterations = effective_function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
             for attempt_idx in range(max_iterations if loop_enabled else 0):
                 approval_result = await _process_function_requests(
                     response=None,
@@ -2667,10 +2678,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             # Make a final model call with tool_choice="none" so the model
             # produces a plain text answer instead of leaving orphaned
             # function_call items without matching results.
-            if response is not None and self.function_invocation_configuration.get("enabled", True):
+            if response is not None and effective_function_invocation_configuration.get("enabled", True):
                 logger.info(
                     "Maximum iterations reached (%d). Requesting final response without tools.",
-                    self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
+                    effective_function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
                 )
             mutable_options["tool_choice"] = "none"
             final_inner_stream = cast(

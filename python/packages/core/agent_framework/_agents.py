@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequen
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from functools import partial
+from inspect import signature
 from itertools import chain
 from typing import (
     TYPE_CHECKING,
@@ -40,7 +41,14 @@ from ._sessions import (
     SessionContext,
     is_local_history_conversation_id,
 )
-from ._tools import FunctionInvocationLayer, FunctionTool, ToolTypes, normalize_tools
+from ._tools import (
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+    FunctionTool,
+    ToolTypes,
+    normalize_function_invocation_configuration,
+    normalize_tools,
+)
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -163,6 +171,14 @@ def _sanitize_agent_name(agent_name: str | None) -> str | None:
     return sanitized
 
 
+def _accepts_function_invocation_configuration(client: SupportsChatGetResponse[Any]) -> bool:
+    """Return whether the client's get_response accepts per-call function invocation config."""
+    try:
+        return "function_invocation_configuration" in signature(client.get_response).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 class _RunContext(TypedDict):
     session: AgentSession | None
     session_context: SessionContext
@@ -174,6 +190,7 @@ class _RunContext(TypedDict):
     compaction_strategy: CompactionStrategy | None
     tokenizer: TokenizerProtocol | None
     client_kwargs: Mapping[str, Any]
+    function_invocation_configuration: FunctionInvocationConfiguration
     function_invocation_kwargs: Mapping[str, Any]
 
 
@@ -669,6 +686,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -691,6 +709,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 is not already storing history. If service-side storage is active for
                 the run, the agent skips local history providers and relies on the
                 service-managed conversation instead.
+            function_invocation_configuration: Optional agent-level function invocation configuration.
             default_options: A TypedDict containing chat options. When using a typed agent like
                 ``Agent[OpenAIChatOptions]``, this enables IDE autocomplete for
                 provider-specific options including temperature, max_tokens, model,
@@ -724,6 +743,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         self.compaction_strategy = compaction_strategy
         self.require_per_service_call_history_persistence = require_per_service_call_history_persistence
         self.tokenizer = tokenizer
+        self.function_invocation_configuration = normalize_function_invocation_configuration(
+            function_invocation_configuration
+        )
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
@@ -989,8 +1011,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         stream: bool,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Invoke the downstream chat client for a prepared run context."""
+        function_invocation_configuration_kwargs: dict[str, Any] = {}
+        if isinstance(self.client, FunctionInvocationLayer) and _accepts_function_invocation_configuration(self.client):
+            function_invocation_configuration_kwargs["function_invocation_configuration"] = context[
+                "function_invocation_configuration"
+            ]
+
         if stream:
-            return self.client.get_response(  # type: ignore[call-overload, no-any-return]
+            return cast(Any, self.client).get_response(
                 messages=context["session_messages"],
                 stream=True,
                 options=context["chat_options"],  # type: ignore[reportArgumentType]
@@ -998,9 +1026,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 tokenizer=context["tokenizer"],
                 function_invocation_kwargs=context["function_invocation_kwargs"],
                 client_kwargs=context["client_kwargs"],
+                **function_invocation_configuration_kwargs,
             )
 
-        return self.client.get_response(  # type: ignore[call-overload, no-any-return]
+        return cast(Any, self.client).get_response(
             messages=context["session_messages"],
             stream=False,
             options=context["chat_options"],  # type: ignore[reportArgumentType]
@@ -1008,6 +1037,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             tokenizer=context["tokenizer"],
             function_invocation_kwargs=context["function_invocation_kwargs"],
             client_kwargs=context["client_kwargs"],
+            **function_invocation_configuration_kwargs,
         )
 
     async def _parse_non_streaming_response(
@@ -1324,6 +1354,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "compaction_strategy": compaction_strategy or self.compaction_strategy,
             "tokenizer": tokenizer or self.tokenizer,
             "client_kwargs": effective_client_kwargs,
+            "function_invocation_configuration": self.function_invocation_configuration,
             "function_invocation_kwargs": additional_function_arguments,
         }
 
@@ -1689,6 +1720,7 @@ class Agent(
         context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -1705,6 +1737,7 @@ class Agent(
             context_providers=context_providers,
             middleware=middleware,
             require_per_service_call_history_persistence=require_per_service_call_history_persistence,
+            function_invocation_configuration=function_invocation_configuration,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
             additional_properties=additional_properties,
