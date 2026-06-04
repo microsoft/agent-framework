@@ -191,7 +191,9 @@ internal static class AttachmentDetector
 
         int semicolon = mediaType!.IndexOf(';');
         string baseType = semicolon >= 0 ? mediaType.Substring(0, semicolon) : mediaType;
-        return baseType.Trim();
+        // Normalize stray whitespace (incl. interior, e.g. "application / pdf") so tolerant
+        // inputs still hit the exact-match allow-list.
+        return baseType.Replace(" ", string.Empty).Replace("\t", string.Empty).Trim();
     }
 
     private static string ResolveDataFilename(DataContent dc, string mediaType, byte[] bytes)
@@ -237,8 +239,12 @@ internal static class AttachmentDetector
             }
         }
 
-        // Synthesize from a hash of the URI string when no real filename can be derived.
-        byte[] uriBytes = Encoding.UTF8.GetBytes(uc.Uri.ToString());
+        // Synthesize from a hash of the URI when no real filename can be derived. Hash only
+        // scheme+host+path (drop query/fragment) so the same resource carrying a time-bound query
+        // (e.g. a rotating SAS token) yields a stable dedup prefix across turns instead of a new
+        // filename each time. Relative URIs (no GetLeftPart) fall back to the full string.
+        string uriKey = uc.Uri.IsAbsoluteUri ? uc.Uri.GetLeftPart(UriPartial.Path) : uc.Uri.ToString();
+        byte[] uriBytes = Encoding.UTF8.GetBytes(uriKey);
         return Synthesize(uriBytes, uriBytes.Length, mediaType);
     }
 
@@ -347,13 +353,32 @@ internal static class AttachmentDetector
     // avoids a full SHA256 over multi-hundred-MB media just to derive 6 hex chars.
     private const int SynthesizeHashCap = 4096;
 
+    // Payloads at or below this size are hashed in full, so two attachments that share the same
+    // head/tail windows and length but differ only in their middle bytes never collide on the
+    // dedup prefix. Larger payloads fall back to head+tail sampling to avoid a full SHA256 over
+    // multi-hundred-MB media. Equal to head + tail windows: below it the sampled windows already
+    // cover every byte, so "full hash" costs nothing extra.
+    private const int SynthesizeFullHashCap = SynthesizeHashCap * 2;
+
     private static string Synthesize(ReadOnlySpan<byte> data, long totalLength, string mediaType)
     {
-        int headCount = Math.Min(data.Length, SynthesizeHashCap);
-        // When the payload is larger than what we hashed from the head, also sample an equal-sized
-        // tail window. This distinguishes same-header / same-length payloads that differ only in
-        // their middle/tail bytes, which a head-only hash would otherwise collide.
-        int tailCount = data.Length > headCount ? Math.Min(data.Length - headCount, SynthesizeHashCap) : 0;
+        // Small/medium payloads: hash the entire buffer (no head/tail collision risk).
+        if (data.Length <= SynthesizeFullHashCap)
+        {
+            return Synthesize(data, data.Length, 0, totalLength, mediaType);
+        }
+
+        const int headCount = SynthesizeHashCap;
+        // For larger payloads, also sample an equal-sized tail window. This distinguishes
+        // same-header / same-length payloads that differ only in their tail bytes, which a
+        // head-only hash would otherwise collide. (Middle-byte differences in very large media are
+        // accepted as a residual collision risk; this is a dedup prefix, not an integrity check.)
+        int tailCount = Math.Min(data.Length - headCount, SynthesizeHashCap);
+        return Synthesize(data, headCount, tailCount, totalLength, mediaType);
+    }
+
+    private static string Synthesize(ReadOnlySpan<byte> data, int headCount, int tailCount, long totalLength, string mediaType)
+    {
         int count = headCount + tailCount;
         byte[] buffer = new byte[count + sizeof(long)];
         data.Slice(0, headCount).CopyTo(buffer);
