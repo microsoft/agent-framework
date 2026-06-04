@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from mcp import types
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import SpanKind, StatusCode
 
@@ -122,12 +124,15 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
         m.setattr(tool, "get_mcp_client", lambda: mock_transport)
 
         async def patched_connect(self_: Any, *, reset: bool = False, load_configured: bool = True) -> None:
-            # Simulate what _connect_on_owner does but with mock session
+            # Simulate _connect_on_owner: create initialize span and call session.initialize()
             from agent_framework._mcp import create_mcp_client_span
             from agent_framework.observability import OtelAttr
 
             with create_mcp_client_span("initialize", attributes=self_._mcp_base_span_attributes()) as init_span:
-                init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, "2025-06-18")
+                result = await mock_session_cls.initialize()
+                protocol_version = getattr(result, "protocolVersion", None)
+                if protocol_version:
+                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, protocol_version)
 
             self_.session = mock_session_cls
             self_.is_connected = True
@@ -135,6 +140,7 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
         m.setattr(MCPTool, "_connect_on_owner", patched_connect)
         await tool.connect()
 
+    mock_session_cls.initialize.assert_awaited_once()
     spans = span_exporter.get_finished_spans()
     init_spans = [s for s in spans if s.name == "initialize"]
     assert len(init_spans) == 1
@@ -230,6 +236,23 @@ async def test_mcp_tools_call_tool_error_sets_error_type(span_exporter: InMemory
     assert span.status.status_code == StatusCode.ERROR
 
 
+async def test_mcp_tools_call_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
+    """When session.call_tool() raises McpError, error.type should be the exception class name."""
+    tool = _make_connected_mcp_tool()
+    tool.session.call_tool = AsyncMock(side_effect=McpError(ErrorData(code=-32600, message="invalid request")))
+
+    span_exporter.clear()
+    with pytest.raises(ToolExecutionException):
+        await tool.call_tool("get-weather")
+
+    spans = span_exporter.get_finished_spans()
+    call_spans = [s for s in spans if "tools/call" in s.name]
+    assert len(call_spans) == 1
+    span = call_spans[0]
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"
+    assert span.status.status_code == StatusCode.ERROR
+
+
 # endregion
 
 
@@ -253,6 +276,25 @@ async def test_mcp_prompts_get_creates_client_span(span_exporter: InMemorySpanEx
     assert span.name == "prompts/get analyze-code"
     assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "prompts/get"
     assert span.attributes[OtelAttr.PROMPT_NAME] == "analyze-code"
+
+
+async def test_mcp_prompts_get_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
+    """When session.get_prompt() raises McpError, the span should have error.type and ERROR status."""
+    tool = _make_connected_mcp_tool()
+    tool.session.get_prompt = AsyncMock(
+        side_effect=McpError(ErrorData(code=-32602, message="prompt not found"))
+    )
+
+    span_exporter.clear()
+    with pytest.raises(ToolExecutionException):
+        await tool.get_prompt("missing-prompt")
+
+    spans = span_exporter.get_finished_spans()
+    prompt_spans = [s for s in spans if "prompts/get" in s.name]
+    assert len(prompt_spans) == 1
+    span = prompt_spans[0]
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"
+    assert span.status.status_code == StatusCode.ERROR
 
 
 # endregion
