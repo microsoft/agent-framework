@@ -360,4 +360,25 @@ class TestAGUIEventConverter:
             if content.type == "function_call"
         ]
 
+        assert ("danger", "danger_tool", "") in function_calls
         assert ("danger", "danger_tool", '{"amount": 100}') not in function_calls
+        assert all(call[2] != '{"amount": 100}' for call in function_calls)
+
+    def test_tool_call_end_must_match_current_tool_call_id(self) -> None:
+        """TOOL_CALL_END with a mismatched toolCallId should not clear the current tool call state."""
+        converter = AGUIEventConverter()
+
+        converter.convert_event({"type": "TOOL_CALL_START", "toolCallId": "danger", "toolName": "danger_tool"})
+        converter.convert_event({"type": "TOOL_CALL_ARGS", "toolCallId": "danger", "delta": '{"amount":'})
+        update = converter.convert_event({"type": "TOOL_CALL_END", "toolCallId": "safe"})
+
+        assert update is None
+        assert converter.current_tool_call_id == "danger"
+        assert converter.current_tool_name == "danger_tool"
+        assert converter.accumulated_tool_args == '{"amount":'
+
+        converter.convert_event({"type": "TOOL_CALL_END", "toolCallId": "danger"})
+
+        assert converter.current_tool_call_id is None
+        assert converter.current_tool_name is None
+        assert converter.accumulated_tool_args == ""
