@@ -88,7 +88,6 @@ __all__ = [
     "enable_sensitive_telemetry",
     "get_meter",
     "get_tracer",
-    "mcp_tracer",
     "set_mcp_span_error",
 ]
 
