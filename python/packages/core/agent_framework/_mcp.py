@@ -17,6 +17,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from opentelemetry import propagate
+from opentelemetry import trace as otel_trace
 
 from ._tools import FunctionTool
 from ._types import (
@@ -25,6 +26,11 @@ from ._types import (
     Message,
 )
 from .exceptions import ToolException, ToolExecutionException
+from .observability import (
+    OtelAttr,
+    create_mcp_client_span,
+    set_mcp_span_error,
+)
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -279,9 +285,20 @@ class MCPTool:
         self._supports_logging: bool | None = None
         self._ping_available: bool = True
         self._pending_reload_tasks: set[asyncio.Task[None]] = set()
+        self._mcp_protocol_version: str | None = None
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        """Return base MCP span attributes shared across all operations.
+
+        Subclasses override to add transport-specific attributes (server address, port, etc.).
+        """
+        attrs: dict[str, Any] = {}
+        if self._mcp_protocol_version:
+            attrs[OtelAttr.MCP_PROTOCOL_VERSION] = self._mcp_protocol_version
+        return attrs
 
     def _parse_prompt_result_from_mcp(
         self,
@@ -793,8 +810,12 @@ class MCPTool:
                     inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
             try:
-                initialize_result = await session.initialize()
-                self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+                with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
+                    initialize_result = await session.initialize()
+                    self._mcp_protocol_version = getattr(initialize_result, "protocolVersion", None)
+                    if self._mcp_protocol_version:
+                        init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, self._mcp_protocol_version)
+                    self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
             except (Exception, asyncio.CancelledError) as ex:
                 if await self._close_and_check_cancelled(ex):
                     raise
@@ -812,8 +833,12 @@ class MCPTool:
             self.session = session
         elif self.session._request_id == 0:  # type: ignore[attr-defined]
             # If the session is not initialized, we need to reinitialize it
-            initialize_result = await self.session.initialize()
-            self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+            with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
+                initialize_result = await self.session.initialize()
+                self._mcp_protocol_version = getattr(initialize_result, "protocolVersion", None)
+                if self._mcp_protocol_version:
+                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, self._mcp_protocol_version)
+                self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
         elif self._server_capabilities is None:
             self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
         logger.debug("Connected to MCP server: %s", self.session)
@@ -1057,7 +1082,8 @@ class MCPTool:
                             "Skipping MCP prompt loading because the server did not advertise prompts support."
                         )
                         return
-                    prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                    with create_mcp_client_span("prompts/list", attributes=self._mcp_base_span_attributes()):
+                        prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -1142,7 +1168,8 @@ class MCPTool:
                     if not self._supports_tools:
                         logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
                         return
-                    tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                    with create_mcp_client_span("tools/list", attributes=self._mcp_base_span_attributes()):
+                        tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -1314,9 +1341,6 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
                 or the tool call fails.
         """
-        from anyio import ClosedResourceError
-        from mcp.shared.exceptions import McpError
-
         if not self.load_tools_flag:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
@@ -1365,7 +1389,27 @@ class MCPTool:
         meta = _inject_otel_into_mcp_meta(request_meta)
 
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
-        # Try the operation, reconnecting once if the connection is closed
+
+        # Build MCP span attributes for tools/call
+        mcp_attrs = self._mcp_base_span_attributes()
+        mcp_attrs[OtelAttr.TOOL_NAME] = tool_name
+        mcp_attrs[OtelAttr.OPERATION] = OtelAttr.TOOL_EXECUTION_OPERATION
+
+        with create_mcp_client_span("tools/call", target=tool_name, attributes=mcp_attrs) as span:
+            return await self._call_tool_with_retries(tool_name, filtered_kwargs, meta, parser, span)
+
+    async def _call_tool_with_retries(
+        self,
+        tool_name: str,
+        filtered_kwargs: dict[str, Any],
+        meta: dict[str, Any] | None,
+        parser: Callable[..., str | list[Content]],
+        span: otel_trace.Span | None,
+    ) -> str | list[Content]:
+        """Execute the MCP tools/call RPC with retry logic."""
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
         for attempt in range(2):
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
@@ -1376,18 +1420,34 @@ class MCPTool:
                         if isinstance(parsed, list)
                         else str(parsed)
                     )
+                    # Per OTel MCP semconv: set error.type="tool_error" for isError results
+                    if span is not None:
+                        set_mcp_span_error(span, "tool_error", text or str(parsed))
                     raise ToolExecutionException(text or str(parsed))
                 return parser(result)
             except ToolExecutionException:
                 raise
-            except (ClosedResourceError, McpError) as call_ex:
+            except (ClosedResourceError, McpError) as call_ex:  # type: ignore[reportUnknownVariableType]
                 is_session_terminated = (
-                    isinstance(call_ex, McpError) and "session terminated" in call_ex.error.message.lower()
+                    isinstance(call_ex, McpError) and "session terminated" in call_ex.error.message.lower()  # type: ignore[reportUnknownMemberType]
                 )
                 is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
                 if not is_connection_lost:
-                    error_message = call_ex.error.message if isinstance(call_ex, McpError) else str(call_ex)
-                    raise ToolExecutionException(error_message, inner_exception=call_ex) from call_ex
+                    error_message = (
+                        call_ex.error.message  # type: ignore[reportUnknownMemberType]
+                        if isinstance(call_ex, McpError)
+                        else str(call_ex)  # type: ignore[reportUnknownArgumentType]
+                    )
+                    if span is not None:
+                        set_mcp_span_error(
+                            span,
+                            type(call_ex).__name__,  # type: ignore[reportUnknownArgumentType]
+                            error_message,  # type: ignore[reportUnknownArgumentType]
+                        )
+                    raise ToolExecutionException(
+                        error_message,
+                        inner_exception=call_ex,  # type: ignore[reportUnknownArgumentType]
+                    ) from call_ex
 
                 if attempt == 0:
                     # First attempt failed, try reconnecting.
@@ -1402,12 +1462,19 @@ class MCPTool:
                         ) from reconn_ex
 
                 # Second attempt also failed, give up.
-                logger.error("MCP connection closed unexpectedly after reconnection: %s", call_ex)
+                logger.error(
+                    "MCP connection closed unexpectedly after reconnection: %s",
+                    call_ex,  # type: ignore[reportUnknownArgumentType]
+                )
+                if span is not None:
+                    set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))  # type: ignore[reportUnknownArgumentType]
                 raise ToolExecutionException(
                     f"Failed to call tool '{tool_name}' - connection lost.",
-                    inner_exception=call_ex,
+                    inner_exception=call_ex,  # type: ignore[reportUnknownArgumentType]
                 ) from call_ex
             except Exception as ex:
+                if span is not None:
+                    set_mcp_span_error(span, type(ex).__name__, str(ex))
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
 
@@ -1436,36 +1503,42 @@ class MCPTool:
             )
 
         parser = self.parse_prompt_results or self._parse_prompt_result_from_mcp
-        # Try the operation, reconnecting once if the connection is closed
-        for attempt in range(2):
-            try:
-                prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
-                return parser(prompt_result)
-            except ClosedResourceError as cl_ex:
-                if attempt == 0:
-                    # First attempt failed, try reconnecting
-                    logger.info("MCP connection closed unexpectedly. Reconnecting...")
-                    try:
-                        await self.connect(reset=True)
-                        continue  # Retry the operation
-                    except Exception as reconn_ex:
+        mcp_attrs = self._mcp_base_span_attributes()
+        mcp_attrs[OtelAttr.PROMPT_NAME] = prompt_name
+
+        with create_mcp_client_span("prompts/get", target=prompt_name, attributes=mcp_attrs) as span:
+            for attempt in range(2):
+                try:
+                    prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
+                    return parser(prompt_result)
+                except ClosedResourceError as cl_ex:
+                    if attempt == 0:
+                        # First attempt failed, try reconnecting
+                        logger.info("MCP connection closed unexpectedly. Reconnecting...")
+                        try:
+                            await self.connect(reset=True)
+                            continue  # Retry the operation
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                    else:
+                        # Second attempt also failed, give up
+                        logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
+                        set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
                         raise ToolExecutionException(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
-                        ) from reconn_ex
-                else:
-                    # Second attempt also failed, give up
-                    logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
-                    raise ToolExecutionException(
-                        f"Failed to call prompt '{prompt_name}' - connection lost.",
-                        inner_exception=cl_ex,
-                    ) from cl_ex
-            except McpError as mcp_exc:
-                error_message = mcp_exc.error.message
-                raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
-            except Exception as ex:
-                raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
-        raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
+                            f"Failed to call prompt '{prompt_name}' - connection lost.",
+                            inner_exception=cl_ex,
+                        ) from cl_ex
+                except McpError as mcp_exc:
+                    error_message = mcp_exc.error.message
+                    set_mcp_span_error(span, type(mcp_exc).__name__, error_message)
+                    raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
+                except Exception as ex:
+                    set_mcp_span_error(span, type(ex).__name__, str(ex))
+                    raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
+            raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager.
@@ -1621,6 +1694,11 @@ class MCPStdioTool(MCPTool):
         self.encoding = encoding
         self._client_kwargs = kwargs
 
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        attrs = super()._mcp_base_span_attributes()
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "pipe"
+        return attrs
+
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP stdio client.
 
@@ -1760,6 +1838,24 @@ class MCPStreamableHTTPTool(MCPTool):
         self.terminate_on_close = terminate_on_close
         self._httpx_client: AsyncClient | None = http_client
         self._header_provider = header_provider
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        attrs = super()._mcp_base_span_attributes()
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
+        attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "http"
+        try:
+            from httpx import URL
+
+            parsed = URL(self.url)
+            if parsed.host:
+                attrs[OtelAttr.ADDRESS] = parsed.host
+            port = parsed.port
+            if port is None:
+                port = 443 if parsed.scheme == "https" else 80
+            attrs[OtelAttr.PORT] = port
+        except Exception:
+            logger.debug("Failed to parse URL for MCP span transport attributes", exc_info=True)
+        return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -1923,6 +2019,24 @@ class MCPWebsocketTool(MCPTool):
         )
         self.url = url
         self._client_kwargs = kwargs
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        attrs = super()._mcp_base_span_attributes()
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
+        attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "websocket"
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.url)
+            if parsed.hostname:
+                attrs[OtelAttr.ADDRESS] = parsed.hostname
+            port = parsed.port
+            if port is None:
+                port = 443 if parsed.scheme == "wss" else 80
+            attrs[OtelAttr.PORT] = port
+        except Exception:
+            logger.debug("Failed to parse URL for MCP span transport attributes", exc_info=True)
+        return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP WebSocket client.
