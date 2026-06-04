@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Extensions.AI;
@@ -32,11 +34,19 @@ public static class ChatClientHarnessExtensions
     /// additional context providers, and chat history provider.
     /// When <see langword="null"/>, the agent uses built-in default settings.
     /// </param>
+    /// <param name="loggerFactory">
+    /// Optional logger factory for creating loggers used by the agent and its components.
+    /// </param>
+    /// <param name="services">
+    /// Optional service provider for resolving dependencies required by AI functions and other agent components.
+    /// </param>
     /// <returns>A new <see cref="HarnessAgent"/> instance.</returns>
     public static HarnessAgent AsHarnessAgent(
         this IChatClient chatClient,
         int maxContextWindowTokens,
         int maxOutputTokens,
-        HarnessAgentOptions? options = null) =>
-        new(chatClient, maxContextWindowTokens, maxOutputTokens, options);
+        HarnessAgentOptions? options = null,
+        ILoggerFactory? loggerFactory = null,
+        IServiceProvider? services = null) =>
+        new(chatClient, maxContextWindowTokens, maxOutputTokens, options, loggerFactory, services);
 }

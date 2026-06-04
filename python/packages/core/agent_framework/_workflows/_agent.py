@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 from .._agents import BaseAgent
+from .._serialization import make_json_safe
 from .._sessions import (
     AgentSession,
     ContextProvider,
@@ -32,6 +33,7 @@ from .._types import (
 from ..exceptions import AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
 from ._events import (
+    AGENT_FORWARDED_EVENT_TYPES,
     WorkflowEvent,
 )
 from ._message_utils import normalize_messages_input
@@ -60,7 +62,7 @@ class WorkflowAgent(BaseAgent):
         data: Any
 
         def to_dict(self) -> dict[str, Any]:
-            return {"request_id": self.request_id, "data": self.data}
+            return {"request_id": self.request_id, "data": make_json_safe(self.data)}
 
         def to_json(self) -> str:
             return json.dumps(self.to_dict())
@@ -104,7 +106,7 @@ class WorkflowAgent(BaseAgent):
         Note:
             Only output events (type='output') and request_info events (type='request_info') from
             the workflow are considered and converted to agent responses of the WorkflowAgent.
-            Other workflow events are ignored. Use `with_output_from` in WorkflowBuilder to control
+            Other workflow events are ignored. Use `output_from` in WorkflowBuilder to control
             which executors' outputs are surfaced as agent responses.
         """
         if id is None:
@@ -300,7 +302,7 @@ class WorkflowAgent(BaseAgent):
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
         ):
-            if event.type == "output" or event.type == "request_info":
+            if event.type in AGENT_FORWARDED_EVENT_TYPES:
                 output_events.append(event)
 
         result = self._convert_workflow_events_to_agent_response(response_id, output_events)
@@ -514,7 +516,11 @@ class WorkflowAgent(BaseAgent):
         response_id: str,
         output_events: list[WorkflowEvent[Any]],
     ) -> AgentResponse:
-        """Convert a list of workflow output events to an AgentResponse."""
+        """Convert a list of workflow events to an AgentResponse.
+
+        Caller-facing workflow events are forwarded as agent messages. Terminal and
+        intermediate event payloads keep their original content types.
+        """
         messages: list[Message] = []
         raw_representations: list[object] = []
         merged_usage: UsageDetails | None = None
@@ -535,14 +541,19 @@ class WorkflowAgent(BaseAgent):
                 raw_representations.append(output_event)
             else:
                 data = output_event.data
+                # Anything that isn't `output` is intermediate — this branch only sees
+                # events that already passed the lifecycle filter and weren't request_info.
+                is_intermediate = output_event.type != "output"
 
                 if isinstance(data, AgentResponseUpdate):
-                    # We cannot support AgentResponseUpdate in non-streaming mode. This is because the message
-                    # sequence cannot be guaranteed when there are streaming updates in between non-streaming
-                    # responses.
+                    # AgentResponseUpdate is a streaming-only payload. Accepting it
+                    # in non-streaming runs would make message ordering depend on
+                    # partial chunks for both terminal and intermediate events.
+                    event_label = "Intermediate" if is_intermediate else "Output"
                     raise AgentInvalidRequestException(
-                        "Output event with AgentResponseUpdate data cannot be emitted in non-streaming mode. "
-                        "Please ensure executors emit AgentResponse for non-streaming workflows."
+                        f"{event_label} event with AgentResponseUpdate data cannot be emitted "
+                        "in non-streaming mode. Please ensure executors emit AgentResponse "
+                        "for non-streaming workflows."
                     )
 
                 if isinstance(data, AgentResponse):
@@ -626,16 +637,21 @@ class WorkflowAgent(BaseAgent):
     ) -> list[AgentResponseUpdate]:
         """Convert a workflow event to a list of AgentResponseUpdate objects.
 
-        Events with type='output' and type='request_info' are processed.
-        Other workflow events are ignored as they are workflow-internal.
+        Forwarding rule:
 
-        For 'output' events, AgentExecutor yields AgentResponseUpdate for streaming updates
-        via ctx.yield_output(). This method converts those to agent response updates.
-
-        Returns:
-            A list of AgentResponseUpdate objects. Empty list if the event is not relevant.
+        - ``type='output'`` — terminal user-facing emission. Forwarded as-is.
+        - ``type='intermediate'`` (and the deprecated ``type='data'``) — forwarded
+          as-is.
+        - ``type='request_info'`` — request-info translation (unchanged).
+        - Everything else (lifecycle, diagnostics, executor bookkeeping,
+          orchestration-internal events like ``group_chat``/``handoff_sent``/
+          ``magentic_orchestrator``) is dropped.
         """
-        if event.type == "output":
+        # TODO(evmattso): https://github.com/microsoft/agent-framework/issues/5885
+        if event.type not in AGENT_FORWARDED_EVENT_TYPES:
+            return []
+
+        if event.type != "request_info":
             data = event.data
             executor_id = event.executor_id
 

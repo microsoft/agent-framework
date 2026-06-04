@@ -728,10 +728,16 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
-            contents.extend(self._parse_tool_calls_from_openai(choice))
             if choice.finish_reason:
                 finish_reason = choice.finish_reason  # type: ignore[assignment]
 
+            # Some OpenAI-compatible providers (e.g. Azure) send `"delta": null`
+            # on finish chunks instead of the spec-compliant `"delta": {}`.
+            # Guard here so all content-parsing below can assume delta is present.
+            if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
+                continue
+
+            contents.extend(self._parse_tool_calls_from_openai(choice))
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):

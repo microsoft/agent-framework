@@ -7,20 +7,20 @@ using Microsoft.Extensions.AI;
 namespace Harness.Shared.Console.ToolFormatters;
 
 /// <summary>
-/// Formats <c>TodoList_*</c> tool calls with tree-view output for added items
+/// Formats <c>todos_*</c> tool calls with tree-view output for added items
 /// and structured output for complete/remove operations.
 /// </summary>
 public sealed class TodoToolFormatter : ToolCallFormatter
 {
     /// <inheritdoc/>
-    public override bool CanFormat(FunctionCallContent call) => call.Name.StartsWith("TodoList_", StringComparison.Ordinal);
+    public override bool CanFormat(FunctionCallContent call) => call.Name.StartsWith("todos_", StringComparison.Ordinal);
 
     /// <inheritdoc/>
     public override string? FormatDetail(FunctionCallContent call) => call.Name switch
     {
-        "TodoList_Add" => FormatAddTodos(call),
-        "TodoList_Complete" => FormatIdList(call, "ids", "Complete"),
-        "TodoList_Remove" => FormatIdList(call, "ids", "Remove"),
+        "todos_add" => FormatAddTodos(call),
+        "todos_complete" => FormatCompleteTodos(call),
+        "todos_remove" => FormatIdList(call, "ids", "Remove"),
         _ => null,
     };
 
@@ -59,6 +59,50 @@ public sealed class TodoToolFormatter : ToolCallFormatter
         {
             string connector = i < titles.Count - 1 ? "├─" : "└─";
             sb.Append($"\n   {connector} {titles[i]}");
+        }
+
+        return sb.ToString();
+    }
+
+    private static string? FormatCompleteTodos(FunctionCallContent call)
+    {
+        if (call.Arguments?.TryGetValue("items", out object? itemsObj) != true || itemsObj is null)
+        {
+            return null;
+        }
+
+        var entries = new List<(int Id, string? Reason)>();
+
+        if (itemsObj is JsonElement jsonArray && jsonArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in jsonArray.EnumerateArray())
+            {
+                if (!item.TryGetProperty("id", out JsonElement idElement) || !idElement.TryGetInt32(out int id))
+                {
+                    continue;
+                }
+
+                string? reason = item.TryGetProperty("reason", out JsonElement reasonElement)
+                    ? reasonElement.GetString()
+                    : null;
+                entries.Add((id, reason));
+            }
+        }
+
+        if (entries.Count == 0)
+        {
+            return null;
+        }
+
+        var sb = new StringBuilder();
+        for (int i = 0; i < entries.Count; i++)
+        {
+            string connector = i < entries.Count - 1 ? "├─" : "└─";
+            sb.Append($"\n   {connector} Complete #{entries[i].Id}");
+            if (!string.IsNullOrEmpty(entries[i].Reason))
+            {
+                sb.Append($" — {Truncate(entries[i].Reason!, 80)}");
+            }
         }
 
         return sb.ToString();

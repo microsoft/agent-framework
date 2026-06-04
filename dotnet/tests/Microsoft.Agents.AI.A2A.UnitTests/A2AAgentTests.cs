@@ -84,6 +84,72 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_WithOptions_InitializesPropertiesCorrectly()
+    {
+        // Arrange
+        var options = new A2AAgentOptions
+        {
+            Id = "options-id",
+            Name = "options-name",
+            Description = "options-description"
+        };
+
+        // Act
+        var agent = new A2AAgent(this._a2aClient, options);
+
+        // Assert
+        Assert.Equal("options-id", agent.Id);
+        Assert.Equal("options-name", agent.Name);
+        Assert.Equal("options-description", agent.Description);
+    }
+
+    [Fact]
+    public void Constructor_WithOptions_IsolatesAgentFromOptionsMutation()
+    {
+        // Arrange
+        var options = new A2AAgentOptions
+        {
+            Id = "original-id",
+            Name = "Original Name",
+            Description = "Original Description"
+        };
+        var agent = new A2AAgent(this._a2aClient, options);
+
+        // Act - mutate options after agent construction
+        options.Id = "mutated-id";
+        options.Name = "Mutated Name";
+        options.Description = "Mutated Description";
+
+        // Assert - agent should retain original values
+        Assert.Equal("original-id", agent.Id);
+        Assert.Equal("Original Name", agent.Name);
+        Assert.Equal("Original Description", agent.Description);
+    }
+
+    [Fact]
+    public void Constructor_WithNullOptions_ThrowsArgumentNullException() =>
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new A2AAgent(this._a2aClient, options: null!));
+
+    [Fact]
+    public void Constructor_WithEmptyOptions_UsesBaseProperties()
+    {
+        // Act
+        var agent = new A2AAgent(this._a2aClient, new A2AAgentOptions());
+
+        // Assert
+        Assert.NotNull(agent.Id);
+        Assert.NotEmpty(agent.Id);
+        Assert.Null(agent.Name);
+        Assert.Null(agent.Description);
+    }
+
+    [Fact]
+    public void Constructor_WithOptions_NullA2AClient_ThrowsArgumentNullException() =>
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new A2AAgent(null!, new A2AAgentOptions()));
+
+    [Fact]
     public async Task RunAsync_AllowsNonUserRoleMessagesAsync()
     {
         // Arrange
@@ -1058,12 +1124,57 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
         Assert.Null(update0.FinishReason);
+        Assert.Null(update0.MessageId);
         Assert.IsType<TaskStatusUpdateEvent>(update0.RawRepresentation);
 
         // Assert - session should be updated with context and task IDs
         var a2aSession = (A2AAgentSession)session;
         Assert.Equal(ContextId, a2aSession.ContextId);
         Assert.Equal(TaskId, a2aSession.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithTaskStatusUpdateEventAndMessageId_YieldsMessageIdAsync()
+    {
+        // Arrange
+        const string TaskId = "task-status-msg-123";
+        const string ContextId = "ctx-status-msg-456";
+        const string ExpectedMessageId = "msg-status-789";
+
+        this._handler.StreamingResponseToReturn = new StreamResponse
+        {
+            StatusUpdate = new TaskStatusUpdateEvent
+            {
+                TaskId = TaskId,
+                ContextId = ContextId,
+                Status = new()
+                {
+                    State = TaskState.Working,
+                    Message = new Message
+                    {
+                        MessageId = ExpectedMessageId,
+                        Parts = [Part.FromText("Processing your request...")]
+                    }
+                }
+            }
+        };
+
+        var session = await this._agent.CreateSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Check task status", session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ExpectedMessageId, update0.MessageId);
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.IsType<TaskStatusUpdateEvent>(update0.RawRepresentation);
     }
 
     [Fact]
@@ -1084,6 +1195,7 @@ public sealed class A2AAgentTests : IDisposable
                     State = TaskState.InputRequired,
                     Message = new Message
                     {
+                        MessageId = "input-msg-789",
                         Parts = [Part.FromText("Where would you like to fly?")]
                     }
                 }
@@ -1104,6 +1216,7 @@ public sealed class A2AAgentTests : IDisposable
 
         var update0 = updates[0];
         Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal("input-msg-789", update0.MessageId);
         Assert.Null(update0.FinishReason);
 
         var textContent = Assert.Single(update0.Contents.OfType<TextContent>());

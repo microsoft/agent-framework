@@ -351,18 +351,24 @@ public class FoundryAgentTests
     }
 
     [Fact]
-    public async Task Constructor_UserAgentHeaderAddedToRequestsAsync()
+    public async Task Constructor_AgentFrameworkUserAgentHeaderAddedToRequestsAsync()
     {
-        bool userAgentFound = false;
+        // After the FoundryChatClient consolidation, every outbound request from a
+        // FoundryAgent-built chat client carries the new agent-framework-dotnet/{version}
+        // segment (stamped by AgentFrameworkUserAgentPolicy registered via the MEAI
+        // OpenAIRequestPolicies hook). The local MEAI/{version} stamp was removed because
+        // MEAI 10.5.1 stamps that itself; this test only verifies the framework-wide segment
+        // that the Foundry package now guarantees.
+        bool agentFrameworkUserAgentFound = false;
         using HttpHandlerAssert httpHandler = new(request =>
         {
             if (request.Headers.TryGetValues("User-Agent", out System.Collections.Generic.IEnumerable<string>? values))
             {
                 foreach (string value in values)
                 {
-                    if (value.StartsWith("MEAI/", StringComparison.OrdinalIgnoreCase))
+                    if (value.Contains("agent-framework-dotnet/"))
                     {
-                        userAgentFound = true;
+                        agentFrameworkUserAgentFound = true;
                     }
                 }
             }
@@ -395,7 +401,7 @@ public class FoundryAgentTests
         AgentSession session = await agent.CreateSessionAsync();
         await agent.RunAsync("Hello", session);
 
-        Assert.True(userAgentFound, "Expected MEAI user-agent header to be present in requests.");
+        Assert.True(agentFrameworkUserAgentFound, "Expected agent-framework-dotnet user-agent segment to be present on outbound requests.");
     }
 
     #endregion
@@ -431,31 +437,39 @@ public class FoundryAgentTests
     }
 
     [Fact]
-    public void AgentEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNonNull()
+    public void AgentEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNull()
     {
+        // Behavior change: FoundryAgent no longer caches a ProjectOpenAIClient. Callers
+        // retrieve it from the AIProjectClient themselves
+        // (agent.GetService<AIProjectClient>()!.GetProjectOpenAIClient()).
         FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
 
-        Assert.NotNull(agent.GetService<ProjectOpenAIClient>());
+        Assert.Null(agent.GetService<ProjectOpenAIClient>());
     }
 
     [Fact]
-    public void AgentEndpointConstructor_GetServiceAIProjectClient_ReturnsNull()
+    public void AgentEndpointConstructor_GetServiceAIProjectClient_ReturnsNonNull()
     {
+        // Behavior change: after Plan #2's Agent Endpoint mode (Mode 3) AIProjectClient materialization, the
+        // agent-endpoint constructor now derives a project-level AIProjectClient from the
+        // parsed project root URL and surfaces it via GetService. Previously this returned
+        // null because no AIProjectClient was constructed for hosted-agent-endpoint agents.
         FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
 
-        Assert.Null(agent.GetService<AIProjectClient>());
+        Assert.NotNull(agent.GetService<AIProjectClient>());
     }
 
     [Fact]
-    public void ProjectEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNonNull()
+    public void ProjectEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNull()
     {
+        // See AgentEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNull for rationale.
         FoundryAgent agent = new(
             s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test");
 
-        Assert.NotNull(agent.GetService<ProjectOpenAIClient>());
+        Assert.Null(agent.GetService<ProjectOpenAIClient>());
     }
 
     [Fact]
@@ -611,6 +625,57 @@ public class FoundryAgentTests
     }
 
     [Fact]
+    public void AgentEndpointConstructor_ExposesFoundryProviderName_OnChatClientMetadata()
+    {
+        // Behavior change: after the FoundryChatClient consolidation, the agent-endpoint path
+        // now wraps with FoundryChatClient in the Agent Endpoint mode (Mode 3) and stamps the microsoft.foundry provider
+        // name. Previously this path used a bare AsIChatClient() with no Foundry-specific
+        // decorator, so the provider name defaulted to whatever MEAI surfaces. This guards the
+        // new behavior.
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
+
+        var metadata = agent.GetService<ChatClientMetadata>();
+        Assert.NotNull(metadata);
+        Assert.Equal("microsoft.foundry", metadata!.ProviderName);
+    }
+
+    [Fact]
+    public async Task AgentEndpointConstructor_StampsAgentFrameworkUserAgentSegmentAsync()
+    {
+        // Behavior change: after the FoundryChatClient consolidation, every outbound request
+        // from the agent-endpoint constructor carries the agent-framework-dotnet/{version}
+        // segment via AgentFrameworkUserAgentPolicy. Previously this path had no
+        // agent-framework branding at all.
+        bool afSeen = false;
+        using HttpHandlerAssert handler = new(req =>
+        {
+            if (req.Headers.TryGetValues("User-Agent", out var values))
+            {
+                foreach (string v in values)
+                {
+                    if (v.Contains("agent-framework-dotnet/"))
+                    {
+                        afSeen = true;
+                    }
+                }
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(TestDataUtil.GetOpenAIDefaultResponseJson(), Encoding.UTF8, "application/json"),
+            };
+        });
+#pragma warning disable CA5399
+        using HttpClient http = new(handler);
+#pragma warning restore CA5399
+        ProjectOpenAIClientOptions opts = new() { Transport = new HttpClientPipelineTransport(http) };
+
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
+        await agent.RunAsync("Hello");
+
+        Assert.True(afSeen, "Expected agent-framework-dotnet/{version} segment on the agent-endpoint outbound User-Agent.");
+    }
+
+    [Fact]
     public async Task AgentEndpointConstructor_PassesThroughCallerPolicyOnPerAgentPipelineAsync()
     {
         // Direct switch to ProjectOpenAIClientOptions means caller-supplied pipeline policies
@@ -669,13 +734,14 @@ public class FoundryAgentTests
     {
         // The MEAI policy adds its own User-Agent header so we cannot reliably observe the OpenAI SDK's
         // application-id stamp in the outbound request. Verify the value is propagated onto the
-        // project-level client's options via the public ProjectOpenAIClient surface.
+        // caller's options bag and that the materialized AIProjectClient is reachable so
+        // downstream conversation/file/vector-store operations can pick the application id up.
         ProjectOpenAIClientOptions opts = new() { UserAgentApplicationId = "my-app-id" };
 
         FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
 
-        ProjectOpenAIClient? projectClient = agent.GetService<ProjectOpenAIClient>();
-        Assert.NotNull(projectClient);
+        AIProjectClient? aiProjectClient = agent.GetService<AIProjectClient>();
+        Assert.NotNull(aiProjectClient);
         // Caller's UserAgentApplicationId is preserved on the per-agent options bag verbatim.
         Assert.Equal("my-app-id", opts.UserAgentApplicationId);
     }

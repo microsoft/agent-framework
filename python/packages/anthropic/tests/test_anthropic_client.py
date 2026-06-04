@@ -485,6 +485,48 @@ def test_prepare_message_for_anthropic_text_reasoning_with_signature(
     assert result["content"][0]["signature"] == "sig_abc123"
 
 
+def test_prepare_message_for_anthropic_attaches_signature_only_reasoning(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(text="Let me think about this..."),
+            Content.from_text_reasoning(text=None, protected_data="sig_abc123"),
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [
+        {"type": "thinking", "thinking": "Let me think about this...", "signature": "sig_abc123"}
+    ]
+
+
+def test_prepare_message_for_anthropic_skips_orphan_signature_only_reasoning(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(text=None, protected_data="sig_abc123"),
+            Content.from_function_call(
+                call_id="call_123",
+                name="get_weather",
+                arguments={"location": "San Francisco"},
+            ),
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert len(result["content"]) == 1
+    assert result["content"][0]["type"] == "tool_use"
+    assert result["content"][0]["id"] == "call_123"
+
+
 def test_prepare_message_for_anthropic_mcp_server_tool_call(
     mock_anthropic_client: MagicMock,
 ) -> None:

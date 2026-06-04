@@ -102,7 +102,7 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
 
         // Register agent using hosting DI pattern with InMemorySessionStore
         builder.Services.AddAIAgent("session-test-agent", (_, name) => new FakeSessionAgent(name))
-            .WithInMemorySessionStore();
+            .WithInMemorySessionStore(withIsolation: false);
 
         this._app = builder.Build();
 

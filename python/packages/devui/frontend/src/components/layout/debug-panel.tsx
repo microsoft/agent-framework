@@ -600,7 +600,10 @@ function EventItem({ event }: EventItemProps) {
     event.type === "error";
 
   return (
-    <div className="border-l-2 border-muted pl-3 py-2 hover:bg-muted/50 transition-colors">
+    <div
+      className="border-l-2 border-muted pl-3 py-2 hover:bg-muted/50 transition-colors"
+      data-devui-debug-event={eventType}
+    >
       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
         <Icon className={`h-3 w-3 ${colorClass}`} />
         <span className="font-mono">{timestamp}</span>
@@ -1088,18 +1091,17 @@ function EventExpandedContent({
 
 function EventsTab({
   events,
+  processedEvents,
   isStreaming,
 }: {
   events: ExtendedResponseStreamEvent[];
+  processedEvents: ExtendedResponseStreamEvent[];
   isStreaming?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Process events to accumulate tool calls and reduce noise
-  const processedEvents = processEventsForDisplay(events);
-
   // Add separators between message rounds
-  const eventsWithSeparators = addSeparatorsToEvents(processedEvents);
+  const eventsWithSeparators = useMemo(() => addSeparatorsToEvents(processedEvents), [processedEvents]);
 
   // Reverse events so latest appears at top
   const reversedEvents = [...eventsWithSeparators].reverse();
@@ -1565,10 +1567,13 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
   );
 }
 
-function ToolsTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
-  // Process events first to get clean tool calls
-  const processedEvents = processEventsForDisplay(events);
-
+function ToolsTab({
+  events,
+  processedEvents,
+}: {
+  events: ExtendedResponseStreamEvent[];
+  processedEvents: ExtendedResponseStreamEvent[];
+}) {
   // Create call->result pairs in chronological order
   const toolEvents: ExtendedResponseStreamEvent[] = [];
   const functionCalls = processedEvents.filter(
@@ -1755,15 +1760,16 @@ export function DebugPanel({
   const activeTab = useDevUIStore((state) => state.debugPanelTab);
   const setActiveTab = useDevUIStore((state) => state.setDebugPanelTab);
 
+  const processedEvents = useMemo(() => processEventsForDisplay(events), [events]);
+
   // Compute counts once for tab badges (memoized to avoid perf hits)
   const counts = useMemo(() => {
-    const processedEvents = processEventsForDisplay(events);
     const eventsCount = processedEvents.length;
     const tracesCount = events.filter(e => e.type === "response.trace.completed").length;
     const toolsCount = processedEvents.filter(e => e.type === "response.function_call.complete").length
       + events.filter(e => getFunctionResultFromEvent(e) !== null).length;
     return { eventsCount, tracesCount, toolsCount };
-  }, [events]);
+  }, [events, processedEvents]);
 
   return (
     <div className="flex-1 border-l flex flex-col min-h-0">
@@ -1809,7 +1815,7 @@ export function DebugPanel({
         </div>
 
         <TabsContent value="events" className="flex-1 mt-0 overflow-hidden">
-          <EventsTab events={events} isStreaming={isStreaming} />
+          <EventsTab events={events} processedEvents={processedEvents} isStreaming={isStreaming} />
         </TabsContent>
 
         <TabsContent value="traces" className="flex-1 mt-0 overflow-hidden">
@@ -1817,7 +1823,7 @@ export function DebugPanel({
         </TabsContent>
 
         <TabsContent value="tools" className="flex-1 mt-0 overflow-hidden">
-          <ToolsTab events={events} />
+          <ToolsTab events={events} processedEvents={processedEvents} />
         </TabsContent>
       </Tabs>
     </div>

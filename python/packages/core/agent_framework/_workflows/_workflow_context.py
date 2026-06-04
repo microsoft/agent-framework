@@ -201,6 +201,7 @@ def validate_workflow_context_annotation(
 
 # Event types reserved for framework lifecycle (not allowed from user code)
 _FRAMEWORK_LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset({"started", "status", "failed"})
+_OUTPUT_SELECTION_EVENT_TYPES: frozenset[str] = frozenset({"output", "intermediate"})
 
 
 class WorkflowContext(Generic[OutT, W_OutT]):
@@ -337,7 +338,20 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             await self._runner_context.send_message(msg)
 
     async def yield_output(self, output: W_OutT) -> None:
-        """Set the output of the workflow.
+        """Yield an output from this executor.
+
+        The framework labels the resulting workflow event based on the workflow's explicit
+        output designation:
+
+        - Omitted-selection compatibility behavior: every yield produces ``type='output'``.
+        - Explicit mode: output-designated executors produce ``type='output'``,
+          intermediate-designated executors produce ``type='intermediate'``, and
+          unlisted executor yields are hidden from caller-facing events.
+
+        Whether a given executor produces ``output`` or ``intermediate`` events is fixed at
+        workflow-build time via ``output_from`` / ``intermediate_output_from`` on
+        :class:`WorkflowBuilder`; an executor cannot vary the label per yield. To change an
+        executor's role, list it under a different designation when building the workflow.
 
         Args:
             output: The output to yield. This must conform to the workflow output type(s)
@@ -347,12 +361,24 @@ class WorkflowContext(Generic[OutT, W_OutT]):
         # (deepcopy to capture state at yield time)
         self._yielded_outputs.append(copy.deepcopy(output))
 
+        event_type = self._runner_context.classify_yielded_output(self._executor_id)
+        if event_type is None:
+            return
+
         with _framework_event_origin():
-            event = WorkflowEvent.output(self._executor_id, output)
+            event = WorkflowEvent(event_type, executor_id=self._executor_id, data=output)
         await self._runner_context.add_event(event)
 
     async def add_event(self, event: WorkflowEvent[Any]) -> None:
         """Add an event to the workflow context."""
+        if event.origin == WorkflowEventSource.EXECUTOR and event.type in _OUTPUT_SELECTION_EVENT_TYPES:
+            warning_msg = (
+                f"Executor '{self._executor_id}' attempted to emit a '{event.type}' event directly, "
+                "which is reserved for ctx.yield_output(). The event was ignored."
+            )
+            logger.warning(warning_msg)
+            await self._runner_context.add_event(WorkflowEvent.warning(warning_msg))
+            return
         if event.origin == WorkflowEventSource.EXECUTOR and event.type in _FRAMEWORK_LIFECYCLE_EVENT_TYPES:
             warning_msg = (
                 f"Executor '{self._executor_id}' attempted to emit a '{event.type}' event, "

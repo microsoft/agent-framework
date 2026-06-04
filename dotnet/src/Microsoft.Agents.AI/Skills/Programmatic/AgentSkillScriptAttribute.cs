@@ -26,7 +26,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// This attribute is compatible with Native AOT when used with <see cref="AgentClassSkill{TSelf}"/>.
-/// Alternatively, override the <see cref="AgentSkill.Scripts"/> property and use
+/// Alternatively, override <see cref="AgentClassSkill{TSelf}.Scripts"/> and use
 /// <see cref="AgentClassSkill{TSelf}.CreateScript"/> instead.
 /// </para>
 /// </remarks>

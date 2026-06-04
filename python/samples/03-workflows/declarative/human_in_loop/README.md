@@ -1,12 +1,11 @@
 # Human-in-Loop Workflow Sample
 
-This sample demonstrates how to build interactive workflows that request user input during execution using the `Question`, `RequestExternalInput`, and `WaitForInput` actions.
+This sample demonstrates how to build interactive workflows that request user input during execution using the `Question` and `RequestExternalInput` actions.
 
 ## What This Sample Shows
 
 - Using `Question` to prompt for user responses
 - Using `RequestExternalInput` to request external data
-- Using `WaitForInput` to pause and wait for input
 - Processing user responses to drive workflow decisions
 - Interactive conversation patterns
 

@@ -19,6 +19,7 @@ from agent_framework import (
     ChatResponse,
     CompactionProvider,
     Content,
+    ContextWindowCompactionStrategy,
     Message,
     SelectiveToolCallCompactionStrategy,
     SlidingWindowStrategy,
@@ -193,6 +194,64 @@ def test_append_compaction_message_annotates_new_message() -> None:
 
     assert len(messages) == 2
     assert isinstance(_group_id(messages[1]), str)
+
+
+def test_incremental_annotation_assigns_unique_message_ids() -> None:
+    # Regression test for #5237: ``_ensure_message_ids`` assigned ``msg_{index}``
+    # using the position within the slice handed to ``group_messages``. Successive
+    # incremental annotations restart the index at 0, so distinct messages collided
+    # on the same ``message_id``.
+    messages: list[Message] = []
+    for turn in range(4):
+        messages.append(Message(role="user", contents=[f"user {turn}"]))
+        annotate_message_groups(messages)
+        messages.append(Message(role="assistant", contents=[f"assistant {turn}"]))
+        annotate_message_groups(messages)
+
+    message_ids = [message.message_id for message in messages]
+    assert all(message_ids), "every message should receive an id"
+    assert len(set(message_ids)) == len(message_ids), f"duplicate message ids: {message_ids}"
+
+
+def test_ensure_message_ids_avoids_existing_id_collisions() -> None:
+    # An auto-generated ``msg_{index}`` must not collide with an id already present
+    # on another message (user-supplied or assigned by an earlier annotation pass).
+    messages = [
+        Message(role="user", contents=["zero"]),
+        Message(role="assistant", contents=["one"], message_id="msg_2"),
+        Message(role="user", contents=["two"]),
+    ]
+    annotate_message_groups(messages)
+
+    message_ids = [message.message_id for message in messages]
+    assert message_ids[1] == "msg_2"
+    assert len(set(message_ids)) == len(message_ids), f"duplicate message ids: {message_ids}"
+
+
+def test_incremental_annotation_avoids_prefix_id_collision() -> None:
+    # Regression for the PR review on #5237: when only a suffix is re-annotated,
+    # an auto-assigned ``msg_{index}`` in the suffix must not collide with a
+    # preexisting id carried by a message in the *preserved prefix* (a group
+    # before the one re-annotation pulls back to). Otherwise ``_group_id_for``
+    # derives the same group id and merges groups across the boundary.
+    messages = [
+        # Out-of-position, user-supplied id that matches the ``msg_{index}`` the
+        # suffix pass would assign to the appended message below. This message is
+        # two groups back, so it stays outside the re-annotated slice.
+        Message(role="user", contents=["zero"], message_id="msg_2"),
+        Message(role="user", contents=["one"]),
+    ]
+    annotate_message_groups(messages)
+    assert messages[0].message_id == "msg_2"
+    assert messages[1].message_id == "msg_1"
+
+    messages.append(Message(role="user", contents=["two"]))
+    annotate_message_groups(messages, from_index=2)
+
+    message_ids = [message.message_id for message in messages]
+    assert all(message_ids), "every message should receive an id"
+    assert len(set(message_ids)) == len(message_ids), f"duplicate message ids: {message_ids}"
+    assert messages[0].message_id == "msg_2"
 
 
 async def test_truncation_strategy_keeps_system_anchor() -> None:
@@ -480,6 +539,44 @@ async def test_tool_result_compaction_collapses_old_groups_into_summary() -> Non
     summary_msgs = [t for t in texts if t.startswith("[Tool results:")]
     assert len(summary_msgs) == 1
     assert "r1" in summary_msgs[0]
+    assert any(m.role == "tool" for m in projected)
+
+
+async def test_tool_result_compaction_is_idempotent_after_summary_insertion() -> None:
+    """Re-running compaction after a mid-list summary insertion must not duplicate it.
+
+    Mirrors a subsequent tool-loop iteration (issue #4991): the inserted summary and the
+    excluded originals now persist on the same list, so a second annotate + compaction pass
+    over the same groups should be a no-op rather than collapsing the group again.
+    """
+    messages = [
+        Message(role="user", contents=["u"]),
+        _assistant_function_call("call-1"),
+        _tool_result("call-1", "r1"),
+        _assistant_function_call("call-2"),
+        _tool_result("call-2", "r2"),
+        Message(role="assistant", contents=["done"]),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)
+    annotate_message_groups(messages)
+    assert await strategy(messages) is True
+
+    summaries_after_first = [m for m in messages if (m.text or "").startswith("[Tool results:")]
+    assert len(summaries_after_first) == 1
+    summary = summaries_after_first[0]
+    summary_group_ids = _group_unknown_value(summary, SUMMARY_OF_GROUP_IDS_KEY)
+
+    # Second pass over the same (now partially compacted) list.
+    annotate_message_groups(messages)
+    changed = await strategy(messages)
+
+    assert changed is False
+    summaries_after_second = [m for m in messages if (m.text or "").startswith("[Tool results:")]
+    assert len(summaries_after_second) == 1
+    assert _group_unknown_value(summaries_after_second[0], SUMMARY_OF_GROUP_IDS_KEY) == summary_group_ids
+
+    # The kept tool-call group stays atomic and included.
+    projected = included_messages(messages)
     assert any(m.role == "tool" for m in projected)
 
 
@@ -952,3 +1049,159 @@ async def test_in_memory_history_provider_default_loads_all() -> None:
 
     loaded = await provider.get_messages(session_id="test", state=state)
     assert len(loaded) == 3
+
+
+# --- ContextWindowCompactionStrategy tests ---
+
+
+async def test_context_window_strategy_noop_under_threshold() -> None:
+    """No compaction when total tokens are below 50% of input budget."""
+    # input_budget = 1000 - 200 = 800; tool eviction threshold = 50% = 400 tokens
+    # CharacterEstimatorTokenizer: 4 chars/token
+    # Each short message ~4-5 tokens, total well under 400
+    messages = [
+        Message(role="system", contents=["sys"]),
+        Message(role="user", contents=["hello"]),
+        Message(role="assistant", contents=["hi"]),
+    ]
+    strategy = ContextWindowCompactionStrategy(
+        max_context_window_tokens=1000,
+        max_output_tokens=200,
+    )
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert len(included_messages(messages)) == 3
+
+
+async def test_context_window_strategy_tool_eviction_triggers_at_threshold() -> None:
+    """Tool eviction fires when tokens exceed 50% but truncation does not."""
+    # input_budget = 20000 - 200 = 19800
+    # tool eviction at 50% = 9900 tokens; truncation at 80% = 15840 tokens
+    # CharacterEstimatorTokenizer: 4 chars/token
+    # Each tool result: "x" * 8000 = 8000 chars = 2000 tokens
+    # 5 groups * ~2000 = ~10000+ tokens (exceeds 9900, under 15840)
+    # Tool eviction collapses older groups; truncation threshold not reached.
+    messages = [
+        Message(role="system", contents=["system prompt"]),
+        Message(role="user", contents=["u1"]),
+        _assistant_function_call("c1"),
+        _tool_result("c1", "x" * 8000),
+        Message(role="user", contents=["u2"]),
+        _assistant_function_call("c2"),
+        _tool_result("c2", "x" * 8000),
+        Message(role="user", contents=["u3"]),
+        _assistant_function_call("c3"),
+        _tool_result("c3", "x" * 8000),
+        Message(role="user", contents=["u4"]),
+        _assistant_function_call("c4"),
+        _tool_result("c4", "x" * 8000),
+        Message(role="user", contents=["u5"]),
+        _assistant_function_call("c5"),
+        _tool_result("c5", "x" * 8000),
+    ]
+    strategy = ContextWindowCompactionStrategy(
+        max_context_window_tokens=20000,
+        max_output_tokens=200,
+        keep_last_tool_call_groups=2,
+    )
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    # Verify that tool results were compacted (summary messages present).
+    summary_msgs = [m for m in projected if m.text and "[Tool results:" in m.text]
+    assert len(summary_msgs) > 0
+    # Verify that the truncation phase did NOT fire — no messages excluded with "truncation" reason.
+    from agent_framework._compaction import EXCLUDE_REASON_KEY
+
+    truncation_excluded = [m for m in messages if m.additional_properties.get(EXCLUDE_REASON_KEY) == "truncation"]
+    assert len(truncation_excluded) == 0
+
+
+async def test_context_window_strategy_truncation_triggers_above_80_pct() -> None:
+    """Truncation fires when tokens exceed 80% of input budget."""
+    # input_budget = 1000 - 100 = 900
+    # tool eviction at 50% = 450 tokens; truncation at 80% = 720 tokens
+    # We'll create messages with no tool calls (so tool eviction does nothing)
+    # but exceeding 720 tokens total (>2880 chars)
+    messages = [
+        Message(role="system", contents=["sys"]),
+        Message(role="user", contents=["u1 " * 400]),  # ~1200 chars = 300 tokens
+        Message(role="assistant", contents=["a1 " * 400]),  # ~1200 chars = 300 tokens
+        Message(role="user", contents=["u2 " * 400]),  # ~1200 chars = 300 tokens
+        Message(role="assistant", contents=["a2 " * 400]),  # ~1200 chars = 300 tokens
+    ]
+    strategy = ContextWindowCompactionStrategy(
+        max_context_window_tokens=1000,
+        max_output_tokens=100,
+    )
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    # System message should always be preserved
+    assert projected[0].role == "system"
+    # Some messages should have been excluded
+    assert len(projected) < 5
+
+
+async def test_context_window_strategy_keep_last_tool_call_groups_respected() -> None:
+    """The keep_last_tool_call_groups parameter controls how many groups are retained."""
+    # Create enough tokens to trigger tool eviction (>50% of input budget)
+    # input_budget = 1000 - 100 = 900; threshold = 450 tokens
+    messages = [
+        Message(role="system", contents=["sys"]),
+        Message(role="user", contents=["u1"]),
+        _assistant_function_call("c1"),
+        _tool_result("c1", "r1 " * 200),
+        Message(role="user", contents=["u2"]),
+        _assistant_function_call("c2"),
+        _tool_result("c2", "r2 " * 200),
+        Message(role="user", contents=["u3"]),
+        _assistant_function_call("c3"),
+        _tool_result("c3", "r3 " * 200),
+    ]
+    # keep_last_tool_call_groups=1: only the last group (c3) should be kept verbatim
+    strategy = ContextWindowCompactionStrategy(
+        max_context_window_tokens=1000,
+        max_output_tokens=100,
+        keep_last_tool_call_groups=1,
+    )
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    # The last tool call group (c3) should be in the projected messages
+    has_c3 = any(
+        c.call_id == "c3" for m in projected for c in m.contents if c.type in ("function_call", "function_result")
+    )
+    assert has_c3
+
+
+def test_context_window_strategy_validates_thresholds() -> None:
+    """Invalid threshold combinations raise ValueError."""
+    import pytest
+
+    with pytest.raises(ValueError, match="max_context_window_tokens must be positive"):
+        ContextWindowCompactionStrategy(max_context_window_tokens=0, max_output_tokens=0)
+
+    with pytest.raises(ValueError, match="max_output_tokens must be >= 0"):
+        ContextWindowCompactionStrategy(max_context_window_tokens=1000, max_output_tokens=1000)
+
+    with pytest.raises(ValueError, match="tool_eviction_threshold must be in"):
+        ContextWindowCompactionStrategy(
+            max_context_window_tokens=1000, max_output_tokens=100, tool_eviction_threshold=0.0
+        )
+
+    with pytest.raises(ValueError, match="truncation_threshold must be >= tool_eviction_threshold"):
+        ContextWindowCompactionStrategy(
+            max_context_window_tokens=1000,
+            max_output_tokens=100,
+            tool_eviction_threshold=0.8,
+            truncation_threshold=0.5,
+        )

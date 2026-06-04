@@ -519,6 +519,7 @@ class ApiClient {
           lastMessageId,
           lastSequenceNumber,
           accumulatedText: storedState?.accumulatedText,
+          accumulatedTextIsPreview: storedState?.accumulatedTextIsPreview,
         }),
         event,
         currentResponseId,

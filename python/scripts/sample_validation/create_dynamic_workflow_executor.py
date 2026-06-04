@@ -14,11 +14,9 @@ from agent_framework import (
     handler,
 )
 from agent_framework.github import GitHubCopilotAgent
-from copilot.generated.session_events import PermissionRequest
-from copilot.session import PermissionRequestResult
+from copilot.session import PermissionHandler, PermissionRequestResult
+from copilot.session_events import PermissionRequest
 from pydantic import BaseModel
-from typing_extensions import Never
-
 from sample_validation.const import WORKER_COMPLETED
 from sample_validation.discovery import DiscoveryResult
 from sample_validation.models import (
@@ -29,6 +27,7 @@ from sample_validation.models import (
     ValidationConfig,
     WorkflowCreationResult,
 )
+from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +103,7 @@ def prompt_permission(
     logger.debug(
         f"[Permission Request: {request.kind}] ({context})Automatically approved for sample validation."
     )
-    return PermissionRequestResult(kind="approved")
+    return PermissionHandler.approve_all(request, context)
 
 
 class CustomAgentExecutor(Executor):
@@ -249,7 +248,7 @@ class CollectorExecutor(Executor):
         batch_completion: BatchCompletion,
         ctx: WorkflowContext[Never, ExecutionResult],
     ) -> None:
-        """Receive all results at once and emit final output."""
+        """Receive all results at once and emit Workflow Output."""
         await ctx.yield_output(ExecutionResult(results=self._results))
 
     @handler
@@ -305,9 +304,7 @@ class CreateConcurrentValidationWorkflowExecutor(Executor):
         )
         collector = CollectorExecutor()
 
-        nested_builder = WorkflowBuilder(
-            start_executor=coordinator, output_executors=[collector]
-        )
+        nested_builder = WorkflowBuilder(start_executor=coordinator, output_from=[collector])
         nested_builder.add_edge(coordinator, collector)
         for worker in workers:
             nested_builder.add_edge(coordinator, worker)

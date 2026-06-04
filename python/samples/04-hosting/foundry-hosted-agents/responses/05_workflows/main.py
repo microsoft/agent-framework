@@ -52,9 +52,9 @@ def main():
     workflow_agent = (
         WorkflowBuilder(
             start_executor=writer_executor,
-            # Limiting the output to only the final formatted result.
-            # If this is not set, all intermediate results will be included in the output.
-            output_executors=[format_executor],
+            # Select only the formatted result as Workflow Output.
+            # Unselected executor payloads are hidden unless selected as Intermediate Output.
+            output_from=[format_executor],
         )
         .add_edge(writer_executor, legal_executor)
         .add_edge(legal_executor, format_executor)

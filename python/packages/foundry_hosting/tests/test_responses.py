@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Callable
-from unittest.mock import AsyncMock, MagicMock
+from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -25,16 +26,25 @@ from agent_framework import (
     Message,
     RawAgent,
     ResponseStream,
+    WorkflowCheckpoint,
+    WorkflowCheckpointException,
+    WorkflowMessage,
 )
 from azure.ai.agentserver.responses import InMemoryResponseProvider
+from mcp import McpError
+from mcp.types import ErrorData
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
+    _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
+    CONSENT_ERROR_CODE,
+    ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    consent_url_from_error,
 )
 
 
@@ -251,6 +261,50 @@ class TestNonStreaming:
         assert "function_call_output" in types
         assert "message" in types
 
+    async def test_hosted_mcp_call_and_result_persist_as_single_mcp_call(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_mcp_server_tool_call(
+                                call_id="mcp_abc123",
+                                tool_name="search",
+                                server_name="api_specs",
+                                arguments='{"q": "cats"}',
+                            )
+                        ],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_mcp_server_tool_result(
+                                call_id="mcp_abc123",
+                                output=[Content.from_text(text="found 10 cats")],
+                            )
+                        ],
+                    ),
+                    Message(role="assistant", contents=[Content.from_text("I found 10 cats!")]),
+                ]
+            )
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=False)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        types = [item["type"] for item in body["output"]]
+        assert "mcp_call" in types
+        assert "custom_tool_call_output" not in types
+
+        mcp_items = [item for item in body["output"] if item["type"] == "mcp_call"]
+        assert len(mcp_items) == 1
+        assert mcp_items[0]["id"] == "mcp_abc123"
+        assert mcp_items[0]["output"] == "found 10 cats"
+
     async def test_reasoning_content(self) -> None:
         agent = _make_agent(
             response=AgentResponse(
@@ -400,6 +454,36 @@ class TestStreaming:
         args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
+
+    async def test_function_call_streaming_serializes_dataclass_arguments(self) -> None:
+        @dataclass
+        class HandoffLikeRequest:
+            agent_response: AgentResponse
+
+        request = HandoffLikeRequest(
+            agent_response=AgentResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("Need more details")])]
+            )
+        )
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "handoff_to_refund", arguments=request)],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+
+        payload = json.loads(args_done[0]["data"]["arguments"])
+        assert payload["agent_response"]["type"] == "agent_response"
+        assert payload["agent_response"]["messages"][0]["contents"][0]["text"] == "Need more details"
 
     async def test_alternating_text_and_function_call(self) -> None:
         agent = _make_agent(
@@ -578,6 +662,53 @@ class TestStreaming:
         assert "response.output_item.added" in types
         assert "response.output_item.done" in types
 
+    async def test_mcp_tool_call_and_result_streaming_emit_single_completed_mcp_call(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_mcp_server_tool_call(
+                            call_id="mcp_abc123",
+                            tool_name="search",
+                            server_name="api_specs",
+                            arguments='{"q":',
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_mcp_server_tool_call(
+                            call_id="mcp_abc123",
+                            tool_name="search",
+                            server_name="api_specs",
+                            arguments=' "cats"}',
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_mcp_server_tool_result(
+                            call_id="mcp_abc123",
+                            output=[Content.from_text(text="found 10 cats")],
+                        )
+                    ],
+                    role="tool",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        done_events = [e for e in events if e["event"] == "response.output_item.done"]
+        assert len(done_events) == 1
+        assert done_events[0]["data"]["item"]["type"] == "mcp_call"
+        assert done_events[0]["data"]["item"]["id"] == "mcp_abc123"
+        assert done_events[0]["data"]["item"]["output"] == "found 10 cats"
+
 
 # endregion
 
@@ -680,6 +811,24 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "mcp_server_tool_call"
         assert msg.contents[0].server_name == "my_server"
         assert msg.contents[0].tool_name == "search"
+
+    async def test_mcp_call_with_output_reconstructs_mcp_result_content(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemMcpToolCall
+
+        item = OutputItemMcpToolCall({
+            "type": "mcp_call",
+            "id": "mcp-1",
+            "server_label": "my_server",
+            "name": "search",
+            "arguments": '{"q": "test"}',
+            "output": "found 10 cats",
+        })
+        msg = await _output_item_to_message(item)
+        assert msg.role == "assistant"
+        assert len(msg.contents) == 2
+        assert msg.contents[0].type == "mcp_server_tool_call"
+        assert msg.contents[1].type == "mcp_server_tool_result"
+        assert msg.contents[1].output == "found 10 cats"
 
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
@@ -1149,6 +1298,25 @@ class TestItemToMessage:
         assert msg.contents[0].type == "mcp_server_tool_call"
         assert msg.contents[0].server_name == "my_server"
         assert msg.contents[0].tool_name == "search"
+
+    async def test_mcp_call_with_output_reconstructs_mcp_result_content(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemMcpToolCall
+
+        item = ItemMcpToolCall({
+            "type": "mcp_call",
+            "id": "mcp-1",
+            "server_label": "my_server",
+            "name": "search",
+            "arguments": '{"q": "test"}',
+            "output": "found 10 cats",
+        })
+        msg = await _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert len(msg.contents) == 2
+        assert msg.contents[0].type == "mcp_server_tool_call"
+        assert msg.contents[1].type == "mcp_server_tool_result"
+        assert msg.contents[1].output == "found 10 cats"
 
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
@@ -1897,6 +2065,71 @@ class TestMultiTurnMixedContent:
         ]
         assert len(fc_contents) >= 1
         assert fc_contents[0].name == "search"
+
+    async def test_hosted_mcp_call_round_trip_does_not_orphan_function_call_output(self) -> None:
+        """Turn 1 produces hosted MCP call + result, turn 2 must replay both without orphaning output."""
+        agent = _make_multi_response_agent([
+            AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_mcp_server_tool_call(
+                                call_id="mcp_abc123",
+                                tool_name="search",
+                                server_name="api_specs",
+                                arguments='{"q": "cats"}',
+                            )
+                        ],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_mcp_server_tool_result(
+                                call_id="mcp_abc123",
+                                output=[Content.from_text(text="found 10 cats")],
+                            )
+                        ],
+                    ),
+                    Message(role="assistant", contents=[Content.from_text("I found 10 cats!")]),
+                ]
+            ),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Here are more details")])]),
+        ])
+        server = _make_server(agent)
+
+        resp1 = await _post(server, input_text="Search for cats", stream=False)
+        assert resp1.status_code == 200
+        response_id = resp1.json()["id"]
+
+        types1 = [item["type"] for item in resp1.json()["output"]]
+        assert "mcp_call" in types1
+        assert "custom_tool_call_output" not in types1
+
+        resp2 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": "Tell me more",
+                "stream": False,
+                "previous_response_id": response_id,
+            },
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "completed"
+
+        second_call_messages = agent.run.call_args_list[1].kwargs["messages"]
+        mcp_call_contents = [c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_call"]
+        mcp_result_contents = [
+            c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_result"
+        ]
+        function_result_contents = [c for m in second_call_messages for c in m.contents if c.type == "function_result"]
+
+        assert len(mcp_call_contents) >= 1
+        assert len(mcp_result_contents) >= 1
+        assert all((c.call_id or "") != "mcp_abc123" for c in function_result_contents)
+        assert any((c.call_id or "") == "mcp_abc123" for c in mcp_call_contents)
+        assert any((c.call_id or "") == "mcp_abc123" for c in mcp_result_contents)
 
     async def test_multi_turn_reasoning_in_history(self) -> None:
         """Turn 1 produces reasoning + text, turn 2 sees them in history."""
@@ -2677,6 +2910,23 @@ class TestCheckpointContextPathValidation:
 
         return _checkpoint_storage_for_context
 
+    @staticmethod
+    def _checkpoint_with_azure_message_role() -> WorkflowCheckpoint:
+        from azure.ai.agentserver.responses.models import MessageRole
+
+        return WorkflowCheckpoint(
+            workflow_name="wf",
+            graph_signature_hash="hash",
+            messages={
+                "executor": [
+                    WorkflowMessage(
+                        data=Message(role=MessageRole.USER, contents=[Content.from_text("hello")]),
+                        source_id="source",
+                    )
+                ]
+            },
+        )
+
     def test_valid_segment_creates_storage_under_root(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
@@ -2684,6 +2934,124 @@ class TestCheckpointContextPathValidation:
         storage = helper(str(root), "resp_abc123")
         assert storage.storage_path.is_dir()
         assert storage.storage_path.parent == root.resolve()
+
+    def test_azure_message_role_allowlist_type_matches_generated_sdk_path(self) -> None:
+        assert (
+            _AZURE_RESPONSES_MESSAGE_ROLE_TYPE
+            == "azure.ai.agentserver.responses.models._generated.sdk.models.models._enums:MessageRole"
+        )
+
+    async def test_storage_allows_azure_message_role_checkpoint_restore(self, tmp_path: Any) -> None:
+        from azure.ai.agentserver.responses.models import MessageRole
+
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        storage = helper(str(root), "resp_abc123")
+        checkpoint = self._checkpoint_with_azure_message_role()
+
+        await storage.save(checkpoint)
+        loaded = await storage.load(checkpoint.checkpoint_id)
+
+        loaded_message = loaded.messages["executor"][0].data
+        assert isinstance(loaded_message, Message)
+        assert type(loaded_message.role) is MessageRole
+        assert loaded_message.role == MessageRole.USER
+        assert loaded_message.text == "hello"
+
+    async def test_plain_storage_blocks_azure_message_role_checkpoint_restore(self, tmp_path: Any) -> None:
+        storage = FileCheckpointStorage(tmp_path / "plain")
+        checkpoint = self._checkpoint_with_azure_message_role()
+
+        await storage.save(checkpoint)
+        with pytest.raises(WorkflowCheckpointException, match="MessageRole"):
+            await storage.load(checkpoint.checkpoint_id)
+
+    async def test_get_latest_restores_azure_message_role(self, tmp_path: Any) -> None:
+        from azure.ai.agentserver.responses.models import MessageRole
+
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        storage = helper(str(root), "resp_abc123")
+        checkpoint = self._checkpoint_with_azure_message_role()
+
+        await storage.save(checkpoint)
+        latest = await storage.get_latest(workflow_name="wf")
+
+        assert latest is not None
+        assert latest.checkpoint_id == checkpoint.checkpoint_id
+        latest_message = latest.messages["executor"][0].data
+        assert isinstance(latest_message, Message)
+        assert type(latest_message.role) is MessageRole
+
+    async def test_get_latest_silently_skips_without_allowlist(
+        self, tmp_path: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        storage = FileCheckpointStorage(tmp_path / "plain")
+        checkpoint = self._checkpoint_with_azure_message_role()
+
+        await storage.save(checkpoint)
+        with caplog.at_level(logging.WARNING, logger="agent_framework"):
+            latest = await storage.get_latest(workflow_name="wf")
+
+        assert latest is None
+        assert any("MessageRole" in message for message in caplog.messages)
+
+    async def test_handle_inner_workflow_restores_message_role_checkpoint_from_previous_response(
+        self, tmp_path: Any
+    ) -> None:
+        from agent_framework import WorkflowAgent
+        from azure.ai.agentserver.responses import ResponseContext
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        previous_response_id = "resp_previous"
+        response_id = "resp_current"
+        root = tmp_path / "root"
+        root.mkdir()
+        checkpoint_storage = self._helper()(str(root), previous_response_id)
+        checkpoint = self._checkpoint_with_azure_message_role()
+        await checkpoint_storage.save(checkpoint)
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.run = AsyncMock(
+            side_effect=[
+                AgentResponse(messages=[]),
+                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
+            ]
+        )
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
+        context = ResponseContext(
+            response_id=response_id, previous_response_id=previous_response_id, mode_flags=MagicMock()
+        )
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            async for _ in server._handle_inner_workflow(request, context):  # pyright: ignore[reportPrivateUsage]
+                pass
+
+        assert agent.run.call_count == 2
+        restore_call = agent.run.call_args_list[0]
+        assert restore_call.kwargs["checkpoint_id"] == checkpoint.checkpoint_id
+        assert restore_call.kwargs["checkpoint_storage"].storage_path == (root / previous_response_id).resolve()
+
+        new_turn_call = agent.run.call_args_list[1]
+        new_turn_messages = new_turn_call.args[0]
+        assert len(new_turn_messages) == 1
+        assert new_turn_messages[0].text == "next turn"
+        assert new_turn_call.kwargs["checkpoint_storage"].storage_path == (root / response_id).resolve()
 
     @pytest.mark.parametrize(
         "bad_id",
@@ -2888,6 +3256,216 @@ class TestCheckpointContextPathValidation:
             f"before={before} after={after}"
         )
         assert list(root.iterdir()) == [], f"Checkpoint directory created inside root for {context_field}={bad_id!r}"
+
+
+# region Agent lifecycle (lazy entry & OAuth consent surfacing)
+
+
+def _make_consent_error(
+    url: str = "https://consent.example.com/auth",
+    name: str = "Foundry Toolbox",
+) -> Exception:
+    """Build an exception wrapping a Foundry MCP gateway consent error.
+
+    Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
+    which catches connection-time ``McpError``s and re-raises them as a
+    ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
+    original error attached via ``inner_exception``. ``consent_url_from_error``
+    then finds the wrapped ``McpError`` in ``exc.args``.
+
+    The McpError message uses the structured Foundry MCP gateway format:
+    a human-readable prefix followed by a JSON document describing each
+    failed tool source and its consent URL.
+    """
+    from agent_framework.exceptions import ToolExecutionException
+
+    payload = json.dumps({
+        "errors": [
+            {
+                "name": name,
+                "type": "mcp",
+                "error": {
+                    "code": "CONSENT_REQUIRED",
+                    "message": url,
+                },
+            }
+        ]
+    })
+    message = f"tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {payload}"
+    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=message))
+    return ToolExecutionException("MCP consent required", inner_exception=inner)
+
+
+class TestConsentUrlFromError:
+    def test_returns_consent_url_when_inner_arg_is_consent_mcp_error(self) -> None:
+        exc = _make_consent_error("https://example.com/consent", name="my-tool")
+        assert consent_url_from_error(exc) == [ConsentError(name="my-tool", consent_url="https://example.com/consent")]
+
+    def test_returns_none_when_no_mcp_error_in_args(self) -> None:
+        assert consent_url_from_error(Exception("boom")) is None
+
+    def test_returns_none_when_mcp_error_has_different_code(self) -> None:
+        inner = McpError(ErrorData(code=-32000, message="some other error"))
+        exc = Exception("wrapped", inner)
+        assert consent_url_from_error(exc) is None
+
+    def test_returns_none_for_bare_mcp_error_without_wrapping(self) -> None:
+        # `args` of a bare McpError holds the message string, not an McpError
+        # instance, so it does not match the wrapping pattern produced by the
+        # MCP client when it bubbles consent errors up.
+        bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
+        assert consent_url_from_error(bare) is None
+
+    def test_returns_none_when_message_has_no_json(self) -> None:
+        from agent_framework.exceptions import ToolExecutionException
+
+        inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="no json here"))
+        exc = ToolExecutionException("MCP consent required", inner_exception=inner)
+        assert consent_url_from_error(exc) is None
+
+
+class TestAgentLifecycle:
+    async def test_agent_entered_lazily_on_first_request(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        server = _make_server(agent)
+        # Construction must not enter the agent.
+        assert agent.__aenter__.await_count == 0
+
+        await _post(server, input_text="hello", stream=False)
+        assert agent.__aenter__.await_count == 1
+
+    async def test_agent_entered_only_once_across_requests(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        server = _make_server(agent)
+
+        await _post(server, input_text="first", stream=False)
+        await _post(server, input_text="second", stream=False)
+        await _post(server, input_text="third", stream=False)
+        assert agent.__aenter__.await_count == 1
+
+    async def test_cleanup_exits_agent_and_allows_reentry(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        server = _make_server(agent)
+
+        await _post(server, input_text="hello", stream=False)
+        assert agent.__aenter__.await_count == 1
+        assert agent.__aexit__.await_count == 0
+
+        await server._cleanup_agent()  # pyright: ignore[reportPrivateUsage]
+        assert agent.__aexit__.await_count == 1
+
+        # Cleanup is idempotent.
+        await server._cleanup_agent()  # pyright: ignore[reportPrivateUsage]
+        assert agent.__aexit__.await_count == 1
+
+        # After cleanup, a follow-up request re-enters the agent.
+        await _post(server, input_text="again", stream=False)
+        assert agent.__aenter__.await_count == 2
+
+    async def test_failed_entry_does_not_cache_stack(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = [_make_consent_error(), None]
+        server = _make_server(agent)
+
+        await _post(server, input_text="first", stream=False)
+        # Failed entry must leave the stack empty so the next request retries.
+        await _post(server, input_text="second", stream=False)
+        assert agent.__aenter__.await_count == 2
+
+
+class TestOAuthConsentSurfacing:
+    async def test_non_streaming_consent_error_emits_oauth_output_item(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("https://consent.example.com/auth")
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        oauth_items = [it for it in body["output"] if it["type"] == "oauth_consent_request"]
+        assert len(oauth_items) == 1
+        assert oauth_items[0]["consent_link"] == "https://consent.example.com/auth"
+        assert oauth_items[0]["server_label"] == "Foundry Toolbox"
+
+        # The agent must not be run when entry fails.
+        agent.run.assert_not_called()
+
+    async def test_streaming_consent_error_emits_oauth_output_item(self) -> None:
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
+        agent.__aenter__.side_effect = _make_consent_error("https://consent.example.com/auth")
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        assert types[0] == "response.created"
+        assert types[1] == "response.in_progress"
+        assert types[-1] == "response.completed"
+
+        added = [e for e in events if e["event"] == "response.output_item.added"]
+        oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
+        assert len(oauth_added) == 1
+        assert oauth_added[0]["data"]["item"]["consent_link"] == "https://consent.example.com/auth"
+        assert oauth_added[0]["data"]["item"]["server_label"] == "Foundry Toolbox"
+
+        done = [e for e in events if e["event"] == "response.output_item.done"]
+        assert any(e["data"]["item"]["type"] == "oauth_consent_request" for e in done)
+
+        agent.run.assert_not_called()
+
+    async def test_non_consent_error_during_entry_propagates(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = RuntimeError("boom")
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        # Non-consent errors are not swallowed: the response is marked failed
+        # and no `oauth_consent_request` item is emitted.
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert not any(it["type"] == "oauth_consent_request" for it in body.get("output", []))
+        agent.run.assert_not_called()
+
+    async def test_retry_after_consent_succeeds(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hello!")])])
+        )
+        agent.__aenter__.side_effect = [_make_consent_error("https://consent.example.com/auth"), None]
+        server = _make_server(agent)
+
+        # First request surfaces consent; agent.run is not called.
+        resp1 = await _post(server, input_text="first", stream=False)
+        assert resp1.status_code == 200
+        body1 = resp1.json()
+        oauth = [it for it in body1["output"] if it["type"] == "oauth_consent_request"]
+        assert len(oauth) == 1
+        agent.run.assert_not_called()
+
+        # After the user authenticates, the next request enters successfully.
+        resp2 = await _post(server, input_text="second", stream=False)
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        assert body2["status"] == "completed"
+        assert any(it["type"] == "message" for it in body2["output"])
+        assert agent.__aenter__.await_count == 2
+        agent.run.assert_awaited_once()
 
 
 # endregion

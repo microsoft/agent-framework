@@ -8,6 +8,7 @@ filters the same way.
 """
 
 import concurrent.futures
+import contextlib
 import glob
 import os
 import subprocess
@@ -16,6 +17,16 @@ import time
 from collections.abc import Sequence
 from fnmatch import fnmatch
 from pathlib import Path
+
+# On Windows, stdout defaults to cp1252 under non-interactive callers (e.g.
+# prek / pre-commit hooks). Reconfigure to UTF-8 before importing rich so
+# unicode glyphs like ``\u2713`` don't raise ``UnicodeEncodeError``.
+if sys.platform == "win32":
+    for _stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(_stream, "reconfigure", None)
+        if callable(reconfigure):
+            with contextlib.suppress(OSError, ValueError):
+                reconfigure(encoding="utf-8")
 
 import tomli
 from rich import print
@@ -122,8 +133,7 @@ def project_filter_matches(project: Path | str, pattern: str, aliases: Sequence[
     """
     normalized_pattern = normalize_project_filter(pattern).lower()
     return any(
-        fnmatch(candidate, normalized_pattern)
-        for candidate in build_project_filter_candidates(project, aliases)
+        fnmatch(candidate, normalized_pattern) for candidate in build_project_filter_candidates(project, aliases)
     )
 
 

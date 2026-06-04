@@ -39,9 +39,9 @@ public class ListSelection : ConsoleReactiveComponent<ListSelectionProps, Consol
         {
             foreach (string line in props.Title.Split('\n'))
             {
-                Console.Write(AnsiEscapes.MoveCursor(this.Y + row, this.X));
-                Console.Write(AnsiEscapes.EraseEntireLine);
+                Console.Write(AnsiEscapes.MoveCursor(props.Y + row, props.X));
                 Console.Write(line);
+                Console.Write(AnsiEscapes.EraseToEndOfLine);
                 row++;
             }
         }
@@ -51,8 +51,7 @@ public class ListSelection : ConsoleReactiveComponent<ListSelectionProps, Consol
 
         for (int i = 0; i < totalItems; i++)
         {
-            Console.Write(AnsiEscapes.MoveCursor(this.Y + row, this.X));
-            Console.Write(AnsiEscapes.EraseEntireLine);
+            Console.Write(AnsiEscapes.MoveCursor(props.Y + row, props.X));
 
             bool isSelected = i == props.SelectedIndex;
             bool isCustomTextOption = props.CustomTextPlaceholder != null && i == props.Items.Count;
@@ -72,6 +71,7 @@ public class ListSelection : ConsoleReactiveComponent<ListSelectionProps, Consol
                 }
 
                 Console.Write(props.Items[i]);
+                Console.Write(AnsiEscapes.EraseToEndOfLine);
 
                 if (isSelected)
                 {
@@ -101,6 +101,7 @@ public class ListSelection : ConsoleReactiveComponent<ListSelectionProps, Consol
             }
 
             Console.Write(props.CustomText);
+            Console.Write(AnsiEscapes.EraseToEndOfLine);
 
             if (isSelected)
             {
@@ -121,6 +122,7 @@ public class ListSelection : ConsoleReactiveComponent<ListSelectionProps, Consol
 
             Console.Write(" ");
             Console.Write(props.CustomTextPlaceholder);
+            Console.Write(AnsiEscapes.EraseToEndOfLine);
             Console.Write(AnsiEscapes.ResetAttributes);
         }
     }

@@ -27,7 +27,7 @@ Status is grouped into these buckets:
 | `agent-framework-claude` | `python/packages/claude` | `beta` |
 | `agent-framework-copilotstudio` | `python/packages/copilotstudio` | `beta` |
 | `agent-framework-core` | `python/packages/core` | `released` |
-| `agent-framework-declarative` | `python/packages/declarative` | `beta` |
+| `agent-framework-declarative` | `python/packages/declarative` | `rc` |
 | `agent-framework-devui` | `python/packages/devui` | `beta` |
 | `agent-framework-durabletask` | `python/packages/durabletask` | `beta` |
 | `agent-framework-foundry` | `python/packages/foundry` | `released` |
@@ -37,6 +37,8 @@ Status is grouped into these buckets:
 | `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` |
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |
+| `agent-framework-mistral` | `python/packages/mistral` | `alpha` |
+| `agent-framework-monty` | `python/packages/monty` | `alpha` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |
 | `agent-framework-orchestrations` | `python/packages/orchestrations` | `beta` |
@@ -55,6 +57,13 @@ The following feature IDs have explicit feature-stage decorators on public APIs 
 listed below.
 
 ### Experimental features
+
+#### `DECLARATIVE_AGENTS`
+
+- `agent-framework-declarative`: declarative agent loading APIs from
+  `agent_framework_declarative`, including `AgentFactory`,
+  `DeclarativeLoaderError`, `ProviderLookupError`, and `ProviderTypeMapping`
+  from `agent_framework_declarative/_loader.py`
 
 #### `EVALS`
 

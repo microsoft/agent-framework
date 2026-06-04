@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel.Primitives;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using DotNetEnv;
@@ -11,28 +10,34 @@ using Microsoft.Agents.AI.Foundry;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-Uri agentEndpoint = new(Environment.GetEnvironmentVariable("AGENT_ENDPOINT")
-    ?? "http://localhost:8088");
+// AZURE_AI_PROJECT_ENDPOINT is the Foundry project endpoint. Shape:
+//   https://<host>/api/projects/<project>
+Uri projectEndpoint = new(Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set."));
 
-var agentName = Environment.GetEnvironmentVariable("AGENT_NAME")
-    ?? throw new InvalidOperationException("AGENT_NAME is not set.");
+// AZURE_AI_AGENT_NAME is the registered server-side agent name.
+string agentName = Environment.GetEnvironmentVariable("AZURE_AI_AGENT_NAME")
+    ?? throw new InvalidOperationException("AZURE_AI_AGENT_NAME is not set.");
+
+// Derive the per-agent OpenAI endpoint that hosted Foundry agents require.
+Uri agentEndpoint = new($"{projectEndpoint}/agents/{agentName}/endpoint/protocols/openai");
 
 // ── Create an agent-framework agent backed by the remote agent endpoint ──────
 
 var options = new AIProjectClientOptions();
 
-if (agentEndpoint.Scheme == "http")
+if (projectEndpoint.Scheme == "http")
 {
     // For local HTTP dev: tell AIProjectClient the endpoint is HTTPS (to satisfy
     // BearerTokenPolicy's TLS check), then swap the scheme back to HTTP right
     // before the request hits the wire.
-
+    projectEndpoint = new UriBuilder(projectEndpoint) { Scheme = "https" }.Uri;
     agentEndpoint = new UriBuilder(agentEndpoint) { Scheme = "https" }.Uri;
     options.AddPolicy(new HttpSchemeRewritePolicy(), PipelinePosition.BeforeTransport);
 }
 
-var aiProjectClient = new AIProjectClient(agentEndpoint, new AzureCliCredential(), options);
-FoundryAgent agent = aiProjectClient.AsAIAgent(new AgentReference(agentName));
+var aiProjectClient = new AIProjectClient(projectEndpoint, new AzureCliCredential(), options);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentEndpoint);
 
 AgentSession session = await agent.CreateSessionAsync();
 
@@ -41,9 +46,9 @@ AgentSession session = await agent.CreateSessionAsync();
 Console.ForegroundColor = ConsoleColor.Cyan;
 Console.WriteLine($"""
     ══════════════════════════════════════════════════════════
-    Simple Agent Sample                                     
+    Simple Agent Sample
     Connected to: {agentEndpoint}
-    Type a message or 'quit' to exit                        
+    Type a message or 'quit' to exit
     ══════════════════════════════════════════════════════════
     """);
 Console.ResetColor();
