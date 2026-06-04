@@ -349,7 +349,7 @@ class BackgroundAgentsProvider(ContextProvider):
             _save_provider_state(session, provider_state, source_id=source_id)
             return f"Background task {task_id} started on agent '{agent_name}'."
 
-        background_agents_start_task._invoke_sync_on_event_loop = True
+        background_agents_start_task._invoke_sync_on_event_loop = True  # pyright: ignore[reportPrivateUsage]
 
         @tool(name="background_agents_wait_for_first_completion", approval_mode="never_require")
         async def background_agents_wait_for_first_completion(task_ids: list[int]) -> str:
@@ -473,7 +473,7 @@ class BackgroundAgentsProvider(ContextProvider):
             _save_provider_state(session, provider_state, source_id=source_id)
             return f"Task {task_id} continued with new input."
 
-        background_agents_continue_task._invoke_sync_on_event_loop = True
+        background_agents_continue_task._invoke_sync_on_event_loop = True  # pyright: ignore[reportPrivateUsage]
 
         @tool(name="background_agents_clear_completed_task", approval_mode="never_require")
         def background_agents_clear_completed_task(task_id: int) -> str:
