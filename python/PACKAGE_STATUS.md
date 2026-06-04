@@ -33,7 +33,7 @@ Status is grouped into these buckets:
 | `agent-framework-foundry` | `python/packages/foundry` | `released` |
 | `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` |
 | `agent-framework-gemini` | `python/packages/gemini` | `alpha` |
-| `agent-framework-github-copilot` | `python/packages/github_copilot` | `beta` |
+| `agent-framework-github-copilot` | `python/packages/github_copilot` | `rc` |
 | `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` |
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |
