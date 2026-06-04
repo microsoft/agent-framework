@@ -84,7 +84,7 @@ agent_framework/
   - `default_ttl: timedelta | None` — forwarded to the server as `params.task.ttl` (milliseconds). When `None`, the server's default applies.
   - `cancel_remote_task_on_local_cancellation: bool = True` — on local `CancelledError`, spawn a best-effort `tasks/cancel` before re-raising.
 - **Permissive fallback**: servers that ignore the augmentation (return `CallToolResult` directly) or reject the unknown `task` field with `METHOD_NOT_FOUND` / `INVALID_PARAMS` fall back to the plain `session.call_tool(...)` path so legacy servers keep working.
-- **Phase-aware reconnect**: a dropped connection before a `task_id` is known retries the augmented `tools/call`; once a `task_id` exists, only `tasks/get` / `tasks/result` are retried for the same id so reconnects never create duplicate remote tasks.
+- **Phase-aware reconnect**: a dropped connection before a `task_id` is known raises `ToolExecutionException("connection lost; task state unknown")` without re-issuing the augmented `tools/call`, so a server that accepted the request but lost the response cannot be made to start the same operation twice; once a `task_id` exists, `tasks/get` / `tasks/result` reconnect once and retry against the same id, which is safe because the request references the existing operation.
 
 ### File Access Harness (`_harness/_file_access.py`)
 

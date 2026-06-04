@@ -1344,7 +1344,7 @@ class MCPTool:
                     inner_exception=ex,
                 ) from ex
 
-    def _effective_task_options(self) -> "MCPTaskOptions":
+    def _effective_task_options(self) -> MCPTaskOptions:
         """Return the effective MCPTaskOptions, lazily constructing defaults on first use.
 
         Defers the implicit ``MCPTaskOptions()`` so the experimental warning only
@@ -1358,12 +1358,12 @@ class MCPTool:
         return self._task_options_default
 
     @property
-    def task_options(self) -> "MCPTaskOptions":
+    def task_options(self) -> MCPTaskOptions:
         """The effective MCPTaskOptions for this tool (lazy defaults)."""
         return self._effective_task_options()
 
     @task_options.setter
-    def task_options(self, value: "MCPTaskOptions | None") -> None:
+    def task_options(self, value: MCPTaskOptions | None) -> None:
         self._task_options_explicit = value
         self._task_options_default = None
 
@@ -1691,7 +1691,7 @@ class MCPTool:
             await asyncio.sleep(self._compute_poll_delay(snapshot.pollInterval).total_seconds())
 
     @staticmethod
-    def _coerce_get_task_result(lenient: "types.Result", task_id: str) -> "types.GetTaskResult":
+    def _coerce_get_task_result(lenient: types.Result, task_id: str) -> types.GetTaskResult:
         """Coerce a lenient Result into GetTaskResult, defaulting ``ttl`` when absent."""
         from mcp import types
 
