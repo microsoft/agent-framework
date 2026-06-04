@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
@@ -56,31 +54,6 @@ class WorkflowAgent(BaseAgent):
 
     # Class variable for the request info function name
     REQUEST_INFO_FUNCTION_NAME: ClassVar[str] = "request_info"
-
-    @dataclass
-    class RequestInfoFunctionArgs:
-        request_id: str
-        data: Any
-
-        def to_dict(self) -> dict[str, Any]:
-            return {"request_id": self.request_id, "data": make_json_safe(self.data)}
-
-        def to_json(self) -> str:
-            return json.dumps(self.to_dict())
-
-        @classmethod
-        def from_dict(cls, payload: dict[str, Any]) -> WorkflowAgent.RequestInfoFunctionArgs:
-            return cls(request_id=payload.get("request_id", ""), data=payload.get("data"))
-
-        @classmethod
-        def from_json(cls, raw: str) -> WorkflowAgent.RequestInfoFunctionArgs:
-            try:
-                parsed: Any = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"RequestInfoFunctionArgs JSON payload is malformed: {exc}") from exc
-            if not isinstance(parsed, dict):
-                raise ValueError("RequestInfoFunctionArgs JSON payload must decode to a mapping")
-            return cls.from_dict(cast(dict[str, Any], parsed))
 
     def __init__(
         self,
@@ -710,7 +683,7 @@ class WorkflowAgent(BaseAgent):
             return event.data
 
         request_id = event.request_id
-        args = self.RequestInfoFunctionArgs(request_id=request_id, data=event).to_dict()
+        args = {"request_id": request_id, "data": make_json_safe(event)}
 
         return Content.from_function_call(
             call_id=request_id,
