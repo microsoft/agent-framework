@@ -1563,7 +1563,7 @@ class MCPTool:
                 raise ToolExecutionException(text or str(parsed))
             return parser(fallback_result)
 
-        assert task_id is not None  # noqa: S101 - protected by the branch above
+        assert task_id is not None  # noqa: S101  # nosec B101 - protected by the branch above
 
         # Phase 2: poll until terminal status, then fetch payload. Never re-issue tools/call
         # past this point; reconnect-and-retry only against the same task_id.
