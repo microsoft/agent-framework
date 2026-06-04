@@ -8,6 +8,7 @@ function getPullRequest(context) {
 
   return {
     author: pullRequest.user.login,
+    authorType: pullRequest.user.type,
     labels: pullRequest.labels?.map((label) => label.name).filter(Boolean) ?? [],
     number: pullRequest.number,
   };
@@ -49,6 +50,10 @@ function hasLabel(labels, labelName) {
   return labels.some((label) => label.toLowerCase() === labelName.toLowerCase());
 }
 
+function isDependabotAuthor({ author, authorType }) {
+  return authorType === 'Bot' && author.toLowerCase() === 'dependabot[bot]';
+}
+
 function buildLimitMessage({ author, exemptLabelName, maxOpenPrs, openPrCount }) {
   return [
     `Thank you for your contribution, @${author}.`,
@@ -83,7 +88,17 @@ async function getOpenPrCount({ github, owner, repo, author, pullRequestNumber }
 
 async function enforcePrLimit({ github, context, core, exemptLabelName, maxOpenPrs, labelName }) {
   const { owner, repo } = context.repo;
-  const { author, labels, number } = getPullRequest(context);
+  const { author, authorType, labels, number } = getPullRequest(context);
+
+  if (isDependabotAuthor({ author, authorType })) {
+    core.info(`Author ${author} is Dependabot; skipping open PR limit enforcement.`);
+    return {
+      author,
+      closed: false,
+      dependabotExempt: true,
+      openPrCount: null,
+    };
+  }
 
   if (hasLabel(labels, exemptLabelName)) {
     core.info(`PR #${number} has the ${exemptLabelName} label; skipping open PR limit enforcement.`);
