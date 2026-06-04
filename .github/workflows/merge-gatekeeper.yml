@@ -69,8 +69,14 @@ jobs:
                   continue; // Skipped runs are dropped, matching the original action.
                 } else if (r.conclusion === 'success' || r.conclusion === 'neutral') {
                   state = 'success';
+                } else if (r.conclusion === 'cancelled') {
+                  // A cancelled run means the job was interrupted (e.g. due to
+                  // fail-fast or a manual cancel), not that it actually failed.
+                  // Treat it as pending so the gatekeeper waits for a re-run
+                  // rather than blocking the PR immediately.
+                  state = 'pending';
                 } else {
-                  // cancelled | timed_out | action_required | stale | failure
+                  // timed_out | action_required | stale | failure
                   state = 'error';
                 }
                 merged.set(r.name, { name: r.name, state });
