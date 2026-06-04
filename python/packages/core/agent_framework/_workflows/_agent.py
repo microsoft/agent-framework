@@ -6,11 +6,11 @@ import logging
 import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 from .._agents import BaseAgent
-from .._serialization import make_json_safe
 from .._sessions import (
     AgentSession,
     ContextProvider,
@@ -54,6 +54,28 @@ class WorkflowAgent(BaseAgent):
 
     # Class variable for the request info function name
     REQUEST_INFO_FUNCTION_NAME: ClassVar[str] = "request_info"
+
+    @dataclass
+    class RequestInfoFunctionArgs:
+        request_id: str
+        request_event: WorkflowEvent
+
+        def to_dict(self) -> dict[str, Any]:
+            return {"request_id": self.request_id, "request_event": self.request_event.to_dict()}
+
+        @classmethod
+        def from_dict(cls, payload: dict[str, Any]) -> WorkflowAgent.RequestInfoFunctionArgs:
+            if "request_id" not in payload or "request_event" not in payload:
+                raise ValueError(
+                    "Invalid payload for RequestInfoFunctionArgs. 'request_id' and 'request_event' are required."
+                )
+            if not payload["request_id"]:
+                raise ValueError("request_id cannot be empty.")
+
+            return cls(
+                request_id=payload.get("request_id", ""),
+                request_event=WorkflowEvent.from_dict(payload.get("request_event", {})),
+            )
 
     def __init__(
         self,
@@ -683,7 +705,7 @@ class WorkflowAgent(BaseAgent):
             return event.data
 
         request_id = event.request_id
-        args = {"request_id": request_id, "data": make_json_safe(event)}
+        args = self.RequestInfoFunctionArgs(request_id=request_id, request_event=event).to_dict()
 
         return Content.from_function_call(
             call_id=request_id,
