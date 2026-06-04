@@ -1397,7 +1397,7 @@ class MCPTool:
         filtered_kwargs: dict[str, Any],
         meta: dict[str, Any] | None,
         parser: Callable[..., str | list[Content]],
-        span: otel_trace.Span | None,
+        span: otel_trace.Span,
     ) -> str | list[Content]:
         """Execute the MCP tools/call RPC with retry logic."""
         from anyio import ClosedResourceError
@@ -1414,33 +1414,22 @@ class MCPTool:
                         else str(parsed)
                     )
                     # Per OTel MCP semconv: set error.type="tool_error" for isError results
-                    if span is not None:
+                    if span.is_recording():
                         set_mcp_span_error(span, "tool_error", text or str(parsed))
                     raise ToolExecutionException(text or str(parsed))
                 return parser(result)
             except ToolExecutionException:
                 raise
-            except (ClosedResourceError, McpError) as call_ex:  # type: ignore[reportUnknownVariableType]
+            except (ClosedResourceError, McpError) as call_ex:
                 is_session_terminated = (
-                    isinstance(call_ex, McpError) and "session terminated" in call_ex.error.message.lower()  # type: ignore[reportUnknownMemberType]
+                    isinstance(call_ex, McpError) and "session terminated" in call_ex.error.message.lower()
                 )
                 is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
                 if not is_connection_lost:
-                    error_message = (
-                        call_ex.error.message  # type: ignore[reportUnknownMemberType]
-                        if isinstance(call_ex, McpError)
-                        else str(call_ex)  # type: ignore[reportUnknownArgumentType]
-                    )
-                    if span is not None:
-                        set_mcp_span_error(
-                            span,
-                            type(call_ex).__name__,  # type: ignore[reportUnknownArgumentType]
-                            error_message,  # type: ignore[reportUnknownArgumentType]
-                        )
-                    raise ToolExecutionException(
-                        error_message,
-                        inner_exception=call_ex,  # type: ignore[reportUnknownArgumentType]
-                    ) from call_ex
+                    error_message = call_ex.error.message if isinstance(call_ex, McpError) else str(call_ex)
+                    if span.is_recording():
+                        set_mcp_span_error(span, type(call_ex).__name__, error_message)
+                    raise ToolExecutionException(error_message, inner_exception=call_ex) from call_ex
 
                 if attempt == 0:
                     # First attempt failed, try reconnecting.
@@ -1450,23 +1439,19 @@ class MCPTool:
                         continue
                     except Exception as reconn_ex:
                         raise ToolExecutionException(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
+                            "Failed to reconnect to MCP server.", inner_exception=reconn_ex
                         ) from reconn_ex
 
                 # Second attempt also failed, give up.
-                logger.error(
-                    "MCP connection closed unexpectedly after reconnection: %s",
-                    call_ex,  # type: ignore[reportUnknownArgumentType]
-                )
-                if span is not None:
-                    set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))  # type: ignore[reportUnknownArgumentType]
+                logger.error("MCP connection closed unexpectedly after reconnection: %s", call_ex)
+                if span.is_recording():
+                    set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
                 raise ToolExecutionException(
                     f"Failed to call tool '{tool_name}' - connection lost.",
-                    inner_exception=call_ex,  # type: ignore[reportUnknownArgumentType]
+                    inner_exception=call_ex,
                 ) from call_ex
             except Exception as ex:
-                if span is not None:
+                if span.is_recording():
                     set_mcp_span_error(span, type(ex).__name__, str(ex))
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
@@ -1499,7 +1484,7 @@ class MCPTool:
         mcp_span_attrs = self._mcp_base_span_attributes()
         mcp_span_attrs.update({OtelAttr.PROMPT_NAME: prompt_name})
 
-        with create_mcp_client_span("prompts/get", target=prompt_name, attributes=mcp_span_attrs) as span:  # type: ignore
+        with create_mcp_client_span("prompts/get", target=prompt_name, attributes=mcp_span_attrs) as span:
             for attempt in range(2):
                 try:
                     prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
