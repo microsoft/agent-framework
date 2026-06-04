@@ -474,6 +474,45 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
+  # GitHub Copilot integration tests
+  python-tests-github-copilot:
+    name: Python Integration Tests - GitHub Copilot
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    env:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GITHUB_COPILOT_TIMEOUT: "120"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test with pytest (GitHub Copilot integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/github_copilot/tests
+          -m integration
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-results-github-copilot
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
   # Integration test trend report (aggregates per-job JUnit XML results)
   python-integration-test-report:
     name: Integration Test Report
@@ -490,6 +529,7 @@ jobs:
         python-tests-foundry,
         python-tests-foundry-hosting,
         python-tests-cosmos,
+        python-tests-github-copilot,
       ]
     runs-on: ubuntu-latest
     defaults:
@@ -553,7 +593,8 @@ jobs:
         python-tests-functions,
         python-tests-foundry,
         python-tests-foundry-hosting,
-        python-tests-cosmos
+        python-tests-cosmos,
+        python-tests-github-copilot
       ]
     steps:
       - name: Fail workflow if tests failed
