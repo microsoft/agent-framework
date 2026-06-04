@@ -114,7 +114,6 @@ public abstract class AgentClassSkill<
             this.Frontmatter.Name,
             this.Frontmatter.Description,
             this.Instructions,
-            this.Resources,
             this.Scripts));
     }
 
@@ -147,11 +146,17 @@ public abstract class AgentClassSkill<
     /// Gets the resources associated with this skill, or <see langword="null"/> if none.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The default implementation returns resources discovered via reflection by scanning
     /// <typeparamref name="TSelf"/> for members annotated with <see cref="AgentSkillResourceAttribute"/>.
     /// This discovery is compatible with Native AOT because <typeparamref name="TSelf"/> is annotated with
     /// <see cref="DynamicallyAccessedMembersAttribute"/>. The result is cached after the first access.
     /// Override this property in derived classes to provide skill-specific resources.
+    /// </para>
+    /// <para>
+    /// Resources are not automatically included in the skill body.
+    /// To enable discovery, reference resources by name in the skill's instructions or in other resources.
+    /// </para>
     /// </remarks>
     public virtual IReadOnlyList<AgentSkillResource>? Resources => this._resources.Value;
 
@@ -159,11 +164,17 @@ public abstract class AgentClassSkill<
     /// Gets the scripts associated with this skill, or <see langword="null"/> if none.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The default implementation returns scripts discovered via reflection by scanning
     /// <typeparamref name="TSelf"/> for methods annotated with <see cref="AgentSkillScriptAttribute"/>.
     /// This discovery is compatible with Native AOT because <typeparamref name="TSelf"/> is annotated with
     /// <see cref="DynamicallyAccessedMembersAttribute"/>. The result is cached after the first access.
     /// Override this property in derived classes to provide skill-specific scripts.
+    /// </para>
+    /// <para>
+    /// Scripts are not automatically included in the skill body.
+    /// To enable discovery, reference scripts by name in the skill's instructions or in a resource.
+    /// </para>
     /// </remarks>
     public virtual IReadOnlyList<AgentSkillScript>? Scripts => this._scripts.Value;
 
@@ -184,6 +195,10 @@ public abstract class AgentClassSkill<
     /// <summary>
     /// Creates a skill resource backed by a static value.
     /// </summary>
+    /// <remarks>
+    /// Resources are not automatically included in the skill body.
+    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="value">The static resource value.</param>
     /// <param name="description">An optional description of the resource.</param>
@@ -194,6 +209,10 @@ public abstract class AgentClassSkill<
     /// <summary>
     /// Creates a skill resource backed by a delegate that produces a dynamic value.
     /// </summary>
+    /// <remarks>
+    /// Resources are not automatically included in the skill body.
+    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="method">A method that produces the resource value when requested.</param>
     /// <param name="description">An optional description of the resource.</param>
@@ -208,6 +227,10 @@ public abstract class AgentClassSkill<
     /// <summary>
     /// Creates a skill script backed by a delegate.
     /// </summary>
+    /// <remarks>
+    /// Scripts are not automatically included in the skill body.
+    /// To enable discovery, reference the script by name in the skill's instructions or in a resource.
+    /// </remarks>
     /// <param name="name">The script name.</param>
     /// <param name="method">A method to execute when the script is invoked.</param>
     /// <param name="description">An optional description of the script.</param>

@@ -51,9 +51,8 @@ public sealed class AgentClassSkillTests
         // Act & Assert — Content is cached
         Assert.Same(await skill.GetContentAsync(), await skill.GetContentAsync());
 
-        // Act & Assert — Content includes parameter schema from typed script
-        Assert.Contains("parameters_schema", await skill.GetContentAsync());
-        Assert.Contains("value", await skill.GetContentAsync());
+        // Act & Assert — Content includes parameter schema from typed script (with preserved quotes)
+        Assert.Contains("\"value\"", await skill.GetContentAsync());
     }
 
     [Fact]
@@ -383,10 +382,9 @@ public sealed class AgentClassSkillTests
         // Arrange
         var skill = new AttributedFullSkill();
 
-        // Act & Assert — Content includes reflected resources and scripts
-        Assert.Contains("<resources>", await skill.GetContentAsync());
-        Assert.Contains("conversion-table", await skill.GetContentAsync());
-        Assert.Contains("<scripts>", await skill.GetContentAsync());
+        // Act & Assert — Content no longer includes resources in body; scripts are in script_schemas
+        Assert.DoesNotContain("<resources>", await skill.GetContentAsync());
+        Assert.Contains("<script_schemas>", await skill.GetContentAsync());
         Assert.Contains("convert", await skill.GetContentAsync());
 
         // Act & Assert — discovered members are cached
@@ -512,8 +510,8 @@ public sealed class AgentClassSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — descriptions from [Description] attribute appear in synthesized content
-        Assert.Contains("Some important data.", content);
+        // Assert — resources are no longer rendered in body content
+        Assert.DoesNotContain("<resources>", content);
     }
 
     [Fact]

@@ -95,7 +95,7 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <inheritdoc/>
     public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
-        return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._resources, this._scripts));
+        return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._scripts));
     }
 
     /// <inheritdoc/>
@@ -115,6 +115,10 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <summary>
     /// Registers a static resource with this skill.
     /// </summary>
+    /// <remarks>
+    /// Resources are not automatically included in the skill body.
+    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="value">The static resource value.</param>
     /// <param name="description">An optional description of the resource.</param>
@@ -129,6 +133,10 @@ public sealed class AgentInlineSkill : AgentSkill
     /// Registers a dynamic resource with this skill, backed by a C# delegate.
     /// The delegate's parameters and return type are automatically marshaled via <c>AIFunctionFactory</c>.
     /// </summary>
+    /// <remarks>
+    /// Resources are not automatically included in the skill body.
+    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="method">A method that produces the resource value when requested.</param>
     /// <param name="description">An optional description of the resource.</param>
@@ -147,6 +155,10 @@ public sealed class AgentInlineSkill : AgentSkill
     /// Registers a script with this skill, backed by a C# delegate.
     /// The delegate's parameters and return type are automatically marshaled via <c>AIFunctionFactory</c>.
     /// </summary>
+    /// <remarks>
+    /// Scripts are not automatically included in the skill body.
+    /// To enable discovery, reference the script by name in the skill's instructions or in a resource.
+    /// </remarks>
     /// <param name="name">The script name.</param>
     /// <param name="method">A method to execute when the script is invoked.</param>
     /// <param name="description">An optional description of the script.</param>
