@@ -25,9 +25,9 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using FoundryEvals = Microsoft.Agents.AI.Foundry.FoundryEvals;
 
-string projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT_3")
+string projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL_3")
+string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL")
     ?? throw new InvalidOperationException("FOUNDRY_MODEL is not set.");
 string agentName = Environment.GetEnvironmentVariable("FOUNDRY_AGENT_NAME")
     ?? throw new InvalidOperationException("FOUNDRY_AGENT_NAME is not set.");
