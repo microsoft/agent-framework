@@ -5075,13 +5075,15 @@ async def test_task_options_defaults_are_sane() -> None:
     assert opts.cancel_remote_task_on_local_cancellation is True
 
 
-async def test_task_options_rejects_negative_default_ttl() -> None:
+async def test_task_options_rejects_non_positive_default_ttl() -> None:
     from datetime import timedelta
 
     from agent_framework import MCPTaskOptions
 
-    with pytest.raises(ValueError, match="non-negative"):
+    with pytest.raises(ValueError, match="positive"):
         MCPTaskOptions(default_ttl=timedelta(seconds=-1))
+    with pytest.raises(ValueError, match="positive"):
+        MCPTaskOptions(default_ttl=timedelta(0))
 
 
 async def test_load_tools_captures_task_support() -> None:

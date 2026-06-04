@@ -159,6 +159,11 @@ _MCP_TASK_MAX_POLL_INTERVAL = timedelta(seconds=5)
 _MCP_TASK_CANCEL_TIMEOUT = timedelta(seconds=5)
 _MCP_TASK_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "cancelled", "input_required"})
 
+# Total send attempts for a Phase 2 request (initial try + one reconnect-and-retry).
+# A single transient disconnect should not abort a long-running task; sustained outages
+# surface as ``_MCPTaskAbandoned`` after the second failure.
+_MCP_RECONNECT_ATTEMPTS = 2
+
 
 class _MCPTaskAbandoned(ToolExecutionException):
     """Raised when the remote MCP task may still be running and must be cancelled.
@@ -184,9 +189,13 @@ class MCPTaskOptions:
     ``MCPTool.task_options = MCPTaskOptions(...)`` to change behavior.
 
     Attributes:
-        default_ttl: Optional default time-to-live forwarded to the server as
-            ``params.task.ttl`` (milliseconds, integer). When ``None``, the server
-            applies its own default. Must be non-negative if set.
+        default_ttl: Optional task-record retention time forwarded to the server as
+            ``params.task.ttl`` (milliseconds, integer). The server keeps the task
+            record around this long after the task reaches a terminal status so the
+            client can still call ``tasks/get`` / ``tasks/result``; it does not
+            cancel a running task. When ``None``, the server applies its own default.
+            Must be positive if set (zero would expire the record before any client
+            could read it).
         cancel_remote_task_on_local_cancellation: If True (default), a local
             cancellation of the awaiting coroutine triggers a best-effort
             ``tasks/cancel`` on the server before re-raising ``CancelledError``.
@@ -204,8 +213,8 @@ class MCPTaskOptions:
     max_task_wait: timedelta | None = None
 
     def __post_init__(self) -> None:
-        if self.default_ttl is not None and self.default_ttl.total_seconds() < 0:
-            raise ValueError("MCPTaskOptions.default_ttl must be non-negative.")
+        if self.default_ttl is not None and self.default_ttl.total_seconds() <= 0:
+            raise ValueError("MCPTaskOptions.default_ttl must be positive.")
         if self.max_task_wait is not None and self.max_task_wait.total_seconds() <= 0:
             raise ValueError("MCPTaskOptions.max_task_wait must be positive.")
 
@@ -1587,7 +1596,10 @@ class MCPTool:
                 raise ToolExecutionException(text or str(parsed))
             return parser(fallback_result)
 
-        assert task_id is not None  # noqa: S101  # nosec B101 - protected by the branch above
+        if task_id is None:
+            raise ToolExecutionException(
+                f"MCP server did not return a task_id or fallback result for '{tool_name}'."
+            )
 
         # Track to completion: poll until terminal, then fetch payload. Never re-issue
         # tools/call past this point; reconnect-and-retry only against the same task_id.
@@ -1601,7 +1613,8 @@ class MCPTool:
         try:
             if max_wait_s is not None:
                 try:
-                    return await self._await_with_deadline(_await_task_completion(), max_wait_s)
+                    result = await self._await_with_deadline(_await_task_completion(), max_wait_s)
+                    return cast("str | list[Content]", result)
                 except _MCPDeadlineExpired as ex:
                     self._spawn_best_effort_cancel(task_id)
                     raise ToolExecutionException(
@@ -1840,13 +1853,13 @@ class MCPTool:
         from anyio import ClosedResourceError
         from mcp.shared.exceptions import McpError
 
-        for attempt in range(2):
+        for attempt in range(_MCP_RECONNECT_ATTEMPTS):
             try:
                 return await self.session.send_request(request, result_type)  # type: ignore[union-attr]
             except (ClosedResourceError, McpError) as ex:
                 if not self._is_connection_lost(ex):
                     raise
-                if attempt == 0:
+                if attempt < _MCP_RECONNECT_ATTEMPTS - 1:
                     logger.info(
                         "MCP connection lost during %s; reconnecting (task_id=%s).", operation, task_id
                     )
@@ -1858,7 +1871,7 @@ class MCPTool:
                             "Failed to reconnect to MCP server.", inner_exception=reconn_ex
                         ) from reconn_ex
                     continue
-                # Second connection loss: task may still be running.
+                # Final attempt also lost the connection: task may still be running.
                 raise _MCPTaskAbandoned(
                     f"MCP connection lost; task state unknown (task_id={task_id}).",
                     inner_exception=ex,
