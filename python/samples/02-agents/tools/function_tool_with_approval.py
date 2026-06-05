@@ -155,7 +155,7 @@ async def main() -> None:
     print("=== Demonstration of a tool with approvals ===\n")
 
     await run_weather_agent_with_approval(stream=False)
-    # await run_weather_agent_with_approval(stream=True)
+    await run_weather_agent_with_approval(stream=True)
 
 
 if __name__ == "__main__":
