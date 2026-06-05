@@ -39,6 +39,7 @@ from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
     _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
+    ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
@@ -259,6 +260,50 @@ class TestNonStreaming:
         assert "function_call" in types
         assert "function_call_output" in types
         assert "message" in types
+
+    async def test_hosted_mcp_call_and_result_persist_as_single_mcp_call(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_mcp_server_tool_call(
+                                call_id="mcp_abc123",
+                                tool_name="search",
+                                server_name="api_specs",
+                                arguments='{"q": "cats"}',
+                            )
+                        ],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_mcp_server_tool_result(
+                                call_id="mcp_abc123",
+                                output=[Content.from_text(text="found 10 cats")],
+                            )
+                        ],
+                    ),
+                    Message(role="assistant", contents=[Content.from_text("I found 10 cats!")]),
+                ]
+            )
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=False)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        types = [item["type"] for item in body["output"]]
+        assert "mcp_call" in types
+        assert "custom_tool_call_output" not in types
+
+        mcp_items = [item for item in body["output"] if item["type"] == "mcp_call"]
+        assert len(mcp_items) == 1
+        assert mcp_items[0]["id"] == "mcp_abc123"
+        assert mcp_items[0]["output"] == "found 10 cats"
 
     async def test_reasoning_content(self) -> None:
         agent = _make_agent(
@@ -617,6 +662,53 @@ class TestStreaming:
         assert "response.output_item.added" in types
         assert "response.output_item.done" in types
 
+    async def test_mcp_tool_call_and_result_streaming_emit_single_completed_mcp_call(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_mcp_server_tool_call(
+                            call_id="mcp_abc123",
+                            tool_name="search",
+                            server_name="api_specs",
+                            arguments='{"q":',
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_mcp_server_tool_call(
+                            call_id="mcp_abc123",
+                            tool_name="search",
+                            server_name="api_specs",
+                            arguments=' "cats"}',
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_mcp_server_tool_result(
+                            call_id="mcp_abc123",
+                            output=[Content.from_text(text="found 10 cats")],
+                        )
+                    ],
+                    role="tool",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        done_events = [e for e in events if e["event"] == "response.output_item.done"]
+        assert len(done_events) == 1
+        assert done_events[0]["data"]["item"]["type"] == "mcp_call"
+        assert done_events[0]["data"]["item"]["id"] == "mcp_abc123"
+        assert done_events[0]["data"]["item"]["output"] == "found 10 cats"
+
 
 # endregion
 
@@ -719,6 +811,24 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "mcp_server_tool_call"
         assert msg.contents[0].server_name == "my_server"
         assert msg.contents[0].tool_name == "search"
+
+    async def test_mcp_call_with_output_reconstructs_mcp_result_content(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemMcpToolCall
+
+        item = OutputItemMcpToolCall({
+            "type": "mcp_call",
+            "id": "mcp-1",
+            "server_label": "my_server",
+            "name": "search",
+            "arguments": '{"q": "test"}',
+            "output": "found 10 cats",
+        })
+        msg = await _output_item_to_message(item)
+        assert msg.role == "assistant"
+        assert len(msg.contents) == 2
+        assert msg.contents[0].type == "mcp_server_tool_call"
+        assert msg.contents[1].type == "mcp_server_tool_result"
+        assert msg.contents[1].output == "found 10 cats"
 
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
@@ -1188,6 +1298,25 @@ class TestItemToMessage:
         assert msg.contents[0].type == "mcp_server_tool_call"
         assert msg.contents[0].server_name == "my_server"
         assert msg.contents[0].tool_name == "search"
+
+    async def test_mcp_call_with_output_reconstructs_mcp_result_content(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemMcpToolCall
+
+        item = ItemMcpToolCall({
+            "type": "mcp_call",
+            "id": "mcp-1",
+            "server_label": "my_server",
+            "name": "search",
+            "arguments": '{"q": "test"}',
+            "output": "found 10 cats",
+        })
+        msg = await _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert len(msg.contents) == 2
+        assert msg.contents[0].type == "mcp_server_tool_call"
+        assert msg.contents[1].type == "mcp_server_tool_result"
+        assert msg.contents[1].output == "found 10 cats"
 
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
@@ -1936,6 +2065,71 @@ class TestMultiTurnMixedContent:
         ]
         assert len(fc_contents) >= 1
         assert fc_contents[0].name == "search"
+
+    async def test_hosted_mcp_call_round_trip_does_not_orphan_function_call_output(self) -> None:
+        """Turn 1 produces hosted MCP call + result, turn 2 must replay both without orphaning output."""
+        agent = _make_multi_response_agent([
+            AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_mcp_server_tool_call(
+                                call_id="mcp_abc123",
+                                tool_name="search",
+                                server_name="api_specs",
+                                arguments='{"q": "cats"}',
+                            )
+                        ],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_mcp_server_tool_result(
+                                call_id="mcp_abc123",
+                                output=[Content.from_text(text="found 10 cats")],
+                            )
+                        ],
+                    ),
+                    Message(role="assistant", contents=[Content.from_text("I found 10 cats!")]),
+                ]
+            ),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Here are more details")])]),
+        ])
+        server = _make_server(agent)
+
+        resp1 = await _post(server, input_text="Search for cats", stream=False)
+        assert resp1.status_code == 200
+        response_id = resp1.json()["id"]
+
+        types1 = [item["type"] for item in resp1.json()["output"]]
+        assert "mcp_call" in types1
+        assert "custom_tool_call_output" not in types1
+
+        resp2 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": "Tell me more",
+                "stream": False,
+                "previous_response_id": response_id,
+            },
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "completed"
+
+        second_call_messages = agent.run.call_args_list[1].kwargs["messages"]
+        mcp_call_contents = [c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_call"]
+        mcp_result_contents = [
+            c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_result"
+        ]
+        function_result_contents = [c for m in second_call_messages for c in m.contents if c.type == "function_result"]
+
+        assert len(mcp_call_contents) >= 1
+        assert len(mcp_result_contents) >= 1
+        assert all((c.call_id or "") != "mcp_abc123" for c in function_result_contents)
+        assert any((c.call_id or "") == "mcp_abc123" for c in mcp_call_contents)
+        assert any((c.call_id or "") == "mcp_abc123" for c in mcp_result_contents)
 
     async def test_multi_turn_reasoning_in_history(self) -> None:
         """Turn 1 produces reasoning + text, turn 2 sees them in history."""
@@ -3067,7 +3261,10 @@ class TestCheckpointContextPathValidation:
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
 
 
-def _make_consent_error(url: str = "https://consent.example.com/auth") -> Exception:
+def _make_consent_error(
+    url: str = "https://consent.example.com/auth",
+    name: str = "Foundry Toolbox",
+) -> Exception:
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
     Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
@@ -3075,17 +3272,34 @@ def _make_consent_error(url: str = "https://consent.example.com/auth") -> Except
     ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
     original error attached via ``inner_exception``. ``consent_url_from_error``
     then finds the wrapped ``McpError`` in ``exc.args``.
+
+    The McpError message uses the structured Foundry MCP gateway format:
+    a human-readable prefix followed by a JSON document describing each
+    failed tool source and its consent URL.
     """
     from agent_framework.exceptions import ToolExecutionException
 
-    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=url))
+    payload = json.dumps({
+        "errors": [
+            {
+                "name": name,
+                "type": "mcp",
+                "error": {
+                    "code": "CONSENT_REQUIRED",
+                    "message": url,
+                },
+            }
+        ]
+    })
+    message = f"tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {payload}"
+    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=message))
     return ToolExecutionException("MCP consent required", inner_exception=inner)
 
 
 class TestConsentUrlFromError:
     def test_returns_consent_url_when_inner_arg_is_consent_mcp_error(self) -> None:
-        exc = _make_consent_error("https://example.com/consent")
-        assert consent_url_from_error(exc) == "https://example.com/consent"
+        exc = _make_consent_error("https://example.com/consent", name="my-tool")
+        assert consent_url_from_error(exc) == [ConsentError(name="my-tool", consent_url="https://example.com/consent")]
 
     def test_returns_none_when_no_mcp_error_in_args(self) -> None:
         assert consent_url_from_error(Exception("boom")) is None
@@ -3101,6 +3315,13 @@ class TestConsentUrlFromError:
         # MCP client when it bubbles consent errors up.
         bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
         assert consent_url_from_error(bare) is None
+
+    def test_returns_none_when_message_has_no_json(self) -> None:
+        from agent_framework.exceptions import ToolExecutionException
+
+        inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="no json here"))
+        exc = ToolExecutionException("MCP consent required", inner_exception=inner)
+        assert consent_url_from_error(exc) is None
 
 
 class TestAgentLifecycle:

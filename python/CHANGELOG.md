@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-06-04
+
+### Added
+- **agent-framework-core**: Add MCP-based skills discovery (`McpSkillsSource`) ([#6169](https://github.com/microsoft/agent-framework/pull/6169))
+- **agent-framework-core**: Progressive tool exposure via `FunctionInvocationContext` ([#6233](https://github.com/microsoft/agent-framework/pull/6233))
+- **agent-framework-core**: Add background agent support to harness agent ([#6155](https://github.com/microsoft/agent-framework/pull/6155))
+- **agent-framework-core**: Add `AgentFileStore` and `FileAccessProvider` for file access operations ([#6099](https://github.com/microsoft/agent-framework/pull/6099))
+- **agent-framework-core**: Coalesce code interpreter history chunks ([#5801](https://github.com/microsoft/agent-framework/pull/5801))
+- **agent-framework-core**: Run sync tools off the event loop ([#5773](https://github.com/microsoft/agent-framework/pull/5773))
+- **agent-framework-bedrock**: Implement native structured output support via Converse API ([#6052](https://github.com/microsoft/agent-framework/pull/6052))
+- **agent-framework-foundry**: Add Foundry Adaptive Evals integration for rubric-generation ([#6101](https://github.com/microsoft/agent-framework/pull/6101))
+- **agent-framework-foundry**: Add `timeout` parameter to `FoundryAgent` to fix `ConnectTimeout` on multi-turn conversations ([#6263](https://github.com/microsoft/agent-framework/pull/6263))
+- **agent-framework-mistral**: Add Mistral AI embedding client package ([#5480](https://github.com/microsoft/agent-framework/pull/5480))
+- **agent-framework-a2a**: Expose `supported_protocol_bindings` as configurable parameter ([#6098](https://github.com/microsoft/agent-framework/pull/6098))
+- **agent-framework-a2a**: Set `message_id` on `AgentResponseUpdate` for message-bearing paths ([#6163](https://github.com/microsoft/agent-framework/pull/6163))
+- **agent-framework-foundry-hosting**: Persist hosted MCP call/results as canonical `mcp_call` output ([#6070](https://github.com/microsoft/agent-framework/pull/6070))
+
+### Changed
+- **agent-framework-github-copilot**: [BREAKING] Upgrade `github-copilot-sdk` to v1.0.0 (stable) ([#6292](https://github.com/microsoft/agent-framework/pull/6292))
+- **agent-framework-core**: [BREAKING — experimental] Refactor Skill API to async resource and script lookup ([#6135](https://github.com/microsoft/agent-framework/pull/6135))
+- **agent-framework-github-copilot**: Promote to release candidate (`1.0.0rc1`)
+- **agent-framework-declarative**: Promote to release candidate (`1.0.0rc1`) ([#6256](https://github.com/microsoft/agent-framework/pull/6256))
+
+### Fixed
+- **agent-framework-core**: Fix compaction message-id collisions and tool-loop summary persistence ([#6299](https://github.com/microsoft/agent-framework/pull/6299))
+- **agent-framework-core**: Fix observability unsafe serialization of function-call arguments containing dataclass/framework objects ([#6026](https://github.com/microsoft/agent-framework/pull/6026))
+- **agent-framework-core**: Consolidate MCP reliability fixes ([#6145](https://github.com/microsoft/agent-framework/pull/6145))
+- **agent-framework-core**: Backfill chat span request model if unknown and response model is available ([#6160](https://github.com/microsoft/agent-framework/pull/6160))
+- **agent-framework-anthropic**: Skip orphan anthropic thinking signatures ([#5784](https://github.com/microsoft/agent-framework/pull/5784))
+- **agent-framework-foundry**: Fix `FoundryAgent` stripping model from `PromptAgent` requests ([#5526](https://github.com/microsoft/agent-framework/pull/5526))
+- **agent-framework-foundry-hosting**: Fix toolbox consent flow in hosted agent ([#6249](https://github.com/microsoft/agent-framework/pull/6249))
+- **agent-framework-foundry-hosting**: Drop hosted MCP calls when reasoning is stripped ([#6210](https://github.com/microsoft/agent-framework/pull/6210))
+- **agent-framework-openai**: Fix OTLP HTTP base-endpoint losing `/v1/{signal}` auto-append ([#5913](https://github.com/microsoft/agent-framework/pull/5913))
+- **agent-framework-openai**: Drop hosted MCP calls when reasoning is stripped ([#6210](https://github.com/microsoft/agent-framework/pull/6210))
+- **agent-framework-orchestrations**: Fix spurious Magentic custom manager warning ([#6261](https://github.com/microsoft/agent-framework/pull/6261))
+- **agent-framework-azurefunctions**: Fix integration test worker crashes on Py3.13 ([#4260](https://github.com/microsoft/agent-framework/pull/4260))
+
 ## [1.7.0] - 2026-05-28
 
 ### Added
@@ -1132,7 +1169,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.7.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.8.0...HEAD
+[1.8.0]: https://github.com/microsoft/agent-framework/compare/python-1.7.0...python-1.8.0
 [1.7.0]: https://github.com/microsoft/agent-framework/compare/python-1.6.0...python-1.7.0
 [1.6.0]: https://github.com/microsoft/agent-framework/compare/python-1.5.0...python-1.6.0
 [1.5.0]: https://github.com/microsoft/agent-framework/compare/python-1.4.0...python-1.5.0

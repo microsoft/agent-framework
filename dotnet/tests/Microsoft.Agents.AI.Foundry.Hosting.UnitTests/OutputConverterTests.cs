@@ -704,6 +704,35 @@ public class OutputConverterTests
         Assert.Equal("[{\"id\":1}]", inner);
     }
 
+    // K-06e: Regression — the OutputItemFunctionToolCallOutput must have a populated Id
+    // and a matching wire id on the added/done events. The Foundry storage layer extracts
+    // a partition id from this field and throws "ID cannot be null or empty (Parameter 'id')"
+    // when it is missing.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResult_OutputItemHasIdAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "sunny")] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var done = Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+
+        var addedOutput = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        var doneOutput = Assert.IsType<OutputItemFunctionToolCallOutput>(done.Item);
+
+        Assert.False(string.IsNullOrEmpty(addedOutput.Id));
+        Assert.False(string.IsNullOrEmpty(doneOutput.Id));
+        Assert.Equal(addedOutput.Id, doneOutput.Id);
+        Assert.Equal("call_1", addedOutput.CallId);
+        Assert.Equal("call_1", doneOutput.CallId);
+    }
+
     // L-01
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_ExecutorInvokedEvent_EmitsWorkflowActionItemAsync()

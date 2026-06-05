@@ -176,6 +176,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         http_client: httpx.AsyncClient | None = None,
         auth_interceptor: AuthInterceptor | None = None,
         timeout: float | httpx.Timeout | None = None,
+        supported_protocol_bindings: list[Literal["JSONRPC", "GRPC", "HTTP+JSON"] | str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
@@ -193,6 +194,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             timeout: Request timeout configuration. Can be a float (applied to all timeout components),
                 httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
                 10.0s write, 5.0s pool - optimized for A2A operations).
+            supported_protocol_bindings: List of protocol bindings to use for transport negotiation.
+                Known values: "JSONRPC", "GRPC", "HTTP+JSON". Defaults to ["JSONRPC"].
+                The A2A spec treats this as an open-form string, so custom bindings are also accepted.
             kwargs: any additional properties, passed to BaseAgent.
         """
         # Default name/description from agent_card when not explicitly provided
@@ -205,6 +209,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
         self._timeout_config = self._create_timeout_config(timeout)
+        bindings = supported_protocol_bindings if supported_protocol_bindings is not None else ["JSONRPC"]
         if client is not None:
             self.client = client
             self._non_streaming_client: Client | None = None
@@ -214,7 +219,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if url is None:
                 raise ValueError("Either agent_card or url must be provided")
             # Create minimal agent card from URL
-            agent_card = minimal_agent_card(url, ["JSONRPC"])
+            agent_card = minimal_agent_card(url, bindings)
 
         # Create or use provided httpx client
         if http_client is None:
@@ -229,13 +234,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         streaming_config = ClientConfig(
             httpx_client=http_client,
             streaming=True,
-            supported_protocol_bindings=["JSONRPC"],
+            supported_protocol_bindings=bindings,
         )
         # Create non-streaming client (single request/response for stream=False)
         non_streaming_config = ClientConfig(
             httpx_client=http_client,
             streaming=False,
-            supported_protocol_bindings=["JSONRPC"],
+            supported_protocol_bindings=bindings,
         )
         streaming_factory = ClientFactory(streaming_config)
         non_streaming_factory = ClientFactory(non_streaming_config)
@@ -256,7 +261,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     "Provide a 'url' argument or ensure 'agent_card.supported_interfaces' "
                     "contains at least one interface with a URL."
                 ) from transport_error
-            fallback_card = minimal_agent_card(fallback_url, ["JSONRPC"])
+            fallback_card = minimal_agent_card(fallback_url, bindings)
             try:
                 self.client = streaming_factory.create(fallback_card, interceptors=interceptors)  # type: ignore
                 self._non_streaming_client = non_streaming_factory.create(
@@ -487,6 +492,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     contents=contents,
                     role="assistant" if msg.role == A2ARole.ROLE_AGENT else "user",
                     response_id=msg.message_id or str(uuid.uuid4()),
+                    message_id=msg.message_id,
                     additional_properties={"a2a_metadata": metadata} if metadata else None,
                     raw_representation=msg,
                 )
@@ -727,6 +733,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 contents=contents,
                 role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
                 response_id=update_event.task_id,
+                message_id=message.message_id,
                 additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
                 raw_representation=update_event,
             )

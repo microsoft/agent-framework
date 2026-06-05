@@ -14,12 +14,13 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from .._agents import Agent
+from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy, ToolResultCompactionStrategy
 from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider
 from .._skills import SkillsProvider
+from ._background_agents import BackgroundAgentsProvider
 from ._memory import MemoryContextProvider, MemoryStore
 from ._mode import AgentModeProvider
 from ._todo import TodoProvider
@@ -103,6 +104,8 @@ def _assemble_context_providers(
     memory_store: MemoryStore | None,
     skills_provider: SkillsProvider | None,
     skills_paths: Sequence[str] | None,
+    background_agents: Sequence[SupportsAgentRun] | None,
+    background_agents_instructions: str | None,
     extra_context_providers: Sequence[ContextProvider] | None,
 ) -> list[ContextProvider]:
     """Assemble the ordered list of context providers."""
@@ -129,6 +132,10 @@ def _assemble_context_providers(
         providers.append(skills_provider)
     if skills_paths:
         providers.append(SkillsProvider.from_paths(*skills_paths))
+
+    # Background agents are opt-in: only added when agents are provided.
+    if background_agents:
+        providers.append(BackgroundAgentsProvider(background_agents, instructions=background_agents_instructions))
 
     # Append any user-supplied additional providers.
     if extra_context_providers:
@@ -165,6 +172,8 @@ def create_harness_agent(
     memory_store: MemoryStore | None = None,
     skills_provider: SkillsProvider | None = None,
     skills_paths: Sequence[str] | None = None,
+    background_agents: Sequence[SupportsAgentRun] | None = None,
+    background_agents_instructions: str | None = None,
     disable_web_search: bool = False,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
@@ -182,6 +191,7 @@ def create_harness_agent(
     - **AgentModeProvider** — plan/execute mode tracking
     - **MemoryContextProvider** — file-based durable memory (when ``memory_store`` provided)
     - **SkillsProvider** — skill discovery and progressive loading
+    - **BackgroundAgentsProvider** — delegate work to background sub-agents
     - **OpenTelemetry** — observability via ``AgentTelemetryLayer``
 
     Each feature can be disabled or customized via keyword arguments.
@@ -253,6 +263,13 @@ def create_harness_agent(
         skills_paths: Paths for file-based skill discovery (looks for SKILL.md files).
             Can be combined with ``skills_provider``. When neither ``skills_provider``
             nor ``skills_paths`` is provided, no SkillsProvider is added.
+        background_agents: Collection of agents available for background task delegation.
+            When provided, a ``BackgroundAgentsProvider`` is automatically included,
+            enabling the agent to start, monitor, and retrieve results from background tasks.
+            Each agent must have a non-empty, unique name (case-insensitive).
+        background_agents_instructions: Optional instruction override for the
+            ``BackgroundAgentsProvider``. May include ``{background_agents}`` placeholder
+            which will be replaced with the agent listing.
         disable_web_search: When True, skip automatic web search tool inclusion.
             When False (default), the web search tool is automatically added if the
             client implements SupportsWebSearchTool. A warning is logged if the client
@@ -302,6 +319,8 @@ def create_harness_agent(
         memory_store=memory_store,
         skills_provider=skills_provider,
         skills_paths=skills_paths,
+        background_agents=background_agents,
+        background_agents_instructions=background_agents_instructions,
         extra_context_providers=context_providers,
     )
 
