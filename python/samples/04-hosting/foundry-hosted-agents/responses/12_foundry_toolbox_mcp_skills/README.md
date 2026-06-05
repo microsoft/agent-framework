@@ -14,7 +14,7 @@ This way the full skill body and resources are only loaded when the agent actual
 
 ### Model Integration
 
-The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It connects to the toolbox's MCP endpoint via the `mcp` library's `streamable_http_client`, discovers skills served by the toolbox through `MCPSkillsSource`, and injects them as a context provider via `SkillsProvider`. The toolbox endpoint URL is derived from `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_TOOLBOX_NAME`.
+The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It connects to the toolbox's MCP endpoint via the `mcp` library's `streamable_http_client`, discovers skills served by the toolbox through `MCPSkillsSource`, and injects them as a context provider via `SkillsProvider`. The toolbox endpoint URL is derived from `FOUNDRY_PROJECT_ENDPOINT` and `TOOLBOX_NAME`.
 
 See [main.py](main.py) for the full implementation.
 

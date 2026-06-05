@@ -69,7 +69,7 @@ async def main() -> None:
 
         # ── Create the agent ─────────────────────────────────────────────────
         client = FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            project_endpoint=project_endpoint,
             model=deployment,
             credential=credential,
         )
