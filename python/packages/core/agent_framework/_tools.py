@@ -193,6 +193,8 @@ def _parse_inputs(  # pyright: ignore[reportUnusedFunction]
 
 def _model_dump_preserving_explicit_none(model: BaseModel) -> dict[str, Any]:
     """Dump a model without dropping fields that were explicitly set to None."""
+    # Pydantic's exclude_none removes both default None values and explicit null arguments.
+    # Restore only fields present in model_fields_set so omitted optional fields stay omitted.
     dumped = model.model_dump(exclude_none=True)
     _restore_explicit_none_fields(model, dumped)
     return dumped
@@ -200,6 +202,7 @@ def _model_dump_preserving_explicit_none(model: BaseModel) -> dict[str, Any]:
 
 def _restore_explicit_none_fields(value: Any, dumped: Any) -> None:
     if isinstance(value, BaseModel) and isinstance(dumped, dict):
+        # model_fields_set distinguishes an explicitly provided null from a default None.
         for field_name in value.model_fields_set:
             if not isinstance(field_name, str):
                 continue
