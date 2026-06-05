@@ -160,6 +160,19 @@ def _resume_to_workflow_responses(resume_payload: Any) -> dict[str, Any]:
     return responses
 
 
+def _merge_workflow_response_sources(
+    resume_responses: dict[str, Any],
+    message_responses: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge workflow response sources with explicit resume payloads taking precedence."""
+    if not resume_responses:
+        return dict(message_responses)
+
+    responses = dict(message_responses)
+    responses.update(resume_responses)
+    return responses
+
+
 def _coerce_json_value(value: Any) -> Any:
     """Parse JSON strings when possible; otherwise return the original value."""
     if not isinstance(value, str):
@@ -541,8 +554,10 @@ async def run_workflow_stream(
     last_assistant_text: str | None = None
 
     resume_payload = _extract_resume_payload(input_data)
-    responses = _resume_to_workflow_responses(resume_payload)
-    responses.update(_extract_responses_from_messages(messages))
+    responses = _merge_workflow_response_sources(
+        _resume_to_workflow_responses(resume_payload),
+        _extract_responses_from_messages(messages),
+    )
     pending_before_run = await _pending_request_events(workflow)
     responses = _coerce_responses_for_pending_requests(responses, pending_before_run)
     pending_interrupts = _interrupts_from_pending_requests(pending_before_run)

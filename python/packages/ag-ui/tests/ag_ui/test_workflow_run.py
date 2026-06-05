@@ -1352,6 +1352,80 @@ async def test_workflow_run_approval_via_messages_approved() -> None:
     assert not resumed_finished.get("interrupt")
 
 
+async def test_workflow_run_explicit_resume_overrides_stale_message_approval() -> None:
+    """Explicit resume payloads should not be overwritten by stale function_approvals in messages."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request
+            status = "approved" if bool(response.approved) else "rejected"
+            await ctx.yield_output(f"Refund {status}.")
+
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    first_events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()
+    interrupt_payload = cast(list[dict[str, Any]], first_finished.get("interrupt"))
+    interrupt_value = cast(dict[str, Any], interrupt_payload[0]["value"])
+
+    resumed_events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "",
+                        "function_approvals": [
+                            {
+                                "approved": True,
+                                "id": "approval-1",
+                                "call_id": "refund-call",
+                                "name": "submit_refund",
+                                "arguments": {"order_id": "12345", "amount": "$89.99"},
+                            }
+                        ],
+                    }
+                ],
+                "resume": {
+                    "interrupts": [
+                        {
+                            "id": "approval-1",
+                            "value": {
+                                "type": "function_approval_response",
+                                "approved": False,
+                                "id": interrupt_value.get("id", "approval-1"),
+                                "function_call": interrupt_value.get("function_call"),
+                            },
+                        }
+                    ]
+                },
+            },
+            workflow,
+        )
+    ]
+
+    text_deltas = [event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"]
+    assert any("rejected" in delta for delta in text_deltas)
+    assert not any("approved" in delta for delta in text_deltas)
+
+
 async def test_workflow_run_approval_via_messages_denied() -> None:
     """Denied approval response sent via messages (function_approvals) should satisfy the pending request."""
 
