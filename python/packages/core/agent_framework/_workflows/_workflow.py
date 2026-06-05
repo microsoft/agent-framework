@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sessions import ContextProvider
 from .._types import ResponseStream
+from ..exceptions import WorkflowException, WorkflowRunnerException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
@@ -357,9 +358,6 @@ class Workflow(DictConvertible):
             max_iterations=max_iterations,
         )
 
-        # Flag to prevent concurrent workflow executions
-        self._is_running = False
-
         # Current run-level status of this workflow instance. Updated in lockstep with
         # the status events emitted from `_run_workflow_with_tracing`. Defaults to IDLE
         # for a freshly built workflow that has not yet been run.
@@ -375,16 +373,6 @@ class Workflow(DictConvertible):
         CPython GIL, so no locking is required.
         """
         return self._status
-
-    def _ensure_not_running(self) -> None:
-        """Ensure the workflow is not already running."""
-        if self._is_running:
-            raise RuntimeError("Workflow is already running. Concurrent executions are not allowed.")
-        self._is_running = True
-
-    def _reset_running_flag(self) -> None:
-        """Reset the running flag."""
-        self._is_running = False
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
@@ -745,9 +733,19 @@ class Workflow(DictConvertible):
         Raises:
             ValueError: If parameter combination is invalid.
         """
-        # Validate parameters and set running flag eagerly (before any async work)
+        # Validate parameters first so misuse fails before we touch any run state.
         self._validate_run_params(message, responses, checkpoint_id)
-        self._ensure_not_running()
+
+        # Acquire the run lock synchronously - before constructing the ResponseStream
+        # or yielding control to the event loop - so a second concurrent ``run`` call
+        # is rejected immediately rather than slipping past the guard while the first
+        # call is suspended inside its async generator.
+        try:
+            self._runner.reserve()
+        except WorkflowRunnerException as exc:
+            raise WorkflowException(
+                "Workflow is already running; concurrent runs are not allowed on the same instance."
+            ) from exc
 
         response_stream = ResponseStream[WorkflowEvent, WorkflowRunResult](
             self._run_core(
@@ -760,9 +758,6 @@ class Workflow(DictConvertible):
                 client_kwargs=client_kwargs,
             ),
             finalizer=functools.partial(self._finalize_events, include_status_events=include_status_events),
-            cleanup_hooks=[
-                functools.partial(self._run_cleanup, checkpoint_storage),
-            ],
         )
 
         if stream:
@@ -789,51 +784,55 @@ class Workflow(DictConvertible):
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
 
-        # Async validation: a fresh-message run is only allowed when the
-        # runner context has fully drained from any prior run. If it still
-        # has in-flight executor messages, the prior run didn't complete -
-        # the caller must either resume from a checkpoint or wait for the
-        # prior run to drain. (Pending request_info events are intentionally
-        # NOT blocked here: a follow-up run with message=... is the normal
-        # way to deliver a response to those pending requests, e.g. via
-        # WorkflowAgent._process_pending_requests.)
-        # NOTE: _validate_run_params already enforces that ``message`` is
-        # mutually exclusive with both ``checkpoint_id`` and ``responses``,
-        # so we don't need to re-check those here.
-        if message is not None and await self._runner.context.has_messages():
-            raise RuntimeError(
-                "Cannot start a new run with 'message' while in-flight executor "
-                "messages remain from a prior run. Resume from a checkpoint "
-                "(checkpoint_id=...) or wait for the prior run to complete. "
-                "Workflows that need to recover from a mid-run failure must use "
-                "checkpointing; there is no in-process recovery path."
-            )
+        try:
+            # Async validation: a fresh-message run is only allowed when the
+            # runner context has fully drained from any prior run. If it still
+            # has in-flight executor messages, the prior run didn't complete -
+            # the caller must either resume from a checkpoint or wait for the
+            # prior run to drain. (Pending request_info events are intentionally
+            # NOT blocked here: a follow-up run with message=... is the normal
+            # way to deliver a response to those pending requests, e.g. via
+            # WorkflowAgent._process_pending_requests.)
+            # NOTE: _validate_run_params already enforces that ``message`` is
+            # mutually exclusive with both ``checkpoint_id`` and ``responses``,
+            # so we don't need to re-check those here.
+            if message is not None and await self._runner.context.has_messages():
+                raise RuntimeError(
+                    "Cannot start a new run with 'message' while in-flight executor "
+                    "messages remain from a prior run. Resume from a checkpoint "
+                    "(checkpoint_id=...) or wait for the prior run to complete. "
+                    "Workflows that need to recover from a mid-run failure must use "
+                    "checkpointing; there is no in-process recovery path."
+                )
 
-        initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
+            initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
 
-        async for event in self._run_workflow_with_tracing(
-            initial_executor_fn=initial_executor_fn,
-            is_continuation=(message is None),
-            streaming=streaming,
-            function_invocation_kwargs=function_invocation_kwargs,
-            client_kwargs=client_kwargs,
-        ):
-            if event.type == "request_info" and event.request_id in (responses or {}):
-                # Don't yield request_info events for which we have responses to send -
-                # these are considered "handled". This prevents the caller from seeing
-                # events for requests they are already responding to.
-                # This usually happens when responses are provided with a checkpoint
-                # (restore then send), because the request_info events are stored in the
-                # checkpoint and would be emitted on restoration by the runner regardless
-                # of if a response is provided or not.
-                continue
-            yield event
-
-    async def _run_cleanup(self, checkpoint_storage: CheckpointStorage | None) -> None:
-        """Cleanup hook called after stream consumption."""
-        if checkpoint_storage is not None:
-            self._runner.context.clear_runtime_checkpoint_storage()
-        self._reset_running_flag()
+            async for event in self._run_workflow_with_tracing(
+                initial_executor_fn=initial_executor_fn,
+                is_continuation=(message is None),
+                streaming=streaming,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
+            ):
+                if event.type == "request_info" and event.request_id in (responses or {}):
+                    # Don't yield request_info events for which we have responses to send -
+                    # these are considered "handled". This prevents the caller from seeing
+                    # events for requests they are already responding to.
+                    # This usually happens when responses are provided with a checkpoint
+                    # (restore then send), because the request_info events are stored in the
+                    # checkpoint and would be emitted on restoration by the runner regardless
+                    # of if a response is provided or not.
+                    continue
+                yield event
+        finally:
+            # Release the run lock acquired synchronously by ``run()`` via ``reserve``.
+            # ``run_until_convergence`` also clears it in its own ``finally`` once its
+            # body runs; this clause additionally covers the case where this generator
+            # raises (or is closed) before that body is reached - e.g. the in-flight
+            # messages check above. ``release`` is idempotent.
+            self._runner.release()
+            if checkpoint_storage is not None:
+                self._runner.context.clear_runtime_checkpoint_storage()
 
     @staticmethod
     def _finalize_events(

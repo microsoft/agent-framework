@@ -26,6 +26,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowConvergenceException,
     WorkflowEvent,
+    WorkflowException,
     WorkflowMessage,
     WorkflowRunState,
     handler,
@@ -759,8 +760,7 @@ async def test_workflow_concurrent_execution_prevention():
 
     # Try to start a second concurrent execution - this should fail
     with pytest.raises(
-        RuntimeError,
-        match="Workflow is already running. Concurrent executions are not allowed.",
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
     ):
         await workflow.run(NumberMessage(data=0))
 
@@ -795,8 +795,7 @@ async def test_workflow_concurrent_execution_prevention_streaming():
 
     # Try to start a second concurrent execution - this should fail
     with pytest.raises(
-        RuntimeError,
-        match="Workflow is already running. Concurrent executions are not allowed.",
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
     ):
         await workflow.run(NumberMessage(data=0))
 
@@ -828,14 +827,12 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
 
     # Try different execution methods - all should fail
     with pytest.raises(
-        RuntimeError,
-        match="Workflow is already running. Concurrent executions are not allowed.",
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
     ):
         await workflow.run(NumberMessage(data=0))
 
     with pytest.raises(
-        RuntimeError,
-        match="Workflow is already running. Concurrent executions are not allowed.",
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
     ):
         async for _ in workflow.run(NumberMessage(data=0), stream=True):
             break

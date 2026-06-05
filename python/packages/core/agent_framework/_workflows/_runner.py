@@ -5,6 +5,7 @@ import contextlib
 import logging
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
+from enum import Enum
 from typing import Any
 
 from ..exceptions import (
@@ -25,6 +26,25 @@ from ._runner_context import (
 from ._state import State
 
 logger = logging.getLogger(__name__)
+
+
+class _RunnerLifecycle(Enum):
+    """Lifecycle of a single :class:`Runner` invocation.
+
+    Three states keep concurrent-run protection in one place while still letting
+    :meth:`Workflow.run` reserve the runner synchronously (before any await):
+
+    * ``IDLE``     - no run in progress.
+    * ``RESERVED`` - :meth:`Runner.reserve` was called by an external caller but
+      :meth:`Runner.run_until_convergence` has not yet entered its body. This is the
+      window during which ``Workflow.run`` has handed back a ``ResponseStream`` that
+      hasn't been iterated yet. ``run_until_convergence`` requires this state.
+    * ``RUNNING``  - the body of :meth:`Runner.run_until_convergence` is executing.
+    """
+
+    IDLE = "idle"
+    RESERVED = "reserved"
+    RUNNING = "running"
 
 
 class Runner:
@@ -63,7 +83,7 @@ class Runner:
         self._iteration = 0
         self._max_iterations = max_iterations
         self._state = state
-        self._running = False
+        self._lifecycle: _RunnerLifecycle = _RunnerLifecycle.IDLE
         self._resumed_from_checkpoint = False  # Track whether we resumed
 
     @property
@@ -71,16 +91,48 @@ class Runner:
         """Get the workflow context."""
         return self._ctx
 
+    def reserve(self) -> None:
+        """Synchronously reserve the runner for an upcoming run.
+
+        This is the **only** way to acquire the run lock. :meth:`run_until_convergence`
+        requires the runner to be in :attr:`_RunnerLifecycle.RESERVED` and will refuse
+        to start otherwise. Reserving synchronously lets callers (notably
+        :meth:`Workflow.run`) reject concurrent runs *before* any ``await`` or
+        async-generator suspension - otherwise a second caller could slip past a
+        flag-based guard while the first is still suspended above
+        :meth:`run_until_convergence`. The lock is released by
+        :meth:`run_until_convergence` in its ``finally`` clause once it begins, or by
+        :meth:`release` when the run never starts (for example, if early validation
+        raises before ``run_until_convergence`` is reached).
+
+        Raises:
+            WorkflowRunnerException: If the runner is already reserved or running.
+        """
+        if self._lifecycle is not _RunnerLifecycle.IDLE:
+            raise WorkflowRunnerException("Runner is already running.")
+        self._lifecycle = _RunnerLifecycle.RESERVED
+
+    def release(self) -> None:
+        """Release the runner's run lock. Idempotent; safe to call when already idle."""
+        self._lifecycle = _RunnerLifecycle.IDLE
+
     def reset_iteration_count(self) -> None:
         """Reset the iteration count to zero."""
         self._iteration = 0
 
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
-        if self._running:
-            raise WorkflowRunnerException("Runner is already running.")
+        # Mandatory reservation: callers must reserve() the runner first. This makes
+        # ``reserve`` the single entry point that takes the run lock, so all
+        # concurrent-run rejection happens there. Any non-RESERVED state here is a
+        # contract violation - either the caller forgot to reserve, or another run
+        # is already in progress.
+        if self._lifecycle is not _RunnerLifecycle.RESERVED:
+            raise WorkflowRunnerException(
+                "Runner must be reserved via Runner.reserve() before calling run_until_convergence()."
+            )
+        self._lifecycle = _RunnerLifecycle.RUNNING
 
-        self._running = True
         previous_checkpoint_id: CheckpointID | None = None
         try:
             # Emit any events already produced prior to entering loop
@@ -155,7 +207,7 @@ class Runner:
             logger.info(f"Workflow completed after {self._iteration} supersteps")
             self._resumed_from_checkpoint = False  # Reset resume flag for next run
         finally:
-            self._running = False
+            self._lifecycle = _RunnerLifecycle.IDLE
 
     async def _run_iteration(self) -> None:
         """Run a single iteration of the workflow.
