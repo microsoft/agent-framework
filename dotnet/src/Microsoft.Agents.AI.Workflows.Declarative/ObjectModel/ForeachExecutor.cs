@@ -49,7 +49,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Items);
         if (expressionResult.Value is TableDataValue tableValue)
         {
-            this._values = [.. tableValue.Values.Select(value => value.ToFormula())];
+            this._values = [.. tableValue.Values.Select(ToLoopValue)];
         }
         else
         {
@@ -98,6 +98,15 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
             await context.QueueStateResetAsync(this.Model.Index, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    // Power Fx wraps scalar array literals (`=[1, 2, 3]`) as `Table({Value: 1}, ...)`. Unwrap that single-column
+    // `Value`-record shape so `Local.LoopValue` is the scalar; multi-field and other shapes pass through unchanged.
+    private static FormulaValue ToLoopValue(DataValue value) =>
+        value is RecordDataValue record
+            && record.Properties.Count == 1
+            && record.Properties.TryGetValue("Value", out DataValue? singleColumn)
+                ? singleColumn.ToFormula()
+                : value.ToFormula();
 
     /// <inheritdoc/>
     /// <remarks>
