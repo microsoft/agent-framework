@@ -1,15 +1,19 @@
 {
   "name": "Python 3",
-  "image": "mcr.microsoft.com/devcontainers/python:3.13-bullseye",
+  "image": "mcr.microsoft.com/devcontainers/python:3.14-bookworm",
   "features": {
     "ghcr.io/va-h/devcontainers-features/uv:1": {},
-    "ghcr.io/devcontainers/features/azure-cli:1.2.8": {}
+    "ghcr.io/devcontainers/features/docker-in-docker:3": {},
+    "ghcr.io/devcontainers/features/azure-cli:1.2.9": {},
+    "ghcr.io/devcontainers/features/copilot-cli:1": {}
   },
   "postCreateCommand": "bash ./devsetup.sh",
   "workspaceFolder": "/workspaces/agent-framework/python/",
   "customizations": {
     "vscode": {
       "extensions": [
+        "GitHub.copilot",
+        "GitHub.vscode-github-actions",
         "ms-python.python",
         "ms-windows-ai-studio.windows-ai-studio",
         "littlefoxteam.vscode-python-test-adapter"
