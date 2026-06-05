@@ -131,7 +131,7 @@ Console.WriteLine(new string('=', 60));
 
 try
 {
-    results.AssertDimensionScoreAtLeast("general_quality", minScore: 3.0, evaluator: rubricName);
+    results.AssertDimensionScoreAtLeast("general_quality", minScore: 3.0, evaluator: rubricName, requireApplicable: true);
     Console.WriteLine($"[PASS] {results.ProviderName}: general_quality >= 3 on every item");
 }
 catch (InvalidOperationException ex)

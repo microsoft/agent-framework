@@ -815,6 +815,29 @@ public sealed class EvaluationTests
     }
 
     [Fact]
+    public void AssertDimensionScoreAtLeast_UnknownDimension_ThrowsWhenDimensionDataExists()
+    {
+        // Arrange
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("policy", 1.0, Passed: true)
+            {
+                Dimensions =
+                [
+                    new RubricScore("clarity", Score: 4, Applicable: true, Weight: 1, Reason: "ok"),
+                ],
+            },
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => results.AssertDimensionScoreAtLeast("typo_dimension", 3.0));
+        Assert.Contains("typo_dimension", ex.Message);
+        Assert.Contains("not found", ex.Message);
+    }
+
+    [Fact]
     public void AssertNoFailedItems_AllPassing_DoesNotThrow()
     {
         // Arrange

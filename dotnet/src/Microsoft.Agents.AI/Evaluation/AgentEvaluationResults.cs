@@ -166,7 +166,9 @@ public sealed class AgentEvaluationResults
     /// Walks <see cref="EvalScoreResult.Dimensions"/> across <see cref="DetailedItems"/>
     /// (and any <see cref="SubResults"/>) looking for the named dimension. Non-applicable
     /// dimensions are skipped by default; pass <paramref name="requireApplicable"/>=<see langword="true"/>
-    /// to fail when no applicable score is produced for an item.
+    /// to fail when no applicable score is produced for an item. If dimension data exists
+    /// but the requested <paramref name="dimensionId"/> is never present, the assertion fails
+    /// to surface likely typos or evaluator mismatches.
     /// </remarks>
     /// <param name="dimensionId">Dimension id — matches the rubric definition.</param>
     /// <param name="minScore">Minimum acceptable dimension score (inclusive).</param>
@@ -193,6 +195,14 @@ public sealed class AgentEvaluationResults
         CollectDimensionOffenders(this, dimensionId, minScore, evaluator, requireApplicable, offenders, missing);
 
         var problems = new List<string>();
+        bool hasAnyDimensionData = HasAnyDimensionData(this, evaluator);
+        if (hasAnyDimensionData && !HasDimension(this, dimensionId, evaluator))
+        {
+            problems.Add(
+                $"Dimension '{dimensionId}' was not found in results"
+                + (evaluator is not null ? $" for evaluator '{evaluator}'." : "."));
+        }
+
         if (offenders.Count > 0)
         {
             problems.Add(FormatOffenders(
@@ -352,6 +362,81 @@ public sealed class AgentEvaluationResults
                 CollectFailedItems(sub, bad);
             }
         }
+    }
+
+    private static bool HasAnyDimensionData(AgentEvaluationResults results, string? evaluator)
+    {
+        if (results.DetailedItems is not null)
+        {
+            foreach (var item in results.DetailedItems)
+            {
+                foreach (var score in item.Scores)
+                {
+                    if (evaluator is not null && score.Name != evaluator)
+                    {
+                        continue;
+                    }
+
+                    if (score.Dimensions is { Count: > 0 })
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        if (results.SubResults is not null)
+        {
+            foreach (var sub in results.SubResults.Values)
+            {
+                if (HasAnyDimensionData(sub, evaluator))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasDimension(AgentEvaluationResults results, string dimensionId, string? evaluator)
+    {
+        if (results.DetailedItems is not null)
+        {
+            foreach (var item in results.DetailedItems)
+            {
+                foreach (var score in item.Scores)
+                {
+                    if (evaluator is not null && score.Name != evaluator)
+                    {
+                        continue;
+                    }
+
+                    if (score.Dimensions is null)
+                    {
+                        continue;
+                    }
+
+                    if (score.Dimensions.Any(rs => rs.Id == dimensionId))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        if (results.SubResults is not null)
+        {
+            foreach (var sub in results.SubResults.Values)
+            {
+                if (HasDimension(sub, dimensionId, evaluator))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static string FormatOffenders(string prefix, List<string> offenders)
