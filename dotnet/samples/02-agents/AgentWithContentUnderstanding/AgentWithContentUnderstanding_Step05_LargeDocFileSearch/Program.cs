@@ -62,16 +62,14 @@ try
     //    - uploads it to vectorStoreId via the configured backend
     //    - surfaces the file_search tool on the agent's context.
     await using var cu = new ContentUnderstandingContextProvider(
-        new Uri(cuEndpoint),
-        credential,
-        options =>
+        new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
         {
-            options.AnalyzerId = "prebuilt-documentSearch";
-            options.MaxWait = TimeSpan.FromMinutes(2);
-            options.FileSearchConfig = FileSearchConfig.FromFoundry(
+            AnalyzerId = "prebuilt-documentSearch",
+            MaxWait = TimeSpan.FromMinutes(2),
+            FileSearchConfig = FileSearchConfig.FromFoundry(
                 aiProjectClient,
                 vectorStoreId,
-                fileSearchTool);
+                fileSearchTool),
         });
 
     AIAgent agent = aiProjectClient.AsAIAgent(new ChatClientAgentOptions

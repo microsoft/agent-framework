@@ -44,9 +44,12 @@ using Microsoft.Extensions.AI;
 var credential = new DefaultAzureCredential();
 
 await using var cu = new ContentUnderstandingContextProvider(
-    new Uri(Environment.GetEnvironmentVariable("AZURE_CONTENTUNDERSTANDING_ENDPOINT")!),
-    credential,
-    options => options.AnalyzerId = "prebuilt-documentSearch");
+    new ContentUnderstandingContextProviderOptions(
+        new Uri(Environment.GetEnvironmentVariable("AZURE_CONTENTUNDERSTANDING_ENDPOINT")!),
+        credential)
+    {
+        AnalyzerId = "prebuilt-documentSearch",
+    });
 
 AIAgent agent = new AIProjectClient(
     new Uri(Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")!),

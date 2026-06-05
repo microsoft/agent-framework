@@ -42,13 +42,11 @@ var credential = new DefaultAzureCredential();
 // LLM context — no document markdown — because we want the structured fields,
 // not raw text.
 await using var cu = new ContentUnderstandingContextProvider(
-    new Uri(cuEndpoint),
-    credential,
-    options =>
+    new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
     {
-        options.AnalyzerId = "prebuilt-invoice";
-        options.OutputSections = AnalysisSection.Fields;
-        options.MaxWait = TimeSpan.FromMinutes(2);
+        AnalyzerId = "prebuilt-invoice",
+        OutputSections = AnalysisSection.Fields,
+        MaxWait = TimeSpan.FromMinutes(2),
     });
 
 AIProjectClient aiProjectClient = new(new Uri(projectEndpoint), credential);

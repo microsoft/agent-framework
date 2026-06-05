@@ -34,12 +34,10 @@ var credential = new DefaultAzureCredential();
 // Set up the Azure Content Understanding context provider.
 // MaxWait set high so analysis completes inline for this single-turn sample (no background deferral).
 await using var cu = new ContentUnderstandingContextProvider(
-    new Uri(cuEndpoint),
-    credential,
-    options =>
+    new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
     {
-        options.AnalyzerId = "prebuilt-documentSearch"; // RAG-optimized document analyzer
-        options.MaxWait = TimeSpan.FromMinutes(2);
+        AnalyzerId = "prebuilt-documentSearch", // RAG-optimized document analyzer
+        MaxWait = TimeSpan.FromMinutes(2),
     });
 
 // Wire CU into a Foundry agent.

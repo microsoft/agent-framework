@@ -65,9 +65,7 @@ HostedFileSearchTool fileSearchTool = new() { Inputs = [new HostedVectorStoreCon
 //    web host. DisposeAsync runs on app shutdown and deletes the files the
 //    provider uploaded; the vector store is deleted explicitly below.
 builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
-    new Uri(cuEndpoint),
-    credential,
-    options =>
+    new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
     {
         // Foreground budget for both CU analysis polling AND vector-store upload polling.
         // Sample workloads (multi-page PDFs) typically need 10–20 s CU + 5–15 s vector-store
@@ -75,18 +73,18 @@ builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
         // (audio/video) that exceeds this budget gets a rehydration token stored on the entry
         // and resumes on the next turn; the upload then runs in that follow-up turn against a
         // fresh budget.
-        options.MaxWait = TimeSpan.FromSeconds(60);
+        MaxWait = TimeSpan.FromSeconds(60),
 
         // DevUI's HostedAgentResponseExecutor creates a fresh AgentSession every
         // turn, so per-session state would be lost. PerAgent keys state on the
         // agent instance instead — fine here because each DevUI agent is single-
         // user. Production multi-tenant hosts MUST keep the default PerSession.
-        options.StateScope = StateScope.PerAgent;
+        StateScope = StateScope.PerAgent,
 
-        options.FileSearchConfig = FileSearchConfig.FromFoundry(
+        FileSearchConfig = FileSearchConfig.FromFoundry(
             aiProjectClient,
             vectorStoreId,
-            fileSearchTool);
+            fileSearchTool),
     }));
 
 const string AgentName = "FoundryFileSearchDocAgent";

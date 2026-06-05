@@ -44,20 +44,18 @@ var aiProjectClient = new AIProjectClient(new Uri(projectEndpoint), credential);
 // The CU provider is a singleton so its session state and any background analyses
 // survive across HTTP requests. DisposeAsync runs at app shutdown.
 builder.Services.AddSingleton(_ => new ContentUnderstandingContextProvider(
-    new Uri(cuEndpoint),
-    credential,
-    options =>
+    new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
     {
         // For interactive DevUI use, a short timeout keeps the chat responsive —
         // the agent tells the user the file is still being analyzed and resolves
         // it on the next turn.
-        options.MaxWait = TimeSpan.FromSeconds(5);
+        MaxWait = TimeSpan.FromSeconds(5),
 
         // DevUI's HostedAgentResponseExecutor creates a fresh AgentSession every
         // turn, so per-session state would be lost. PerAgent keys state on the
         // agent instance instead — fine here because each DevUI agent is single-
         // user. Production multi-tenant hosts MUST keep the default PerSession.
-        options.StateScope = StateScope.PerAgent;
+        StateScope = StateScope.PerAgent,
     }));
 
 const string AgentName = "MultiModalDocAgent";

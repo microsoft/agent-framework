@@ -32,12 +32,10 @@ string pdfPath = Path.Combine(AppContext.BaseDirectory, "SampleAssets", "invoice
 var credential = new DefaultAzureCredential();
 
 await using var cu = new ContentUnderstandingContextProvider(
-    new Uri(cuEndpoint),
-    credential,
-    options =>
+    new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
     {
-        options.AnalyzerId = "prebuilt-documentSearch";
-        options.MaxWait = TimeSpan.FromMinutes(2);
+        AnalyzerId = "prebuilt-documentSearch",
+        MaxWait = TimeSpan.FromMinutes(2),
     });
 
 AIProjectClient aiProjectClient = new(new Uri(projectEndpoint), credential);

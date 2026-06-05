@@ -46,11 +46,9 @@ var credential = new DefaultAzureCredential();
 //   Audio      → prebuilt-audioSearch
 //   Video      → prebuilt-videoSearch
 await using var cu = new ContentUnderstandingContextProvider(
-    new Uri(cuEndpoint),
-    credential,
-    options =>
+    new ContentUnderstandingContextProviderOptions(new Uri(cuEndpoint), credential)
     {
-        options.MaxWait = Timeout.InfiniteTimeSpan; // wait until CU analysis finishes (no background deferral)
+        MaxWait = Timeout.InfiniteTimeSpan, // wait until CU analysis finishes (no background deferral)
     });
 
 AIProjectClient aiProjectClient = new(new Uri(projectEndpoint), credential);
