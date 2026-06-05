@@ -40,9 +40,12 @@ logger = logging.getLogger("agent_framework.minimax")
 MINIMAX_DEFAULT_BASE_URL: Final[str] = "https://api.minimax.io/anthropic"
 
 MINIMAX_MODELS: Final[list[str]] = [
+    "MiniMax-M3",
     "MiniMax-M2.7",
     "MiniMax-M2.7-highspeed",
 ]
+
+MINIMAX_DEFAULT_MODEL: Final[str] = "MiniMax-M3"
 
 # Parameters not supported by MiniMax Anthropic-compatible API
 MINIMAX_UNSUPPORTED_PARAMS: Final[frozenset[str]] = frozenset([
@@ -106,7 +109,7 @@ class RawMiniMaxClient(
 
         Keyword Args:
             api_key: The MiniMax API key to use for authentication.
-            model: The model to use (e.g. ``"MiniMax-M2.7"``).
+            model: The model to use (e.g. ``"MiniMax-M3"``).
             base_url: Optional base URL override. Defaults to ``https://api.minimax.io/anthropic``.
             anthropic_client: An existing AsyncAnthropic client to use with a custom base_url.
             additional_properties: Additional properties stored on the client instance.
@@ -119,11 +122,11 @@ class RawMiniMaxClient(
                 from agent_framework_minimax import MiniMaxClient
 
                 # Using environment variables (set MINIMAX_API_KEY)
-                client = MiniMaxClient(model="MiniMax-M2.7")
+                client = MiniMaxClient(model="MiniMax-M3")
 
                 # Or passing parameters directly
                 client = MiniMaxClient(
-                    model="MiniMax-M2.7",
+                    model="MiniMax-M3",
                     api_key="your_minimax_api_key",
                 )
         """
@@ -138,7 +141,7 @@ class RawMiniMaxClient(
         )
 
         api_key_secret = settings.get("api_key")
-        model_setting = settings.get("chat_model")
+        model_setting = settings.get("chat_model") or MINIMAX_DEFAULT_MODEL
         base_url_setting = settings.get("base_url") or MINIMAX_DEFAULT_BASE_URL
 
         if anthropic_client is None:
@@ -205,7 +208,7 @@ class MiniMaxClient(  # type: ignore[misc]
     """MiniMax chat client with middleware, telemetry, and function invocation support.
 
     Uses MiniMax's Anthropic-compatible API (https://api.minimax.io/anthropic).
-    Supported models: ``MiniMax-M2.7``, ``MiniMax-M2.7-highspeed``.
+    Supported models: ``MiniMax-M3`` (default), ``MiniMax-M2.7``, ``MiniMax-M2.7-highspeed``.
 
     Examples:
         .. code-block:: python
@@ -213,7 +216,7 @@ class MiniMaxClient(  # type: ignore[misc]
             from agent_framework_minimax import MiniMaxClient
 
             # Set MINIMAX_API_KEY environment variable, then:
-            client = MiniMaxClient(model="MiniMax-M2.7")
+            client = MiniMaxClient(model="MiniMax-M3")
             response = await client.get_response("Hello from MiniMax!")
     """
 
@@ -234,7 +237,7 @@ class MiniMaxClient(  # type: ignore[misc]
 
         Keyword Args:
             api_key: The MiniMax API key to use for authentication.
-            model: The model to use (e.g. ``"MiniMax-M2.7"``).
+            model: The model to use (e.g. ``"MiniMax-M3"``).
             base_url: Optional base URL override. Defaults to ``https://api.minimax.io/anthropic``.
             anthropic_client: An existing AsyncAnthropic client to use with a custom base_url.
             additional_properties: Additional properties stored on the client instance.

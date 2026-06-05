@@ -26,7 +26,7 @@ import asyncio
 from agent_framework_minimax import MiniMaxClient
 
 async def main():
-    client = MiniMaxClient(model="MiniMax-M2.7")
+    client = MiniMaxClient(model="MiniMax-M3")
     response = await client.get_response("Hello! Tell me about yourself.")
     print(response.messages[0].text)
 
@@ -40,7 +40,7 @@ import asyncio
 from agent_framework_minimax import MiniMaxClient
 
 async def main():
-    client = MiniMaxClient(model="MiniMax-M2.7")
+    client = MiniMaxClient(model="MiniMax-M3")
     async for update in await client.get_streaming_response("Tell me a short story."):
         if update.text:
             print(update.text, end="", flush=True)
@@ -53,8 +53,9 @@ asyncio.run(main())
 
 | Model | Description |
 |-------|-------------|
-| `MiniMax-M2.7` | Peak Performance. Ultimate Value. Master the Complex |
-| `MiniMax-M2.7-highspeed` | Same performance, faster and more agile |
+| `MiniMax-M3` | Latest model, 512K context, up to 128K output, supports image input (default) |
+| `MiniMax-M2.7` | Previous generation |
+| `MiniMax-M2.7-highspeed` | Previous generation, faster and more agile |
 
 ### API Documentation
 

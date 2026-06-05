@@ -12,8 +12,9 @@ Integration with MiniMax's Anthropic-compatible API for Microsoft Agent Framewor
 
 | Model ID | Description |
 |----------|-------------|
-| `MiniMax-M2.7` | Peak Performance. Ultimate Value. Master the Complex |
-| `MiniMax-M2.7-highspeed` | Same performance, faster and more agile |
+| `MiniMax-M3` | Latest model, 512K context, up to 128K output, supports image input (default) |
+| `MiniMax-M2.7` | Previous generation |
+| `MiniMax-M2.7-highspeed` | Previous generation, faster and more agile |
 
 ## Usage
 
@@ -21,7 +22,7 @@ Integration with MiniMax's Anthropic-compatible API for Microsoft Agent Framewor
 from agent_framework_minimax import MiniMaxClient
 
 # Set MINIMAX_API_KEY environment variable, then:
-client = MiniMaxClient(model="MiniMax-M2.7")
+client = MiniMaxClient(model="MiniMax-M3")
 response = await client.get_response("Hello from MiniMax!")
 ```
 

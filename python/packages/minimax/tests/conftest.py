@@ -28,7 +28,7 @@ def minimax_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  
 
     env_vars = {
         "MINIMAX_API_KEY": "test-minimax-api-key-12345",
-        "MINIMAX_CHAT_MODEL": "MiniMax-M2.7",
+        "MINIMAX_CHAT_MODEL": "MiniMax-M3",
     }
 
     env_vars.update(override_env_param_dict)  # type: ignore

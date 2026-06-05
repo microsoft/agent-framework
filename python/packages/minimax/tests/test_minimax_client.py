@@ -21,6 +21,7 @@ from anthropic.types import (
 from agent_framework_minimax import MiniMaxClient, RawMiniMaxClient
 from agent_framework_minimax._chat_client import (
     MINIMAX_DEFAULT_BASE_URL,
+    MINIMAX_DEFAULT_MODEL,
     MINIMAX_MODELS,
     MINIMAX_UNSUPPORTED_PARAMS,
     MiniMaxSettings,
@@ -34,7 +35,7 @@ skip_if_minimax_integration_tests_disabled = pytest.mark.skipif(
 
 def create_test_minimax_client(
     mock_anthropic_client: MagicMock,
-    model: str | None = "MiniMax-M2.7",
+    model: str | None = "MiniMax-M3",
 ) -> MiniMaxClient:
     """Helper function to create MiniMaxClient instances for testing."""
     client = object.__new__(MiniMaxClient)
@@ -63,7 +64,7 @@ def make_anthropic_message(text: str = "Hello from MiniMax!") -> AnthropicMessag
         type="message",
         role="assistant",
         content=[TextBlock(type="text", text=text)],
-        model="MiniMax-M2.7",
+        model="MiniMax-M3",
         stop_reason="end_turn",
         stop_sequence=None,
         usage=Usage(input_tokens=10, output_tokens=5),
@@ -81,7 +82,7 @@ def test_minimax_settings_from_env(minimax_unit_test_env: dict[str, str]) -> Non
         MiniMaxSettings,
         env_prefix="MINIMAX_",
     )
-    assert settings.get("chat_model") == "MiniMax-M2.7"
+    assert settings.get("chat_model") == "MiniMax-M3"
     assert settings.get("api_key") is not None
 
 
@@ -91,9 +92,16 @@ def test_minimax_default_base_url() -> None:
 
 
 def test_minimax_models_list() -> None:
-    """Test that the supported model list contains the expected models."""
+    """Test that the supported model list contains the expected models and M3 is first."""
+    assert "MiniMax-M3" in MINIMAX_MODELS
     assert "MiniMax-M2.7" in MINIMAX_MODELS
     assert "MiniMax-M2.7-highspeed" in MINIMAX_MODELS
+    assert MINIMAX_MODELS[0] == "MiniMax-M3"
+
+
+def test_minimax_default_model_is_m3() -> None:
+    """Test that the default model is MiniMax-M3."""
+    assert MINIMAX_DEFAULT_MODEL == "MiniMax-M3"
 
 
 def test_minimax_unsupported_params() -> None:
@@ -112,13 +120,13 @@ def test_raw_minimax_client_raises_without_api_key(minimax_unit_test_env: dict[s
     """Test that RawMiniMaxClient raises ValueError when no API key is provided."""
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     with pytest.raises(ValueError, match="MiniMax API key is required"):
-        RawMiniMaxClient(model="MiniMax-M2.7")
+        RawMiniMaxClient(model="MiniMax-M3")
 
 
 def test_raw_minimax_client_init(minimax_unit_test_env: dict[str, str]) -> None:
     """Test that RawMiniMaxClient initializes correctly with environment variables."""
     client = RawMiniMaxClient()
-    assert client.model == "MiniMax-M2.7"
+    assert client.model == "MiniMax-M3"
     assert MINIMAX_DEFAULT_BASE_URL in str(client.anthropic_client.base_url)
 
 
@@ -131,9 +139,9 @@ def test_raw_minimax_client_custom_base_url(minimax_unit_test_env: dict[str, str
 
 def test_raw_minimax_client_with_explicit_anthropic_client(mock_minimax_client: MagicMock) -> None:
     """Test that RawMiniMaxClient accepts a pre-built AsyncAnthropic client."""
-    client = RawMiniMaxClient(model="MiniMax-M2.7", anthropic_client=mock_minimax_client)
+    client = RawMiniMaxClient(model="MiniMax-M3", anthropic_client=mock_minimax_client)
     assert client.anthropic_client is mock_minimax_client
-    assert client.model == "MiniMax-M2.7"
+    assert client.model == "MiniMax-M3"
 
 
 def test_minimax_client_has_middleware_layers(minimax_unit_test_env: dict[str, str]) -> None:
@@ -215,7 +223,7 @@ async def test_minimax_uses_correct_model(mock_minimax_client: MagicMock) -> Non
 @pytest.mark.asyncio
 async def test_minimax_integration_basic_chat() -> None:
     """Integration test: basic chat with MiniMax API."""
-    client = MiniMaxClient(model="MiniMax-M2.7")
+    client = MiniMaxClient(model="MiniMax-M3")
     response = await client.get_response([Message(role="user", contents=["Say 'test passed' in exactly those words."])])
     assert response is not None
     assert len(response.messages) > 0
@@ -228,7 +236,7 @@ async def test_minimax_integration_basic_chat() -> None:
 @pytest.mark.asyncio
 async def test_minimax_integration_streaming() -> None:
     """Integration test: streaming response from MiniMax API."""
-    client = MiniMaxClient(model="MiniMax-M2.7")
+    client = MiniMaxClient(model="MiniMax-M3")
     chunks = []
     async for update in await client.get_response([Message(role="user", contents=["Say hello."])], stream=True):
         if update.text:
