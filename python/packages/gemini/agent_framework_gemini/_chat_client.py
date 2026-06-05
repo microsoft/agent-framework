@@ -794,23 +794,23 @@ class RawGeminiChatClient(
         """Extract a Gemini response schema from supported mapping response_format shapes."""
         if not isinstance(response_format, Mapping):
             return None
+        mapping = cast("Mapping[str, Any]", response_format)
 
-        if (
-            isinstance(format_config := response_format.get("format"), Mapping)
-            and (schema := RawGeminiChatClient._extract_response_schema(format_config)) is not None
-        ):
-            return schema
+        if (nested := RawGeminiChatClient._extract_response_schema(mapping.get("format"))) is not None:
+            return nested
 
-        if isinstance(json_schema := response_format.get("json_schema"), Mapping) and isinstance(
-            schema := json_schema.get("schema"), Mapping
-        ):
-            return dict(schema)
+        json_schema = mapping.get("json_schema")
+        if isinstance(json_schema, Mapping):
+            schema = cast("Mapping[str, Any]", json_schema).get("schema")
+            if isinstance(schema, Mapping):
+                return dict(cast("Mapping[str, Any]", schema))
 
-        if isinstance(schema := response_format.get("schema"), Mapping):
-            return dict(schema)
+        schema = mapping.get("schema")
+        if isinstance(schema, Mapping):
+            return dict(cast("Mapping[str, Any]", schema))
 
-        if RawGeminiChatClient._is_json_schema_mapping(response_format):
-            return dict(response_format)
+        if RawGeminiChatClient._is_json_schema_mapping(mapping):
+            return dict(mapping)
 
         return None
 
@@ -826,7 +826,9 @@ class RawGeminiChatClient(
         if isinstance(schema_type, str):
             return schema_type in _JSON_SCHEMA_TYPES
         if isinstance(schema_type, Sequence) and not isinstance(schema_type, (str, bytes)):
-            return all(isinstance(item, str) and item in _JSON_SCHEMA_TYPES for item in schema_type)
+            return all(
+                isinstance(item, str) and item in _JSON_SCHEMA_TYPES for item in cast("Sequence[Any]", schema_type)
+            )
 
         return False
 
