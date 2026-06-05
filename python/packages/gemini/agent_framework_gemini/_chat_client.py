@@ -826,9 +826,8 @@ class RawGeminiChatClient(
         if isinstance(schema_type, str):
             return schema_type in _JSON_SCHEMA_TYPES
         if isinstance(schema_type, Sequence) and not isinstance(schema_type, (str, bytes)):
-            return all(
-                isinstance(item, str) and item in _JSON_SCHEMA_TYPES for item in cast("Sequence[Any]", schema_type)
-            )
+            entries = cast("Sequence[object]", schema_type)
+            return all(isinstance(item, str) and item in _JSON_SCHEMA_TYPES for item in entries)
 
         return False
 
