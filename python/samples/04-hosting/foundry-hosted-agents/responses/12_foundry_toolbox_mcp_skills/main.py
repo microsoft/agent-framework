@@ -30,7 +30,7 @@ class ToolboxAuth(httpx.Auth):
 
 async def main() -> None:
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-5")
+    deployment = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     toolbox_name = os.environ["TOOLBOX_NAME"]
 
     # Build the Toolbox MCP URL from the project endpoint and toolbox name.
