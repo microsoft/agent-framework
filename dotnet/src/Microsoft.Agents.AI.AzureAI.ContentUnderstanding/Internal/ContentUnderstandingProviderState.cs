@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 internal sealed class ContentUnderstandingProviderState
 {
     /// <summary>Document registry keyed by <see cref="DocumentEntry.DocumentKey"/>.</summary>
-    public ConcurrentDictionary<string, DocumentEntry> Documents { get; init; } = new();
+    public ConcurrentDictionary<string, DocumentEntry> Documents { get; init; } = new(StringComparer.Ordinal);
 
     /// <summary>Keys of documents whose rendered result has already been injected into a turn.</summary>
     /// <remarks>

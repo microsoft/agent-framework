@@ -64,9 +64,9 @@ public sealed class ContentUnderstandingContextProviderOptions
     /// </summary>
     /// <remarks>
     /// This budget applies only to the server-side analysis polling step. It does NOT include the
-    /// time to upload the request body: for a binary (<see cref="Microsoft.Extensions.AI.DataContent"/>)
+    /// time to upload the request body: for a binary (<see cref="Extensions.AI.DataContent"/>)
     /// attachment the initial submit POST streams the full payload (potentially hundreds of MB),
-    /// which is bounded only by the caller's <see cref="System.Threading.CancellationToken"/>, not by
+    /// which is bounded only by the caller's <see cref="CancellationToken"/>, not by
     /// <see cref="MaxWait"/>. The upload is intentionally excluded so that a slow upload cannot be
     /// cancelled mid-flight (which would leave no operation to rehydrate and force a full re-upload
     /// next turn).

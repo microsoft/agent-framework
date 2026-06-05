@@ -23,11 +23,34 @@ public sealed class MimeSnifferTests
 
     [Fact]
     public void Detects_Mp3_Id3()
-        => Assert.Equal("audio/mpeg", MimeSniffer.Detect([0x49, 0x44, 0x33, 0x03, 0x00, 0x00]));
+    {
+        // ID3v2 header (10 bytes, empty tag body) immediately followed by an MPEG audio frame sync
+        // word. synchsafe size = 0 -> tagSize = 10, so the frame begins at offset 10 and the
+        // sniffer confirms MP3 from the sync word that follows the tag.
+        byte[] head =
+        [
+            0x49, 0x44, 0x33, 0x03, 0x00, 0x00, // "ID3", version 2.3, flags
+            0x00, 0x00, 0x00, 0x00,             // synchsafe tag-body size = 0
+            0xFF, 0xFB, 0x90, 0x00,             // MPEG frame sync word after the tag
+        ];
+        Assert.Equal("audio/mpeg", MimeSniffer.Detect(head));
+    }
 
     [Fact]
     public void Detects_Mp3_FrameSync()
-        => Assert.Equal("audio/mpeg", MimeSniffer.Detect([0xFF, 0xFB, 0x90, 0x00]));
+    {
+        // A bare MPEG-1 Layer III frame (128 kbps, 44.1 kHz) is 417 bytes long. Detection requires
+        // a second sync word one frame later (double-sync), so supply two back-to-back headers.
+        const int FrameLength = 417;
+        byte[] head = new byte[FrameLength + 2];
+        head[0] = 0xFF;
+        head[1] = 0xFB;
+        head[2] = 0x90;
+        head[3] = 0x00;
+        head[FrameLength] = 0xFF;
+        head[FrameLength + 1] = 0xFB;
+        Assert.Equal("audio/mpeg", MimeSniffer.Detect(head));
+    }
 
     [Fact]
     public void Detects_Mp4()
@@ -43,6 +66,22 @@ public sealed class MimeSnifferTests
         // "RIFF" + 4-byte size + "WAVE"
         byte[] head = [(byte)'R', (byte)'I', (byte)'F', (byte)'F', 0x24, 0x00, 0x00, 0x00, (byte)'W', (byte)'A', (byte)'V', (byte)'E'];
         Assert.Equal("audio/wav", MimeSniffer.Detect(head));
+    }
+
+    [Fact]
+    public void Detects_Flac()
+    {
+        // Bare FLAC stream begins with the "fLaC" magic (no ID3 wrapper).
+        byte[] head = [(byte)'f', (byte)'L', (byte)'a', (byte)'C', 0x00, 0x00, 0x00, 0x22];
+        Assert.Equal("audio/flac", MimeSniffer.Detect(head));
+    }
+
+    [Fact]
+    public void Detects_Ogg()
+    {
+        // Bare OGG container begins with the "OggS" capture pattern (no ID3 wrapper).
+        byte[] head = [(byte)'O', (byte)'g', (byte)'g', (byte)'S', 0x00, 0x02, 0x00, 0x00];
+        Assert.Equal("audio/ogg", MimeSniffer.Detect(head));
     }
 
     [Fact]

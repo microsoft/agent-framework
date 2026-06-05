@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Concurrent;
+using System.Diagnostics;
 #if NET8_0_OR_GREATER
 using System.Diagnostics.CodeAnalysis;
 #endif
@@ -148,6 +149,13 @@ internal static class AttachmentDetector
             ? (sniffed ?? string.Empty)
             : (!string.IsNullOrEmpty(supplied) ? supplied : sniffed ?? string.Empty);
 
+        // No usable media type (supplied empty/octet-stream AND sniff produced nothing) → skip.
+        // Made explicit so the short-circuit doesn't rely on the allow-list never containing "".
+        if (string.IsNullOrEmpty(resolved))
+        {
+            return null;
+        }
+
         if (!s_supportedMediaTypes.Contains(resolved))
         {
             // Unknown / unsupported → silently skip; must never block the agent run.
@@ -227,8 +235,10 @@ internal static class AttachmentDetector
             }
         }
 
-        // Fall back to the URI's last segment when it looks like a real filename.
-        string? last = uc.Uri.Segments.Length > 0 ? uc.Uri.Segments[uc.Uri.Segments.Length - 1] : null;
+        // Fall back to the URI's last segment when it looks like a real filename. Uri.Segments is
+        // only valid for absolute URIs (throws InvalidOperationException otherwise), so guard on
+        // IsAbsoluteUri; relative URIs skip this and fall through to the synthesized name below.
+        string? last = uc.Uri.IsAbsoluteUri && uc.Uri.Segments.Length > 0 ? uc.Uri.Segments[uc.Uri.Segments.Length - 1] : null;
         last = last?.Trim('/');
         if (!string.IsNullOrEmpty(last) && last!.Contains('.'))
         {
@@ -347,50 +357,24 @@ internal static class AttachmentDetector
         return joined.Length > MaxFilenameLength ? joined.Substring(0, MaxFilenameLength) : joined;
     }
 
-    // Upper bound on bytes hashed when synthesizing a filename. The hash only needs to produce a
-    // stable, well-distributed dedup prefix — it is NOT a content integrity check — so hashing the
-    // head (plus the total length, mixed in to distinguish same-header / different-size payloads)
-    // avoids a full SHA256 over multi-hundred-MB media just to derive 6 hex chars.
-    private const int SynthesizeHashCap = 4096;
-
-    // Payloads at or below this size are hashed in full, so two attachments that share the same
-    // head/tail windows and length but differ only in their middle bytes never collide on the
-    // dedup prefix. Larger payloads fall back to head+tail sampling to avoid a full SHA256 over
-    // multi-hundred-MB media. Equal to head + tail windows: below it the sampled windows already
-    // cover every byte, so "full hash" costs nothing extra.
-    private const int SynthesizeFullHashCap = SynthesizeHashCap * 2;
-
+    // The hash only needs to produce a stable, well-distributed dedup prefix — it is NOT a content
+    // integrity check. We hash the full payload (plus its total length, mixed in to distinguish
+    // same-content / different-length edge cases) so two attachments that differ only in their
+    // middle bytes never collide on the dedup prefix.
     private static string Synthesize(ReadOnlySpan<byte> data, long totalLength, string mediaType)
     {
-        // Small/medium payloads: hash the entire buffer (no head/tail collision risk).
-        if (data.Length <= SynthesizeFullHashCap)
-        {
-            return Synthesize(data, data.Length, 0, totalLength, mediaType);
-        }
+        // totalLength is mixed into the hash to disambiguate same-prefix / different-length payloads,
+        // so it must stay consistent with the bytes actually hashed. All current callers pass the full
+        // buffer (totalLength == data.Length); assert it to catch a future short-buffer misuse early.
+        Debug.Assert(totalLength == data.Length, $"Synthesize totalLength ({totalLength}) must match data.Length ({data.Length}).");
 
-        const int headCount = SynthesizeHashCap;
-        // For larger payloads, also sample an equal-sized tail window. This distinguishes
-        // same-header / same-length payloads that differ only in their tail bytes, which a
-        // head-only hash would otherwise collide. (Middle-byte differences in very large media are
-        // accepted as a residual collision risk; this is a dedup prefix, not an integrity check.)
-        int tailCount = Math.Min(data.Length - headCount, SynthesizeHashCap);
-        return Synthesize(data, headCount, tailCount, totalLength, mediaType);
-    }
-
-    private static string Synthesize(ReadOnlySpan<byte> data, int headCount, int tailCount, long totalLength, string mediaType)
-    {
-        int count = headCount + tailCount;
-        byte[] buffer = new byte[count + sizeof(long)];
-        data.Slice(0, headCount).CopyTo(buffer);
-        if (tailCount > 0)
-        {
-            data.Slice(data.Length - tailCount, tailCount).CopyTo(buffer.AsSpan(headCount));
-        }
+        byte[] buffer = new byte[data.Length + sizeof(long)];
+        data.CopyTo(buffer);
 #if NET8_0_OR_GREATER
-        BitConverter.TryWriteBytes(buffer.AsSpan(count), totalLength);
+        BitConverter.TryWriteBytes(buffer.AsSpan(data.Length), totalLength);
 #else
         byte[] lengthBytes = BitConverter.GetBytes(totalLength);
-        Array.Copy(lengthBytes, 0, buffer, count, lengthBytes.Length);
+        Array.Copy(lengthBytes, 0, buffer, data.Length, lengthBytes.Length);
 #endif
 
 #pragma warning disable CA1850 // Static SHA256.HashData is .NET 5+ only; this project multi-targets netstandard2.0 / net472 where only ComputeHash exists.
@@ -467,6 +451,9 @@ internal static class AttachmentDetector
         _ => "bin",
     };
 
+    // MimeSniffer needs up to a full MPEG audio frame (plus a second sync word) to confirm MP3 via
+    // double-sync, so the head window must be far larger than a bare magic number. This is a
+    // zero-copy span slice over the already-in-memory payload, so widening it is essentially free.
     private static ReadOnlySpan<byte> SliceHead(ReadOnlySpan<byte> bytes)
-        => bytes.Slice(0, Math.Min(bytes.Length, 64));
+        => bytes.Slice(0, Math.Min(bytes.Length, MimeSniffer.RecommendedHeadByteCount));
 }

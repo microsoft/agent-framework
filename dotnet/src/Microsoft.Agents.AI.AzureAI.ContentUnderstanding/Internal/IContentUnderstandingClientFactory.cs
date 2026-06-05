@@ -24,5 +24,22 @@ internal sealed class DefaultContentUnderstandingClientFactory : IContentUnderst
     }
 
     public ContentUnderstandingClient Create()
-        => new(this._options.Endpoint, this._options.Credential);
+    {
+        if (this._options.Endpoint is null)
+        {
+            throw new InvalidOperationException($"{nameof(ContentUnderstandingContextProviderOptions)}.{nameof(this._options.Endpoint)} must be set before creating the client.");
+        }
+
+        if (!Uri.TryCreate(this._options.Endpoint, UriKind.Absolute, out _))
+        {
+            throw new InvalidOperationException($"{nameof(ContentUnderstandingContextProviderOptions)}.{nameof(this._options.Endpoint)} must be a valid absolute URI, but was: '{this._options.Endpoint}'.");
+        }
+
+        if (this._options.Credential is null)
+        {
+            throw new InvalidOperationException($"{nameof(ContentUnderstandingContextProviderOptions)}.{nameof(this._options.Credential)} must be set before creating the client.");
+        }
+
+        return new(this._options.Endpoint, this._options.Credential);
+    }
 }

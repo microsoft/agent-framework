@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using System.Text;
 using OpenAI;
 using OpenAI.Files;
@@ -36,6 +37,13 @@ public abstract class OpenAICompatFileSearchBackendBase : FileSearchBackend
         TimeSpan.FromSeconds(2),
         TimeSpan.FromSeconds(5),
     };
+
+    /// <summary>
+    /// Total wall-clock budget for the ingestion poll loop. Once exceeded, polling stops and a
+    /// <see cref="TimeoutException"/> is thrown so a stuck server-side ingestion cannot block the
+    /// caller indefinitely (even when no cancelable token is supplied).
+    /// </summary>
+    private static readonly TimeSpan s_pollTimeout = TimeSpan.FromMinutes(5);
 
     private readonly OpenAIClient _openAiClient;
 
@@ -85,9 +93,16 @@ public abstract class OpenAICompatFileSearchBackendBase : FileSearchBackend
 
         VectorStoreFileStatus status = association.Status;
         int delayIndex = 0;
+        Stopwatch pollStopwatch = Stopwatch.StartNew();
         while (status is VectorStoreFileStatus.InProgress or VectorStoreFileStatus.Unknown)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (pollStopwatch.Elapsed >= s_pollTimeout)
+            {
+                throw new TimeoutException(
+                    $"Vector store file '{fileId}' did not finish ingestion within {s_pollTimeout.TotalSeconds:F0}s (last status '{status}').");
+            }
+
             TimeSpan delay = s_pollDelays[Math.Min(delayIndex, s_pollDelays.Length - 1)];
             await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             delayIndex++;
