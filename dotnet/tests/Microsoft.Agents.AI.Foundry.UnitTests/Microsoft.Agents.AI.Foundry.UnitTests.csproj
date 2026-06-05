@@ -8,6 +8,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="Azure.AI.Projects" />
+    <PackageReference Include="Azure.Core" />
+    <PackageReference Include="System.ClientModel" />
   </ItemGroup>
 
   <ItemGroup>

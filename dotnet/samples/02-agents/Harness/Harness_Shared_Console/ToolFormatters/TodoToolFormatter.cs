@@ -7,20 +7,20 @@ using Microsoft.Extensions.AI;
 namespace Harness.Shared.Console.ToolFormatters;
 
 /// <summary>
-/// Formats <c>TodoList_*</c> tool calls with tree-view output for added items
+/// Formats <c>todos_*</c> tool calls with tree-view output for added items
 /// and structured output for complete/remove operations.
 /// </summary>
 public sealed class TodoToolFormatter : ToolCallFormatter
 {
     /// <inheritdoc/>
-    public override bool CanFormat(FunctionCallContent call) => call.Name.StartsWith("TodoList_", StringComparison.Ordinal);
+    public override bool CanFormat(FunctionCallContent call) => call.Name.StartsWith("todos_", StringComparison.Ordinal);
 
     /// <inheritdoc/>
     public override string? FormatDetail(FunctionCallContent call) => call.Name switch
     {
-        "TodoList_Add" => FormatAddTodos(call),
-        "TodoList_Complete" => FormatCompleteTodos(call),
-        "TodoList_Remove" => FormatIdList(call, "ids", "Remove"),
+        "todos_add" => FormatAddTodos(call),
+        "todos_complete" => FormatCompleteTodos(call),
+        "todos_remove" => FormatIdList(call, "ids", "Remove"),
         _ => null,
     };
 

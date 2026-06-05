@@ -1,14 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
 
@@ -34,7 +32,6 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <item><description><b>Agent Endpoint (Mode 3)</b>: throw — no local definition exists to convert.</description></item>
 /// </list>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 internal static class FoundryPromptAgentConverter
 {
     /// <summary>Performs the conversion for an agent whose chat client and chat options are supplied.</summary>

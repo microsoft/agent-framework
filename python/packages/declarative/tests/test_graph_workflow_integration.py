@@ -100,8 +100,8 @@ class TestGraphBasedWorkflowExecution:
                 {
                     "kind": "Foreach",
                     "id": "process_items",
-                    "itemsSource": "=Local.items",
-                    "iteratorVariable": "Local.item",
+                    "source": "=Local.items",
+                    "itemName": "item",
                     "actions": [
                         {"kind": "SendActivity", "id": "show_item", "activity": {"text": "=Local.item"}},
                     ],
@@ -131,8 +131,8 @@ class TestGraphBasedWorkflowExecution:
                 {
                     "kind": "Foreach",
                     "id": "loop",
-                    "itemsSource": "=Local.items",
-                    "iteratorVariable": "Local.item",
+                    "source": "=Local.items",
+                    "itemName": "item",
                     "actions": [
                         {"kind": "SendActivity", "id": "step_1", "activity": {"text": '="1-" & Local.item'}},
                         {"kind": "SendActivity", "id": "step_2", "activity": {"text": '="2-" & Local.item'}},
@@ -151,14 +151,14 @@ class TestGraphBasedWorkflowExecution:
         assert outputs == ["1-A", "2-A", "3-A", "1-B", "2-B", "3-B"]
 
     @pytest.mark.asyncio
-    async def test_workflow_with_switch(self):
-        """Test workflow with Switch/ConditionGroup."""
+    async def test_workflow_with_condition_group(self):
+        """Test workflow with ConditionGroup."""
         yaml_def = {
-            "name": "switch_workflow",
+            "name": "condition_group_workflow",
             "actions": [
                 {"kind": "SetValue", "id": "set_level", "path": "Local.level", "value": 2},
                 {
-                    "kind": "Switch",
+                    "kind": "ConditionGroup",
                     "id": "check_level",
                     "conditions": [
                         {
@@ -174,7 +174,7 @@ class TestGraphBasedWorkflowExecution:
                             ],
                         },
                     ],
-                    "else": [
+                    "elseActions": [
                         {"kind": "SendActivity", "id": "default", "activity": {"text": "Other level"}},
                     ],
                 },

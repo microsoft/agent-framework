@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleaseCandidate>true</IsReleaseCandidate>
+    <IsReleased>true</IsReleased>
     <NoWarn>$(NoWarn);MEAI001;OPENAI001</NoWarn>
   </PropertyGroup>
 
@@ -12,6 +12,13 @@
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- First Stable release after the RC milestone. Baseline against the latest 
+       published RC so package validation catches accidental breaking changes. 
+       Future releases should bump this to the previous stable version. -->
+  <PropertyGroup>
+    <PackageValidationBaselineVersion>1.8.0-rc1</PackageValidationBaselineVersion>
+  </PropertyGroup>
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
@@ -36,18 +43,6 @@
 
   <ItemGroup>
     <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="CodeGen\*Template.tt">
-      <Generator>TextTemplatingFilePreprocessor</Generator>
-      <LastGenOutput>%(Filename).cs</LastGenOutput>
-    </None>
-    <Compile Update="CodeGen\*Template.cs">
-      <DependentUpon>%(Filename).tt</DependentUpon>
-      <DesignTime>True</DesignTime>
-      <AutoGen>True</AutoGen>
-    </Compile>
   </ItemGroup>
 
   <ItemGroup>

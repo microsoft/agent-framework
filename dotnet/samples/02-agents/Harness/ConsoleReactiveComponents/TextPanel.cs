@@ -23,16 +23,18 @@ public record TextPanelProps : ConsoleReactiveProps
 public class TextPanel : ConsoleReactiveComponent<TextPanelProps, ConsoleReactiveState>
 {
     /// <summary>
-    /// Calculates the height (in lines) needed to render all items.
+    /// Calculates the height (in lines) needed to render all items,
+    /// accounting for terminal line wrapping at the specified width.
     /// </summary>
     /// <param name="items">The items to measure.</param>
-    /// <returns>The total number of lines all items will occupy.</returns>
-    public static int CalculateHeight(IReadOnlyList<string> items)
+    /// <param name="terminalWidth">The terminal width in columns. When 0 or negative, wrapping is ignored.</param>
+    /// <returns>The total number of physical lines all items will occupy.</returns>
+    public static int CalculateHeight(IReadOnlyList<string> items, int terminalWidth = 0)
     {
         int total = 0;
         for (int i = 0; i < items.Count; i++)
         {
-            total += CountLines(items[i]);
+            total += AnsiEscapes.CountPhysicalLines(items[i], terminalWidth);
         }
 
         return total;
@@ -47,13 +49,20 @@ public class TextPanel : ConsoleReactiveComponent<TextPanelProps, ConsoleReactiv
         {
             string text = props.Items[i];
             string[] lines = text.Split('\n');
-            int lineCount = CountLines(text);
+            int itemLineCount = AnsiEscapes.CountPhysicalLines(text, props.Width);
+            int itemRow = 0;
 
-            for (int j = 0; j < lineCount; j++)
+            for (int j = 0; j < lines.Length && itemRow < itemLineCount; j++)
             {
+                int linePhysicalRows = props.Width > 0
+                    ? Math.Max(1, (AnsiEscapes.VisibleLength(lines[j]) - 1) / props.Width + 1)
+                    : 1;
+
                 Console.Write(AnsiEscapes.MoveAndEraseLine(props.Y + currentRow));
                 Console.Write(lines[j]);
-                currentRow++;
+
+                currentRow += linePhysicalRows;
+                itemRow += linePhysicalRows;
             }
         }
 
@@ -65,30 +74,5 @@ public class TextPanel : ConsoleReactiveComponent<TextPanelProps, ConsoleReactiv
                 Console.Write(AnsiEscapes.MoveAndEraseLine(props.Y + i));
             }
         }
-    }
-
-    private static int CountLines(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return 0;
-        }
-
-        int count = 1;
-        for (int i = 0; i < text.Length; i++)
-        {
-            if (text[i] == '\n')
-            {
-                count++;
-            }
-        }
-
-        // If text ends with a newline, don't count the trailing empty line
-        if (text[text.Length - 1] == '\n')
-        {
-            count--;
-        }
-
-        return count;
     }
 }

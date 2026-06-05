@@ -17,6 +17,11 @@ builder.Services.AddAGUI();
 // Configure to listen on port 8888
 builder.WebHost.UseUrls("http://localhost:8888");
 
+// WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
+// make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
+// deployments, e.g.:
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+
 WebApplication app = builder.Build();
 
 string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"]

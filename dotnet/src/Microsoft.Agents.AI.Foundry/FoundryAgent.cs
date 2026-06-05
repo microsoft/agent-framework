@@ -4,14 +4,12 @@ using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry;
@@ -36,7 +34,6 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <c>AsAIAgent</c> extension methods on <see cref="AIProjectClient"/>.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryAgent : DelegatingAIAgent
 {
     /// <summary>
@@ -261,6 +258,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
             return innerAgent;
         }
 
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         if (innerAgent.ChatClient.GetService<OpenAIRequestPolicies>() is { } policies)
         {
             OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
@@ -268,6 +266,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
                 ClientHeadersPolicy.Instance,
                 PipelinePosition.PerCall);
         }
+#pragma warning restore MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
         return new ClientHeadersAgent(innerAgent);
     }

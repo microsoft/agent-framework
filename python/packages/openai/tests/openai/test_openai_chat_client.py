@@ -36,7 +36,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     SettingNotFoundError,
 )
-from openai import BadRequestError
+from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
@@ -55,7 +55,7 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_openai import OpenAIChatClient
-from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
+from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY, RawOpenAIChatClient
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -192,6 +192,26 @@ def test_init_uses_explicit_parameters() -> None:
     assert "compaction_strategy" in signature.parameters
     assert "tokenizer" in signature.parameters
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_raw_openai_chat_client_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(RawOpenAIChatClient.__init__)
+
+    assert "additional_properties" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert "timeout" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_raw_openai_chat_client_accepts_preconfigured_client_with_timeout() -> None:
+    """Test that timeout is accepted without error when async_client is pre-provided."""
+
+    mock_client = MagicMock(spec=AsyncOpenAI)
+    mock_client.timeout = 5.0
+
+    client = RawOpenAIChatClient(async_client=mock_client, timeout=30.0)
+    assert client is not None
 
 
 def test_openai_chat_client_supports_all_tool_protocols() -> None:
@@ -838,6 +858,88 @@ async def test_served_model_header_not_captured_for_streaming_text_format() -> N
     assert updates, "Expected at least one streaming update"
     for update in updates:
         # No header override; model stays the deployment alias.
+        assert update.model == "test-model"
+
+
+async def test_streaming_response_without_headers_attribute_does_not_crash() -> None:
+    """Regression for #6028.
+
+    Some telemetry instrumentors (e.g. ``azure-ai-projects`` experimental GenAI tracing,
+    activated by ``AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING=true``) monkey-patch
+    ``openai.resources.responses.AsyncResponses.create`` at the class level and return
+    an ``AsyncStreamWrapper`` whose class genuinely has no ``headers`` attribute. The
+    ``with_raw_response.create`` wrapper does not re-wrap the return value
+    (``async_to_raw_response_wrapper`` only injects an extra header into the request),
+    so ``raw_create_response`` in ``_inner_get_response`` ends up being the wrapper
+    itself. Reading ``raw_create_response.headers`` used to raise ``AttributeError``
+    and bubble up as ``ChatClientException``, breaking every streaming call. The
+    defensive ``getattr(..., "headers", None)`` should now degrade gracefully:
+    no served-model surfacing, but the stream still completes.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta="Hello",
+        ),
+    ]
+
+    class _StreamWrapperWithoutHeaders:
+        """Mimics ``azure.ai.projects.telemetry._responses_instrumentor.AsyncStreamWrapper``:
+        an async iterator that proxies the stream contents but does not expose ``.headers``.
+        ``hasattr(wrapper, "headers")`` returns ``False`` so ``getattr(..., "headers", None)``
+        falls through to the default — matching the real instrumentor's class layout.
+        """
+
+        def __init__(self, events: list[object]) -> None:
+            self._events = events
+            self._iterator = iter(())
+
+        def __aiter__(self) -> "_StreamWrapperWithoutHeaders":
+            self._iterator = iter(self._events)
+            return self
+
+        async def __anext__(self) -> object:
+            try:
+                return next(self._iterator)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+        def parse(self) -> "_StreamWrapperWithoutHeaders":
+            return self
+
+        async def __aenter__(self) -> "_StreamWrapperWithoutHeaders":
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: object | None,
+        ) -> None:
+            return None
+
+    headerless_stream = _StreamWrapperWithoutHeaders(events)
+    # Sanity-check the simulation: the real instrumentor's wrapper genuinely lacks ``.headers``.
+    assert not hasattr(headerless_stream, "headers")
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=headerless_stream)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        updates = [update async for update in stream]
+
+    assert updates, "Expected the stream to complete even when the wrapper lacks .headers"
+    for update in updates:
+        # No header => no override => model stays the deployment alias.
         assert update.model == "test-model"
 
 
@@ -3407,9 +3509,11 @@ def test_streaming_annotation_added_with_url_citation() -> None:
     mock_event = MagicMock()
     mock_event.type = "response.output_text.annotation.added"
     mock_event.annotation_index = 0
+    get_url = "https://example.search.windows.net/indexes/docs/documents/doc-123?api-version=2024-07-01"
     mock_event.annotation = {
         "type": "url_citation",
         "url": "https://example.sharepoint.com/sites/my-site/doc.pdf",
+        "get_url": get_url,
         "title": "doc.pdf",
         "start_index": 100,
         "end_index": 112,
@@ -3427,6 +3531,7 @@ def test_streaming_annotation_added_with_url_citation() -> None:
     assert annotation["title"] == "doc.pdf"
     assert annotation["url"] == "https://example.sharepoint.com/sites/my-site/doc.pdf"
     assert annotation["additional_properties"]["annotation_index"] == 0
+    assert annotation["additional_properties"]["get_url"] == get_url
     assert annotation["raw_representation"] == mock_event.annotation
     assert annotation["annotated_regions"] is not None
     assert len(annotation["annotated_regions"]) == 1
@@ -5561,6 +5666,79 @@ def test_prepare_messages_for_openai_coalesces_mcp_call_and_result_into_single_i
     # And no orphaned function_call_output should appear anywhere in the input.
     fco_items = [item for item in result if isinstance(item, dict) and item.get("type") == "function_call_output"]
     assert fco_items == [], f"unexpected orphan function_call_output items: {fco_items}"
+
+
+def test_prepare_messages_for_openai_drops_mcp_call_when_paired_reasoning_is_stripped() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_abc123", text="Need the MCP server."),
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_abc123",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    types = [item.get("type") for item in result if isinstance(item, dict)]
+    assert "reasoning" not in types
+    assert "mcp_call" not in types
+    assert "function_call_output" not in types
+
+
+def test_prepare_messages_for_openai_drops_mcp_call_across_reasoning_messages() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_text_reasoning(id="rs_abc123", text="Need a tool call.")],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_abc123",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    types = [item.get("type") for item in result if isinstance(item, dict)]
+    assert "reasoning" not in types
+    assert "mcp_call" not in types
+    assert "function_call_output" not in types
 
 
 def test_prepare_messages_for_openai_drops_orphan_mcp_server_tool_result() -> None:

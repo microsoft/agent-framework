@@ -252,8 +252,8 @@ async def test_todo_provider_runs_with_file_store(tmp_path: Path, chat_client_ba
     tools = options["tools"]
     assert isinstance(tools, list)
 
-    add_todos = _tool_by_name(tools, "add_todos")
-    get_all_todos = _tool_by_name(tools, "get_all_todos")
+    add_todos = _tool_by_name(tools, "todos_add")
+    get_all_todos = _tool_by_name(tools, "todos_get_all")
 
     await add_todos.invoke(arguments={"todos": [{"title": "Persist me"}]})
     state_path = tmp_path / "session-1" / "todos.todo.json"
@@ -283,11 +283,11 @@ async def test_todo_provider_tools_manage_session_state(
     tools = options["tools"]
     assert isinstance(tools, list)
 
-    add_todos = _tool_by_name(tools, "add_todos")
-    complete_todos = _tool_by_name(tools, "complete_todos")
-    remove_todos = _tool_by_name(tools, "remove_todos")
-    get_remaining_todos = _tool_by_name(tools, "get_remaining_todos")
-    get_all_todos = _tool_by_name(tools, "get_all_todos")
+    add_todos = _tool_by_name(tools, "todos_add")
+    complete_todos = _tool_by_name(tools, "todos_complete")
+    remove_todos = _tool_by_name(tools, "todos_remove")
+    get_remaining_todos = _tool_by_name(tools, "todos_get_remaining")
+    get_all_todos = _tool_by_name(tools, "todos_get_all")
 
     add_result = await add_todos.invoke(
         arguments={
@@ -302,7 +302,7 @@ async def test_todo_provider_tools_manage_session_state(
         {"id": 2, "title": "Ship feature", "description": None, "is_complete": False},
     ]
 
-    complete_result = await complete_todos.invoke(arguments={"ids": [1]})
+    complete_result = await complete_todos.invoke(arguments={"items": [{"id": 1, "reason": "Tests written"}]})
     assert json.loads(complete_result[0].text) == {"completed": 1}
 
     remaining_result = await get_remaining_todos.invoke()
@@ -334,16 +334,16 @@ async def test_todo_provider_serializes_concurrent_mutations(
     tools = options["tools"]
     assert isinstance(tools, list)
 
-    add_todos = _tool_by_name(tools, "add_todos")
-    complete_todos = _tool_by_name(tools, "complete_todos")
-    get_all_todos = _tool_by_name(tools, "get_all_todos")
+    add_todos = _tool_by_name(tools, "todos_add")
+    complete_todos = _tool_by_name(tools, "todos_complete")
+    get_all_todos = _tool_by_name(tools, "todos_get_all")
 
     await add_todos.invoke(arguments={"todos": [{"title": f"Existing {index}"} for index in range(1, 6)]})
 
     await asyncio.gather(
         add_todos.invoke(arguments={"todos": [{"title": "Add A1"}, {"title": "Add A2"}]}),
         add_todos.invoke(arguments={"todos": [{"title": "Add B1"}, {"title": "Add B2"}]}),
-        complete_todos.invoke(arguments={"ids": [1, 2, 3, 4, 5]}),
+        complete_todos.invoke(arguments={"items": [{"id": i, "reason": "Done"} for i in range(1, 6)]}),
     )
 
     get_all_result = await get_all_todos.invoke()

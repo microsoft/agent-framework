@@ -80,9 +80,8 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(ExecutorIdentity))]
     [JsonSerializable(typeof(RunnerStateData))]
 
-    // Workflow Representation Types
-    [JsonSerializable(typeof(WorkflowInfo))]
-    [JsonSerializable(typeof(EdgeConnection))]
+    // Workflow Output Types
+    [JsonSerializable(typeof(OutputTag))]
 
     // Workflow-as-Agent
     [JsonSerializable(typeof(WorkflowChatHistoryProvider.StoreState))]
@@ -101,6 +100,8 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(MagenticPlanReviewRequest))]
     [JsonSerializable(typeof(MagenticPlanReviewResponse))]
     [JsonSerializable(typeof(MagenticTaskState))]
+    [JsonSerializable(typeof(GroupChatManagerState))]
+    [JsonSerializable(typeof(RoundRobinGroupChatManagerState))]
     [JsonSerializable(typeof(ResetChatSignal))]
 
     // Event Types
