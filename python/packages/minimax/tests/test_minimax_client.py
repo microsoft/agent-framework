@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import (
@@ -9,11 +9,11 @@ from agent_framework import (
     Message,
 )
 from agent_framework._tools import normalize_function_invocation_configuration
-
-USER_MESSAGE = [Message(role="user", contents=["Hello"])]
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types import (
     Message as AnthropicMessage,
+)
+from anthropic.types import (
     TextBlock,
     Usage,
 )
@@ -26,6 +26,8 @@ from agent_framework_minimax._chat_client import (
     MINIMAX_UNSUPPORTED_PARAMS,
     MiniMaxSettings,
 )
+
+USER_MESSAGE = [Message(role="user", contents=["Hello"])]
 
 skip_if_minimax_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("MINIMAX_API_KEY", "") in ("", "test-minimax-api-key-12345"),
@@ -132,7 +134,7 @@ def test_raw_minimax_client_init(minimax_unit_test_env: dict[str, str]) -> None:
 
 def test_raw_minimax_client_custom_base_url(minimax_unit_test_env: dict[str, str]) -> None:
     """Test that RawMiniMaxClient respects a custom base_url."""
-    custom_url = "https://api.minimaxi.com/anthropic"
+    custom_url = "https://example.com/anthropic"
     client = RawMiniMaxClient(base_url=custom_url)
     assert custom_url in str(client.anthropic_client.base_url)
 

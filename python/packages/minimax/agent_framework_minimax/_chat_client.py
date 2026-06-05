@@ -20,9 +20,8 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework.observability import ChatTelemetryLayer
-from anthropic import AsyncAnthropic
-
 from agent_framework_anthropic._chat_client import AnthropicOptionsT, RawAnthropicClient
+from anthropic import AsyncAnthropic
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -39,11 +38,11 @@ logger = logging.getLogger("agent_framework.minimax")
 
 MINIMAX_DEFAULT_BASE_URL: Final[str] = "https://api.minimax.io/anthropic"
 
-MINIMAX_MODELS: Final[list[str]] = [
+MINIMAX_MODELS: Final[tuple[str, ...]] = (
     "MiniMax-M3",
     "MiniMax-M2.7",
     "MiniMax-M2.7-highspeed",
-]
+)
 
 MINIMAX_DEFAULT_MODEL: Final[str] = "MiniMax-M3"
 

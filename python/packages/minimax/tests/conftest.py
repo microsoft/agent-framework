@@ -20,12 +20,6 @@ def override_env_param_dict(request: Any) -> dict[str, str]:
 @fixture
 def minimax_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
     """Fixture to set environment variables for MiniMaxSettings."""
-    if exclude_list is None:
-        exclude_list = []
-
-    if override_env_param_dict is None:
-        override_env_param_dict = {}
-
     env_vars = {
         "MINIMAX_API_KEY": "test-minimax-api-key-12345",
         "MINIMAX_CHAT_MODEL": "MiniMax-M3",
