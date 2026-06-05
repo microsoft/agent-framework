@@ -108,6 +108,34 @@ The agent has a single tool `GetAvailableHotels` defined as a C# method with `[D
 
 The tool searches a mock database of 6 Seattle hotels and returns formatted results with name, location, rating, and pricing.
 
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-local-tools && cd hosted-local-tools
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalTools/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-local-tools
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+---
+
 ## NuGet package users
 
 If you are consuming the Agent Framework as a NuGet package (not building from source), use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented section in `HostedLocalTools.csproj` for the `PackageReference` alternative.
