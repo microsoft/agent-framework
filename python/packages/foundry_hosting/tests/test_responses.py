@@ -39,6 +39,7 @@ from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
     _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
+    ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
@@ -2118,15 +2119,11 @@ class TestMultiTurnMixedContent:
         assert resp2.json()["status"] == "completed"
 
         second_call_messages = agent.run.call_args_list[1].kwargs["messages"]
-        mcp_call_contents = [
-            c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_call"
-        ]
+        mcp_call_contents = [c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_call"]
         mcp_result_contents = [
             c for m in second_call_messages for c in m.contents if c.type == "mcp_server_tool_result"
         ]
-        function_result_contents = [
-            c for m in second_call_messages for c in m.contents if c.type == "function_result"
-        ]
+        function_result_contents = [c for m in second_call_messages for c in m.contents if c.type == "function_result"]
 
         assert len(mcp_call_contents) >= 1
         assert len(mcp_result_contents) >= 1
@@ -3264,7 +3261,10 @@ class TestCheckpointContextPathValidation:
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
 
 
-def _make_consent_error(url: str = "https://consent.example.com/auth") -> Exception:
+def _make_consent_error(
+    url: str = "https://consent.example.com/auth",
+    name: str = "Foundry Toolbox",
+) -> Exception:
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
     Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
@@ -3272,17 +3272,34 @@ def _make_consent_error(url: str = "https://consent.example.com/auth") -> Except
     ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
     original error attached via ``inner_exception``. ``consent_url_from_error``
     then finds the wrapped ``McpError`` in ``exc.args``.
+
+    The McpError message uses the structured Foundry MCP gateway format:
+    a human-readable prefix followed by a JSON document describing each
+    failed tool source and its consent URL.
     """
     from agent_framework.exceptions import ToolExecutionException
 
-    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=url))
+    payload = json.dumps({
+        "errors": [
+            {
+                "name": name,
+                "type": "mcp",
+                "error": {
+                    "code": "CONSENT_REQUIRED",
+                    "message": url,
+                },
+            }
+        ]
+    })
+    message = f"tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {payload}"
+    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=message))
     return ToolExecutionException("MCP consent required", inner_exception=inner)
 
 
 class TestConsentUrlFromError:
     def test_returns_consent_url_when_inner_arg_is_consent_mcp_error(self) -> None:
-        exc = _make_consent_error("https://example.com/consent")
-        assert consent_url_from_error(exc) == "https://example.com/consent"
+        exc = _make_consent_error("https://example.com/consent", name="my-tool")
+        assert consent_url_from_error(exc) == [ConsentError(name="my-tool", consent_url="https://example.com/consent")]
 
     def test_returns_none_when_no_mcp_error_in_args(self) -> None:
         assert consent_url_from_error(Exception("boom")) is None
@@ -3298,6 +3315,13 @@ class TestConsentUrlFromError:
         # MCP client when it bubbles consent errors up.
         bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
         assert consent_url_from_error(bare) is None
+
+    def test_returns_none_when_message_has_no_json(self) -> None:
+        from agent_framework.exceptions import ToolExecutionException
+
+        inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="no json here"))
+        exc = ToolExecutionException("MCP consent required", inner_exception=inner)
+        assert consent_url_from_error(exc) is None
 
 
 class TestAgentLifecycle:
