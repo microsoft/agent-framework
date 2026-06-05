@@ -37,7 +37,7 @@ This sample requires a Foundry Toolbox that has skills attached to it. Skills ar
 2. **Create the skill in Foundry** — Upload the skill via the Skills REST API, Python SDK, or `azd ai skill create`. See [Use skills with Microsoft Foundry agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/skills).
 3. **Attach the skill to a toolbox** — Add a skill reference to a toolbox version so MCP clients can discover it. See [Attach skills to a toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox#attach-skills-to-a-toolbox).
 
-When the agent connects to the toolbox MCP endpoint, skills are advertised through a well-known `skill://index.json` discovery resource. The `MCPSkillsSource` in this sample reads `skill://index.json` at startup to discover all attached skills, then fetches each `SKILL.md` body on demand via `resources/read`.
+When the agent connects to the toolbox MCP endpoint, skills are advertised through a well-known `skill://index.json` discovery resource. The `MCPSkillsSource` in this sample reads `skill://index.json` the first time the agent runs to discover all attached skills, then fetches each `SKILL.md` body on demand via `resources/read`.
 
 ## Running the Agent Host
 
