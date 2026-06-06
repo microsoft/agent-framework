@@ -174,11 +174,14 @@ public static partial class AIAgentExtensions
 
         foreach (var message in messages)
         {
-            foreach (var content in message.Contents)
+            for (int i = 0; i < message.Contents.Count; i++)
             {
-                if (content is FunctionResultContent { Result: AgentToolApprovalRequestResult result })
+                if (message.Contents[i] is FunctionResultContent { Result: AgentToolApprovalRequestResult result })
                 {
+                    // Remap the FunctionResultContent in-place to the underlying ToolApprovalRequestContent,
+                    // preserving all other content in the message and all other messages in the response.
                     approvalRequests.Add(result.ApprovalRequest);
+                    message.Contents[i] = result.ApprovalRequest;
                 }
             }
         }

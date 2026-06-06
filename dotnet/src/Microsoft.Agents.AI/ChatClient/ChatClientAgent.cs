@@ -250,10 +250,10 @@ public sealed partial class ChatClientAgent : AIAgent
             chatResponseMessage.AuthorName ??= this.Name;
         }
 
-        if (AIAgentExtensions.TryExtractAgentToolApprovalRequests(chatResponse.Messages, out var agentToolApprovalRequests))
-        {
-            chatResponse.Messages = [new ChatMessage(ChatRole.Assistant, [.. agentToolApprovalRequests]) { AuthorName = this.Name }];
-        }
+        // Remap child-agent approval results to surface them through the parent's HITL pipeline.
+        // FunctionResultContent entries wrapping AgentToolApprovalRequestResult are replaced
+        // in-place with the underlying ToolApprovalRequestContent, preserving all other content.
+        AIAgentExtensions.TryExtractAgentToolApprovalRequests(chatResponse.Messages, out _);
 
         // Notify providers of all new messages unless persistence is handled per-service-call by the decorator.
         // When background responses are allowed, force notification since per-service-call persistence
