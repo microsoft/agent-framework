@@ -338,10 +338,11 @@ public abstract partial class AIAgent
         CancellationToken cancellationToken = default)
     {
         var previousContext = CurrentRunContext;
-        CurrentRunContext = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
+        var materializedMessages = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+        CurrentRunContext = new(this, session, materializedMessages, options);
         try
         {
-            return await this.RunCoreAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
+            return await this.RunCoreAsync(materializedMessages, session, options, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -476,11 +477,12 @@ public abstract partial class AIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var previousContext = CurrentRunContext;
-        AgentRunContext context = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
+        var materializedMessages = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+        AgentRunContext context = new(this, session, materializedMessages, options);
         CurrentRunContext = context;
         try
         {
-            await foreach (var update in this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+            await foreach (var update in this.RunCoreStreamingAsync(materializedMessages, session, options, cancellationToken).ConfigureAwait(false))
             {
                 yield return update;
 
