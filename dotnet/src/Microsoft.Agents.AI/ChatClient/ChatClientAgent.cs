@@ -207,6 +207,7 @@ public sealed partial class ChatClientAgent : AIAgent
         CancellationToken cancellationToken = default)
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+        AIAgentExtensions.ClearRejectedAgentToolApprovals(inputMessages);
 
         (ChatClientAgentSession safeSession,
          ChatOptions? chatOptions,
@@ -298,6 +299,7 @@ public sealed partial class ChatClientAgent : AIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+        AIAgentExtensions.ClearRejectedAgentToolApprovals(inputMessages);
 
         (ChatClientAgentSession safeSession,
          ChatOptions? chatOptions,

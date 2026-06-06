@@ -433,6 +433,59 @@ public class AgentExtensionsTests
         Assert.Contains(finalResponse.Messages, m => m.Text.Contains("rejection", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task CreateFromAgent_ApprovalRequiredChildTool_RejectedParentApprovalClearsPendingApprovalAsync()
+    {
+        // Arrange
+        int dangerousFunctionCalls = 0;
+        var dangerousTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+            () =>
+            {
+                dangerousFunctionCalls++;
+                return "Dangerous function completed.";
+            },
+            name: "DangerousFunction"));
+
+        var childAgent = new ChatClientAgent(
+            CreateSequentialChatClient(
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("child-tool-call-1", "DangerousFunction")])),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("child-tool-call-2", "DangerousFunction")]))).Object,
+            new ChatClientAgentOptions
+            {
+                Name = "AgentB",
+                ChatOptions = new() { Tools = [dangerousTool] },
+            });
+
+        var parentAgent = new ChatClientAgent(
+            CreateSequentialChatClient(
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("reused-parent-agent-b-call", "AgentB", new Dictionary<string, object?> { ["query"] = "Run child agent." })])),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Parent should wait for approval.")),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Parent handled the rejection.")),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("reused-parent-agent-b-call", "AgentB", new Dictionary<string, object?> { ["query"] = "Run child agent again." })])),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, "Parent should wait for approval again."))).Object,
+            tools: [childAgent.AsAIFunction()]);
+
+        AgentSession parentSession = await parentAgent.CreateSessionAsync();
+
+        // Act - invoke child agent as parent tool and reject the surfaced approval.
+        AgentResponse firstApprovalResponse = await parentAgent.RunAsync("Ask AgentB to run.", parentSession);
+        ToolApprovalRequestContent firstApprovalRequest = Assert.Single(
+            firstApprovalResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+
+        _ = await parentAgent.RunAsync(
+            [new ChatMessage(ChatRole.User, [firstApprovalRequest.CreateResponse(approved: false, reason: "Denied")])],
+            parentSession);
+
+        // Act - invoke the same parent tool call ID again.
+        AgentResponse secondApprovalResponse = await parentAgent.RunAsync("Ask AgentB to run again.", parentSession);
+
+        // Assert - the rejected pending approval was cleared, so the child tool is not auto-approved on reuse.
+        ToolApprovalRequestContent secondApprovalRequest = Assert.Single(
+            secondApprovalResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+        Assert.Equal("AgentB", ((FunctionCallContent)secondApprovalRequest.ToolCall).Name);
+        Assert.Equal(0, dangerousFunctionCalls);
+    }
+
     [Theory]
     [InlineData("MyAgent", "MyAgent")]
     [InlineData("Agent123", "Agent123")]

@@ -20,6 +20,15 @@ namespace Microsoft.Agents.AI;
 public static partial class AIAgentExtensions
 {
     /// <summary>
+    ///Provides a global registry for tracking pending agent tool approvals.
+    /// Maps approval request IDs to clean up records that contain weak references
+    /// back to per-function pending approval dictionaries, enabling external
+    /// code (e.g., <see cref="ClearRejectedAgentToolApprovals"/>) to locate and remove
+    /// approval entries from closure-local state.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, PendingAgentToolApprovalCleanup> s_pendingAgentToolApprovalCleanups = [];
+
+    /// <summary>
     /// Creates a new <see cref="AIAgentBuilder"/> using the specified agent as the foundation for the builder pipeline.
     /// </summary>
     /// <param name="innerAgent">The <see cref="AIAgent"/> instance to use as the inner agent.</param>
@@ -72,6 +81,7 @@ public static partial class AIAgentExtensions
     {
         Throw.IfNull(agent);
 
+        // PendingAgentToolApproval object used to store sub-agents awaiting approval
         ConcurrentDictionary<string, PendingAgentToolApproval> pendingApprovals = [];
 
         [Description("Invoke an agent to retrieve some information.")]
@@ -84,7 +94,13 @@ public static partial class AIAgentExtensions
 
         async Task<object?> InvokeAgentAsync(string query, CancellationToken cancellationToken)
         {
+            // Retrieve the current function call context in case this agent is being invoked as a tool by a parent agent.
             var parentFunctionContext = FunctionInvokingChatClient.CurrentContext;
+
+            // Determine if the current invocation matches a parent function call.
+            // A match means this agent was invoked as a tool by a parent agent via FunctionInvokingChatClient.
+            // The name comparison ensures we're matching the correct tool when the same agent is
+            // registered under multiple names.
             FunctionCallContent? parentToolCall =
                 parentFunctionContext?.CallContent is { } callContent &&
                 string.Equals(callContent.Name, options?.Name, StringComparison.Ordinal)
@@ -99,9 +115,20 @@ public static partial class AIAgentExtensions
             AgentSession? agentSession = session;
             IEnumerable<ChatMessage> inputMessages = [new ChatMessage(ChatRole.User, query)];
 
+            // Resolve the session and input messages for the child agent invocation.
+            //
+            // Two scenarios are handled when invoked via a parent tool call:
+            //  1) Re-invocation after approval: A pending approval record exists for this CallId.
+            //     Restore the previous session and convert approval requests into "approved" messages
+            //     so the child agent can continue from where it left off.
+            //  2) First invocation with no session: No session was provided and there is no
+            //     pending approval. Create a fresh session to maintain conversation state across
+            //     future re-invocations of this agent-as-tool.
             if (parentToolCall is not null &&
                 pendingApprovals.TryRemove(parentToolCall.CallId, out PendingAgentToolApproval? pendingApproval))
             {
+                s_pendingAgentToolApprovalCleanups.TryRemove(CreateAgentToolApprovalRequestId(parentToolCall.CallId), out _);
+
                 agentSession = pendingApproval.Session;
                 inputMessages = pendingApproval.ApprovalRequests.ConvertAll(
                     request => new ChatMessage(ChatRole.User, [request.CreateResponse(approved: true)]));
@@ -113,16 +140,22 @@ public static partial class AIAgentExtensions
 
             var response = await agent.RunAsync(inputMessages, session: agentSession, options: agentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
 
+            // After running the child agent, check if it requires human approval (HITL).
+            // If so, store the approval requests in persistent state keyed by the parent tool call's CallId,
+            // and return a special result that surfaces the approval request back to the parent agent's
+            // HITL pipeline rather than treating it as a regular tool output.
             if (parentToolCall is not null &&
                 agentSession is not null &&
                 response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList() is { Count: > 0 } approvalRequests)
             {
                 pendingApprovals[parentToolCall.CallId] = new PendingAgentToolApproval(agentSession, approvalRequests);
+                string approvalRequestId = CreateAgentToolApprovalRequestId(parentToolCall.CallId);
+                s_pendingAgentToolApprovalCleanups[approvalRequestId] = new(parentToolCall.CallId, new(pendingApprovals));
 
                 // Agent-as-tool must surface the child agent's normal HITL pipeline; otherwise
                 // ToolApprovalRequestContent from the child would be flattened into a tool result.
                 return new AgentToolApprovalRequestResult(
-                    new ToolApprovalRequestContent(CreateAgentToolApprovalRequestId(parentToolCall.CallId), parentToolCall));
+                    new ToolApprovalRequestContent(approvalRequestId, parentToolCall));
             }
 
             return response.Text;
@@ -153,6 +186,34 @@ public static partial class AIAgentExtensions
         return approvalRequests.Count > 0;
     }
 
+    /// <summary>
+    /// Cleans up pending agent tool approvals that have been rejected.
+    /// </summary>
+    /// <remarks>
+    /// When a child agent invoked as a tool requests human approval (HITL), the approval state
+    /// is stored in closure-local dictionaries. If the user rejects the approval, those entries
+    /// must be cleaned up to prevent stale state from interfering with future invocations.
+    /// <para>
+    /// This method traverses the messages for rejected <see cref="ToolApprovalResponseContent"/>,
+    /// looks up the corresponding entry in <see cref="s_pendingAgentToolApprovalCleanups"/>,
+    /// and uses the stored <see cref="WeakReference{T}"/> to reach back into the closure-local
+    /// <c>pendingApprovals</c> dictionary and remove the stale approval record.
+    /// </para>
+    /// </remarks>
+    /// <param name="messages">The messages to scan for rejected approval responses.</param>
+    internal static void ClearRejectedAgentToolApprovals(IEnumerable<ChatMessage> messages)
+    {
+        foreach (ToolApprovalResponseContent approvalResponse in messages.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>())
+        {
+            if (!approvalResponse.Approved &&
+                s_pendingAgentToolApprovalCleanups.TryRemove(approvalResponse.RequestId, out PendingAgentToolApprovalCleanup? cleanup) &&
+                cleanup.PendingApprovals.TryGetTarget(out ConcurrentDictionary<string, PendingAgentToolApproval>? pendingApprovals))
+            {
+                pendingApprovals.TryRemove(cleanup.CallId, out _);
+            }
+        }
+    }
+
     private static FunctionCallContent? CloneFunctionCall(FunctionCallContent? functionCall)
     {
         if (functionCall is null)
@@ -171,9 +232,34 @@ public static partial class AIAgentExtensions
         AgentSession Session,
         List<ToolApprovalRequestContent> ApprovalRequests);
 
+    private sealed record PendingAgentToolApprovalCleanup(
+        string CallId,
+        WeakReference<ConcurrentDictionary<string, PendingAgentToolApproval>> PendingApprovals);
+
     internal sealed record AgentToolApprovalRequestResult(
         ToolApprovalRequestContent ApprovalRequest);
 
+    /// <summary>
+    /// A delegating <see cref="AIFunction"/> that separates metadata from execution.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <paramref name="metadataFunction"/> (derived from <c>InvokeAgentMetadataAsync</c>) provides
+    /// the AI-visible schema — name, description, and parameter definitions with
+    /// <see cref="DescriptionAttribute"/> annotations — while <paramref name="invokeAsync"/>
+    /// (the real <c>InvokeAgentAsync</c>) performs the actual agent invocation.
+    /// </para>
+    /// <para>
+    /// This indirection is necessary because <c>InvokeAgentAsync</c> returns <see cref="object"/>,
+    /// which can be either a <see cref="string"/> result or an
+    /// <see cref="AgentToolApprovalRequestResult"/> for HITL approval. By overriding
+    /// <see cref="InvokeCoreAsync"/> and calling <paramref name="invokeAsync"/> directly,
+    /// we preserve the original return type rather than letting the base class serialize
+    /// it, ensuring <see cref="AgentToolApprovalRequestResult"/> passes through intact.
+    /// </para>
+    /// </remarks>
+    /// <param name="metadataFunction">The function providing AI-visible metadata and schema.</param>
+    /// <param name="invokeAsync">The delegate that performs the actual agent invocation.</param>
     private sealed class AgentAIFunction(
         AIFunction metadataFunction,
         Func<string, CancellationToken, Task<object?>> invokeAsync) : DelegatingAIFunction(metadataFunction)
