@@ -1380,9 +1380,16 @@ async def test_workflow_run_explicit_resume_overrides_stale_message_approval() -
     first_events = [
         event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
     ]
-    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()
-    interrupt_payload = cast(list[dict[str, Any]], first_finished.get("interrupt"))
-    interrupt_value = cast(dict[str, Any], interrupt_payload[0]["value"])
+    first_finished_events = [event for event in first_events if event.type == "RUN_FINISHED"]
+    assert len(first_finished_events) == 1
+    first_finished = first_finished_events[0].model_dump()
+    interrupt_payload = first_finished.get("interrupt")
+    assert isinstance(interrupt_payload, list)
+    assert len(interrupt_payload) == 1
+    interrupt_entry = interrupt_payload[0]
+    assert isinstance(interrupt_entry, dict)
+    interrupt_value = interrupt_entry.get("value")
+    assert isinstance(interrupt_value, dict)
 
     resumed_events = [
         event
@@ -1421,9 +1428,9 @@ async def test_workflow_run_explicit_resume_overrides_stale_message_approval() -
         )
     ]
 
-    text_deltas = [event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"]
-    assert any("rejected" in delta for delta in text_deltas)
-    assert not any("approved" in delta for delta in text_deltas)
+    assistant_text = "".join(event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT")
+    assert "rejected" in assistant_text
+    assert "approved" not in assistant_text
 
 
 async def test_workflow_run_approval_via_messages_denied() -> None:
