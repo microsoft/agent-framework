@@ -4239,6 +4239,78 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
         assert inner.context.trace_id == agent_span.context.trace_id
 
 
+async def test_parallel_function_call_spans_keep_agent_context(span_exporter: InMemorySpanExporter):
+    from agent_framework._tools import FunctionInvocationLayer
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    async def lookup_weather(city: str) -> str:
+        return f"{city}: rainy"
+
+    @tool(name="lookup_hotels", approval_mode="never_require")
+    async def lookup_hotels(city: str) -> str:
+        return f"{city}: 3 hotels"
+
+    class ParallelToolChatClient(FunctionInvocationLayer, ChatTelemetryLayer, BaseChatClient[Any]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.call_count = 0
+
+        def service_url(self):
+            return "https://test.example.com"
+
+        async def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> ChatResponse:
+            self.call_count += 1
+            if self.call_count == 1:
+                return ChatResponse(
+                    messages=[
+                        Message(
+                            role="assistant",
+                            contents=[
+                                Content.from_function_call(
+                                    call_id="weather_call",
+                                    name="lookup_weather",
+                                    arguments='{"city": "Seattle"}',
+                                ),
+                                Content.from_function_call(
+                                    call_id="hotel_call",
+                                    name="lookup_hotels",
+                                    arguments='{"city": "Seattle"}',
+                                ),
+                            ],
+                        )
+                    ],
+                )
+            return ChatResponse(
+                messages=[Message(role="assistant", contents=["Seattle is rainy and has 3 hotels."])],
+                finish_reason="stop",
+            )
+
+    agent = Agent(
+        client=ParallelToolChatClient(),
+        id="parallel_tool_agent_id",
+        name="parallel_tool_agent",
+        default_options={"model": "ToolModel", "tools": [lookup_weather, lookup_hotels], "tool_choice": "auto"},
+    )
+
+    span_exporter.clear()
+    await agent.run("Check weather and hotels in Seattle")
+
+    spans = span_exporter.get_finished_spans()
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    tool_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION]
+
+    assert len(invoke_spans) == 1
+    assert len(tool_spans) == 2
+
+    agent_span = invoke_spans[0]
+    for span in tool_spans:
+        assert span.parent is not None, f"Span {span.name} has no parent"
+        assert span.parent.span_id == agent_span.context.span_id
+        assert span.context.trace_id == agent_span.context.trace_id
+
+
 @pytest.mark.parametrize("stream", [False, True])
 async def test_chat_span_nested_under_explicit_outer_span(
     span_exporter: InMemorySpanExporter, mock_chat_client, stream: bool
