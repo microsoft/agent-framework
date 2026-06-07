@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import json
 import logging
@@ -1793,9 +1794,14 @@ async def _try_execute_function_calls(
                 False,
             )
 
-    execution_results = await asyncio.gather(*[
-        invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
-    ])
+    execution_tasks = [
+        contextvars.copy_context().run(
+            asyncio.create_task,
+            invoke_with_termination_handling(function_call, seq_idx),
+        )
+        for seq_idx, function_call in enumerate(function_calls)
+    ]
+    execution_results = await asyncio.gather(*execution_tasks)
 
     # Unpack results - each is (Content, terminate_flag)
     contents: list[Content] = [result[0] for result in execution_results]
