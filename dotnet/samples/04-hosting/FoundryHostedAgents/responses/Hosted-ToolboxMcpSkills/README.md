@@ -119,7 +119,7 @@ If you need to override defaults, set deployment-time environment variables in t
 
 ```bash
 azd env set AGENT_NAME hosted-toolbox-mcp-skills
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-5
 ```
 
 For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
