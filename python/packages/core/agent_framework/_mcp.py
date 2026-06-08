@@ -1643,9 +1643,7 @@ class MCPTool:
             return parser(fallback_result)
 
         if task_id is None:
-            raise ToolExecutionException(
-                f"MCP server did not return a task_id or fallback result for '{tool_name}'."
-            )
+            raise ToolExecutionException(f"MCP server did not return a task_id or fallback result for '{tool_name}'.")
 
         # Track to completion: poll until terminal, then fetch payload. Never re-issue
         # tools/call past this point; reconnect-and-retry only against the same task_id.
@@ -1765,9 +1763,7 @@ class MCPTool:
         transient_codes: frozenset[int] = frozenset({int(httpx.codes.REQUEST_TIMEOUT)})
 
         while True:
-            request = types.ClientRequest(
-                types.GetTaskRequest(params=types.GetTaskRequestParams(taskId=task_id))
-            )
+            request = types.ClientRequest(types.GetTaskRequest(params=types.GetTaskRequestParams(taskId=task_id)))
             try:
                 # GetTaskResult.ttl is required-but-Optional in the SDK; coerce below.
                 lenient = await self._send_with_one_reconnect(
@@ -1775,9 +1771,7 @@ class MCPTool:
                 )
             except McpError as ex:
                 if ex.error.code in transient_codes:
-                    logger.debug(
-                        "Transient %s on tasks/get for '%s'; will retry.", ex.error.code, task_id
-                    )
+                    logger.debug("Transient %s on tasks/get for '%s'; will retry.", ex.error.code, task_id)
                     await asyncio.sleep(_MCP_TASK_MIN_POLL_INTERVAL.total_seconds())
                     continue
                 # Hard server error mid-poll: task may still be running.
@@ -1906,9 +1900,7 @@ class MCPTool:
                 if not self._is_connection_lost(ex):
                     raise
                 if attempt < _MCP_RECONNECT_ATTEMPTS - 1:
-                    logger.info(
-                        "MCP connection lost during %s; reconnecting (task_id=%s).", operation, task_id
-                    )
+                    logger.info("MCP connection lost during %s; reconnecting (task_id=%s).", operation, task_id)
                     try:
                         await self.connect(reset=True)
                     except Exception as reconn_ex:
@@ -1967,9 +1959,7 @@ class MCPTool:
         """
         from mcp import types
 
-        request = types.ClientRequest(
-            types.CancelTaskRequest(params=types.CancelTaskRequestParams(taskId=task_id))
-        )
+        request = types.ClientRequest(types.CancelTaskRequest(params=types.CancelTaskRequestParams(taskId=task_id)))
         try:
             await asyncio.wait_for(
                 self.session.send_request(request, types.CancelTaskResult),  # type: ignore[union-attr]
@@ -1979,8 +1969,7 @@ class MCPTool:
             raise
         except asyncio.TimeoutError:
             logger.warning(
-                "Best-effort tasks/cancel for '%s' timed out after %.1fs; "
-                "remote task may still be running.",
+                "Best-effort tasks/cancel for '%s' timed out after %.1fs; remote task may still be running.",
                 task_id,
                 _MCP_TASK_CANCEL_TIMEOUT.total_seconds(),
             )

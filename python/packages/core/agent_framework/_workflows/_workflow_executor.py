@@ -534,6 +534,19 @@ class WorkflowExecutor(Executor):
             for event in request_info_events
         ])
 
+    @override
+    async def reset(self) -> None:
+        """Reset the WorkflowExecutor to its initial state for a new workflow run.
+
+        Clears in-flight execution contexts and the request-to-execution mapping,
+        then recursively resets the wrapped sub-workflow so its executors, runner
+        context, and shared state are also returned to a clean state.
+        """
+        logger.debug("WorkflowExecutor %s: Resetting state", self.id)
+        self._execution_contexts.clear()
+        self._request_to_execution.clear()
+        await self.workflow.reset_for_new_run()
+
     async def _process_workflow_result(
         self,
         result: WorkflowRunResult,

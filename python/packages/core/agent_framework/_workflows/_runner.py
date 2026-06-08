@@ -88,8 +88,13 @@ class Runner:
 
     @property
     def context(self) -> RunnerContext:
-        """Get the workflow context."""
+        """Get the runner context for message, event, and checkpoint handling."""
         return self._ctx
+
+    @property
+    def state(self) -> State:
+        """Get the shared state for the workflow."""
+        return self._state
 
     def reserve(self) -> None:
         """Synchronously reserve the runner for an upcoming run.
@@ -117,8 +122,37 @@ class Runner:
         self._lifecycle = _RunnerLifecycle.IDLE
 
     def reset_iteration_count(self) -> None:
-        """Reset the iteration count to zero."""
+        """Reset the iteration count to zero.
+
+        This is useful when the workflow resumes from a new set of messages.
+
+        Note:
+            When a workflow is resumed from a response (for a request_info_event)
+            or a checkpoint, the iteration count is normally NOT reset.
+        """
         self._iteration = 0
+
+    async def reset_for_new_run(self) -> None:
+        """Reset the runner for a new run.
+
+        This is useful when reusing the same workflow instance for a different run
+        that is independent from prior runs.
+
+        Raises:
+            WorkflowRunnerException: If the runner is reserved or running. Reset is only
+                allowed when the runner is idle to avoid clobbering in-flight run state.
+        """
+        if self._lifecycle is not _RunnerLifecycle.IDLE:
+            raise WorkflowRunnerException(
+                "Cannot reset the runner while a run is in progress. "
+                "Wait for the current run to complete before calling reset_for_new_run()."
+            )
+        self.reset_iteration_count()
+        self._ctx.reset_for_new_run()
+        self._state.clear()
+        self._resumed_from_checkpoint = False
+        for executor in self._executors.values():
+            await executor.reset()
 
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
@@ -294,7 +328,7 @@ class Runner:
         checkpoint_id: CheckpointID,
         checkpoint_storage: CheckpointStorage | None = None,
     ) -> None:
-        """Restore workflow state from a checkpoint.
+        """Restore the runner from a checkpoint.
 
         Args:
             checkpoint_id: The ID of the checkpoint to restore from

@@ -166,6 +166,10 @@ class AgentExecutor(Executor):
             raise ValueError("Agent must have a non-empty name or id or an explicit id must be provided.")
         super().__init__(exec_id)
         self._agent = agent
+        # Track whether the caller supplied a session so reset() can preserve their
+        # session reference (which may be wired to external/service-side storage)
+        # and only replace sessions we created ourselves.
+        self._session_supplied_by_caller = session is not None
         self._session = session or self._agent.create_session()
 
         self._pending_agent_requests: dict[str, Content] = {}
@@ -365,10 +369,37 @@ class AgentExecutor(Executor):
         pending_responses_payload = state.get("pending_responses_to_agent")
         self._pending_responses_to_agent = pending_responses_payload or []
 
-    def reset(self) -> None:
-        """Reset the internal cache of the executor."""
-        logger.debug("AgentExecutor %s: Resetting cache", self.id)
+    @override
+    async def reset(self) -> None:
+        """Reset the executor to its initial state for a new workflow run.
+
+        Clears the message cache, full conversation snapshot, and any pending
+        user-input request/response bookkeeping.
+
+        Session handling:
+            * If the session was created by this executor (no ``session`` argument
+              was passed to ``__init__``), it is replaced with a fresh one via
+              ``agent.create_session()`` so prior conversation history does not
+              leak into the next run.
+            * If the session was supplied by the caller, it is left untouched.
+              The caller owns the session lifecycle (it may be backed by
+              service-side or external storage) and is responsible for clearing
+              or rotating it if a clean slate is desired.
+        """
+        logger.debug("AgentExecutor %s: Resetting state", self.id)
         self._cache.clear()
+        self._full_conversation.clear()
+        self._pending_agent_requests.clear()
+        self._pending_responses_to_agent.clear()
+        if not self._session_supplied_by_caller:
+            self._session = self._agent.create_session()
+        else:
+            logger.warning(
+                "AgentExecutor %s: Session was supplied by the caller and will not be reset. "
+                "Prior conversation history retained in the session may leak into the next run. "
+                "Reset or rotate the session externally if a clean slate is required.",
+                self.id,
+            )
 
     async def _run_agent_and_emit(
         self,

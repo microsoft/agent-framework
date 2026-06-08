@@ -598,3 +598,25 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             metadata: Pattern-specific state dict
         """
         pass
+
+    @override
+    async def reset(self) -> None:
+        """Reset the orchestrator to its initial state for a new workflow run.
+
+        Clears the shared conversation history and round counter, then delegates
+        to ``_reset_pattern_state()`` so subclasses can clean up any
+        pattern-specific per-run state (caches, sessions, ledgers, etc.).
+        """
+        logger.debug("%s %s: Resetting state", self.__class__.__name__, self.id)
+        self._full_conversation.clear()
+        self._round_index = 0
+        self._reset_pattern_state()
+
+    def _reset_pattern_state(self) -> None:
+        """Reset pattern-specific state.
+
+        Override this method in subclasses to clear pattern-specific per-run state
+        when ``reset()`` is invoked. Called after the base class clears the shared
+        conversation and round counter.
+        """
+        pass

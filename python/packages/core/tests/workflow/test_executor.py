@@ -1004,3 +1004,53 @@ def test_handler_typevar_error_takes_priority_over_context_error():
             @handler
             async def process(self, message: _T, ctx) -> None:  # type: ignore[no-untyped-def]
                 pass
+
+
+# region: Tests for Executor.reset()
+
+
+async def test_executor_default_reset_is_noop():
+    """The base Executor.reset() is a no-op and must complete without raising.
+
+    Subclasses that don't carry reset-relevant state should be able to rely on the
+    default implementation.
+    """
+
+    class StatelessExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message)
+
+    executor_instance = StatelessExecutor(id="stateless")
+
+    # Must complete without raising and return None.
+    assert await executor_instance.reset() is None
+
+
+async def test_executor_subclass_reset_is_invoked():
+    """A subclass that overrides reset() can clear its own internal state."""
+
+    class CounterExecutor(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.counter = 0
+            self.reset_calls = 0
+
+        @handler
+        async def handle(self, message: int, ctx: WorkflowContext[int]) -> None:
+            self.counter += message
+
+        async def reset(self) -> None:
+            self.counter = 0
+            self.reset_calls += 1
+
+    executor_instance = CounterExecutor(id="counter")
+    executor_instance.counter = 42
+
+    await executor_instance.reset()
+
+    assert executor_instance.counter == 0
+    assert executor_instance.reset_calls == 1
+
+
+# endregion: Tests for Executor.reset()

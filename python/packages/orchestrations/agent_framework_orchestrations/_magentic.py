@@ -1264,6 +1264,14 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         await ctx.send_message(MagenticResetSignal())
 
     @override
+    def _reset_pattern_state(self) -> None:
+        """Reset Magentic-specific per-run state for a new workflow run."""
+        self._magentic_context = None
+        self._task_ledger = None
+        self._progress_ledger = None
+        self._terminated = False
+
+    @override
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current orchestrator state for checkpointing."""
         state = await super().on_checkpoint_save()

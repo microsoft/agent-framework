@@ -689,3 +689,89 @@ async def test_sub_workflow_intermediate_outputs_propagate_to_parent() -> None:
 
     # The parent's own terminal output is unaffected.
     assert any(e.executor_id == "parent_sink" and e.data == "final: hello" for e in output_events)
+
+
+# region: Tests for WorkflowExecutor.reset()
+
+
+async def test_workflow_executor_reset_clears_execution_state() -> None:
+    """reset() clears the WorkflowExecutor's per-run execution contexts and request mappings."""
+    validation_workflow = create_email_validation_workflow()
+    parent = Coordinator()
+    workflow_executor = WorkflowExecutor(validation_workflow, "email_validation_workflow")
+
+    main_workflow = (
+        WorkflowBuilder(start_executor=parent)
+        .add_edge(parent, workflow_executor)
+        .add_edge(workflow_executor, parent)
+        .build()
+    )
+
+    # First run pauses with a pending request from the sub-workflow.
+    result = await main_workflow.run("test@example.com")
+    assert len(result.get_request_info_events()) == 1
+    assert len(workflow_executor._execution_contexts) == 1  # type: ignore[reportPrivateUsage]
+    assert len(workflow_executor._request_to_execution) == 1  # type: ignore[reportPrivateUsage]
+
+    await main_workflow.reset_for_new_run()
+
+    assert workflow_executor._execution_contexts == {}  # type: ignore[reportPrivateUsage]
+    assert workflow_executor._request_to_execution == {}  # type: ignore[reportPrivateUsage]
+
+
+async def test_workflow_executor_reset_resets_wrapped_workflow() -> None:
+    """reset() recursively resets the wrapped workflow (runner iteration counter cleared)."""
+    validation_workflow = create_email_validation_workflow()
+    parent = Coordinator()
+    workflow_executor = WorkflowExecutor(validation_workflow, "email_validation_workflow")
+
+    main_workflow = (
+        WorkflowBuilder(start_executor=parent)
+        .add_edge(parent, workflow_executor)
+        .add_edge(workflow_executor, parent)
+        .build()
+    )
+
+    await main_workflow.run("test@example.com")
+    # The sub-workflow's runner advanced past iteration 0 during execution.
+    assert validation_workflow._runner._iteration > 0  # type: ignore[reportPrivateUsage]
+
+    await main_workflow.reset_for_new_run()
+
+    # The wrapped workflow's runner was reset along with the parent.
+    assert validation_workflow._runner._iteration == 0  # type: ignore[reportPrivateUsage]
+
+
+async def test_workflow_executor_reset_allows_subsequent_run() -> None:
+    """After reset(), the parent + WorkflowExecutor can be reused for a fresh run with no leakage."""
+    validation_workflow = create_email_validation_workflow()
+    parent = Coordinator()
+    workflow_executor = WorkflowExecutor(validation_workflow, "email_validation_workflow")
+
+    main_workflow = (
+        WorkflowBuilder(start_executor=parent)
+        .add_edge(parent, workflow_executor)
+        .add_edge(workflow_executor, parent)
+        .build()
+    )
+
+    first_result = await main_workflow.run("first@example.com")
+    assert len(first_result.get_request_info_events()) == 1
+
+    await main_workflow.reset_for_new_run()
+
+    # State on the WorkflowExecutor and parent's pending-request bookkeeping is clean.
+    assert workflow_executor._execution_contexts == {}  # type: ignore[reportPrivateUsage]
+    assert workflow_executor._request_to_execution == {}  # type: ignore[reportPrivateUsage]
+
+    second_result = await main_workflow.run("second@example.com")
+    second_requests = second_result.get_request_info_events()
+    assert len(second_requests) == 1
+    assert isinstance(second_requests[0].data, DomainCheckRequest)
+    # Confirm the new run produced a request from the second email, not the cached first one.
+    assert second_requests[0].data.email == "second@example.com"
+    # And the WorkflowExecutor is now tracking exactly one fresh execution.
+    assert len(workflow_executor._execution_contexts) == 1  # type: ignore[reportPrivateUsage]
+
+
+# endregion: Tests for WorkflowExecutor.reset()

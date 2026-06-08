@@ -347,11 +347,10 @@ class Workflow(DictConvertible):
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
         self._runner_context.set_yield_output_classifier(self._output_designation.classify)
-        self._state = State()
         self._runner: Runner = Runner(
             self.edge_groups,
             self.executors,
-            self._state,
+            State(),
             runner_context,
             self.name,
             self.graph_signature_hash,
@@ -552,14 +551,14 @@ class Workflow(DictConvertible):
                         combined_kwargs["client_kwargs"] = self._resolve_invocation_kwargs(
                             client_kwargs, "client_kwargs"
                         )
-                    self._state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
+                    self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
                 elif not is_continuation:
-                    self._state.set(WORKFLOW_RUN_KWARGS_KEY, {})
-                self._state.commit()  # Commit immediately so kwargs are available
+                    self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, {})
+                self._runner.state.commit()  # Commit immediately so kwargs are available
 
                 # Set streaming mode (always set explicitly per run since
                 # reset_for_new_run() no longer runs to clear it).
-                self._runner_context.set_streaming(streaming)
+                self._runner.context.set_streaming(streaming)
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
@@ -653,7 +652,7 @@ class Workflow(DictConvertible):
             await executor.execute(
                 message,
                 [self.__class__.__name__],
-                self._state,
+                self._runner.state,
                 self._runner.context,
                 trace_contexts=None,
                 source_span_ids=None,
@@ -934,7 +933,7 @@ class Workflow(DictConvertible):
 
     async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:
         """Internal method to validate and send responses to the executors."""
-        pending_requests = await self._runner_context.get_pending_request_info_events()
+        pending_requests = await self._runner.context.get_pending_request_info_events()
         if not pending_requests:
             raise RuntimeError("No pending requests found in workflow context.")
 
@@ -954,7 +953,7 @@ class Workflow(DictConvertible):
             coerced_responses[request_id] = response
 
         await asyncio.gather(*[
-            self._runner_context.send_request_info_response(request_id, response)
+            self._runner.context.send_request_info_response(request_id, response)
             for request_id, response in coerced_responses.items()
         ])
 
@@ -1150,3 +1149,17 @@ class Workflow(DictConvertible):
             context_providers=context_providers,
             **kwargs,
         )
+
+    async def reset_for_new_run(self) -> None:
+        """Reset the workflow for a new run that is independent from prior runs.
+
+        Note:
+            This will reset EVERYTHING - executor states, workflow state, and runner
+            context (including pending requests/messages).
+
+        Raises:
+            WorkflowRunnerException: If a run is currently in progress. Reset is only
+                allowed when the workflow is idle to avoid clobbering in-flight run state.
+
+        """
+        await self._runner.reset_for_new_run()
