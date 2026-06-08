@@ -380,7 +380,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionStartEvent toolStart)
     {
-        IDictionary<string, object?>? arguments = ParseArguments(toolStart.Data?.Arguments);
+        IDictionary<string, object?>? arguments = this.ParseArguments(toolStart.Data?.Arguments);
 
         FunctionCallContent content = new(
             toolStart.Data?.ToolCallId ?? string.Empty,
