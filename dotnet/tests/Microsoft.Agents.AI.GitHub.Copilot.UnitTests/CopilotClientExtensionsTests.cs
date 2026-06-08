@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using GitHub.Copilot;
-using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
