@@ -1535,7 +1535,7 @@ def test_configure_otel_providers_explicit_console_exporters_overrides_env(monke
 
 
 def test_observability_settings_defaults_instrumentation_true(monkeypatch):
-    """ENABLE_INSTRUMENTATION unset → ObservabilitySettings defaults to True."""
+    """ENABLE_INSTRUMENTATION unset 鈫?ObservabilitySettings defaults to True."""
     from agent_framework.observability import ObservabilitySettings
 
     monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
@@ -2152,6 +2152,29 @@ def test_get_response_attributes_with_usage():
 
     assert result[OtelAttr.INPUT_TOKENS] == 100
     assert result[OtelAttr.OUTPUT_TOKENS] == 50
+
+
+def test_get_response_attributes_maps_detailed_usage_to_standard_otel_attrs():
+    """Test detailed usage fields use standard OTel GenAI attributes."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import OtelAttr, _get_response_attributes
+
+    response = Mock()
+    response.response_id = None
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = {
+        "cache_creation_input_token_count": 10,
+        "cache_read_input_token_count": 20,
+        "reasoning_output_token_count": 30,
+    }
+
+    result = _get_response_attributes({}, response)
+
+    assert result[OtelAttr.CACHE_CREATION_INPUT_TOKENS] == 10
+    assert result[OtelAttr.CACHE_READ_INPUT_TOKENS] == 20
+    assert result[OtelAttr.REASONING_OUTPUT_TOKENS] == 30
 
 
 def test_get_response_attributes_capture_usage_false():
@@ -3113,7 +3136,7 @@ async def test_capture_messages_preserves_non_ascii_characters(mock_chat_client,
     """Test that non-ASCII characters (e.g., Japanese) are preserved in span attributes."""
     import json
 
-    japanese_text = "こんにちは世界"  # "Hello World" in Japanese
+    japanese_text = "銇撱倱銇仭銇笘鐣?  # "Hello World" in Japanese
 
     class ClientWithJapanese(mock_chat_client):
         async def _inner_get_response(self, *, messages, options, **kwargs):
@@ -3158,7 +3181,7 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
 
     from opentelemetry import trace
 
-    chinese_text = "你好世界"  # "Hello World" in Chinese
+    chinese_text = "浣犲ソ涓栫晫"  # "Hello World" in Chinese
 
     tracer = trace.get_tracer("test")
     span_exporter.clear()
@@ -3306,7 +3329,7 @@ async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMe
     """Test that non-ASCII characters are preserved in tool arguments span attribute."""
     import json
 
-    korean_text = "안녕하세요"  # "Hello" in Korean
+    korean_text = "鞎堧厱頃橃劯鞖?  # "Hello" in Korean
 
     @tool
     def greet(message: str) -> str:
@@ -3333,7 +3356,7 @@ async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMe
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_tool_result_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
     """Test that non-ASCII characters are preserved in tool result span attribute."""
-    arabic_text = "مرحبا بالعالم"  # "Hello World" in Arabic
+    arabic_text = "賲乇丨亘丕 亘丕賱毓丕賱賲"  # "Hello World" in Arabic
 
     @tool
     def echo(text: str) -> str:
@@ -3363,7 +3386,7 @@ async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
 
     from pydantic import BaseModel
 
-    japanese_text = "こんにちは"  # "Hello" in Japanese
+    japanese_text = "銇撱倱銇仭銇?  # "Hello" in Japanese
 
     class Greeting(BaseModel):
         message: str
@@ -3917,7 +3940,7 @@ def test_get_meter_typeerror_fallback():
 @tool(name="get_weather", description="Get weather for a city", approval_mode="never_require")
 def _get_weather(city: str) -> str:
     """Get weather for a city."""
-    return "Sunny, 72°F"
+    return "Sunny, 72掳F"
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
