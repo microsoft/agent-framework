@@ -105,12 +105,6 @@ internal static class MimeSniffer
                 tagSize += 10;
             }
 
-            if (tagSize < 10)
-            {
-                // Malformed ID3v2 header (synchsafe size below the 10-byte minimum).
-                return null;
-            }
-
             // A valid ID3v2 tag can legitimately exceed the head buffer (e.g. an MP3
             // with an embedded album-art frame). When the tag body — plus the bytes
             // we need to inspect right after it — does not fit in the provided head,

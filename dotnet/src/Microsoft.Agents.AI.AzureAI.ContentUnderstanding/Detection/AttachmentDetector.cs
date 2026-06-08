@@ -358,14 +358,15 @@ internal static class AttachmentDetector
     }
 
     // The hash only needs to produce a stable, well-distributed dedup prefix — it is NOT a content
-    // integrity check. We hash the full payload (plus its total length, mixed in to distinguish
-    // same-content / different-length edge cases) so two attachments that differ only in their
-    // middle bytes never collide on the dedup prefix.
+    // integrity check. We hash the full payload, then append its total length as a final block. With
+    // the entire content already hashed the length is redundant for collision resistance; it is kept
+    // only as a cheap defensive guard so the prefix still varies on length even if the digest were
+    // ever swapped for a weaker/truncated one.
     private static string Synthesize(ReadOnlySpan<byte> data, long totalLength, string mediaType)
     {
-        // totalLength is mixed into the hash to disambiguate same-prefix / different-length payloads,
-        // so it must stay consistent with the bytes actually hashed. All current callers pass the full
-        // buffer (totalLength == data.Length); assert it to catch a future short-buffer misuse early.
+        // totalLength is mixed into the hash as the final block, so it must stay consistent with the
+        // bytes actually hashed. All current callers pass the full buffer (totalLength == data.Length);
+        // assert it to catch a future short-buffer misuse early.
         Debug.Assert(totalLength == data.Length, $"Synthesize totalLength ({totalLength}) must match data.Length ({data.Length}).");
 
 #pragma warning disable CA1850 // Static SHA256.HashData is .NET 5+ only; this project multi-targets netstandard2.0 / net472 where only ComputeHash exists.
