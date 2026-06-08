@@ -170,6 +170,67 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         Assert.Equal("Engineer", currentValue.GetField("role").ToObject());
     }
 
+    /// <summary>
+    /// Power Fx wraps scalar array literals such as <c>=[1, 2, 3]</c> as <c>Table({Value: 1}, ...)</c>;
+    /// the loop value must expose the bare scalar, not the single-column wrapper record.
+    /// </summary>
+    [Fact]
+    public async Task ForeachTakeNextWithSingleColumnValueRecordAsync()
+    {
+        // Arrange
+        const string CurrentValueName = "CurrentValue";
+        this.SetVariableState(CurrentValueName);
+
+        TableDataValue tableValue = DataValue.TableFromRecords(
+            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("Value", new NumberDataValue(1))),
+            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("Value", new NumberDataValue(2))),
+            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("Value", new NumberDataValue(3))));
+
+        Foreach model = this.CreateModel(
+            displayName: nameof(ForeachTakeNextWithSingleColumnValueRecordAsync),
+            items: ValueExpression.Literal(tableValue),
+            valueName: CurrentValueName,
+            indexName: null);
+        ForeachExecutor action = new(model, this.State);
+
+        // Act
+        await this.ExecuteAsync(action, ForeachExecutor.Steps.Next(action.Id), action.TakeNextAsync);
+
+        // Assert
+        FormulaValue currentValue = this.State.Get(CurrentValueName);
+        Assert.IsNotType<RecordValue>(currentValue, exactMatch: false);
+        Assert.Equal(1m, currentValue.ToObject());
+    }
+
+    /// <summary>
+    /// Single-field records whose only field is NOT named <c>Value</c> are not Power Fx auto-wraps;
+    /// they are preserved as records so the field name remains accessible inside the loop body.
+    /// </summary>
+    [Fact]
+    public async Task ForeachTakeNextWithSingleFieldNonValueRecordAsync()
+    {
+        // Arrange
+        const string CurrentValueName = "CurrentValue";
+        this.SetVariableState(CurrentValueName);
+
+        TableDataValue tableValue = DataValue.TableFromRecords(
+            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("name", new StringDataValue("Alice"))));
+
+        Foreach model = this.CreateModel(
+            displayName: nameof(ForeachTakeNextWithSingleFieldNonValueRecordAsync),
+            items: ValueExpression.Literal(tableValue),
+            valueName: CurrentValueName,
+            indexName: null);
+        ForeachExecutor action = new(model, this.State);
+
+        // Act
+        await this.ExecuteAsync(action, ForeachExecutor.Steps.Next(action.Id), action.TakeNextAsync);
+
+        // Assert
+        RecordValue currentValue = Assert.IsType<RecordValue>(this.State.Get(CurrentValueName), exactMatch: false);
+        Assert.Equal("Alice", currentValue.GetField("name").ToObject());
+    }
+
     [Fact]
     public async Task ForeachTakeLastAsync()
     {
