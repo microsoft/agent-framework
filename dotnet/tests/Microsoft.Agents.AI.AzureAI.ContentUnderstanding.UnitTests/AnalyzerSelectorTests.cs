@@ -28,4 +28,8 @@ public sealed class AnalyzerSelectorTests
     [Fact]
     public void Select_EmptyOverrideFallsThroughToAuto()
         => Assert.Equal(AnalyzerSelector.AudioAnalyzer, AnalyzerSelector.Select("audio/mpeg", string.Empty));
+
+    [Fact]
+    public void Select_WhitespaceOverrideFallsThroughToAuto()
+        => Assert.Equal(AnalyzerSelector.AudioAnalyzer, AnalyzerSelector.Select("audio/mpeg", "   "));
 }

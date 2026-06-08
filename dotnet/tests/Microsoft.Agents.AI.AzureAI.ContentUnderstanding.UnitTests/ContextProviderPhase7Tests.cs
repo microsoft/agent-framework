@@ -188,6 +188,26 @@ public sealed class ContextProviderPhase7Tests
     }
 
     [Fact]
+    public async Task GetAnalyzedDocumentTool_EmptyName_ReturnsRequiredErrorString()
+    {
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
+            "invoice.pdf",
+            new AnalysisOutcome(true, SharedTestFixtures.MakeInvoiceResult(), "op-1", null, TimeSpan.FromMilliseconds(50)));
+        await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
+        DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
+
+        AIContext result = await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(new TestAIAgentStub(), new AgentSessionFake(),
+                new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Read."), pdf]) } }),
+            CancellationToken.None);
+
+        AIFunction get = result.Tools!.OfType<AIFunction>().First(f => f.Name == "get_analyzed_document");
+        AIFunctionArguments args = new() { ["documentName"] = string.Empty };
+        string response = (await get.InvokeAsync(args, CancellationToken.None))!.ToString()!;
+        Assert.Equal("Document name is required", response);
+    }
+
+    [Fact]
     public async Task GetAnalyzedDocumentTool_StillAnalyzing_ReturnsStatusErrorString()
     {
         // Turn 1 records the entry as Analyzing with a token. With no ResumeOverride the

@@ -109,4 +109,11 @@ public sealed class ProviderStateTests
         var state = new ContentUnderstandingProviderState();
         Assert.IsType<ConcurrentDictionary<string, DocumentEntry>>(state.Documents);
     }
+
+    [Fact]
+    public void ProviderState_InjectedKeysIsConcurrentDictionary()
+    {
+        var state = new ContentUnderstandingProviderState();
+        Assert.IsType<ConcurrentDictionary<string, byte>>(state.InjectedKeys);
+    }
 }

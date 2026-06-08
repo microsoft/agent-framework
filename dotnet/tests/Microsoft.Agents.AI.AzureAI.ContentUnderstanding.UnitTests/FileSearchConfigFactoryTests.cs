@@ -61,4 +61,24 @@ public sealed class FileSearchConfigFactoryTests
         Assert.Throws<ArgumentNullException>(() => FileSearchConfig.FromFoundry(project, null!, s_fileSearchTool));
         Assert.Throws<ArgumentNullException>(() => FileSearchConfig.FromFoundry(project, "vs", null!));
     }
+
+    [Fact]
+    public void FromOpenAI_RejectsWhitespaceVectorStoreId()
+    {
+        // Whitespace (non-null) must surface as ArgumentException, distinct from the
+        // ArgumentNullException thrown for a null id (xUnit Throws matches the exact type).
+        OpenAIClient client = new("sk-fake-key");
+
+        Assert.Throws<ArgumentException>(() => FileSearchConfig.FromOpenAI(client, "   ", s_fileSearchTool));
+    }
+
+    [Fact]
+    public void FromFoundry_RejectsWhitespaceVectorStoreId()
+    {
+        AIProjectClient project = new(
+            new Uri("https://contoso.services.ai.azure.com/api/projects/test"),
+            new FakeTokenCredential());
+
+        Assert.Throws<ArgumentException>(() => FileSearchConfig.FromFoundry(project, "   ", s_fileSearchTool));
+    }
 }

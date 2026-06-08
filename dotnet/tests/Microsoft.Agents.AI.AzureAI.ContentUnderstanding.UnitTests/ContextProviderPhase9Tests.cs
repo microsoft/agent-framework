@@ -222,6 +222,64 @@ public sealed class ContextProviderPhase9Tests
     }
 
     [Fact]
+    public async Task InvokingAsync_UploadBudgetExhausted_DefersUploadButKeepsReadyResult()
+    {
+        // Analysis consumes the entire MaxWait budget (Duration 1s >> MaxWait 10ms), leaving
+        // zero foreground time for the vector-store upload. The upload must be DEFERRED, not
+        // failed: the analyzed result stays intact and Ready so list_documents /
+        // get_analyzed_document keep serving it, and the next turn's promotion scan retries the
+        // upload (VectorStoreFileId is still null). Regression guard for the budget-exhaustion
+        // path that previously discarded a valid analysis by marking it Failed.
+        FakeFileSearchBackend backend = new();
+        FakeAITool fileSearchTool = new();
+        FakeAnalyzer analyzer = new FakeAnalyzer().Returns(
+            "invoice.pdf",
+            new AnalysisOutcome(true, SharedTestFixtures.MakeInvoiceResult(), "op-1", null, TimeSpan.FromSeconds(1)));
+
+        await using ContentUnderstandingContextProvider provider = new(
+            new ContentUnderstandingContextProviderOptions(SharedTestFixtures.TestEndpoint, new FakeTokenCredential())
+            {
+                MaxWait = TimeSpan.FromMilliseconds(10),
+                FileSearchConfig = new FileSearchConfig
+                {
+                    Backend = backend,
+                    VectorStoreId = "vs-abc",
+                    FileSearchTool = fileSearchTool,
+                },
+            })
+        {
+            ClientFactoryOverride = new CountingClientFactory(),
+            AnalyzeOverride = analyzer.AnalyzeAsync,
+        };
+        AgentSessionFake session = new();
+
+        DataContent pdf = new(s_pdfBytes, "application/pdf") { Name = "invoice.pdf" };
+        AIContext result = await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(
+                new TestAIAgentStub(),
+                session,
+                new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, [new TextContent("Read."), pdf]) } }),
+            CancellationToken.None);
+
+        // Upload was deferred, never attempted.
+        Assert.Empty(backend.UploadCalls);
+
+        // The analyzed result is preserved and still Ready (NOT marked Failed / cleared).
+        ContentUnderstandingProviderState st = provider.GetStateForTesting(session);
+        DocumentEntry entry = st.Documents["invoice.pdf"];
+        Assert.Equal(DocumentStatus.Ready, entry.Status);
+        Assert.Null(entry.VectorStoreFileId);   // upload pending → next turn retries.
+        Assert.NotNull(entry.Result);           // rendered content intact.
+        Assert.Contains("deferred", entry.Error!, StringComparison.OrdinalIgnoreCase);
+
+        // The LLM note explains the deferral rather than reporting an upload failure.
+        string combinedText = string.Join("\n",
+            result.Messages!.SelectMany(m => m.Contents).OfType<TextContent>().Select(t => t.Text));
+        Assert.Contains("deferred", combinedText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("failed to upload", combinedText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task InvokingAsync_BackendThrows_StatusBecomesFailedAndNoteEmitted()
     {
         FakeFileSearchBackend backend = new()
