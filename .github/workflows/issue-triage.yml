@@ -153,8 +153,7 @@ jobs:
         if: ${{ steps.spam.outputs.allow_triage != 'true' }}
         shell: bash
         run: |
-          echo "Stopping: issue triage preflight did not allow automation."
-          exit 1
+          echo "Issue triage preflight withheld automation; maintainer review is required."
 
       - name: Reproduce reported issue
         if: ${{ steps.spam.outputs.allow_triage == 'true' }}
