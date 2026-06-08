@@ -10,6 +10,14 @@ The `SkillsProvider` is attached to the agent as a context provider and implemen
 
 This way the full skill body and resources are only loaded when the agent actually needs them, reducing token usage.
 
+## Toolbox MCP skills vs. Foundry Skills
+
+Foundry exposes skills in two ways, and this sample uses the second one.
+
+Foundry Skills are managed through the Foundry Skills REST API. An agent downloads each `SKILL.md` as a ZIP at startup, serving the bodies from local files. See the [`09_foundry_skills`](../09_foundry_skills/README.md) sample for a demonstration.
+
+Toolbox MCP skills are accessed through a toolbox over the MCP protocol. A toolbox bundles a curated set of skills behind one MCP endpoint, and any MCP client discovers them automatically. Skill bodies and any supplementary resources are fetched on demand.
+
 ## How It Works
 
 ### Model Integration
