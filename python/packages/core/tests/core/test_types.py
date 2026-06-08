@@ -831,6 +831,51 @@ def test_chat_response_with_mapping_response_format() -> None:
     assert response.value["response"] == "Hello"
 
 
+def test_chat_response_value_parses_final_message_with_response_format() -> None:
+    """ChatResponse.value should ignore intermediate messages when parsing structured output."""
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"skill_name": "building-permit-compliance"}\n{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_parses_final_message_with_response_format() -> None:
+    """AgentResponse.value should ignore intermediate messages when parsing structured output."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"skill_name": "building-permit-compliance"}{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_mapping_value_parses_final_message() -> None:
+    """AgentResponse.value should parse the final message for JSON schema mappings."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["response"] == "Hello"
+
+
 def test_parse_structured_response_value_empty_text_with_pydantic_model() -> None:
     """Empty text should return None instead of raising when response_format is a Pydantic model."""
     result = _parse_structured_response_value("", OutputModel)
