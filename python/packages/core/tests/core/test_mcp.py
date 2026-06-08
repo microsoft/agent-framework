@@ -6092,6 +6092,16 @@ def test_normalize_additional_tool_argument_names_mapping_with_global_key() -> N
     assert per_tool == {"tool_a": {"a1", "a2"}, "tool_b": {"b1"}}
 
 
+def test_normalize_additional_tool_argument_names_mapping_with_string_values() -> None:
+    # A bare string mapping value is a single name, not an iterable of characters.
+    global_extras, per_tool = _normalize_additional_tool_argument_names({
+        "*": "conversation_id",
+        "tool_a": "custom",
+    })
+    assert global_extras == {"conversation_id"}
+    assert per_tool == {"tool_a": {"custom"}}
+
+
 def test_prepare_call_kwargs_strips_undeclared_arguments() -> None:
     server = MCPTool(name="test_server")
     server._tool_param_names_by_name = {"test_tool": {"param"}}
@@ -6154,15 +6164,19 @@ def test_prepare_call_kwargs_denylist_guards_server_declared_names() -> None:
 
 
 def test_prepare_call_kwargs_extras_override_denylist() -> None:
-    # A user that explicitly opts a denylisted name back in takes responsibility for it.
-    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])
+    # Opting a denylisted framework name back in via extras takes precedence over the
+    # denylist safety net. "thread" is on the framework denylist, but an explicit extra wins.
+    server = MCPTool(name="test_server", additional_tool_argument_names=["thread"])
     server._tool_param_names_by_name = {"test_tool": {"param"}}
 
+    sentinel = object()
     filtered, _ = server._prepare_call_kwargs(
         "test_tool",
-        {"param": "v", "conversation_id": "c", "thread": object()},
+        {"param": "v", "thread": sentinel, "conversation_id": "c"},
     )
-    assert filtered == {"param": "v", "conversation_id": "c"}
+    # "thread" opted in via extras -> kept despite the denylist; conversation_id is denylisted,
+    # not declared, and not opted in -> dropped.
+    assert filtered == {"param": "v", "thread": sentinel}
 
 
 def test_prepare_call_kwargs_zero_arg_tool_passes_no_arguments() -> None:

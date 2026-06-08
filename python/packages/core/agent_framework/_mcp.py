@@ -75,8 +75,10 @@ _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 _MCP_GLOBAL_EXTRA_ARGS_KEY = "*"
 # Framework kwargs that flow through the function-invocation pipeline (via
 # ``FunctionInvocationContext.kwargs``) but must never be forwarded to an MCP
-# server: they are internal objects that the MCP SDK cannot serialize. These are
-# always dropped as a safety net, even when a tool oddly declares one of them.
+# server: they are internal objects that the MCP SDK cannot serialize. They are
+# dropped as a safety net when a tool declares one of them in its schema, unless
+# the user explicitly opts the name back in via ``additional_tool_argument_names``
+# (explicit extras always win over the denylist).
 # - chat_options/tools/tool_choice/session/thread: framework runtime objects.
 # - conversation_id: internal tracking ID used by services like Azure AI.
 # - options: metadata/store used by AG-UI for Azure AI client requirements.
@@ -164,7 +166,8 @@ def _normalize_additional_tool_argument_names(
     """Split user-supplied extra argument names into global and per-tool sets.
 
     Accepts either a sequence (applied to every tool) or a mapping keyed by remote
-    tool name, where the reserved key ``"*"`` is treated as global. Returns a
+    tool name, where the reserved key ``"*"`` is treated as global. Mapping values
+    may be a sequence or a single string. Returns a
     ``(global_extras, per_tool_extras)`` tuple.
     """
     if additional_tool_argument_names is None:
@@ -175,10 +178,12 @@ def _normalize_additional_tool_argument_names(
         global_extras: set[str] = set()
         per_tool_extras: dict[str, set[str]] = {}
         for tool_name, names in additional_tool_argument_names.items():
+            # Treat a bare string value as a single name rather than iterating its characters.
+            names_set = {names} if isinstance(names, str) else set(names)
             if tool_name == _MCP_GLOBAL_EXTRA_ARGS_KEY:
-                global_extras.update(names)
+                global_extras.update(names_set)
             else:
-                per_tool_extras[tool_name] = set(names)
+                per_tool_extras[tool_name] = names_set
         return global_extras, per_tool_extras
     return set(additional_tool_argument_names), {}
 
@@ -1329,14 +1334,6 @@ class MCPTool:
                 if task_support is not None:
                     tool_task_support_by_name[tool.name] = task_support
 
-                normalized_name = _normalize_mcp_name(tool.name)
-                local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
-
-                # Skip if already loaded
-                if local_name in existing_names:
-                    continue
-
-                approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
                 # Normalize inputSchema: ensure "properties" exists for object schemas.
                 # Some MCP servers (e.g. zero-argument tools) omit "properties",
                 # which causes OpenAI API to reject the schema with a 400 error.
@@ -1346,10 +1343,23 @@ class MCPTool:
                 if input_schema.get("type") == "object" and "properties" not in input_schema:
                     input_schema["properties"] = {}
 
+                # Register declared param names before the existing-tool skip below so that
+                # reloads (e.g. notifications/tools/list_changed) preserve the allowlist for
+                # tools that are already loaded, consistent with tool_call_meta_by_name and
+                # tool_task_support_by_name above.
                 schema_properties = input_schema.get("properties")
                 tool_param_names_by_name[tool.name] = (
-                    set(schema_properties) if isinstance(schema_properties, dict) else set()
+                    set(cast(dict[str, Any], schema_properties)) if isinstance(schema_properties, dict) else set()
                 )
+
+                normalized_name = _normalize_mcp_name(tool.name)
+                local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
+
+                # Skip if already loaded
+                if local_name in existing_names:
+                    continue
+
+                approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
 
                 async def _call_tool_with_runtime_kwargs(
                     ctx: FunctionInvocationContext,
