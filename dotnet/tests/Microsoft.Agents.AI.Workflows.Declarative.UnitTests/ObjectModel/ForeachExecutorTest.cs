@@ -143,6 +143,34 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     }
 
     [Fact]
+    public async Task ForeachTakeNextWithMultiFieldRecordAsync()
+    {
+        // Arrange
+        const string CurrentValueName = "CurrentValue";
+        this.SetVariableState(CurrentValueName);
+
+        TableDataValue tableValue = DataValue.TableFromRecords(
+            DataValue.RecordFromFields(
+                new KeyValuePair<string, DataValue>("name", new StringDataValue("Alice")),
+                new KeyValuePair<string, DataValue>("role", new StringDataValue("Engineer"))));
+
+        Foreach model = this.CreateModel(
+            displayName: nameof(ForeachTakeNextWithMultiFieldRecordAsync),
+            items: ValueExpression.Literal(tableValue),
+            valueName: CurrentValueName,
+            indexName: null);
+        ForeachExecutor action = new(model, this.State);
+
+        // Act
+        await this.ExecuteAsync(action, ForeachExecutor.Steps.Next(action.Id), action.TakeNextAsync);
+
+        // Assert
+        RecordValue currentValue = Assert.IsType<RecordValue>(this.State.Get(CurrentValueName), exactMatch: false);
+        Assert.Equal("Alice", currentValue.GetField("name").ToObject());
+        Assert.Equal("Engineer", currentValue.GetField("role").ToObject());
+    }
+
+    [Fact]
     public async Task ForeachTakeLastAsync()
     {
         // Arrange

@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass
@@ -987,6 +988,33 @@ def test_magentic_builder_requires_exactly_one_manager_option():
         MagenticBuilder(participants=[agent], manager=manager, manager_factory=manager_factory)
 
 
+def test_magentic_with_custom_manager_does_not_warn_without_standard_manager_options(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING, logger="agent_framework_orchestrations._magentic")
+
+    MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager=FakeManager())
+
+    assert "Custom manager provided; all other manager arguments will be ignored." not in caplog.text
+
+
+def test_magentic_with_custom_manager_factory_does_not_warn_without_standard_manager_options(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING, logger="agent_framework_orchestrations._magentic")
+
+    def manager_factory() -> MagenticManagerBase:
+        return FakeManager()
+
+    MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager_factory=manager_factory)
+
+    assert "Custom manager provided; all other manager arguments will be ignored." not in caplog.text
+
+
+def test_magentic_with_custom_manager_warns_when_standard_manager_option_is_provided(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING, logger="agent_framework_orchestrations._magentic")
+
+    MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager=FakeManager(), max_stall_count=3)
+
+    assert "Custom manager provided; all other manager arguments will be ignored." in caplog.text
+
+
 async def test_magentic_with_manager_factory():
     """Test workflow creation using manager_factory."""
     factory_call_count = 0
@@ -1035,6 +1063,20 @@ async def test_magentic_with_agent_factory():
             break
 
     assert event_count > 0
+
+
+def test_magentic_agent_factory_uses_default_max_stall_count() -> None:
+    def agent_factory() -> SupportsAgentRun:
+        return cast(SupportsAgentRun, StubManagerAgent())
+
+    participant = StubAgent("agentA", "reply from agentA")
+    workflow = MagenticBuilder(participants=[participant], manager_agent_factory=agent_factory).build()
+
+    orchestrator = next(e for e in workflow.executors.values() if isinstance(e, MagenticOrchestrator))
+    manager = orchestrator._manager  # type: ignore[reportPrivateUsage]
+
+    assert isinstance(manager, StandardMagenticManager)
+    assert manager.max_stall_count == 3
 
 
 async def test_magentic_manager_factory_reusable_builder():

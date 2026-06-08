@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Compaction;
 using Microsoft.Agents.AI.Tools.Shell;
 #endif
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -105,6 +106,12 @@ public sealed class HarnessAgent : DelegatingAIAgent
     /// additional context providers, and chat history provider.
     /// When <see langword="null"/>, the agent uses built-in default settings.
     /// </param>
+    /// <param name="loggerFactory">
+    /// Optional logger factory for creating loggers used by the agent and its components.
+    /// </param>
+    /// <param name="services">
+    /// Optional service provider for resolving dependencies required by AI functions and other agent components.
+    /// </param>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="chatClient"/> is <see langword="null"/>.
     /// </exception>
@@ -112,24 +119,26 @@ public sealed class HarnessAgent : DelegatingAIAgent
     /// <paramref name="maxContextWindowTokens"/> is not positive, or
     /// <paramref name="maxOutputTokens"/> is negative or greater than or equal to <paramref name="maxContextWindowTokens"/>.
     /// </exception>
-    public HarnessAgent(IChatClient chatClient, int maxContextWindowTokens, int maxOutputTokens, HarnessAgentOptions? options = null)
+    public HarnessAgent(IChatClient chatClient, int maxContextWindowTokens, int maxOutputTokens, HarnessAgentOptions? options = null, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
         : base(BuildAgent(
             Throw.IfNull(chatClient),
             maxContextWindowTokens,
             maxOutputTokens,
-            options))
+            options,
+            loggerFactory,
+            services))
     {
     }
 
-    private static AIAgent BuildAgent(IChatClient chatClient, int maxContextWindowTokens, int maxOutputTokens, HarnessAgentOptions? options)
+    private static AIAgent BuildAgent(IChatClient chatClient, int maxContextWindowTokens, int maxOutputTokens, HarnessAgentOptions? options, ILoggerFactory? loggerFactory, IServiceProvider? services)
     {
-        ChatClientAgent innerAgent = BuildInnerAgent(chatClient, maxContextWindowTokens, maxOutputTokens, options);
+        ChatClientAgent innerAgent = BuildInnerAgent(chatClient, maxContextWindowTokens, maxOutputTokens, options, loggerFactory, services);
 
         AIAgentBuilder builder = innerAgent.AsBuilder();
 
         if (options?.DisableToolApproval is not true)
         {
-            builder.UseToolApproval();
+            builder.UseToolApproval(options?.ToolApprovalAgentOptions);
         }
 
         if (options?.DisableOpenTelemetry is not true)
@@ -137,10 +146,10 @@ public sealed class HarnessAgent : DelegatingAIAgent
             builder.UseOpenTelemetry(sourceName: options?.OpenTelemetrySourceName);
         }
 
-        return builder.Build();
+        return builder.Build(services);
     }
 
-    private static ChatClientAgent BuildInnerAgent(IChatClient chatClient, int maxContextWindowTokens, int maxOutputTokens, HarnessAgentOptions? options)
+    private static ChatClientAgent BuildInnerAgent(IChatClient chatClient, int maxContextWindowTokens, int maxOutputTokens, HarnessAgentOptions? options, ILoggerFactory? loggerFactory, IServiceProvider? services)
     {
         var compactionStrategy = new ContextWindowCompactionStrategy(
             maxContextWindowTokens: maxContextWindowTokens,
@@ -165,13 +174,13 @@ public sealed class HarnessAgent : DelegatingAIAgent
 
         ChatOptions chatOptions = BuildChatOptions(options, instructions, maxOutputTokens);
 
-        var compactionProvider = new CompactionProvider(compactionStrategy);
+        var compactionProvider = new CompactionProvider(compactionStrategy, loggerFactory: loggerFactory);
 
-        IEnumerable<AIContextProvider> contextProviders = BuildContextProviders(options);
+        IEnumerable<AIContextProvider> contextProviders = BuildContextProviders(options, loggerFactory);
 
         return chatClient
             .AsBuilder()
-            .UseFunctionInvocation(configure: options?.MaximumIterationsPerRequest is int maxIterations
+            .UseFunctionInvocation(loggerFactory, configure: options?.MaximumIterationsPerRequest is int maxIterations
                 ? ficc => ficc.MaximumIterationsPerRequest = maxIterations
                 : null)
             .UseMessageInjection()
@@ -189,7 +198,9 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 RequirePerServiceCallChatHistoryPersistence = true,
                 WarnOnChatHistoryProviderConflict = false,
                 ThrowOnChatHistoryProviderConflict = false,
-            });
+            },
+            loggerFactory,
+            services);
     }
 
     private static ChatOptions BuildChatOptions(HarnessAgentOptions? options, string instructions, int maxOutputTokens)
@@ -215,7 +226,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
         return result;
     }
 
-    private static List<AIContextProvider> BuildContextProviders(HarnessAgentOptions? options)
+    private static List<AIContextProvider> BuildContextProviders(HarnessAgentOptions? options, ILoggerFactory? loggerFactory)
     {
         var providers = new List<AIContextProvider>();
 
@@ -255,8 +266,8 @@ public sealed class HarnessAgent : DelegatingAIAgent
         if (options?.DisableAgentSkillsProvider is not true)
         {
             AgentSkillsProvider skillsProvider = options?.AgentSkillsSource is AgentSkillsSource source
-                ? new AgentSkillsProvider(source)
-                : new AgentSkillsProvider(Directory.GetCurrentDirectory());
+                ? new AgentSkillsProvider(source, loggerFactory: loggerFactory)
+                : new AgentSkillsProvider(Directory.GetCurrentDirectory(), loggerFactory: loggerFactory);
 
             providers.Add(skillsProvider);
         }

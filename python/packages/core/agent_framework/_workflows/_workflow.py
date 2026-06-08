@@ -360,6 +360,22 @@ class Workflow(DictConvertible):
         # Flag to prevent concurrent workflow executions
         self._is_running = False
 
+        # Current run-level status of this workflow instance. Updated in lockstep with
+        # the status events emitted from `_run_workflow_with_tracing`. Defaults to IDLE
+        # for a freshly built workflow that has not yet been run.
+        self._status: WorkflowRunState = WorkflowRunState.IDLE
+
+    @property
+    def status(self) -> WorkflowRunState:
+        """Return the current run-level status of this workflow instance.
+
+        Mirrors the most recent status event emitted by the workflow. Safe to read at
+        any time: workflows run on a single asyncio event loop, and the underlying
+        attribute is a single enum reference whose assignment is atomic under the
+        CPython GIL, so no locking is required.
+        """
+        return self._status
+
     def _ensure_not_running(self) -> None:
         """Ensure the workflow is not already running."""
         if self._is_running:
@@ -513,8 +529,9 @@ class Workflow(DictConvertible):
                 with _framework_event_origin():
                     started = WorkflowEvent.started()
                 yield started  # noqa: RUF070
+                self._status = WorkflowRunState.IN_PROGRESS
                 with _framework_event_origin():
-                    in_progress = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
+                    in_progress = WorkflowEvent.status(self._status)
                 yield in_progress  # noqa: RUF070
 
                 # Per-run reset for fresh-message runs only. We deliberately
@@ -569,17 +586,20 @@ class Workflow(DictConvertible):
 
                     if event.type == "request_info" and not emitted_in_progress_pending:
                         emitted_in_progress_pending = True
+                        self._status = WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
                         with _framework_event_origin():
-                            pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                            pending_status = WorkflowEvent.status(self._status)
                         yield pending_status  # noqa: RUF070
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
+                    self._status = WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
                     with _framework_event_origin():
-                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                        terminal_status = WorkflowEvent.status(self._status)
                     yield terminal_status
                 else:
+                    self._status = WorkflowRunState.IDLE
                     with _framework_event_origin():
-                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE)
+                        terminal_status = WorkflowEvent.status(self._status)
                     yield terminal_status
 
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
@@ -593,6 +613,7 @@ class Workflow(DictConvertible):
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
                 yield failed_event  # noqa: RUF070
+                self._status = WorkflowRunState.FAILED
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
                 yield failed_status  # noqa: RUF070

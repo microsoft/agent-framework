@@ -40,6 +40,7 @@ jobs:
       foundryChanged: ${{ steps.filter.outputs.foundry }}
       foundryHostingChanged: ${{ steps.filter.outputs.foundry_hosting }}
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
+      githubCopilotChanged: ${{ steps.filter.outputs.github_copilot }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
@@ -85,6 +86,8 @@ jobs:
               - 'python/packages/foundry_hosting/**'
             cosmos:
               - 'python/packages/azure-cosmos/**'
+            github_copilot:
+              - 'python/packages/github_copilot/**'
       # run only if 'python' files were changed
       - name: python tests
         if: steps.filter.outputs.python == 'true'
@@ -658,6 +661,58 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
+  # GitHub Copilot integration tests
+  python-tests-github-copilot:
+    name: Python Tests - GitHub Copilot Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.githubCopilotChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    env:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GITHUB_COPILOT_TIMEOUT: "120"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test with pytest (GitHub Copilot integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/github_copilot/tests
+          -m integration
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        with:
+          path: ./python/pytest.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: GitHub Copilot integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-results-github-copilot
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
   # Integration test trend report (aggregates per-job JUnit XML results)
   python-integration-test-report:
     name: Integration Test Report
@@ -674,6 +729,7 @@ jobs:
         python-tests-foundry,
         python-tests-foundry-hosting,
         python-tests-cosmos,
+        python-tests-github-copilot,
       ]
     runs-on: ubuntu-latest
     defaults:
@@ -735,6 +791,7 @@ jobs:
         python-tests-foundry,
         python-tests-foundry-hosting,
         python-tests-cosmos,
+        python-tests-github-copilot,
       ]
     steps:
       - name: Fail workflow if tests failed

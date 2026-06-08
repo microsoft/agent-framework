@@ -380,8 +380,15 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             return prepared_messages
         from ._compaction import apply_compaction
 
+        # Compact the caller's list in place when possible. A compaction operation has
+        # two halves: exclusion flags (mutated on shared Message objects) and inserted
+        # summary messages. Operating on the original list keeps both halves on the list
+        # the function-invocation tool loop reuses across iterations; otherwise inserted
+        # summaries would be lost on a throwaway copy while exclusions persisted, silently
+        # dropping older groups (issue #4991).
+        working_messages = messages if isinstance(messages, list) else prepared_messages
         return await apply_compaction(
-            prepared_messages,
+            working_messages,
             strategy=compaction_strategy,
             tokenizer=tokenizer,
         )
