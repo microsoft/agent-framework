@@ -102,6 +102,15 @@ public sealed class HarnessAgentOptions
     public bool DisableToolApproval { get; set; }
 
     /// <summary>
+    /// Gets or sets the options for the <see cref="ToolApprovalAgent"/> middleware.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, the <see cref="ToolApprovalAgent"/> uses default settings.
+    /// This property has no effect when <see cref="DisableToolApproval"/> is <see langword="true"/>.
+    /// </remarks>
+    public ToolApprovalAgentOptions? ToolApprovalAgentOptions { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether the <see cref="FileMemoryProvider"/> is disabled.
     /// </summary>
     /// <remarks>

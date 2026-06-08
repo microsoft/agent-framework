@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
-using System.Text.Json;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -17,9 +16,9 @@ public static class ToolApprovalAgentBuilderExtensions
     /// Adds tool approval middleware to the agent pipeline, enabling "don't ask again" approval behavior.
     /// </summary>
     /// <param name="builder">The <see cref="AIAgentBuilder"/> to which tool approval support will be added.</param>
-    /// <param name="jsonSerializerOptions">
-    /// Optional <see cref="JsonSerializerOptions"/> used for serializing argument values when storing rules
-    /// and for persisting state. When <see langword="null"/>, <see cref="AgentJsonUtilities.DefaultOptions"/> is used.
+    /// <param name="options">
+    /// Optional <see cref="ToolApprovalAgentOptions"/> for configuring serialization and auto-approval rules.
+    /// When <see langword="null"/>, default settings are used.
     /// </param>
     /// <returns>The <see cref="AIAgentBuilder"/> with tool approval middleware added, enabling method chaining.</returns>
     /// <exception cref="System.ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
@@ -32,6 +31,6 @@ public static class ToolApprovalAgentBuilderExtensions
     /// </remarks>
     public static AIAgentBuilder UseToolApproval(
         this AIAgentBuilder builder,
-        JsonSerializerOptions? jsonSerializerOptions = null)
-        => Throw.IfNull(builder).Use(innerAgent => new ToolApprovalAgent(innerAgent, jsonSerializerOptions));
+        ToolApprovalAgentOptions? options = null)
+        => Throw.IfNull(builder).Use(innerAgent => new ToolApprovalAgent(innerAgent, options));
 }

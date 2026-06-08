@@ -2,6 +2,7 @@
 
 import base64
 import logging
+import uuid
 from asyncio import CancelledError
 from collections.abc import Mapping
 from functools import partial
@@ -181,9 +182,18 @@ class A2AExecutor(AgentExecutor):
         """Run the agent in streaming mode and publish updates to the task updater."""
         response_stream = self._agent.run(query, session=session, stream=True, **self._run_kwargs)
         streamed_artifact_ids: set[str] = set()
+        # Generate a stable artifact ID for the entire stream so all chunks share the same ID.
+        # This ensures clients can coalesce streaming tokens into a single artifact/message
+        # per the A2A spec (TaskArtifactUpdateEvent with append=True on same artifactId).
+        default_artifact_id = str(uuid.uuid4())
         await (
             response_stream.with_transform_hook(
-                partial(self.handle_events, updater=updater, streamed_artifact_ids=streamed_artifact_ids)
+                partial(
+                    self.handle_events,
+                    updater=updater,
+                    streamed_artifact_ids=streamed_artifact_ids,
+                    default_artifact_id=default_artifact_id,
+                )
             )
         ).get_final_response()
 
@@ -199,7 +209,11 @@ class A2AExecutor(AgentExecutor):
             await self.handle_events(message, updater)
 
     async def handle_events(
-        self, item: Message | AgentResponseUpdate, updater: TaskUpdater, streamed_artifact_ids: set[str] | None = None
+        self,
+        item: Message | AgentResponseUpdate,
+        updater: TaskUpdater,
+        streamed_artifact_ids: set[str] | None = None,
+        default_artifact_id: str | None = None,
     ) -> None:
         """Convert agent response items (Messages or Updates) to A2A protocol events.
 
@@ -213,7 +227,10 @@ class A2AExecutor(AgentExecutor):
             item: The agent response item (Message or AgentResponseUpdate) to process.
             updater: The task updater to publish events to.
             streamed_artifact_ids: A set of artifact IDs that have already been streamed.
-                Used to prevent duplicate updates for the same artifact.
+                Used to track which artifacts need append=True on subsequent chunks.
+            default_artifact_id: A stable artifact ID to use when the item does not provide one.
+                This ensures all streaming chunks for a single response share the same artifact ID,
+                allowing clients to coalesce them into a single message.
 
         Example:
             .. code-block:: python
@@ -224,6 +241,7 @@ class A2AExecutor(AgentExecutor):
                         item: Message | AgentResponseUpdate,
                         updater: TaskUpdater,
                         streamed_artifact_ids: set[str] | None = None,
+                        default_artifact_id: str | None = None,
                     ) -> None:
                         # Custom logic to transform item contents
                         if item.role == "assistant" and item.contents:
@@ -260,19 +278,20 @@ class A2AExecutor(AgentExecutor):
 
         if parts:
             if isinstance(item, AgentResponseUpdate):
+                # Resolve artifact ID: use item's message_id if available, otherwise fall back
+                # to the stable default_artifact_id so all streaming chunks share the same ID.
+                artifact_id = item.message_id or default_artifact_id
                 # For streaming updates, we send TaskArtifactUpdateEvent via add_artifact
                 await updater.add_artifact(
                     parts=parts,
-                    artifact_id=item.message_id,
+                    artifact_id=artifact_id,
                     metadata=metadata,
                     append=(
-                        True
-                        if streamed_artifact_ids is not None and item.message_id in (streamed_artifact_ids or set())
-                        else None
+                        True if streamed_artifact_ids is not None and artifact_id in streamed_artifact_ids else None
                     ),
                 )
-                if item.message_id and streamed_artifact_ids is not None:
-                    streamed_artifact_ids.add(item.message_id)
+                if artifact_id and streamed_artifact_ids is not None:
+                    streamed_artifact_ids.add(artifact_id)
             else:
                 # For final messages, we send TaskStatusUpdateEvent with 'working' state
                 await updater.update_status(

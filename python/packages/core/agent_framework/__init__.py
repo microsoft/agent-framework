@@ -71,6 +71,7 @@ from ._evaluation import (
     Evaluator,
     ExpectedToolCall,
     LocalEvaluator,
+    RubricScore,
     evaluate_agent,
     evaluate_workflow,
     evaluator,
@@ -123,7 +124,7 @@ from ._harness._todo import (
     TodoSessionStore,
     TodoStore,
 )
-from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
+from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool
 from ._middleware import (
     AgentContext,
     AgentMiddleware,
@@ -167,6 +168,9 @@ from ._skills import (
     InlineSkillResource,
     InlineSkillScript,
     InMemorySkillsSource,
+    MCPSkill,
+    MCPSkillResource,
+    MCPSkillsSource,
     Skill,
     SkillFrontmatter,
     SkillResource,
@@ -440,8 +444,12 @@ __all__ = [
     "InlineSkillResource",
     "InlineSkillScript",
     "LocalEvaluator",
+    "MCPSkill",
+    "MCPSkillResource",
+    "MCPSkillsSource",
     "MCPStdioTool",
     "MCPStreamableHTTPTool",
+    "MCPTaskOptions",
     "MCPWebsocketTool",
     "MemoryContextProvider",
     "MemoryFileStore",
@@ -460,6 +468,7 @@ __all__ = [
     "ResponseStream",
     "Role",
     "RoleLiteral",
+    "RubricScore",
     "RunContext",
     "Runner",
     "RunnerContext",

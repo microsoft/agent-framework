@@ -18,92 +18,92 @@ template:
     - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
       value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
     - name: TOOLBOX_NAME
-      value: "agent-tools-2"
-# parameters:
-#   properties:
-# - name: mcp_endpoint
-#   # `azd ai agent init -m` will prompt for this value when initializing the agent manifest
-#   secret: false
-#   description: URL of the public MCP server (e.g. https://gitmcp.io/Azure/azure-rest-api-specs) that does not require authentication
-# - name: github_pat
-#   # `azd ai agent init -m` will prompt for this value when initializing the agent manifest.
-#   # Only needed when the GitHub MCP connection is configured to use the `github-mcp-pat-conn`
-#   # PAT-based connection below; if you use the `github-mcp-oauth-conn` OAuth2 connection
-#   # instead, you can leave this empty.
-#   secret: true
-#   description: GitHub Personal Access Token used to authenticate with the GitHub MCP server (only needed when using the PAT connection; press Enter if using OAuth2 instead)
-# - name: language_mcp_entra_audience
-#   secret: false
-#   description: Entra ID audience for the Azure Language MCP server (e.g. https://cognitiveservices.azure.com/)
-# - name: language_mcp_target_url
-#   secret: false
-#   description: URL of the Azure Language MCP server that accepts agent identity tokens (e.g. https://{foundry-resource-name}.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview)
-# - name: outlook_mail_entra_audience
-#   secret: false
-#   description: Entra ID audience for the Outlook Mail MCP server
-# - name: outlook_mail_entra_mcp_target
-#   secret: false
-#   description: URL of the Outlook Mail MCP server that accepts user Entra tokens
+      value: "agent-tools"
+parameters:
+  properties:
+    - name: mcp_endpoint
+      # `azd ai agent init -m` will prompt for this value when initializing the agent manifest
+      secret: false
+      description: URL of the public MCP server (e.g. https://gitmcp.io/Azure/azure-rest-api-specs) that does not require authentication
+    - name: github_pat
+      # `azd ai agent init -m` will prompt for this value when initializing the agent manifest.
+      # Only needed when the GitHub MCP connection is configured to use the `github-mcp-pat-conn`
+      # PAT-based connection below; if you use the `github-mcp-oauth-conn` OAuth2 connection
+      # instead, you can leave this empty.
+      secret: true
+      description: GitHub Personal Access Token used to authenticate with the GitHub MCP server (only needed when using the PAT connection; press Enter if using OAuth2 instead)
+  # - name: language_mcp_entra_audience
+  #   secret: false
+  #   description: Entra ID audience for the Azure Language MCP server (e.g. https://cognitiveservices.azure.com/)
+  # - name: language_mcp_target_url
+  #   secret: false
+  #   description: URL of the Azure Language MCP server that accepts agent identity tokens (e.g. https://{foundry-resource-name}.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview)
+  # - name: outlook_mail_entra_audience
+  #   secret: false
+  #   description: Entra ID audience for the Outlook Mail MCP server
+  # - name: outlook_mail_entra_mcp_target
+  #   secret: false
+  #   description: URL of the Outlook Mail MCP server that accepts user Entra tokens
 resources:
   - kind: model
     id: gpt-4.1-mini
     name: AZURE_AI_MODEL_DEPLOYMENT_NAME
-  # - kind: connection
-  #   # A connection that uses a GitHub Personal Access Token (PAT) to authenticate with the GitHub MCP server
-  #   name: github-mcp-pat-conn
-  #   category: RemoteTool
-  #   authType: CustomKeys
-  #   target: https://api.githubcopilot.com/mcp
-  #   credentials:
-  #     type: CustomKeys
-  #     keys:
-  #       Authorization: "Bearer {{ github_pat }}"
-  # - kind: connection
-  #   # A connection that uses OAuth2 to authenticate with the GitHub MCP server
-  #   name: github-mcp-oauth-conn
-  #   category: RemoteTool
-  #   authType: OAuth2
-  #   target: https://api.githubcopilot.com/mcp
-  #   connectorName: foundrygithubmcp
-  #   credentials:
-  #     type: OAuth2
-  #     clientId: managed
-  #     clientSecret: managed
+  - kind: connection
+    # A connection that uses a GitHub Personal Access Token (PAT) to authenticate with the GitHub MCP server
+    name: github-mcp-pat-conn
+    category: RemoteTool
+    authType: CustomKeys
+    target: https://api.githubcopilot.com/mcp
+    credentials:
+      type: CustomKeys
+      keys:
+        Authorization: "Bearer {{ github_pat }}"
+  - kind: connection
+    # A connection that uses OAuth2 to authenticate with the GitHub MCP server
+    name: github-mcp-oauth-conn
+    category: RemoteTool
+    authType: OAuth2
+    target: https://api.githubcopilot.com/mcp
+    connectorName: foundrygithubmcp
+    credentials:
+      type: OAuth2
+      clientId: managed
+      clientSecret: managed
   # - kind: connection
   #   name: language-mcp-conn
   #   category: RemoteTool
   #   authType: AgenticIdentity
   #   audience: "{{ language_mcp_entra_audience }}"
   #   target: "{{ language_mcp_target_url }}"
-  # # - kind: connection
-  # #   name: outlook-mail-conn
-  # #   category: RemoteTool
-  # #   authType: UserEntraToken
-  # #   audience: "{{ outlook_mail_entra_audience }}"
-  # #   target: "{{ outlook_mail_entra_mcp_target }}"
-  # - kind: toolbox
-  #   name: agent-tools
-  #   tools:
-  #     - type: web_search
-  #       name: web_search
-  #     - type: code_interpreter
-  #       name: code_interpreter
-  #     # - type: mcp
-  #     #   # This MCP tool doesn't require authentication
-  #     #   server_label: noauth_mcp
-  #     #   server_url: "{{ mcp_endpoint }}"
-  #     #   require_approval: "never"
-  #     - type: mcp
-  #       # This MCP tool uses the GitHub MCP server with a PAT for authentication or OAuth2
-  #       server_label: github
-  #       project_connection_id: github-mcp-pat-conn # use `github-mcp-oauth-conn` for OAuth2 authentication
-  #       require_approval: "never"
-  #     - type: mcp
-  #       # This MCP tool uses the Azure Language MCP server with agent identity for authentication
-  #       server_label: language-mcp
-  #       project_connection_id: language-mcp-conn
-  #       require_approval: "never"
-  #     # - type: mcp
-  #     #   server_label: outlook-mail
-  #     #   project_connection_id: outlook-mail-conn
-  #     #   require_approval: "never"
+  # - kind: connection
+  #   name: outlook-mail-conn
+  #   category: RemoteTool
+  #   authType: UserEntraToken
+  #   audience: "{{ outlook_mail_entra_audience }}"
+  #   target: "{{ outlook_mail_entra_mcp_target }}"
+  - kind: toolbox
+    name: agent-tools
+    tools:
+      - type: web_search
+        name: web_search
+      - type: code_interpreter
+        name: code_interpreter
+      - type: mcp
+        # This MCP tool doesn't require authentication
+        server_label: noauth_mcp
+        server_url: "{{ mcp_endpoint }}"
+        require_approval: "never"
+      - type: mcp
+        # This MCP tool uses the GitHub MCP server with a PAT for authentication or OAuth2
+        server_label: github
+        project_connection_id: github-mcp-pat-conn # use `github-mcp-oauth-conn` for OAuth2 authentication
+        require_approval: "never"
+      # - type: mcp
+      #   # This MCP tool uses the Azure Language MCP server with agent identity for authentication
+      #   server_label: language-mcp
+      #   project_connection_id: language-mcp-conn
+      #   require_approval: "never"
+      # - type: mcp
+      #   server_label: outlook-mail
+      #   project_connection_id: outlook-mail-conn
+      #   require_approval: "never"
