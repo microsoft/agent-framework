@@ -649,6 +649,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     checkpoint_id=latest_checkpoint_id,
                     checkpoint_storage=restore_storage,
                 )
+        else:
+            # We reset the workflow if neither conversation_id nor previous_response_id
+            # was supplied, because this implies there's no prior state to restore and
+            # we want to ensure a clean slate. Workflow may contain in-memory state that
+            # needs to be cleared on new conversations.
+            await self._agent.workflow.reset_for_new_run()
 
         # Now run the agent with the latest input
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
