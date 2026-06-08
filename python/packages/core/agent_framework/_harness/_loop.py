@@ -27,7 +27,7 @@ from __future__ import annotations
 import inspect
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import BaseModel, Field
 from typing_extensions import Self
@@ -38,8 +38,6 @@ from .._types import (
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
-    FinishReason,
-    FinishReasonLiteral,
     Message,
     ResponseStream,
     UsageDetails,
@@ -648,7 +646,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             response_id=final.response_id,
             agent_id=final.agent_id,
             created_at=final.created_at,
-            finish_reason=cast(FinishReasonLiteral | FinishReason | None, final.finish_reason),
+            finish_reason=final.finish_reason,  # pyright: ignore[reportArgumentType]
             usage_details=usage,
             value=final.value,
             additional_properties=dict(final.additional_properties) if final.additional_properties else None,
