@@ -62,7 +62,7 @@ if TYPE_CHECKING:
         SdkPluginConfig,
         SettingSource,
     )
-    from claude_agent_sdk.types import TaskBudget, ThinkingConfig
+    from claude_agent_sdk.types import ThinkingConfig
 
 
 logger = logging.getLogger("agent_framework.claude")
@@ -231,7 +231,7 @@ class ClaudeAgentOptions(TypedDict, total=False):
     session_id: str
     """Use a specific session ID (must be a valid UUID) instead of auto-generated."""
 
-    task_budget: TaskBudget
+    task_budget: dict[str, int]
     """API-side task budget in tokens for pacing tool use."""
 
     include_hook_events: bool
