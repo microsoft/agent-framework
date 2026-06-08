@@ -46,7 +46,7 @@ public class AgentWorkflowBuilderTests
             await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
 
         Assert.NotNull(result);
-        Assert.Equal(numAgents + 1, result.Count);
+        Assert.Single(result);
         Assert.NotEmpty(updateText);
     }
 

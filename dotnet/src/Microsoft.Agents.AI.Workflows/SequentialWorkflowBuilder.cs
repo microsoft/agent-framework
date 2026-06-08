@@ -49,7 +49,9 @@ public sealed class SequentialWorkflowBuilder : OrchestrationBuilderBase<Sequent
         AIAgentHostOptions options = new()
         {
             ReassignOtherAgentsAsUsers = true,
-            ForwardIncomingMessages = true,
+            // Sequential orchestration should pass only the prior step's output to the next
+            // agent, not replay the entire incoming history at each hop.
+            ForwardIncomingMessages = false,
         };
 
         Dictionary<AIAgent, ExecutorBinding> agentMap = new(AIAgentIDEqualityComparer.Instance);

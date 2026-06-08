@@ -3,6 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.UnitTests.Futures;
@@ -43,30 +45,47 @@ public class SequentialWorkflowBuilderTests
                 await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
 
             Assert.NotNull(result);
-            Assert.Equal(numAgents + 1, result.Count);
+            Assert.Single(result);
 
-            Assert.Equal(ChatRole.User, result[0].Role);
-            Assert.Null(result[0].AuthorName);
-            Assert.Equal(UserInput, result[0].Text);
-
-            string[] texts = new string[numAgents + 1];
-            texts[0] = UserInput;
-            string expectedTotal = string.Empty;
-            for (int i = 1; i < numAgents + 1; i++)
+            string[] texts = new string[numAgents];
+            for (int i = 0; i < numAgents; i++)
             {
-                string id = $"agent{((i - 1) % numAgents) + 1}";
-                texts[i] = $"{id}{Double(string.Concat(texts.Take(i)))}";
-                Assert.Equal(ChatRole.Assistant, result[i].Role);
-                Assert.Equal(id, result[i].AuthorName);
-                Assert.Equal(texts[i], result[i].Text);
-                expectedTotal += texts[i];
+                string id = $"agent{i + 1}";
+                if (i == 0)
+                {
+                    texts[i] = $"{id}{Double(UserInput)}";
+                }
+                else
+                {
+                    texts[i] = $"{id}{Double(texts[i - 1])}";
+                }
             }
 
-            Assert.Equal(expectedTotal, updateText);
-            Assert.Equal(UserInput + expectedTotal, string.Concat(result));
+            ChatMessage finalMessage = result[0];
+            Assert.Equal(ChatRole.Assistant, finalMessage.Role);
+            Assert.Equal($"agent{numAgents}", finalMessage.AuthorName);
+            Assert.Equal(texts[^1], finalMessage.Text);
+            Assert.Equal(texts[^1], string.Concat(result.Select(m => m.Text)));
+            Assert.Equal(string.Concat(texts), updateText);
 
             static string Double(string s) => s + s;
         }
+    }
+
+    [Fact]
+    public async Task Test_SequentialWorkflowBuilder_NextAgentReceivesOnlyPreviousOutputAsync()
+    {
+        CapturingAgent first = new("agent1", "step-one");
+        CapturingAgent second = new("agent2", "step-two");
+
+        Workflow workflow = new SequentialWorkflowBuilder(first, second).Build();
+
+        _ = await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "start")]);
+
+        second.MessagesSeen.Should().NotBeNull();
+        second.MessagesSeen.Should().ContainSingle();
+        second.MessagesSeen![0].Role.Should().Be(ChatRole.User);
+        second.MessagesSeen[0].Text.Should().Be("step-one");
     }
 
     [Fact]
@@ -138,6 +157,51 @@ public class SequentialWorkflowBuilderTests
             .Build();
 
         workflow.Description.Should().Be("describes the sequential pipeline");
+    }
+
+    private sealed class CapturingAgent(string name, string responseText) : AIAgent
+    {
+        public List<ChatMessage>? MessagesSeen { get; private set; }
+
+        public override string Name => name;
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => new(new CapturingAgentSession());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(System.Text.Json.JsonElement serializedState, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new CapturingAgentSession());
+
+        protected override ValueTask<System.Text.Json.JsonElement> SerializeSessionCoreAsync(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => default;
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            this.MessagesSeen = messages.ToList();
+            return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, responseText)));
+        }
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            this.MessagesSeen = messages.ToList();
+            await Task.Yield();
+
+            string messageId = Guid.NewGuid().ToString("N");
+            yield return new AgentResponseUpdate(ChatRole.Assistant, responseText)
+            {
+                AuthorName = this.Name,
+                MessageId = messageId,
+            };
+        }
+
+        private sealed class CapturingAgentSession() : AgentSession;
     }
 
     [Collection(FuturesSerialCollection.Name)]
