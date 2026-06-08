@@ -831,6 +831,34 @@ def test_chat_response_with_mapping_response_format() -> None:
     assert response.value["response"] == "Hello"
 
 
+def test_chat_response_value_parses_final_message() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=['{"response": "intermediate"}']),
+            Message(role="assistant", contents=['{"response": "final"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"response": "intermediate"}\n{"response": "final"}'
+    assert response.value is not None
+    assert response.value.response == "final"
+
+
+def test_agent_response_value_parses_final_message() -> None:
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"response": "intermediate"}']),
+            Message(role="assistant", contents=['{"response": "final"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"response": "intermediate"}{"response": "final"}'
+    assert response.value is not None
+    assert response.value.response == "final"
+
+
 def test_parse_structured_response_value_empty_text_with_pydantic_model() -> None:
     """Empty text should return None instead of raising when response_format is a Pydantic model."""
     result = _parse_structured_response_value("", OutputModel)
