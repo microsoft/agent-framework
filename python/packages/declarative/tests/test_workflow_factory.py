@@ -289,11 +289,11 @@ actions:
         # Stamp a marker into the declarative state between turns. The
         # continuation branch must preserve it; a state-clearing run would
         # wipe ``DECLARATIVE_STATE_KEY`` and force re-initialization.
-        state_data = workflow._state.get(DECLARATIVE_STATE_KEY)
+        state_data = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert isinstance(state_data, dict), "Expected declarative state to be initialized after turn 1"
         state_data["Local"] = {"persisted_marker": "kept-from-turn-1"}
-        workflow._state.set(DECLARATIVE_STATE_KEY, state_data)
-        workflow._state.commit()
+        workflow._runner.state.set(DECLARATIVE_STATE_KEY, state_data)
+        workflow._runner.state.commit()
 
         second = await agent.run("turn-2-msg")
         assert second.text == "turn-2-msg", (
@@ -303,7 +303,7 @@ actions:
         # The continuation branch in ``_ensure_state_initialized`` must:
         # 1. preserve the cross-turn marker we stamped above
         # 2. refresh Inputs.input and System.LastMessage* to the new turn
-        post_state = workflow._state.get(DECLARATIVE_STATE_KEY)
+        post_state = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert isinstance(post_state, dict), "declarative state vanished between turns"
         local = post_state.get("Local", {})
         assert local.get("persisted_marker") == "kept-from-turn-1", (

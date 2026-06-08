@@ -335,7 +335,7 @@ def test_runner_reserve_twice_raises():
     """
     runner = _make_runner()
     runner.reserve()
-    with pytest.raises(WorkflowRunnerException, match="Runner is already running."):
+    with pytest.raises(WorkflowRunnerException, match="Runner is already reserved or running."):
         runner.reserve()
 
 
@@ -428,7 +428,7 @@ async def test_runner_rejects_concurrent_run_until_convergence():
     await started.wait()  # first run is now executing
 
     try:
-        with pytest.raises(WorkflowRunnerException, match="Runner is already running."):
+        with pytest.raises(WorkflowRunnerException, match="Runner is already reserved or running."):
             runner.reserve()
     finally:
         release.set()

@@ -114,7 +114,7 @@ class Runner:
             WorkflowRunnerException: If the runner is already reserved or running.
         """
         if self._lifecycle is not _RunnerLifecycle.IDLE:
-            raise WorkflowRunnerException("Runner is already running.")
+            raise WorkflowRunnerException("Runner is already reserved or running.")
         self._lifecycle = _RunnerLifecycle.RESERVED
 
     def release(self) -> None:

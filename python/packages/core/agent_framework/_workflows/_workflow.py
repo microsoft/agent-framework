@@ -556,8 +556,7 @@ class Workflow(DictConvertible):
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, {})
                 self._runner.state.commit()  # Commit immediately so kwargs are available
 
-                # Set streaming mode (always set explicitly per run since
-                # reset_for_new_run() no longer runs to clear it).
+                # Explicitly set streaming mode per run
                 self._runner.context.set_streaming(streaming)
 
                 # Execute initial setup if provided
