@@ -2768,12 +2768,14 @@ class _PscSpyChatClient(MockBaseChatClient):
         provider: _PscSpyHistoryProvider,
         stores_by_default: bool = False,
         script: list[tuple[str, ...]] | None = None,
+        echo_conversation_id: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.STORES_BY_DEFAULT = stores_by_default  # type: ignore[attr-defined]
         self._provider = provider
         self._script = list(script) if script is not None else [("text", "ok")]
+        self._echo_conversation_id = echo_conversation_id
         self.received_messages: list[list[Message]] = []
         self.received_options: list[dict[str, Any]] = []
         self.saves_before_call: list[int] = []
@@ -2802,7 +2804,8 @@ class _PscSpyChatClient(MockBaseChatClient):
         self.received_messages.append(list(messages))
         self.received_options.append(dict(options))
         self.saves_before_call.append(self._provider.save_calls)
-        conv_id = _PSC_SERVICE_CONVERSATION_ID if self._effective_store(options) else None
+        store_and_echo = self._effective_store(options) and self._echo_conversation_id
+        conv_id = _PSC_SERVICE_CONVERSATION_ID if store_and_echo else None
         contents = self._next_contents()
 
         if stream:
@@ -3023,3 +3026,105 @@ async def test_psc_flag_off_stores_by_default_persists_once_at_end(stream: bool)
     assert client.saves_before_call == [0, 0]
     assert provider.save_calls == 1
     assert session.service_session_id == _PSC_SERVICE_CONVERSATION_ID
+
+
+@_psc_stream_params
+async def test_psc_flag_on_storing_with_existing_conversation_id_does_not_raise(stream: bool) -> None:
+    """Allow side of the guard: flag on + storing client + an existing conversation_id resumes (no raise).
+
+    The non-storing path raises on an existing service-managed conversation id, but with a storing
+    client the run must proceed and the service conversation id must propagate to the session.
+    """
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    if stream:
+        chunks: list[str] = []
+        async for update in agent.run(
+            "What's the weather in Seattle?",
+            session=session,
+            stream=True,
+            options={"conversation_id": "existing_conversation"},
+        ):
+            chunks.append(update.text or "")
+        text = "".join(chunks)
+    else:
+        result = await agent.run(
+            "What's the weather in Seattle?",
+            session=session,
+            options={"conversation_id": "existing_conversation"},
+        )
+        text = result.text
+
+    assert text == "It is sunny in Seattle."
+    # Persistence still happens per service call, and the real service id propagates to the session.
+    assert provider.save_calls == 2
+    assert provider.get_calls == 0
+    assert session.service_session_id == _PSC_SERVICE_CONVERSATION_ID
+
+
+@_psc_stream_params
+async def test_psc_flag_on_storing_two_runs_same_session(stream: bool) -> None:
+    """Storing mode across two runs on one session: persistence keeps happening, id is stable, no load.
+
+    The second run exercises the precedence branch where the session already carries a
+    service_session_id, which must continue to skip provider loading and keep persisting.
+    """
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert provider.save_calls == 2
+    assert provider.get_calls == 0
+    first_run_service_id = session.service_session_id
+    assert first_run_service_id == _PSC_SERVICE_CONVERSATION_ID
+
+    # Reset the scripted client for a second run on the same session.
+    client._script = _psc_function_call_script()
+    client.call_count = 0
+    client.saves_before_call = []
+
+    await _psc_run(agent, "And in Portland?", session, stream=stream)
+
+    # Persistence keeps happening on the second run (two more saves), still per service call.
+    assert client.saves_before_call == [2, 3]
+    assert provider.save_calls == 4
+    # Loading stays skipped and the service conversation id stays stable across runs.
+    assert provider.get_calls == 0
+    assert session.service_session_id == first_run_service_id
+
+
+@_psc_stream_params
+async def test_psc_flag_on_storing_without_conversation_id_warns_every_call(
+    stream: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Storing mode but the client returns no conversation_id: warn on every service call.
+
+    Without an echoed conversation id the next run has nothing to resume from, so cross-turn
+    history can be lost silently. The warning fires per service call (no dedup) so the uncommon
+    failure mode cannot pass unnoticed.
+    """
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=_psc_function_call_script(),
+        echo_conversation_id=False,
+    )
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    # Persistence still happens, but no service id is captured to resume from.
+    assert provider.save_calls == 2
+    assert session.service_session_id is None
+    # Two service calls -> the warning is emitted twice (one per call, not deduped).
+    missing_id_warnings = [r for r in caplog.records if "returned no conversation_id" in r.message]
+    assert len(missing_id_warnings) == 2

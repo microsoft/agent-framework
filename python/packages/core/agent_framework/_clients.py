@@ -609,7 +609,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 client does not store history server-side, history providers are also loaded and
                 injected around each model call; if it does, provider loading is skipped and the
                 service-managed conversation is the source of truth (persistence still happens
-                after each model call).
+                after each model call). When no HistoryProvider is present, this flag has no
+                effect (no middleware is installed and nothing is persisted).
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level compaction override. When omitted,
                 client-level compaction defaults remain in effect for each call.

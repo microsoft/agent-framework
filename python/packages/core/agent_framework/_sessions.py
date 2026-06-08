@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import threading
 import uuid
 import weakref
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
     from ._middleware import MiddlewareTypes
 
+
+logger = logging.getLogger("agent_framework")
 
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
@@ -670,6 +673,18 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             raise ChatClientInvalidResponseException(
                 "require_per_service_call_history_persistence cannot be used "
                 "when the chat client returns a real conversation_id."
+            )
+
+        # In storing mode the service is expected to echo a conversation id that the next run
+        # resumes from. If it comes back empty, the provider still captures this turn but there is
+        # no service id to load from next time, so cross-turn history can be lost silently. Warn
+        # every time so this uncommon, easy-to-miss failure mode cannot fail quietly.
+        if self._service_stores_history and response.conversation_id is None:
+            logger.warning(
+                "require_per_service_call_history_persistence is enabled with a chat client that "
+                "stores history server-side, but the client returned no conversation_id; cross-turn "
+                "history may not resume. Set store=False to load and resume from the HistoryProvider "
+                "instead."
             )
 
         await self._persist_service_call_response(

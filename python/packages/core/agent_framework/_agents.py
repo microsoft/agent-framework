@@ -700,7 +700,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 drives the function loop with a local conversation; if it does, loading is skipped
                 (the service-managed conversation is the source of truth) and the middleware only
                 persists. A warning is logged for providers with ``load_messages=True`` when
-                loading is skipped because service-side storage is active.
+                loading is skipped because service-side storage is active. When no HistoryProvider
+                is present, this flag has no effect (no middleware is installed and nothing is
+                persisted).
             default_options: A TypedDict containing chat options. When using a typed agent like
                 ``Agent[OpenAIChatOptions]``, this enables IDE autocomplete for
                 provider-specific options including temperature, max_tokens, model,
