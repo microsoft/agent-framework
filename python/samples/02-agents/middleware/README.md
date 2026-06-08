@@ -7,7 +7,7 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 | File | Description |
 |------|-------------|
 | [`agent_and_run_level_middleware.py`](./agent_and_run_level_middleware.py) | Demonstrates combining agent-level and run-level middleware. |
-| [`agent_loop_middleware.py`](./agent_loop_middleware.py) | Demonstrates `AgentLoopMiddleware` re-running an agent in a loop: the Ralph loop, a todo-driven `should_continue` predicate, a ChatClient judge, and auto-resolving function-approval requests via `on_approval_request`. |
+| [`agent_loop_middleware.py`](./agent_loop_middleware.py) | Demonstrates `AgentLoopMiddleware` re-running an agent in a loop: a `should_continue` predicate (a completion-marker refinement loop with feedback tracking, plus a todo-driven loop), and a ChatClient judge. |
 | [`chat_middleware.py`](./chat_middleware.py) | Shows class-based and function-based chat middleware that can observe, modify, and override model calls. |
 | [`class_based_middleware.py`](./class_based_middleware.py) | Shows class-based agent and function middleware. |
 | [`decorator_middleware.py`](./decorator_middleware.py) | Demonstrates middleware registration with decorators. |

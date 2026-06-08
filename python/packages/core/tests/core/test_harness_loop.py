@@ -26,10 +26,10 @@ from agent_framework import (
     TodoProvider,
     background_tasks_running,
     todos_remaining,
-    tool,
 )
 from agent_framework._harness._loop import (
     DEFAULT_JUDGE_MAX_ITERATIONS,
+    DEFAULT_MAX_ITERATIONS,
     DEFAULT_NEXT_MESSAGE,
     AgentLoopMiddleware,
 )
@@ -91,57 +91,59 @@ class RecordingChatClient:
 # region construction / validation
 
 
-def test_rejects_should_continue_and_judge_together() -> None:
-    with pytest.raises(ValueError, match="not both"):
-        AgentLoopMiddleware(should_continue=lambda **kwargs: True, judge_client=RecordingChatClient())
+def always_continue(**kwargs: Any) -> bool:
+    """A ``should_continue`` predicate that always keeps looping (bounded by ``max_iterations``)."""
+    return True
 
 
 @pytest.mark.parametrize("bad", [0, -1])
 def test_rejects_non_positive_max_iterations(bad: int) -> None:
     with pytest.raises(ValueError, match="positive integer"):
-        AgentLoopMiddleware(max_iterations=bad)
-
-
-@pytest.mark.parametrize("bad", [0, -1])
-def test_rejects_non_positive_max_approval_rounds(bad: int) -> None:
-    with pytest.raises(ValueError, match="max_approval_rounds"):
-        AgentLoopMiddleware(max_approval_rounds=bad)
+        AgentLoopMiddleware(always_continue, max_iterations=bad)
 
 
 def test_judge_mode_default_max_iterations() -> None:
-    middleware = AgentLoopMiddleware(judge_client=RecordingChatClient())
+    middleware = AgentLoopMiddleware.with_judge(RecordingChatClient())
     assert middleware.max_iterations == DEFAULT_JUDGE_MAX_ITERATIONS
 
 
 def test_judge_mode_explicit_unbounded() -> None:
-    middleware = AgentLoopMiddleware(judge_client=RecordingChatClient(), max_iterations=None)
+    middleware = AgentLoopMiddleware.with_judge(RecordingChatClient(), max_iterations=None)
     assert middleware.max_iterations is None
 
 
-def test_default_is_unbounded() -> None:
-    assert AgentLoopMiddleware().max_iterations is None
+def test_judge_mode_custom_max_iterations() -> None:
+    middleware = AgentLoopMiddleware.with_judge(RecordingChatClient(), max_iterations=3)
+    assert middleware.max_iterations == 3
 
 
-def test_ralph_factory_configures_feedback_loop() -> None:
+def test_default_max_iterations_applied() -> None:
+    assert AgentLoopMiddleware(always_continue).max_iterations == DEFAULT_MAX_ITERATIONS
+
+
+def test_explicit_none_is_unbounded() -> None:
+    assert AgentLoopMiddleware(always_continue, max_iterations=None).max_iterations is None
+
+
+def test_constructor_configures_feedback_loop() -> None:
     record = lambda *, iteration, **kwargs: f"note-{iteration}"  # noqa: E731
-    mw = AgentLoopMiddleware.ralph(
+    mw = AgentLoopMiddleware(
+        always_continue,
         max_iterations=4,
         record_feedback=record,
         fresh_context=True,
-        is_complete="<promise>COMPLETE</promise>",
     )
 
     assert isinstance(mw, AgentLoopMiddleware)
     assert mw.max_iterations == 4
     assert mw.record_feedback is record
     assert mw.fresh_context is True
-    assert mw.is_complete == "<promise>COMPLETE</promise>"
-    assert mw.should_continue is None
+    assert mw.should_continue is always_continue
 
 
-def test_with_predicate_factory_sets_should_continue() -> None:
+def test_constructor_sets_should_continue() -> None:
     predicate = lambda *, iteration, **kwargs: iteration < 3  # noqa: E731
-    mw = AgentLoopMiddleware.with_predicate(predicate, max_iterations=5)
+    mw = AgentLoopMiddleware(should_continue=predicate, max_iterations=5)
 
     assert mw.should_continue is predicate
     assert mw.max_iterations == 5
@@ -153,14 +155,22 @@ def test_with_judge_factory_builds_judge_condition() -> None:
     # The judge client is wrapped into a should_continue predicate.
     assert mw.should_continue is not None
     assert mw.max_iterations == DEFAULT_JUDGE_MAX_ITERATIONS
+    # fresh_context defaults to False and is forwarded to the constructor.
+    assert mw.fresh_context is False
+
+
+def test_with_judge_forwards_fresh_context() -> None:
+    mw = AgentLoopMiddleware.with_judge(RecordingChatClient(), fresh_context=True)
+
+    assert mw.fresh_context is True
 
 
 # region non-streaming behavior
 
 
-async def test_ralph_loop_stops_at_max_iterations() -> None:
+async def test_loop_stops_at_max_iterations() -> None:
     client = RecordingChatClient()
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(max_iterations=3)])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(always_continue, max_iterations=3)])
 
     response = await agent.run("start")
 
@@ -187,9 +197,26 @@ async def test_should_continue_controls_iterations_and_receives_kwargs() -> None
     assert seen[0]["original_messages"][0].text == "start"
 
 
+async def test_async_should_continue_is_awaited() -> None:
+    client = RecordingChatClient()
+    calls: list[int] = []
+
+    async def should_continue(*, iteration: int, **kwargs: Any) -> bool:
+        calls.append(iteration)
+        return iteration < 3
+
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(should_continue=should_continue)])
+
+    await agent.run("start")
+
+    # The coroutine predicate is awaited each iteration and governs the stop at iteration 3.
+    assert client.call_count == 3
+    assert calls == [1, 2, 3]
+
+
 async def test_default_next_message_nudge_is_used() -> None:
     client = RecordingChatClient()
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(max_iterations=2)])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(always_continue, max_iterations=2)])
 
     await agent.run("original task")
 
@@ -206,7 +233,7 @@ async def test_custom_next_message_callable() -> None:
 
     agent = Agent(
         client=client,
-        middleware=[AgentLoopMiddleware(max_iterations=2, next_message=next_message)],
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=2, next_message=next_message)],
     )
 
     await agent.run("original task")
@@ -219,7 +246,7 @@ async def test_next_message_returning_none_reuses_messages() -> None:
 
     agent = Agent(
         client=client,
-        middleware=[AgentLoopMiddleware(max_iterations=2, next_message=lambda **kwargs: None)],
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=2, next_message=lambda **kwargs: None)],
     )
 
     await agent.run("only message")
@@ -227,7 +254,42 @@ async def test_next_message_returning_none_reuses_messages() -> None:
     assert any("only message" in text for text in client.received_messages[1])
 
 
-# region ralph feedback loop
+# region return aggregation
+
+
+async def test_non_streaming_returns_aggregated_transcript_by_default() -> None:
+    client = RecordingChatClient(texts=["first answer", "second answer"])
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=2, inject_progress=False)],
+    )
+
+    response = await agent.run("start")
+
+    assert isinstance(response, AgentResponse)
+    # Both iterations' assistant messages and the injected user nudge are present.
+    assert "first answer" in response.text
+    assert "second answer" in response.text
+    assert DEFAULT_NEXT_MESSAGE in response.text
+    roles = [m.role for m in response.messages]
+    assert roles == ["assistant", "user", "assistant"]
+
+
+async def test_non_streaming_return_final_only_returns_last_response() -> None:
+    client = RecordingChatClient(texts=["first answer", "second answer"])
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=2, return_final_only=True)],
+    )
+
+    response = await agent.run("start")
+
+    assert isinstance(response, AgentResponse)
+    assert response.text == "second answer"
+    assert "first answer" not in response.text
+
+
+# region feedback loop
 
 
 async def test_record_feedback_callable_captures_and_injects_progress() -> None:
@@ -240,7 +302,7 @@ async def test_record_feedback_callable_captures_and_injects_progress() -> None:
 
     agent = Agent(
         client=client,
-        middleware=[AgentLoopMiddleware(max_iterations=3, record_feedback=record_feedback)],
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=3, record_feedback=record_feedback)],
     )
 
     await agent.run("task")
@@ -254,12 +316,68 @@ async def test_record_feedback_callable_captures_and_injects_progress() -> None:
 
 async def test_feedback_fallback_records_response_text() -> None:
     client = RecordingChatClient(texts=["first answer", "second answer"])
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(max_iterations=2)])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(always_continue, max_iterations=2)])
 
     await agent.run("task")
 
     # Without a record_feedback callable, the response text becomes the progress entry.
     assert any("first answer" in text for text in client.received_messages[1])
+
+
+async def test_should_continue_feedback_flows_to_callables() -> None:
+    client = RecordingChatClient()
+    seen_feedback: list[str | None] = []
+
+    def should_continue(*, iteration: int, **kwargs: Any) -> tuple[bool, str | None]:
+        return iteration < 2, f"feedback-{iteration}"
+
+    def record_feedback(*, feedback: str | None, **kwargs: Any) -> str:
+        seen_feedback.append(feedback)
+        return f"logged-{feedback}"
+
+    def next_message(*, feedback: str | None, **kwargs: Any) -> str:
+        return f"address: {feedback}"
+
+    agent = Agent(
+        client=client,
+        middleware=[
+            AgentLoopMiddleware(
+                should_continue=should_continue,
+                record_feedback=record_feedback,
+                next_message=next_message,
+            )
+        ],
+    )
+
+    await agent.run("task")
+
+    # record_feedback sees the same iteration's should_continue feedback.
+    assert seen_feedback == ["feedback-1", "feedback-2"]
+    # next_message relays the feedback into the second iteration's input.
+    assert any("address: feedback-1" in text for text in client.received_messages[1])
+
+
+async def test_should_continue_plain_bool_yields_no_feedback() -> None:
+    client = RecordingChatClient()
+    seen: list[str | None] = []
+
+    def next_message(*, feedback: str | None, **kwargs: Any) -> str:
+        seen.append(feedback)
+        return "continue"
+
+    agent = Agent(
+        client=client,
+        middleware=[
+            AgentLoopMiddleware(
+                should_continue=lambda *, iteration, **kwargs: iteration < 2,
+                next_message=next_message,
+            )
+        ],
+    )
+
+    await agent.run("task")
+
+    assert seen == [None]
 
 
 async def test_inject_progress_false_exposes_kwarg_without_injecting() -> None:
@@ -277,8 +395,9 @@ async def test_inject_progress_false_exposes_kwarg_without_injecting() -> None:
 
     await agent.run("task")
 
-    # The progress kwarg is still populated for callables...
-    assert seen[0] == ["response to: task"]
+    # ``should_continue`` is evaluated before this iteration's entry is recorded, so it sees the
+    # log from prior iterations: empty on the first pass, the first entry on the second.
+    assert seen == [[], ["response to: task"]]
     # ...but nothing is injected into the next iteration's input.
     assert not any("Progress so far" in text for text in client.received_messages[1])
 
@@ -289,6 +408,7 @@ async def test_fresh_context_resets_to_original_task_plus_progress() -> None:
         client=client,
         middleware=[
             AgentLoopMiddleware(
+                always_continue,
                 max_iterations=2,
                 fresh_context=True,
                 record_feedback=lambda *, iteration, **kwargs: f"note-{iteration}",
@@ -303,11 +423,15 @@ async def test_fresh_context_resets_to_original_task_plus_progress() -> None:
     assert any("note-1" in text for text in client.received_messages[1])
 
 
-async def test_completion_marker_string_stops_loop_early() -> None:
+async def test_should_continue_marker_stops_loop_early() -> None:
     client = RecordingChatClient(texts=["working <promise>COMPLETE</promise>"])
+
+    def should_continue(*, last_result: AgentResponse, **kwargs: Any) -> bool:
+        return "<promise>COMPLETE</promise>" not in last_result.text
+
     agent = Agent(
         client=client,
-        middleware=[AgentLoopMiddleware(max_iterations=10, is_complete="<promise>COMPLETE</promise>")],
+        middleware=[AgentLoopMiddleware(should_continue, max_iterations=10)],
     )
 
     await agent.run("task")
@@ -315,13 +439,13 @@ async def test_completion_marker_string_stops_loop_early() -> None:
     assert client.call_count == 1
 
 
-async def test_completion_callable_stops_loop_early() -> None:
+async def test_should_continue_callable_stops_loop_early() -> None:
     client = RecordingChatClient()
 
-    def is_complete(*, iteration: int, **kwargs: Any) -> bool:
-        return iteration >= 2
+    def should_continue(*, iteration: int, **kwargs: Any) -> bool:
+        return iteration < 2
 
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(max_iterations=10, is_complete=is_complete)])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(should_continue, max_iterations=10)])
 
     await agent.run("task")
 
@@ -329,7 +453,7 @@ async def test_completion_callable_stops_loop_early() -> None:
 
 
 async def test_resolve_next_message_injects_full_log_without_session() -> None:
-    mw = AgentLoopMiddleware(max_iterations=5)
+    mw = AgentLoopMiddleware(always_continue, max_iterations=5)
     loop_kwargs: dict[str, Any] = {
         "progress": ["e1", "e2"],
         "session": None,
@@ -352,7 +476,7 @@ async def test_resolve_next_message_injects_full_log_without_session() -> None:
 
 
 async def test_resolve_next_message_injects_latest_entry_with_session() -> None:
-    mw = AgentLoopMiddleware(max_iterations=5)
+    mw = AgentLoopMiddleware(always_continue, max_iterations=5)
     loop_kwargs: dict[str, Any] = {
         "progress": ["e1", "e2"],
         "session": object(),
@@ -381,7 +505,7 @@ async def test_judge_stops_when_answered_on_first_pass() -> None:
     agent_client = RecordingChatClient()
     judge_client = RecordingChatClient(texts=["ANSWERED"])
 
-    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware(judge_client=judge_client)])
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
 
     await agent.run("solve it")
 
@@ -393,7 +517,7 @@ async def test_judge_continues_until_answered() -> None:
     agent_client = RecordingChatClient()
     judge_client = RecordingChatClient(texts=["NOT_ANSWERED", "ANSWERED"])
 
-    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware(judge_client=judge_client)])
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
 
     await agent.run("solve it")
 
@@ -405,7 +529,7 @@ async def test_judge_respects_default_max_iterations() -> None:
     agent_client = RecordingChatClient()
     judge_client = RecordingChatClient(texts=["NOT_ANSWERED"] * 20)
 
-    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware(judge_client=judge_client)])
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
 
     await agent.run("never done")
 
@@ -416,7 +540,7 @@ async def test_judge_requests_structured_output() -> None:
     agent_client = RecordingChatClient()
     judge_client = RecordingChatClient(texts=['{"answered": true}'], honor_response_format=True)
 
-    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware(judge_client=judge_client)])
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
 
     await agent.run("solve it")
 
@@ -427,7 +551,7 @@ async def test_judge_uses_structured_value_to_stop() -> None:
     agent_client = RecordingChatClient()
     judge_client = RecordingChatClient(texts=['{"answered": true, "reasoning": "done"}'], honor_response_format=True)
 
-    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware(judge_client=judge_client)])
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
 
     await agent.run("solve it")
 
@@ -442,12 +566,113 @@ async def test_judge_uses_structured_value_to_continue() -> None:
         honor_response_format=True,
     )
 
-    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware(judge_client=judge_client)])
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
 
     await agent.run("solve it")
 
     assert agent_client.call_count == 2
     assert judge_client.call_count == 2
+
+
+async def test_judge_feedback_is_returned_to_agent() -> None:
+    agent_client = RecordingChatClient()
+    judge_client = RecordingChatClient(
+        texts=[
+            '{"answered": false, "reasoning": "Mention the moon too."}',
+            '{"answered": true, "reasoning": "Looks complete."}',
+        ],
+        honor_response_format=True,
+    )
+
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
+
+    await agent.run("explain the night sky")
+
+    # The judge's reasoning from the first verdict is injected into the second iteration's input.
+    assert agent_client.call_count == 2
+    assert any("Mention the moon too." in text for text in agent_client.received_messages[1])
+
+
+async def test_judge_criteria_injects_agent_instruction_and_judge_criteria() -> None:
+    agent_client = RecordingChatClient()
+    judge_client = RecordingChatClient(texts=['{"answered": true}'], honor_response_format=True)
+
+    agent = Agent(
+        client=agent_client,
+        middleware=[
+            AgentLoopMiddleware.with_judge(
+                judge_client,
+                criteria=["Mentions the moon", "Cites a source"],
+            )
+        ],
+    )
+
+    await agent.run("explain the night sky")
+
+    # The criteria are injected as an extra instruction for the agent on its first run.
+    assert any("Mentions the moon" in text for text in agent_client.received_messages[0])
+    assert any("Cites a source" in text for text in agent_client.received_messages[0])
+    # ...and rendered into the judge instructions (the judge's first message is its system prompt).
+    assert "Mentions the moon" in judge_client.received_messages[0][0]
+    assert "Cites a source" in judge_client.received_messages[0][0]
+
+
+async def test_judge_custom_instructions_template_substitutes_criteria() -> None:
+    agent_client = RecordingChatClient()
+    judge_client = RecordingChatClient(texts=['{"answered": true}'], honor_response_format=True)
+
+    agent = Agent(
+        client=agent_client,
+        middleware=[
+            AgentLoopMiddleware.with_judge(
+                judge_client,
+                instructions="Judge strictly. Criteria:{{criteria}}",
+                criteria=["Is concise"],
+            )
+        ],
+    )
+
+    await agent.run("write a haiku")
+
+    system_prompt = judge_client.received_messages[0][0]
+    assert "Judge strictly." in system_prompt
+    assert "Is concise" in system_prompt
+    assert "{{criteria}}" not in system_prompt
+
+
+async def test_judge_without_criteria_strips_placeholder() -> None:
+    agent_client = RecordingChatClient()
+    judge_client = RecordingChatClient(texts=['{"answered": true}'], honor_response_format=True)
+
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
+
+    await agent.run("solve it")
+
+    # The default instructions contain the placeholder, which is removed when no criteria are given.
+    assert "{{criteria}}" not in judge_client.received_messages[0][0]
+    # No extra system instruction is injected for the agent.
+    assert not any("must satisfy all of the following criteria" in text for text in agent_client.received_messages[0])
+
+
+async def test_additional_instructions_injected_as_system_message() -> None:
+    client = RecordingChatClient()
+    agent = Agent(
+        client=client,
+        middleware=[
+            AgentLoopMiddleware(
+                always_continue,
+                max_iterations=2,
+                fresh_context=True,
+                additional_instructions="Be terse.",
+            )
+        ],
+    )
+
+    await agent.run("hello")
+
+    # The extra instruction is injected ahead of the input and preserved across fresh_context resets.
+    assert any("Be terse." in text for text in client.received_messages[0])
+    assert any("Be terse." in text for text in client.received_messages[1])
 
 
 # region provider helpers
@@ -558,9 +783,22 @@ async def test_streaming_reyields_updates_and_final_is_last_iteration() -> None:
     assert client.call_count == 2
 
 
+async def test_streaming_injects_nudge_messages_as_user_updates() -> None:
+    client = RecordingChatClient(texts=["first", "second"])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(always_continue, max_iterations=2)])
+
+    stream = agent.run("go", stream=True)
+    updates = [update async for update in stream]
+    await stream.get_final_response()
+
+    # The nudge that drives the second iteration is surfaced as a user update in the stream.
+    user_texts = [u.text for u in updates if u.role == "user"]
+    assert any(DEFAULT_NEXT_MESSAGE in text for text in user_texts)
+
+
 async def test_streaming_stops_at_max_iterations() -> None:
     client = RecordingChatClient()
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(max_iterations=2)])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(always_continue, max_iterations=2)])
 
     stream = agent.run("go", stream=True)
     _ = [update async for update in stream]
@@ -569,11 +807,15 @@ async def test_streaming_stops_at_max_iterations() -> None:
     assert client.call_count == 2
 
 
-async def test_streaming_completion_marker_stops_and_injects_progress() -> None:
+async def test_streaming_should_continue_marker_stops_and_injects_progress() -> None:
     client = RecordingChatClient(texts=["progress made", "all <promise>COMPLETE</promise>"])
+
+    def should_continue(*, last_result: AgentResponse, **kwargs: Any) -> bool:
+        return "<promise>COMPLETE</promise>" not in last_result.text
+
     agent = Agent(
         client=client,
-        middleware=[AgentLoopMiddleware(max_iterations=10, is_complete="<promise>COMPLETE</promise>")],
+        middleware=[AgentLoopMiddleware(should_continue, max_iterations=10)],
     )
 
     stream = agent.run("go", stream=True)
@@ -602,7 +844,7 @@ async def test_streaming_middleware_termination_stops_cleanly() -> None:
     terminator = TerminateOnSecond()
     agent = Agent(
         client=client,
-        middleware=[AgentLoopMiddleware(max_iterations=5), terminator],
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=5), terminator],
     )
 
     stream = agent.run("go", stream=True)
@@ -614,321 +856,3 @@ async def test_streaming_middleware_termination_stops_cleanly() -> None:
     assert terminator.calls == 2
     assert "only" in final.text
     assert any("only" in (u.text or "") for u in updates)
-
-
-# region approval handling
-
-
-def _approval_tool() -> tuple[Any, dict[str, int]]:
-    """Build a tool requiring approval plus a counter dict tracking executions."""
-    state = {"executions": 0}
-
-    @tool(name="risky_op", approval_mode="always_require")
-    def risky_op(target: str) -> str:
-        state["executions"] += 1
-        return f"did {target}"
-
-    return risky_op, state
-
-
-def _func_call_response(call_id: str = "1", target: str = "prod") -> ChatResponse:
-    return ChatResponse(
-        messages=Message(
-            role="assistant",
-            contents=[Content.from_function_call(call_id=call_id, name="risky_op", arguments={"target": target})],
-        )
-    )
-
-
-async def test_approval_bool_approve_executes_tool_and_exempt_from_max_iterations(
-    chat_client_base: Any,
-) -> None:
-    risky_op, state = _approval_tool()
-    chat_client_base.run_responses = [
-        _func_call_response(),
-        ChatResponse(messages=Message(role="assistant", contents=["all done"])),
-    ]
-
-    calls: list[str] = []
-
-    def on_approval_request(*, request: Content, **kwargs: Any) -> bool:
-        calls.append(request.type)
-        return True
-
-    # max_iterations=1 proves the approval-resolution run is exempt: two model calls still happen.
-    agent = Agent(
-        client=chat_client_base,
-        tools=[risky_op],
-        middleware=[AgentLoopMiddleware(max_iterations=1, on_approval_request=on_approval_request)],
-    )
-
-    response = await agent.run("please do prod")
-
-    assert calls == ["function_approval_request"]
-    assert state["executions"] == 1
-    assert chat_client_base.call_count == 2
-    assert "all done" in response.text
-    assert response.user_input_requests == []
-
-
-async def test_approval_bool_reject_does_not_execute_tool(chat_client_base: Any) -> None:
-    risky_op, state = _approval_tool()
-    chat_client_base.run_responses = [
-        _func_call_response(),
-        ChatResponse(messages=Message(role="assistant", contents=["understood, skipped"])),
-    ]
-
-    agent = Agent(
-        client=chat_client_base,
-        tools=[risky_op],
-        middleware=[AgentLoopMiddleware(max_iterations=1, on_approval_request=lambda **kwargs: False)],
-    )
-
-    response = await agent.run("please do prod")
-
-    assert state["executions"] == 0
-    assert "skipped" in response.text
-
-
-async def test_approval_returns_content_directly(chat_client_base: Any) -> None:
-    risky_op, state = _approval_tool()
-    chat_client_base.run_responses = [
-        _func_call_response(),
-        ChatResponse(messages=Message(role="assistant", contents=["completed"])),
-    ]
-
-    def on_approval_request(*, request: Content, **kwargs: Any) -> Content:
-        return request.to_function_approval_response(approved=True)
-
-    agent = Agent(
-        client=chat_client_base,
-        tools=[risky_op],
-        middleware=[AgentLoopMiddleware(max_iterations=1, on_approval_request=on_approval_request)],
-    )
-
-    await agent.run("please do prod")
-
-    assert state["executions"] == 1
-
-
-async def test_approval_none_falls_through_and_leaves_request_pending(chat_client_base: Any) -> None:
-    risky_op, state = _approval_tool()
-    chat_client_base.run_responses = [_func_call_response()]
-
-    calls: list[str] = []
-
-    def on_approval_request(*, request: Content, **kwargs: Any) -> None:
-        calls.append(request.type)
-        return
-
-    agent = Agent(
-        client=chat_client_base,
-        tools=[risky_op],
-        middleware=[AgentLoopMiddleware(max_iterations=1, on_approval_request=on_approval_request)],
-    )
-
-    response = await agent.run("please do prod")
-
-    # No decision -> nothing submitted, normal continuation stops the loop, request stays pending.
-    assert calls == ["function_approval_request"]
-    assert state["executions"] == 0
-    assert len(response.user_input_requests) == 1
-    assert chat_client_base.call_count == 1
-
-
-async def test_approval_compose_with_should_continue(chat_client_base: Any) -> None:
-    risky_op, state = _approval_tool()
-    chat_client_base.run_responses = [
-        _func_call_response(),
-        ChatResponse(messages=Message(role="assistant", contents=["finished"])),
-    ]
-
-    work_iterations: list[int] = []
-
-    def should_continue(*, iteration: int, **kwargs: Any) -> bool:
-        work_iterations.append(iteration)
-        return False
-
-    agent = Agent(
-        client=chat_client_base,
-        tools=[risky_op],
-        middleware=[AgentLoopMiddleware(should_continue=should_continue, on_approval_request=lambda **kwargs: True)],
-    )
-
-    response = await agent.run("please do prod")
-
-    # Approval handled first (exempt), then should_continue governs the work run and stops.
-    assert state["executions"] == 1
-    assert "finished" in response.text
-    assert len(work_iterations) == 1
-
-
-async def test_approval_max_approval_rounds_stops_loop(chat_client_base: Any) -> None:
-    risky_op, _ = _approval_tool()
-    # Every model call asks for another approval, so the loop only stops via max_approval_rounds.
-    chat_client_base.run_responses = [_func_call_response(call_id=str(i)) for i in range(10)]
-
-    calls: list[str] = []
-
-    def on_approval_request(*, request: Content, **kwargs: Any) -> bool:
-        calls.append(request.type)
-        return True
-
-    agent = Agent(
-        client=chat_client_base,
-        tools=[risky_op],
-        middleware=[AgentLoopMiddleware(max_approval_rounds=2, on_approval_request=on_approval_request)],
-    )
-
-    response = await agent.run("please do prod")
-
-    # Rounds 1 and 2 submit responses; round 3 trips the cap (callback invoked, then stop).
-    assert len(calls) == 3
-    assert len(response.user_input_requests) == 1
-
-
-async def test_approval_with_session(chat_client_base: Any) -> None:
-    risky_op, state = _approval_tool()
-    chat_client_base.run_responses = [
-        _func_call_response(),
-        ChatResponse(messages=Message(role="assistant", contents=["done with session"])),
-    ]
-
-    agent = Agent(
-        client=chat_client_base,
-        tools=[risky_op],
-        middleware=[AgentLoopMiddleware(max_iterations=1, on_approval_request=lambda **kwargs: True)],
-    )
-    session = agent.create_session()
-
-    response = await agent.run("please do prod", session=session)
-
-    assert state["executions"] == 1
-    assert "done with session" in response.text
-
-
-async def test_approval_parallel_requests_all_handled(chat_client_base: Any) -> None:
-    state = {"executions": 0}
-
-    @tool(name="op_a", approval_mode="always_require")
-    def op_a(target: str) -> str:
-        state["executions"] += 1
-        return f"a:{target}"
-
-    @tool(name="op_b", approval_mode="always_require")
-    def op_b(target: str) -> str:
-        state["executions"] += 1
-        return f"b:{target}"
-
-    chat_client_base.run_responses = [
-        ChatResponse(
-            messages=Message(
-                role="assistant",
-                contents=[
-                    Content.from_function_call(call_id="1", name="op_a", arguments={"target": "x"}),
-                    Content.from_function_call(call_id="2", name="op_b", arguments={"target": "y"}),
-                ],
-            )
-        ),
-        ChatResponse(messages=Message(role="assistant", contents=["both done"])),
-    ]
-
-    seen: list[str | None] = []
-
-    def on_approval_request(*, request: Content, **kwargs: Any) -> bool:
-        seen.append(request.function_call.name if request.function_call else None)
-        return True
-
-    agent = Agent(
-        client=chat_client_base,
-        tools=[op_a, op_b],
-        middleware=[AgentLoopMiddleware(max_iterations=1, on_approval_request=on_approval_request)],
-    )
-
-    response = await agent.run("do both")
-
-    assert sorted(filter(None, seen)) == ["op_a", "op_b"]
-    assert state["executions"] == 2
-    assert "both done" in response.text
-
-
-async def test_approval_streaming_collects_requests_and_resolves(chat_client_base: Any) -> None:
-    risky_op, state = _approval_tool()
-    chat_client_base.streaming_responses = [
-        [
-            ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="1", name="risky_op", arguments='{"target":')],
-                role="assistant",
-            ),
-            ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="1", name="risky_op", arguments='"prod"}')],
-                role="assistant",
-            ),
-        ],
-        [ChatResponseUpdate(contents=[Content.from_text("streamed done")], role="assistant", finish_reason="stop")],
-    ]
-
-    calls: list[str] = []
-
-    def on_approval_request(*, request: Content, **kwargs: Any) -> bool:
-        calls.append(request.type)
-        return True
-
-    agent = Agent(
-        client=chat_client_base,
-        tools=[risky_op],
-        middleware=[AgentLoopMiddleware(max_iterations=1, on_approval_request=on_approval_request)],
-    )
-
-    stream = agent.run("please do prod", stream=True)
-    _ = [update async for update in stream]
-    final = await stream.get_final_response()
-
-    assert calls == ["function_approval_request"]
-    assert state["executions"] == 1
-    assert "streamed done" in final.text
-
-
-# region approval helpers (unit)
-
-
-def test_coerce_decision_bool_for_non_function_request_raises() -> None:
-    middleware = AgentLoopMiddleware(on_approval_request=lambda **kwargs: True)
-    oauth_request = Content.from_oauth_consent_request(consent_link="https://example.com/consent")
-    with pytest.raises(ValueError, match="only valid for 'function_approval_request'"):
-        middleware._coerce_decision(oauth_request, True)
-
-
-def test_coerce_decision_content_id_mismatch_raises() -> None:
-    middleware = AgentLoopMiddleware(on_approval_request=lambda **kwargs: True)
-    request = Content.from_function_approval_request(
-        id="req-1",
-        function_call=Content.from_function_call(call_id="1", name="risky_op", arguments={}),
-    )
-    wrong = Content.from_function_approval_response(
-        approved=True,
-        id="req-2",
-        function_call=Content.from_function_call(call_id="2", name="risky_op", arguments={}),
-    )
-    with pytest.raises(ValueError, match="does not match the request id"):
-        middleware._coerce_decision(request, wrong)
-
-
-def test_coerce_decision_invalid_type_raises() -> None:
-    middleware = AgentLoopMiddleware(on_approval_request=lambda **kwargs: True)
-    request = Content.from_function_approval_request(
-        id="req-1",
-        function_call=Content.from_function_call(call_id="1", name="risky_op", arguments={}),
-    )
-    with pytest.raises(TypeError, match="must return a bool, a Content, or None"):
-        middleware._coerce_decision(request, "yes")  # type: ignore[arg-type]
-
-
-def test_dedupe_requests_drops_duplicate_ids() -> None:
-    middleware = AgentLoopMiddleware(on_approval_request=lambda **kwargs: True)
-    fc = Content.from_function_call(call_id="1", name="risky_op", arguments={})
-    a = Content.from_function_approval_request(id="dup", function_call=fc)
-    b = Content.from_function_approval_request(id="dup", function_call=fc)
-    c = Content.from_function_approval_request(id="other", function_call=fc)
-    deduped = middleware._dedupe_requests([a, b, c])
-    assert [r.id for r in deduped] == ["dup", "other"]
