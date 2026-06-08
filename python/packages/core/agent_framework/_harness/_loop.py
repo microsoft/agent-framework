@@ -27,10 +27,10 @@ from __future__ import annotations
 import inspect
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from pydantic import BaseModel, Field
-from typing_extensions import Self, TypeAlias
+from typing_extensions import Self
 
 from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware, MiddlewareTermination
@@ -38,6 +38,8 @@ from .._types import (
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
+    FinishReason,
+    FinishReasonLiteral,
     Message,
     ResponseStream,
     UsageDetails,
@@ -470,7 +472,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             context.messages = next_messages
             aggregated.extend(next_messages)
 
-        if not self.return_final_only and final_result is not None:
+        if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
 
     def _process_streaming(
@@ -646,7 +648,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             response_id=final.response_id,
             agent_id=final.agent_id,
             created_at=final.created_at,
-            finish_reason=final.finish_reason,
+            finish_reason=cast(FinishReasonLiteral | FinishReason | None, final.finish_reason),
             usage_details=usage,
             value=final.value,
             additional_properties=dict(final.additional_properties) if final.additional_properties else None,
