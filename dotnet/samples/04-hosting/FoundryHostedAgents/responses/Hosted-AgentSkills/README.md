@@ -98,6 +98,8 @@ Because skills are loaded on demand, the canary token in a response also proves 
 
 ## Deploying the Agent to Foundry
 
+### Deploying to Foundry (azd spec)
+
 When deploying to Foundry, make sure `SKILL_NAMES` is set in your `azd` environment so it gets injected into the hosted container per [`agent.manifest.yaml`](agent.manifest.yaml):
 
 ```bash
