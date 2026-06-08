@@ -30,9 +30,9 @@ internal sealed class DefaultContentUnderstandingClientFactory : IContentUnderst
             throw new InvalidOperationException($"{nameof(ContentUnderstandingContextProviderOptions)}.{nameof(this._options.Endpoint)} must be set before creating the client.");
         }
 
-        if (!Uri.TryCreate(this._options.Endpoint, UriKind.Absolute, out _))
+        if (!this._options.Endpoint.IsAbsoluteUri)
         {
-            throw new InvalidOperationException($"{nameof(ContentUnderstandingContextProviderOptions)}.{nameof(this._options.Endpoint)} must be a valid absolute URI, but was: '{this._options.Endpoint}'.");
+            throw new InvalidOperationException($"{nameof(ContentUnderstandingContextProviderOptions)}.{nameof(this._options.Endpoint)} must be an absolute URI, but was: '{this._options.Endpoint}'.");
         }
 
         if (this._options.Credential is null)

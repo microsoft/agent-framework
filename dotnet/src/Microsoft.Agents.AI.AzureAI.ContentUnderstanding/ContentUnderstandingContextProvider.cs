@@ -169,7 +169,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         {
             if (kvp.Value.Status == DocumentStatus.Ready
                 && kvp.Value.Result is not null
-                && !providerState.InjectedKeys.Contains(kvp.Key))
+                && !providerState.InjectedKeys.ContainsKey(kvp.Key))
             {
                 readyForPromotion.Add(kvp.Value);
             }
@@ -395,7 +395,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                 {
                     noteContents.Add(new TextContent(doc.Result ?? string.Empty));
                 }
-                providerState.InjectedKeys.Add(doc.DocumentKey);
+                providerState.InjectedKeys.TryAdd(doc.DocumentKey, 0);
             }
 
             ChatMessage noteMessage = new(ChatRole.System, noteContents);
@@ -610,16 +610,20 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
 
         if (budget <= TimeSpan.Zero)
         {
-            DocumentEntry timeoutEntry = entry with
+            // Foreground budget was fully consumed by analysis, so we never even attempted
+            // the vector-store upload. The analysis itself succeeded and the rendered content
+            // is intact — keep the entry Ready (and keep Result/MarkdownResult/SearchPayload)
+            // so list_documents / get_analyzed_document still serve it, and so the next turn's
+            // promotion scan retries the upload (VectorStoreFileId is still null). Record a
+            // non-destructive upload marker and emit a "will retry next turn" note instead of
+            // discarding a valid analysis.
+            DocumentEntry deferredEntry = entry with
             {
-                Status = DocumentStatus.Failed,
-                Error = "Vector-store upload skipped: foreground budget already exhausted by analysis.",
-                Result = null,
-                MarkdownResult = null,
+                Error = "Vector-store upload deferred: foreground budget already exhausted by analysis. Will retry on the next turn.",
             };
-            return FileSearchOutcome.Fail(
-                timeoutEntry,
-                $"Document `{entry.MarkdownSafeName}`: failed to upload (foreground time budget exhausted).");
+            return FileSearchOutcome.Skip(
+                deferredEntry,
+                $"Document `{entry.MarkdownSafeName}`: analyzed successfully; vector-store upload deferred (ran out of foreground time) and will be retried on a later turn.");
         }
 
         Stopwatch sw = Stopwatch.StartNew();
@@ -767,6 +771,33 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             // token so the next turn can resume this same LRO instead of resubmitting.
             stopwatch.Stop();
             string? tokenJson = TrySerializeRehydrationToken(op);
+            return new AnalysisOutcome(
+                Completed: false,
+                Result: null,
+                OperationId: op.Id,
+                Error: null,
+                Duration: stopwatch.Elapsed)
+            {
+                RehydrationTokenJson = tokenJson,
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Transient polling failure (RequestFailedException on a 5xx / network blip /
+            // parse error). The server-side LRO was already submitted and may still be
+            // running or even completed, so do NOT mark the entry Failed here — that would
+            // orphan a rehydratable operation just like cancelling the upload would (see the
+            // comment above the submit). If we can capture a usable rehydration token, keep
+            // the entry Analyzing and let the next turn's resume path recover. Only when the
+            // token cannot be serialized (deterministic, unrecoverable) do we let the
+            // exception bubble to the Failed path in InvokingCoreAsync.
+            string? tokenJson = TrySerializeRehydrationToken(op);
+            if (tokenJson is null)
+            {
+                throw;
+            }
+
+            stopwatch.Stop();
             return new AnalysisOutcome(
                 Completed: false,
                 Result: null,
@@ -958,6 +989,16 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
 
         try
         {
+            // GetRehydrationToken() can return a non-null token even when the underlying LRO
+            // has no usable operation Id yet. Persisting such a token is harmful: it would
+            // rehydrate into an operation that can never be polled to completion, leaving the
+            // document stuck Analyzing forever. Only persist the token when the live operation
+            // already exposes a non-empty Id.
+            if (string.IsNullOrEmpty(op.Id))
+            {
+                return null;
+            }
+
             BinaryData data = ModelReaderWriter.Write(token.Value, ModelReaderWriterOptions.Json);
             return data.ToString();
         }

@@ -60,7 +60,12 @@ public sealed class FileSearchConfig
         AITool fileSearchTool)
     {
         _ = projectClient ?? throw new ArgumentNullException(nameof(projectClient));
-        ArgumentException.ThrowIfNullOrWhiteSpace(vectorStoreId);
+        _ = vectorStoreId ?? throw new ArgumentNullException(nameof(vectorStoreId));
+        if (string.IsNullOrWhiteSpace(vectorStoreId))
+        {
+            throw new ArgumentException("Value cannot be null or whitespace.", nameof(vectorStoreId));
+        }
+
         _ = fileSearchTool ?? throw new ArgumentNullException(nameof(fileSearchTool));
 
         return new FileSearchConfig
@@ -85,7 +90,12 @@ public sealed class FileSearchConfig
         AITool fileSearchTool)
     {
         _ = openAiClient ?? throw new ArgumentNullException(nameof(openAiClient));
-        ArgumentException.ThrowIfNullOrWhiteSpace(vectorStoreId);
+        _ = vectorStoreId ?? throw new ArgumentNullException(nameof(vectorStoreId));
+        if (string.IsNullOrWhiteSpace(vectorStoreId))
+        {
+            throw new ArgumentException("Value cannot be null or whitespace.", nameof(vectorStoreId));
+        }
+
         _ = fileSearchTool ?? throw new ArgumentNullException(nameof(fileSearchTool));
 
         return new FileSearchConfig

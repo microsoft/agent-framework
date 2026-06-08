@@ -11,8 +11,8 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// <remarks>
 /// Holds the document registry plus the set of document keys already injected into the
 /// LLM context (so cross-turn promotion does not re-inject). Serialized with
-/// <c>System.Text.Json</c>; <see cref="ConcurrentDictionary{TKey,TValue}"/> and
-/// <see cref="HashSet{T}"/> are both round-trippable.
+/// <c>System.Text.Json</c>; both <see cref="ConcurrentDictionary{TKey,TValue}"/> instances
+/// are round-trippable. Both collections are thread-safe to support concurrent access.
 /// </remarks>
 internal sealed class ContentUnderstandingProviderState
 {
@@ -24,5 +24,5 @@ internal sealed class ContentUnderstandingProviderState
     /// Used by Phase 6 cross-turn promotion to avoid duplicate injection. Persisted to state
     /// so it survives serialization across turns.
     /// </remarks>
-    public HashSet<string> InjectedKeys { get; init; } = new(StringComparer.Ordinal);
+    public ConcurrentDictionary<string, byte> InjectedKeys { get; init; } = new(StringComparer.Ordinal);
 }

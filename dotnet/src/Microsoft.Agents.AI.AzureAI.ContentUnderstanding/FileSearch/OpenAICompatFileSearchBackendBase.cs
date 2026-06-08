@@ -86,38 +86,59 @@ public abstract class OpenAICompatFileSearchBackendBase : FileSearchBackend
 
         string fileId = uploadedFile.Id;
 
-        VectorStoreClient vectorClient = this._openAiClient.GetVectorStoreClient();
-        VectorStoreFile association = await vectorClient
-            .AddFileToVectorStoreAsync(vectorStoreId, fileId, cancellationToken)
-            .ConfigureAwait(false);
-
-        VectorStoreFileStatus status = association.Status;
-        int delayIndex = 0;
-        Stopwatch pollStopwatch = Stopwatch.StartNew();
-        while (status is VectorStoreFileStatus.InProgress or VectorStoreFileStatus.Unknown)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (pollStopwatch.Elapsed >= s_pollTimeout)
+            VectorStoreClient vectorClient = this._openAiClient.GetVectorStoreClient();
+            VectorStoreFile association = await vectorClient
+                .AddFileToVectorStoreAsync(vectorStoreId, fileId, cancellationToken)
+                .ConfigureAwait(false);
+
+            VectorStoreFileStatus status = association.Status;
+            int delayIndex = 0;
+            Stopwatch pollStopwatch = Stopwatch.StartNew();
+            while (status is VectorStoreFileStatus.InProgress or VectorStoreFileStatus.Unknown)
             {
-                throw new TimeoutException(
-                    $"Vector store file '{fileId}' did not finish ingestion within {s_pollTimeout.TotalSeconds:F0}s (last status '{status}').");
+                cancellationToken.ThrowIfCancellationRequested();
+                if (pollStopwatch.Elapsed >= s_pollTimeout)
+                {
+                    throw new TimeoutException(
+                        $"Vector store file '{fileId}' did not finish ingestion within {s_pollTimeout.TotalSeconds:F0}s (last status '{status}').");
+                }
+
+                TimeSpan delay = s_pollDelays[Math.Min(delayIndex, s_pollDelays.Length - 1)];
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                delayIndex++;
+                VectorStoreFile refreshed = await vectorClient
+                    .GetVectorStoreFileAsync(vectorStoreId, fileId, cancellationToken)
+                    .ConfigureAwait(false);
+                association = refreshed;
+                status = refreshed.Status;
             }
 
-            TimeSpan delay = s_pollDelays[Math.Min(delayIndex, s_pollDelays.Length - 1)];
-            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-            delayIndex++;
-            VectorStoreFile refreshed = await vectorClient
-                .GetVectorStoreFileAsync(vectorStoreId, fileId, cancellationToken)
-                .ConfigureAwait(false);
-            association = refreshed;
-            status = refreshed.Status;
+            if (status != VectorStoreFileStatus.Completed)
+            {
+                string? lastError = association.LastError?.Message;
+                throw new InvalidOperationException(
+                    $"Vector store file '{fileId}' ended in status '{status}': {lastError ?? "<no error message>"}");
+            }
         }
-
-        if (status != VectorStoreFileStatus.Completed)
+        catch
         {
-            string? lastError = association.LastError?.Message;
-            throw new InvalidOperationException(
-                $"Vector store file '{fileId}' ended in status '{status}': {lastError ?? "<no error message>"}");
+            // Best-effort cleanup: the file was already created server-side, so on any failure
+            // (association, polling, timeout, cancellation, or a non-Completed terminal status)
+            // we try to delete it to avoid leaking orphaned files. Use CancellationToken.None so
+            // cleanup still runs even when the original token is already canceled, and swallow any
+            // secondary failure so it does not mask the original exception.
+            try
+            {
+                _ = await fileClient.DeleteFileAsync(fileId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Ignore cleanup failures; the original exception below is more important.
+            }
+
+            throw;
         }
 #pragma warning restore OPENAI001
 

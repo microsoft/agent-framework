@@ -54,13 +54,17 @@ internal static class ToolFactory
         IReadOnlyList<DocumentSummary> ListDocuments()
         {
             ContentUnderstandingProviderState? state = stateAccessor();
-            if (state?.Documents.IsEmpty ?? true)
+            if (state?.Documents is not { IsEmpty: false } documents)
             {
                 return Array.Empty<DocumentSummary>();
             }
 
-            List<DocumentSummary> summaries = new(state.Documents.Count);
-            foreach (KeyValuePair<string, DocumentEntry> kvp in state.Documents)
+            // Snapshot the registry before enumeration: the background runner may promote/add
+            // entries concurrently, so iterating a live view could observe a torn state (or, if
+            // the backing store were ever a plain Dictionary, throw "Collection was modified").
+            KeyValuePair<string, DocumentEntry>[] snapshot = documents.ToArray();
+            List<DocumentSummary> summaries = new(snapshot.Length);
+            foreach (KeyValuePair<string, DocumentEntry> kvp in snapshot)
             {
                 DocumentEntry entry = kvp.Value;
                 summaries.Add(new DocumentSummary(
@@ -86,6 +90,11 @@ internal static class ToolFactory
 
         string GetAnalyzedDocument(string documentName, AnalysisSection section = AnalysisSection.Default)
         {
+            if (string.IsNullOrEmpty(documentName))
+            {
+                return "Document name is required";
+            }
+
             ContentUnderstandingProviderState? state = stateAccessor();
             if (state is null || !state.Documents.TryGetValue(documentName, out DocumentEntry? entry) || entry is null)
             {
@@ -97,9 +106,11 @@ internal static class ToolFactory
                 return $"Document '{documentName}' is still {entry.Status}";
             }
 
-            // Markdown-only section requested → return the pre-rendered markdown-only payload
-            // (no fields block). Falls back to the full payload if the markdown-only variant
-            // wasn't stored (e.g. provider configured with OutputSections excluding Markdown).
+            // Only Markdown and Default are supported; any other (e.g. out-of-range) value is
+            // treated as Default. Markdown-only section requested → return the pre-rendered
+            // markdown-only payload (no fields block). Falls back to the full payload if the
+            // markdown-only variant wasn't stored (e.g. provider configured with OutputSections
+            // excluding Markdown).
             if (section == AnalysisSection.Markdown && entry.MarkdownResult is not null)
             {
                 return entry.MarkdownResult;

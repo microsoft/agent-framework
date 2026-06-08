@@ -368,19 +368,25 @@ internal static class AttachmentDetector
         // buffer (totalLength == data.Length); assert it to catch a future short-buffer misuse early.
         Debug.Assert(totalLength == data.Length, $"Synthesize totalLength ({totalLength}) must match data.Length ({data.Length}).");
 
-        byte[] buffer = new byte[data.Length + sizeof(long)];
-        data.CopyTo(buffer);
-#if NET8_0_OR_GREATER
-        BitConverter.TryWriteBytes(buffer.AsSpan(data.Length), totalLength);
-#else
-        byte[] lengthBytes = BitConverter.GetBytes(totalLength);
-        Array.Copy(lengthBytes, 0, buffer, data.Length, lengthBytes.Length);
-#endif
-
 #pragma warning disable CA1850 // Static SHA256.HashData is .NET 5+ only; this project multi-targets netstandard2.0 / net472 where only ComputeHash exists.
         using SHA256 sha = SHA256.Create();
-        byte[] hash = sha.ComputeHash(buffer);
 #pragma warning restore CA1850
+
+        // Feed the payload in chunks to avoid allocating a full copy of the data.
+        const int ChunkSize = 81920; // 80 KB — keeps temp buffers off the LOH.
+        int offset = 0;
+        while (offset < data.Length)
+        {
+            int count = Math.Min(ChunkSize, data.Length - offset);
+            byte[] chunk = data.Slice(offset, count).ToArray();
+            sha.TransformBlock(chunk, 0, count, null, 0);
+            offset += count;
+        }
+
+        // Append totalLength as the final block to disambiguate same-prefix / different-length payloads.
+        byte[] lengthBytes = BitConverter.GetBytes(totalLength);
+        sha.TransformFinalBlock(lengthBytes, 0, lengthBytes.Length);
+        byte[] hash = sha.Hash!;
 
         // First 6 bytes → 12 hex chars, lower-cased. 48 bits of prefix keeps the
         // birthday-collision probability negligible even for very large attachment counts.

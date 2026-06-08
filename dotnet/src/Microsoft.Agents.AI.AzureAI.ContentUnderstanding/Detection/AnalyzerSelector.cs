@@ -21,7 +21,7 @@ internal static class AnalyzerSelector
 
     public static string Select(string mediaType, string? explicitOverride)
     {
-        if (!string.IsNullOrEmpty(explicitOverride))
+        if (!string.IsNullOrWhiteSpace(explicitOverride))
         {
             return explicitOverride!;
         }

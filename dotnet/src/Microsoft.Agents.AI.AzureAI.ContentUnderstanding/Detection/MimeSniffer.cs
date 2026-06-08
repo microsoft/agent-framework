@@ -112,13 +112,24 @@ internal static class MimeSniffer
             }
 
             // A valid ID3v2 tag can legitimately exceed the head buffer (e.g. an MP3
-            // with an embedded album-art frame). When the tag body — plus the 4 bytes
+            // with an embedded album-art frame). When the tag body — plus the bytes
             // we need to inspect right after it — does not fit in the provided head,
             // we simply lack the bytes to look past the tag and tell MP3 from
             // FLAC/OGG/etc. Treat this as "too few head bytes to decide", not as an
             // invalid signature. Callers wanting reliable detection of such files
             // should pass more leading bytes (see RecommendedHeadByteCount remarks).
-            if (head.Length < tagSize + 4)
+            //
+            // Derive the required count from the longest prefix the checks below
+            // actually compare (fLaC / OggS = 4 bytes; the MP3 sync word = 2 bytes),
+            // so this bound stays in lockstep with those StartsWith calls — relaxing
+            // it would otherwise let StartsWith silently return false and mis-classify
+            // ID3-wrapped FLAC/OGG as null.
+            //
+            // Compare via subtraction (head.Length is already >= 10 here, see the
+            // "ID3" check above) so we never form tagSize + N and risk integer
+            // overflow if the tag-size bound ever grows.
+            const int afterTagInspectBytes = 4; // max(fLaC/OggS = 4, MP3 sync = 2)
+            if (head.Length - afterTagInspectBytes < tagSize)
             {
                 return null;
             }

@@ -91,8 +91,8 @@ public sealed class ProviderStateTests
     public void ProviderState_RoundTripsInjectedKeys()
     {
         var state = new ContentUnderstandingProviderState();
-        state.InjectedKeys.Add("a.pdf");
-        state.InjectedKeys.Add("b.mp3");
+        state.InjectedKeys.TryAdd("a.pdf", 0);
+        state.InjectedKeys.TryAdd("b.mp3", 0);
 
         var json = JsonSerializer.Serialize(state);
         var clone = JsonSerializer.Deserialize<ContentUnderstandingProviderState>(json);
