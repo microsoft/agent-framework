@@ -33,7 +33,7 @@ import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
 
 import httpx
 
@@ -194,6 +194,21 @@ class DefaultMCPToolHandler:
             Defaults to ``32``.
     """
 
+    LIST_TOOLS_TOOL_NAME: ClassVar[str] = "tools/list"
+    """Reserved ``tool_name`` that maps an :class:`MCPToolHandler` invocation
+    to the MCP protocol ``tools/list`` discovery operation.
+
+    The constant matches the underlying MCP method name so a single
+    string travels unchanged through host code, YAML, and the protocol
+    wire. When this handler receives an invocation with this name it
+    pages through ``session.list_tools()`` and returns the catalog as a
+    single ``TextContent`` containing JSON of shape
+    ``{"tools": [{name, description, inputSchema, outputSchema}, ...]}``.
+    Workflows can reference this name from an ``InvokeMcpTool`` declarative
+    action to introspect a server's tool surface without an extra round-trip
+    from host code.
+    """
+
     def __init__(
         self,
         *,
@@ -217,9 +232,26 @@ class DefaultMCPToolHandler:
         self._closed = False
 
     async def invoke_tool(self, invocation: MCPToolInvocation) -> MCPToolResult:
-        """Invoke ``invocation.tool_name`` on the cached MCP client for the server."""
+        """Invoke ``invocation.tool_name`` on the cached MCP client for the server.
+
+        The reserved name :attr:`LIST_TOOLS_TOOL_NAME` (``"tools/list"``) is
+        intercepted client-side: instead of being forwarded as a tool call,
+        it is translated to an MCP ``session.list_tools()`` discovery
+        operation (paginated automatically) and returned as a single
+        ``TextContent`` containing a JSON tool catalog.
+        """
         from agent_framework import Content
         from agent_framework.exceptions import ToolExecutionException
+
+        # Reserved-name args validation runs before connect: rejecting bad
+        # input shouldn't require establishing an MCP session.
+        if invocation.tool_name == self.LIST_TOOLS_TOOL_NAME and invocation.arguments:
+            message = f"The reserved MCP '{self.LIST_TOOLS_TOOL_NAME}' operation does not accept tool arguments."
+            return MCPToolResult(
+                outputs=[Content.from_text(f"Error: {message}")],
+                is_error=True,
+                error_message=message,
+            )
 
         try:
             entry = await self._get_or_create_entry(invocation)
@@ -240,6 +272,8 @@ class DefaultMCPToolHandler:
             )
 
         try:
+            if invocation.tool_name == self.LIST_TOOLS_TOOL_NAME:
+                return await self._invoke_list_tools(entry)
             raw = await entry.tool.call_tool(invocation.tool_name, **invocation.arguments)
         except ToolExecutionException as exc:
             logger.info(
@@ -283,6 +317,59 @@ class DefaultMCPToolHandler:
         else:
             outputs = list(raw)
         return MCPToolResult(outputs=outputs)
+
+    @staticmethod
+    async def _invoke_list_tools(entry: _CacheEntry) -> MCPToolResult:
+        """Handle the reserved :attr:`LIST_TOOLS_TOOL_NAME` invocation.
+
+        Pages through ``session.list_tools()`` (mirroring the pagination loop
+        in :meth:`agent_framework.MCPTool.load_tools`) and serialises the
+        full catalog as a single ``TextContent`` containing JSON of shape
+        ``{"tools": [{name, description, inputSchema, outputSchema}, ...]}``.
+
+        The output shape, property names, and property order are stable so
+        downstream PowerFx expressions can rely on the schema. ``indent=2``
+        produces human-readable JSON for the conversation log;
+        ``allow_nan=False`` guards against producing non-conformant JSON
+        ``NaN``/``Infinity`` tokens if a misbehaving server returns such
+        values in a schema.
+        """
+        from agent_framework import Content
+
+        session = getattr(entry.tool, "session", None)
+        if session is None:
+            message = "MCP session is not connected; cannot list tools."
+            return MCPToolResult(
+                outputs=[Content.from_text(f"Error: {message}")],
+                is_error=True,
+                error_message=message,
+            )
+
+        # Lazy import keeps ``mcp`` types out of module import time.
+        from mcp import types as mcp_types
+
+        collected: list[Any] = []
+        params: mcp_types.PaginatedRequestParams | None = None
+        while True:
+            tool_list = await session.list_tools(params=params)
+            collected.extend(tool_list.tools)
+            next_cursor = getattr(tool_list, "nextCursor", None)
+            if not next_cursor:
+                break
+            params = mcp_types.PaginatedRequestParams(cursor=next_cursor)
+
+        payload = {
+            "tools": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.inputSchema,
+                    "outputSchema": tool.outputSchema,
+                }
+                for tool in collected
+            ],
+        }
+        return MCPToolResult(outputs=[Content.from_text(json.dumps(payload, indent=2, allow_nan=False))])
 
     async def aclose(self) -> None:
         """Close all cached MCP clients and the owned httpx clients.

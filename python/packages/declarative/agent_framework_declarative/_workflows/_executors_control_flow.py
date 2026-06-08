@@ -3,7 +3,7 @@
 """Control flow executors for the graph-based declarative workflow system.
 
 Control flow in the graph-based system is handled differently than the interpreter:
-- If/Switch: Condition evaluation happens in a dedicated evaluator executor that
+- If/ConditionGroup: Condition evaluation happens in a dedicated evaluator executor that
   returns a ConditionResult with the first-matching branch index. Edge conditions
   then check the branch_index to route to the correct branch. This ensures only
   one branch executes (first-match semantics), matching the interpreter behavior.
@@ -39,7 +39,7 @@ ELSE_BRANCH_INDEX = -1
 
 
 class ConditionGroupEvaluatorExecutor(DeclarativeActionExecutor):
-    """Evaluates conditions for ConditionGroup/Switch and outputs the first-matching branch.
+    """Evaluates conditions for ConditionGroup and outputs the first-matching branch.
 
     This executor implements first-match semantics by evaluating conditions sequentially
     and outputting a ConditionResult with the index of the first matching branch.
@@ -59,7 +59,7 @@ class ConditionGroupEvaluatorExecutor(DeclarativeActionExecutor):
         """Initialize the condition evaluator.
 
         Args:
-            action_def: The ConditionGroup/Switch action definition
+            action_def: The ConditionGroup action definition
             conditions: List of condition items, each with 'condition' and optional 'id'
             id: Optional executor ID
         """
@@ -96,71 +96,6 @@ class ConditionGroupEvaluatorExecutor(DeclarativeActionExecutor):
                 return
 
         # No condition matched - use else/default branch
-        await ctx.send_message(ConditionResult(matched=False, branch_index=ELSE_BRANCH_INDEX))
-
-
-class SwitchEvaluatorExecutor(DeclarativeActionExecutor):
-    """Evaluates a Switch action by matching a value against cases.
-
-    The Switch action uses a different schema than ConditionGroup:
-    - value: expression to evaluate once
-    - cases: list of {match: value_to_match, actions: [...]}
-    - default: default actions if no case matches
-
-    This evaluator evaluates the value expression once, then compares it
-    against each case's match value sequentially. First match wins.
-    """
-
-    def __init__(
-        self,
-        action_def: dict[str, Any],
-        cases: list[dict[str, Any]],
-        *,
-        id: str | None = None,
-    ):
-        """Initialize the switch evaluator.
-
-        Args:
-            action_def: The Switch action definition (contains 'value' expression)
-            cases: List of case items, each with 'match' and optional 'actions'
-            id: Optional executor ID
-        """
-        super().__init__(action_def, id=id)
-        self._cases = cases
-
-    @handler
-    async def handle_action(
-        self,
-        trigger: Any,
-        ctx: WorkflowContext[ConditionResult],
-    ) -> None:
-        """Evaluate the switch value and find the first matching case."""
-        state = await self._ensure_state_initialized(ctx, trigger)
-
-        value_expr = self._action_def.get("value")
-        if not value_expr:
-            # No value to switch on - use default
-            await ctx.send_message(ConditionResult(matched=False, branch_index=ELSE_BRANCH_INDEX))
-            return
-
-        # Evaluate the switch value once
-        switch_value = state.eval_if_expression(value_expr)
-
-        # Compare against each case's match value
-        for index, case_item in enumerate(self._cases):
-            match_expr = case_item.get("match")
-            if match_expr is None:
-                continue
-
-            # Evaluate the match value
-            match_value = state.eval_if_expression(match_expr)
-
-            if switch_value == match_value:
-                # Found matching case
-                await ctx.send_message(ConditionResult(matched=True, branch_index=index, value=switch_value))
-                return
-
-        # No case matched - use default branch
         await ctx.send_message(ConditionResult(matched=False, branch_index=ELSE_BRANCH_INDEX))
 
 
@@ -221,12 +156,7 @@ class ForeachInitExecutor(DeclarativeActionExecutor):
         """Initialize the loop and check for first item."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
-        # Support multiple schema formats:
-        # - Graph mode: itemsSource, items
-        # - Interpreter mode: source
-        items_expr = (
-            self._action_def.get("itemsSource") or self._action_def.get("items") or self._action_def.get("source")
-        )
+        items_expr = self._action_def.get("source")
         items_raw: Any = state.eval_if_expression(items_expr) or []
 
         items: list[Any]
@@ -244,25 +174,12 @@ class ForeachInitExecutor(DeclarativeActionExecutor):
         }
         state.set_state_data(state_data)
 
-        # Check if we have items
         if items:
-            # Set the iteration variable
-            # Support multiple schema formats:
-            # - Graph mode: iteratorVariable, item (default "Local.item")
-            # - Interpreter mode: itemName (default "item", stored in Local scope)
-            item_var = self._action_def.get("iteratorVariable") or self._action_def.get("item")
-            if not item_var:
-                # Interpreter mode: itemName defaults to "item", store in Local scope
-                item_name = self._action_def.get("itemName", "item")
-                item_var = f"Local.{item_name}"
-
-            # Support multiple schema formats for index:
-            # - Graph mode: indexVariable, index
-            # - Interpreter mode: indexName (default "index", stored in Local scope)
-            index_var = self._action_def.get("indexVariable") or self._action_def.get("index")
-            if not index_var and "indexName" in self._action_def:
-                index_name = self._action_def.get("indexName", "index")
-                index_var = f"Local.{index_name}"
+            # Bind the current item and (when requested) the index under the Local scope.
+            item_var = f"Local.{self._action_def.get('itemName', 'item')}"
+            index_var = (
+                f"Local.{self._action_def.get('indexName', 'index')}" if "indexName" in self._action_def else None
+            )
 
             state.set(item_var, items[0])
             if index_var:
@@ -325,23 +242,11 @@ class ForeachNextExecutor(DeclarativeActionExecutor):
             loop_state["index"] = current_index
             state.set_state_data(state_data)
 
-            # Set the iteration variable
-            # Support multiple schema formats:
-            # - Graph mode: iteratorVariable, item (default "Local.item")
-            # - Interpreter mode: itemName (default "item", stored in Local scope)
-            item_var = self._action_def.get("iteratorVariable") or self._action_def.get("item")
-            if not item_var:
-                # Interpreter mode: itemName defaults to "item", store in Local scope
-                item_name = self._action_def.get("itemName", "item")
-                item_var = f"Local.{item_name}"
-
-            # Support multiple schema formats for index:
-            # - Graph mode: indexVariable, index
-            # - Interpreter mode: indexName (default "index", stored in Local scope)
-            index_var = self._action_def.get("indexVariable") or self._action_def.get("index")
-            if not index_var and "indexName" in self._action_def:
-                index_name = self._action_def.get("indexName", "index")
-                index_var = f"Local.{index_name}"
+            # Rebind the current item and (when requested) the index under the Local scope.
+            item_var = f"Local.{self._action_def.get('itemName', 'item')}"
+            index_var = (
+                f"Local.{self._action_def.get('indexName', 'index')}" if "indexName" in self._action_def else None
+            )
 
             state.set(item_var, items[current_index])
             if index_var:
@@ -486,7 +391,7 @@ class EndConversationExecutor(DeclarativeActionExecutor):
 class JoinExecutor(DeclarativeActionExecutor):
     """Executor that joins multiple branches back together.
 
-    Used after If/Switch to merge control flow back to a single path.
+    Used after If/ConditionGroup to merge control flow back to a single path.
     Also used as passthrough nodes for else/default branches.
     """
 

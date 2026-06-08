@@ -96,13 +96,14 @@ async def main() -> None:
     # This will end the conversation after the expert has spoken 2 times (one iteration loop)
     # Note: it's possible that the expert gets it right the first time and the other participants
     # have nothing to add, but for demo purposes we want to see at least one full round of interaction.
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # Mark participant responses as intermediate so the stream shows the
+    # conversation as it unfolds while the orchestrator's transcript remains the
+    # terminal workflow output.
     workflow = (
         GroupChatBuilder(
             participants=[expert, verifier, clarifier, skeptic],
             termination_condition=lambda conversation: len(conversation) >= 6,
-            intermediate_outputs=True,
+            intermediate_output_from=[expert, verifier, clarifier, skeptic],
             selection_func=round_robin_selector,
         )
         # Set a hard termination condition: stop after 6 messages (user task + one full rounds + 1)
@@ -123,7 +124,7 @@ async def main() -> None:
     # Keep track of the last response to format output nicely in streaming mode
     last_response_id: str | None = None
     async for event in workflow.run(task, stream=True):
-        if event.type == "output":
+        if event.type in ("intermediate", "output"):
             data = event.data
             if isinstance(data, AgentResponseUpdate):
                 rid = data.response_id

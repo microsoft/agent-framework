@@ -16,7 +16,7 @@ produces — by convention an `AgentResponse` so downstream consumers see a unif
 
 import logging
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal, cast
 
 from agent_framework import Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor
@@ -32,6 +32,14 @@ from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 
 from ._orchestration_request_info import AgentApprovalExecutor
+from ._participant_output_config import (
+    UNSET,
+    _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
+    _coerce_intermediate_output_from,  # pyright: ignore[reportPrivateUsage]
+    _ParticipantIntermediateOutputSelection,  # pyright: ignore[reportPrivateUsage]
+    _ParticipantOutputSpecifier,  # pyright: ignore[reportPrivateUsage]
+    _resolve_participant_output_config,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +68,7 @@ class SequentialBuilder:
     - The workflow wires participants in order, passing a list[Message] down the chain
     - Agents append their assistant messages to the conversation
     - Custom executors can transform/summarize and return a list[Message]
-    - The final output is the conversation produced by the last participant
+    - The default Workflow Output is the conversation produced by the last participant
 
     Usage:
 
@@ -91,7 +99,8 @@ class SequentialBuilder:
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
         chain_only_agent_responses: bool = False,
-        intermediate_outputs: bool = False,
+        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
+        intermediate_output_from: _ParticipantIntermediateOutputSelection = None,
     ) -> None:
         """Initialize the SequentialBuilder.
 
@@ -101,16 +110,19 @@ class SequentialBuilder:
             chain_only_agent_responses: If True, only agent responses are chained between agents.
                 By default, the full conversation context is passed to the next agent. This also applies
                 to Executor -> Agent transitions if the executor sends `AgentExecutorResponse`.
-            intermediate_outputs: If True, every participant's `yield_output` surfaces as a
-                workflow `output` event in addition to the terminator's. By default (False) only
-                the last participant's output surfaces.
+            output_from: Optional participant names or instances whose ``yield_output`` calls
+                surface as workflow ``output`` events. Pass ``"all"`` to select every participant.
+            intermediate_output_from: Optional participant names or instances whose ``yield_output`` calls
+                surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
+                not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
         self._participants: list[SupportsAgentRun | Executor] = []
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
         self._chain_only_agent_responses: bool = chain_only_agent_responses
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] | None = None
-        self._intermediate_outputs: bool = intermediate_outputs
+        self._output_from = _coalesce_output_from(output_from=output_from)
+        self._intermediate_output_from = _coerce_intermediate_output_from(intermediate_output_from)
 
         self._set_participants(participants)
 
@@ -225,8 +237,8 @@ class SequentialBuilder:
             - Custom `Executor`: receives `list[Message]` and forwards `list[Message]`.
               If used as the terminator, it must call `ctx.yield_output(AgentResponse(...))`
               instead of `ctx.send_message(...)` — its yield becomes the workflow's output.
-        - The last participant is registered as the workflow's `output_executor`, so the
-          terminator's own `yield_output` is the workflow's terminal output (`AgentResponse`,
+        - The last participant is selected as Workflow Output by default, so the
+          terminator's own `yield_output` is Workflow Output (`AgentResponse`,
           or per-chunk `AgentResponseUpdate` when streaming).
         """
         input_conv = _InputToConversation(id="input-conversation")
@@ -234,10 +246,19 @@ class SequentialBuilder:
         # Resolve participants and participant factories to executors
         participants: list[Executor] = self._resolve_participants()
 
+        # Default: only the terminator is terminal. Explicit participant designation
+        # can surface selected earlier participant outputs as terminal or intermediate.
+        designated, intermediate_designated = _resolve_participant_output_config(
+            participants=participants,
+            output_from=self._output_from,
+            intermediate_output_from=self._intermediate_output_from,
+            default_output_from=[participants[-1]],
+        )
         builder = WorkflowBuilder(
             start_executor=input_conv,
             checkpoint_storage=self._checkpoint_storage,
-            output_executors=[participants[-1]] if not self._intermediate_outputs else None,
+            output_from=designated,
+            intermediate_output_from=intermediate_designated,
         )
 
         prior: Executor | SupportsAgentRun = input_conv

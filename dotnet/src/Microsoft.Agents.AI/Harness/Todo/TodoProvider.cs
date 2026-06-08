@@ -26,11 +26,11 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// This provider exposes the following tools to the agent:
 /// <list type="bullet">
-/// <item><description><c>TodoList_Add</c> — Add one or more todo items, each with a title and optional description.</description></item>
-/// <item><description><c>TodoList_Complete</c> — Mark one or more todo items as complete by their IDs.</description></item>
-/// <item><description><c>TodoList_Remove</c> — Remove one or more todo items by their IDs.</description></item>
-/// <item><description><c>TodoList_GetRemaining</c> — Retrieve only incomplete todo items.</description></item>
-/// <item><description><c>TodoList_GetAll</c> — Retrieve all todo items (complete and incomplete).</description></item>
+/// <item><description><c>todos_add</c> — Add one or more todo items, each with a title and optional description.</description></item>
+/// <item><description><c>todos_complete</c> — Mark one or more todo items as complete by their IDs and reasons.</description></item>
+/// <item><description><c>todos_remove</c> — Remove one or more todo items by their IDs.</description></item>
+/// <item><description><c>todos_get_remaining</c> — Retrieve only incomplete todo items.</description></item>
+/// <item><description><c>todos_get_all</c> — Retrieve all todo items (complete and incomplete).</description></item>
 /// </list>
 /// </para>
 /// <para>
@@ -48,16 +48,16 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
         You have access to a todo list for tracking work items.
         While planning, make sure that you break down complex tasks into manageable todo items and add them to the list.
         Ask questions from the user where clarification is needed to create effective todos.
-        If the user provides feedback on your plan, adjust your todos accordingly by adding new items or removing irrelevant ones.
+        If the user provides feedback on your plan, adjust your todos accordingly by adding new items or removing irrelevant/old ones.
         During execution, use the todo list to keep track of what needs to be done, mark items as complete when finished, and remove any items that are no longer needed.
-        When a user changes the topic or changes their mind, ensure that you update the todo list accordingly by removing irrelevant items or adding new ones as needed.
+        When a user changes the topic or changes their mind, ensure that you update the todo list accordingly by removing irrelevant/old items or adding new ones as needed.
         
         Use these tools to manage your tasks:
-        - Use TodoList_Add to break down complex work into trackable items (supports adding one or many at once).
-        - Use TodoList_Complete to mark items as done when finished (supports one or many at once).
-        - Use TodoList_GetRemaining to check what work is still pending.
-        - Use TodoList_GetAll to review the full list including completed items.
-        - Use TodoList_Remove to remove items that are no longer needed (supports one or many at once).
+        - Use todos_add to break down complex work into trackable items (supports adding one or many at once).
+        - Use todos_complete to mark items as done when finished (supports one or many at once). Include a reason describing how the items were completed.
+        - Use todos_get_remaining to check what work is still pending.
+        - Use todos_get_all to review the full list including completed items.
+        - Use todos_remove to remove items that are no longer needed (supports one or many at once).
         """;
 
     private readonly ProviderSessionState<TodoState> _sessionState;
@@ -229,20 +229,20 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_Add",
+                    Name = "todos_add",
                     Description = "Add one or more todo items. Each item has a title and an optional description. Returns the list of created todo items.",
                     SerializerOptions = serializerOptions,
                 }),
 
             AIFunctionFactory.Create(
-                async (List<int> ids) =>
+                async (List<TodoCompleteInput> items) =>
                 {
                     SemaphoreSlim sessionLock = this.GetSessionLock(session);
                     await sessionLock.WaitAsync().ConfigureAwait(false);
                     try
                     {
                         TodoState state = this._sessionState.GetOrInitializeState(session);
-                        var idSet = new HashSet<int>(ids);
+                        var idSet = new HashSet<int>(items.Select(i => i.Id));
                         int completed = 0;
                         foreach (TodoItem item in state.Items)
                         {
@@ -267,8 +267,8 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_Complete",
-                    Description = "Mark one or more todo items as complete by their IDs. Returns the number of items that were found and marked complete.",
+                    Name = "todos_complete",
+                    Description = "Mark one or more todo items as complete. Each entry has an ID and a reason describing how/why the item was completed. Returns the number of items that were found and marked complete.",
                     SerializerOptions = serializerOptions,
                 }),
 
@@ -297,7 +297,7 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_Remove",
+                    Name = "todos_remove",
                     Description = "Remove one or more todo items by their IDs. Returns the number of items that were found and removed.",
                     SerializerOptions = serializerOptions,
                 }),
@@ -319,7 +319,7 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_GetRemaining",
+                    Name = "todos_get_remaining",
                     Description = "Retrieve the list of incomplete todo items.",
                     SerializerOptions = serializerOptions,
                 }),
@@ -341,7 +341,7 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_GetAll",
+                    Name = "todos_get_all",
                     Description = "Retrieve the full list of todo items, both complete and incomplete.",
                     SerializerOptions = serializerOptions,
                 }),

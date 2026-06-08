@@ -248,7 +248,7 @@ async def main() -> None:
 
     # Build the workflow
     workflow = (
-        WorkflowBuilder(start_executor=email_processor, output_executors=[conclude_workflow])
+        WorkflowBuilder(start_executor=email_processor, output_from=[conclude_workflow])
         .add_edge(email_processor, email_writer_agent)
         .add_edge(email_writer_agent, conclude_workflow)
         .build()

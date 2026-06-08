@@ -340,6 +340,63 @@ class TestHistoryProviderBase:
         assert provider.stored[0].text == "hello"
         assert provider.stored[1].text == "hi"
 
+    async def test_after_run_stores_coalesced_code_interpreter_chunks(self) -> None:
+        from agent_framework import AgentResponse, AgentResponseUpdate, Content
+
+        provider = ConcreteHistoryProvider("mem", store_inputs=False)
+        updates = [
+            AgentResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_code_interpreter_tool_result(
+                        call_id="ci_123",
+                        outputs=[],
+                    )
+                ],
+            ),
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_123",
+                        inputs=[Content.from_text(text="import")],
+                        additional_properties={"sequence_number": 1},
+                    )
+                ],
+            ),
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_123",
+                        inputs=[Content.from_text(text=" pandas")],
+                        additional_properties={"sequence_number": 2},
+                    )
+                ],
+            ),
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_123",
+                        inputs=[Content.from_text(text="import pandas as pd")],
+                        additional_properties={"sequence_number": 3},
+                    )
+                ],
+            ),
+        ]
+        ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["make a sheet"])])
+        ctx._response = AgentResponse.from_updates(updates)
+
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+
+        assert len(provider.stored) == 1
+        stored_contents = provider.stored[0].contents
+        calls = [content for content in stored_contents if content.type == "code_interpreter_tool_call"]
+        results = [content for content in stored_contents if content.type == "code_interpreter_tool_result"]
+        assert len(calls) == 1
+        assert len(results) == 1
+        assert calls[0].inputs is not None
+        assert len(calls[0].inputs) == 1
+        assert calls[0].inputs[0].text == "import pandas as pd"
+
     async def test_after_run_skips_inputs_when_disabled(self) -> None:
         from agent_framework import AgentResponse
 

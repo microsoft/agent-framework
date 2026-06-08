@@ -162,6 +162,7 @@ def load_openai_service_settings(
     openai_model_fields: Sequence[OpenAIModelSettingName] = ("model",),
     azure_model_fields: Sequence[OpenAIModelSettingName] = ("model",),
     responses_mode: bool = False,
+    timeout: float | None = None,
 ) -> tuple[dict[str, Any], AsyncOpenAI, bool]:
     """Load OpenAI settings, including Azure OpenAI model aliases.
 
@@ -218,6 +219,8 @@ def load_openai_service_settings(
             }
             if base_url := openai_settings.get("base_url"):
                 client_args["base_url"] = base_url
+            if timeout is not None:
+                client_args["timeout"] = timeout
             return openai_settings, AsyncOpenAI(**client_args), False  # type: ignore[return-value]
         checked_openai = True
     azure_settings = load_settings(
@@ -299,8 +302,12 @@ def load_openai_service_settings(
             openai_args["api_key"] = _ensure_async_token_provider(client_args["azure_ad_token_provider"])
         elif "api_key" in client_args:
             openai_args["api_key"] = client_args["api_key"]
+        if timeout is not None:
+            openai_args["timeout"] = timeout
         return azure_settings, AsyncOpenAI(**openai_args), True  # type: ignore[return-value]
 
+    if timeout is not None:
+        client_args["timeout"] = timeout
     return azure_settings, AsyncAzureOpenAI(**client_args), True  # type: ignore[return-value]
 
 

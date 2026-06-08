@@ -47,6 +47,7 @@ from copy import deepcopy
 from typing import Any, Generic, Literal, TypeVar, overload
 
 from .._feature_stage import ExperimentalFeature, experimental
+from .._serialization import make_json_safe
 from .._types import AgentResponse, AgentResponseUpdate, ResponseStream
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
@@ -982,7 +983,8 @@ class FunctionalWorkflow:
 
                 # Emit the return value as the workflow output.
                 if return_value is not None:
-                    await ctx.add_event(WorkflowEvent.output(self.name, return_value))
+                    with _framework_event_origin():
+                        await ctx.add_event(WorkflowEvent("output", executor_id=self.name, data=return_value))
 
                 # Persist step cache for response-only replay
                 self._last_step_cache = dict(ctx._step_cache)
@@ -1514,7 +1516,7 @@ class FunctionalWorkflowAgent:
         function_call = Content.from_function_call(
             call_id=request_id,
             name=self.REQUEST_INFO_FUNCTION_NAME,
-            arguments={"request_id": request_id, "data": event.data},
+            arguments={"request_id": request_id, "data": make_json_safe(event.data)},
         )
         return Content.from_function_approval_request(
             id=request_id,

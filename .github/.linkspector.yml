@@ -8,7 +8,7 @@ ignorePatterns:
   - pattern: "./blob"
   - pattern: "./issues"
   - pattern: "./discussions"
-  - pattern: "./pulls"
+  - pattern: "./pull"
   - pattern: "https:\/\/platform.openai.com"
   - pattern: "http:\/\/localhost"
   - pattern: "http:\/\/127.0.0.1"
