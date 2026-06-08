@@ -1238,8 +1238,8 @@ def tool(
     Note:
         When approval_mode is set to "always_require", the function will not be executed
         until explicit approval is given, this only applies to the auto-invocation flow.
-        It is also important to note that if the model returns multiple function calls, some that require approval
-        and others that do not, it will ask approval for all of them.
+        If the model returns multiple function calls, only the calls for tools that require approval
+        will ask for approval.
 
     Example:
 
@@ -1675,8 +1675,8 @@ async def _try_execute_function_calls(
     Returns:
         A tuple of:
         - A list of Content containing the results of each function call,
-          or the approval requests if any function requires approval,
-          or the original function calls if any are declaration only.
+          approval requests for function calls that require approval,
+          or original function calls for declaration-only requests.
         - Always False; termination via middleware is no longer supported.
     """
     from ._types import Content
@@ -1685,20 +1685,18 @@ async def _try_execute_function_calls(
     # The live tools list (when tools is the run-local list) is exposed on the
     # FunctionInvocationContext so tools can add/remove tools during the run.
     live_tools: list[ToolTypes] | None = cast("list[ToolTypes]", tools) if isinstance(tools, list) else None
-    approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
+    approval_tools = {tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"}
     logger.debug(
         "_try_execute_function_calls: tool_map keys=%s, approval_tools=%s",
         list(tool_map.keys()),
-        approval_tools,
+        list(approval_tools),
     )
     declaration_only = [tool_name for tool_name, tool in tool_map.items() if tool.declaration_only]
     configured_additional_tools = config.get("additional_tools") or []
     additional_tool_names = [tool.name for tool in configured_additional_tools]
-    # check if any are calling functions that need approval
-    # if so, we return approval request for all
-    approval_needed = False
-    declaration_only_flag = False
-    for fcc in function_calls:
+    deferred_results_by_index: dict[int, Content] = {}
+    function_calls_to_execute: list[tuple[int, Content]] = []
+    for idx, fcc in enumerate(function_calls):
         fcc_name = getattr(fcc, "name", None)
         logger.debug(
             "Checking function call: type=%s, name=%s, in approval_tools=%s",
@@ -1708,36 +1706,25 @@ async def _try_execute_function_calls(
         )
         if fcc.type == "function_call" and fcc.name in approval_tools:  # type: ignore[attr-defined]
             logger.debug("Approval needed for function: %s", fcc.name)
-            approval_needed = True
-            break
+            deferred_results_by_index[idx] = Content.from_function_approval_request(
+                id=fcc.call_id,  # type: ignore[arg-type, attr-defined]
+                function_call=fcc,  # type: ignore[arg-type]
+            )
+            continue
         if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):  # type: ignore[attr-defined]
-            declaration_only_flag = True
-            break
+            fcc.user_input_request = True
+            fcc.id = fcc.call_id
+            deferred_results_by_index[idx] = fcc
+            continue
         if (
             config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map  # type: ignore[attr-defined]
         ):
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
-    if approval_needed:
-        # approval can only be needed for Function Call Content, not Approval Responses.
-        logger.debug("Returning function_approval_request contents")
-        return (
-            [
-                Content.from_function_approval_request(id=fcc.call_id, function_call=fcc)  # type: ignore[attr-defined, arg-type]
-                for fcc in function_calls
-                if fcc.type == "function_call"
-            ],
-            False,
-        )
-    if declaration_only_flag:
-        # return the declaration only tools to the user, since we cannot execute them.
-        # Mark as user_input_request so AgentExecutor emits request_info events and pauses the workflow.
-        declaration_only_calls: list[Content] = []
-        for fcc in function_calls:
-            if fcc.type == "function_call":
-                fcc.user_input_request = True
-                fcc.id = fcc.call_id
-                declaration_only_calls.append(fcc)
-        return (declaration_only_calls, False)
+        function_calls_to_execute.append((idx, fcc))
+
+    if deferred_results_by_index and not function_calls_to_execute:
+        logger.debug("Returning deferred function call contents")
+        return ([deferred_results_by_index[idx] for idx in sorted(deferred_results_by_index)], False)
 
     # Run all function calls concurrently, handling MiddlewareTermination
     from ._middleware import MiddlewareTermination
@@ -1794,11 +1781,23 @@ async def _try_execute_function_calls(
             )
 
     execution_results = await asyncio.gather(*[
-        invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
+        invoke_with_termination_handling(function_call, seq_idx)
+        for seq_idx, function_call in function_calls_to_execute
     ])
 
     # Unpack results - each is (Content, terminate_flag)
-    contents: list[Content] = [result[0] for result in execution_results]
+    if deferred_results_by_index:
+        execution_results_by_index = {
+            seq_idx: result for (seq_idx, _), result in zip(function_calls_to_execute, execution_results)
+        }
+        contents = [
+            deferred_results_by_index[idx]
+            if idx in deferred_results_by_index
+            else execution_results_by_index[idx][0]
+            for idx in range(len(function_calls))
+        ]
+    else:
+        contents = [result[0] for result in execution_results]
     contents.extend(extra_user_input_contents)
     # If any function requested termination, terminate the loop
     should_terminate = any(result[1] for result in execution_results)
@@ -2108,12 +2107,17 @@ def _handle_function_call_results(
     ):
         # Only add items that aren't already in the message (e.g. function_approval_request wrappers).
         # Declaration-only function_call items are already present from the LLM response.
-        new_items = [fccr for fccr in function_call_results if fccr.type != "function_call"]
+        new_items = [
+            fccr for fccr in function_call_results if fccr.type not in {"function_call", "function_result"}
+        ]
         if new_items:
             if response.messages and response.messages[0].role == "assistant":
                 response.messages[0].contents.extend(new_items)
             else:
                 response.messages.append(Message(role="assistant", contents=new_items))
+        function_result_items = [fccr for fccr in function_call_results if fccr.type == "function_result"]
+        if function_result_items:
+            response.messages.append(Message(role="tool", contents=function_result_items))
         return {
             "action": "return",
             "errors_in_a_row": errors_in_a_row,
