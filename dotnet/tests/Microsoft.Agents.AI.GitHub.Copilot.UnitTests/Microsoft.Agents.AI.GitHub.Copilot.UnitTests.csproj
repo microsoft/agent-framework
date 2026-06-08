@@ -3,10 +3,18 @@
   <PropertyGroup>
     <!-- GitHub.Copilot.SDK only supports .NET 8.0+ -->
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <!--
+      GitHub.Copilot.SDK marks several types in the GitHub.Copilot.Rpc
+      namespace (e.g., PermissionDecision and its subclasses) as
+      [Experimental("GHCP001")]. Test fixtures must reference these types to
+      build permission handlers, so suppress the experimental diagnostic here
+      mirroring how the SDK itself suppresses it project-wide.
+    -->
+    <NoWarn>$(NoWarn);GHCP001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.GitHub.Copilot\Microsoft.Agents.AI.GitHub.Copilot.csproj" />
   </ItemGroup>
-  
+
 </Project>

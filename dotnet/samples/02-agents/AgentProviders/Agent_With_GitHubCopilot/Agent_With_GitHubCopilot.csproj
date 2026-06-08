@@ -6,6 +6,14 @@
 
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!--
+      GitHub.Copilot.SDK marks several types in the GitHub.Copilot.Rpc
+      namespace (e.g., PermissionDecision and its subclasses) as
+      [Experimental("GHCP001")]. Samples must reference these types to build
+      permission handlers, so suppress the experimental diagnostic here
+      mirroring how the SDK itself suppresses it project-wide.
+    -->
+    <NoWarn>$(NoWarn);GHCP001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
