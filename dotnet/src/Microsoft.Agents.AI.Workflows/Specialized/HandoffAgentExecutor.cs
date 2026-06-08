@@ -30,6 +30,17 @@ internal sealed class HandoffAgentExecutorOptions
     public bool? EmitAgentResponseUpdateEvents { get; set; }
 
     public HandoffToolCallFilteringBehavior ToolCallFilteringBehavior { get; set; } = HandoffToolCallFilteringBehavior.HandoffOnly;
+
+    // Termination condition. When provided, evaluated after the agent responds and no handoff was
+    // requested. If it returns true, the outgoing HandoffState is stamped with IsTerminated = true
+    // so the per-agent routing switch routes the turn to HandoffEndExecutor instead of continuing.
+    public Func<IReadOnlyList<ChatMessage>, ValueTask<bool>>? TerminationCondition { get; set; }
+}
+
+internal static class HandoffWorkflowBuilderDefaults
+{
+    public const string DefaultAutonomousContinuationPrompt = "User did not respond. Continue assisting autonomously.";
+    public const int DefaultAutonomousTurnLimit = 50;
 }
 
 internal struct AgentInvocationResult(AgentResponse agentResponse, string? handoffTargetId)
@@ -70,7 +81,6 @@ internal sealed record StateRef<TState>(string Key, string? ScopeName)
 }
 
 /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 internal sealed class HandoffAgentExecutor :
     StatefulExecutor<HandoffAgentHostState, HandoffState>
 {
@@ -250,6 +260,7 @@ internal sealed class HandoffAgentExecutor :
         }
 
         int newConversationBookmark = state.ConversationBookmark;
+        List<ChatMessage>? conversationSnapshot = null;
         await this._sharedStateRef.InvokeWithStateAsync(
             (sharedState, ctx, ct) =>
             {
@@ -285,10 +296,23 @@ internal sealed class HandoffAgentExecutor :
                     }
 
                     _ = sharedState.Conversation.AddMessage(handoffCallResultMessage);
+
+                    // Reset this agent's autonomous-turn counter when it chooses to hand off, so that
+                    // if control returns to this agent later in the turn (e.g. via another handoff),
+                    // its autonomous loop starts fresh rather than carrying over prior iterations.
+                    sharedState.AutonomousTurnsByAgent[this._agent.Id] = 0;
                 }
                 else
                 {
                     newConversationBookmark = sharedState.Conversation.AddMessages(result.Response.Messages);
+                }
+
+                // Snapshot the conversation for termination evaluation while we still hold shared state access.
+                // Termination is only relevant when no handoff was requested — a requested handoff always
+                // routes to the target agent regardless of termination.
+                if (this._options.TerminationCondition is not null && !result.IsHandoffRequested)
+                {
+                    conversationSnapshot = sharedState.Conversation.CloneHistory();
                 }
 
                 return new ValueTask();
@@ -298,18 +322,27 @@ internal sealed class HandoffAgentExecutor :
 
         // We send on the HandoffState even if handoff is not requested because we might be terminating the processing, but this only
         // happens if we have no outstanding requests.
-        if (!this.HasOutstandingRequests)
+        if (this.HasOutstandingRequests)
         {
-            HandoffState outgoingState = new(state.IncomingState.TurnToken, result.HandoffTargetId, this._agent.Id);
-
-            await context.SendMessageAsync(outgoingState, cancellationToken).ConfigureAwait(false);
-
-            // reset the state for the next handoff, making sure to keep track of the conversation bookmark, and avoid resetting the
-            // agent session. (return-to-current is modeled as a new handoff turn, as opposed to "HITL", which can be a bit confusing.)
-            return state with { IncomingState = null, ConversationBookmark = newConversationBookmark };
+            return state with { ConversationBookmark = newConversationBookmark };
         }
 
-        return state;
+        // Evaluate the termination condition (when configured and no handoff was requested) and stamp
+        // the result onto the outgoing HandoffState so the per-agent routing switch can route the turn
+        // to HandoffEndExecutor instead of dispatching another handoff or autonomous continuation.
+        bool isTerminated = false;
+        if (conversationSnapshot is not null)
+        {
+            isTerminated = await this._options.TerminationCondition!(conversationSnapshot).ConfigureAwait(false);
+        }
+
+        HandoffState outgoingState = new(state.IncomingState.TurnToken, result.HandoffTargetId, this._agent.Id, isTerminated);
+
+        await context.SendMessageAsync(outgoingState, cancellationToken).ConfigureAwait(false);
+
+        // Reset the turn-local state; keep the conversation bookmark and the agent session so the
+        // next invocation (handoff back, autonomous loop-back, or new user turn) resumes cleanly.
+        return state with { IncomingState = null, ConversationBookmark = newConversationBookmark };
     }
 
     public override ValueTask HandleAsync(HandoffState message, IWorkflowContext context, CancellationToken cancellationToken = default)

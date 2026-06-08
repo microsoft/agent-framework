@@ -44,17 +44,32 @@ public static class HostedFoundryMemoryProviderScopes
         session => new FoundryMemoryProvider.State(new FoundryMemoryProviderScope(GetRequiredHostedContext(session).ChatId));
 
     /// <summary>
-    /// Returns a <c>stateInitializer</c> that scopes memories per (user, chat) pair, using
-    /// <c>"{UserId}:{ChatId}"</c> as the partition key. Use this when memories should be visible
-    /// only to the same user within the same conversation.
+    /// Returns a <c>stateInitializer</c> that scopes memories per (user, chat) pair, composing
+    /// <see cref="HostedSessionContext.UserId"/> and <see cref="HostedSessionContext.ChatId"/> into a
+    /// single delimiter-safe partition key. Use this when memories should be visible only to the same
+    /// user within the same conversation.
     /// </summary>
+    /// <remarks>
+    /// Both identity values are opaque strings that may contain any characters, including the <c>:</c>
+    /// delimiter. To keep the composite key injective (so two distinct (user, chat) pairs can never
+    /// collide), each part is escaped (<c>\</c> becomes <c>\\</c>, then <c>:</c> becomes <c>\:</c>) before
+    /// being joined with a <c>::</c> separator.
+    /// </remarks>
     /// <returns>A delegate suitable for the <c>stateInitializer</c> argument of <see cref="FoundryMemoryProvider"/>.</returns>
     public static Func<AgentSession?, FoundryMemoryProvider.State> PerUserAndChat() =>
         session =>
         {
             var ctx = GetRequiredHostedContext(session);
-            return new FoundryMemoryProvider.State(new FoundryMemoryProviderScope($"{ctx.UserId}:{ctx.ChatId}"));
+            return new FoundryMemoryProvider.State(
+                new FoundryMemoryProviderScope($"{EscapeScopePart(ctx.UserId)}::{EscapeScopePart(ctx.ChatId)}"));
         };
+
+    /// <summary>
+    /// Escapes special characters in a scope part so that distinct (user, chat) pairs produce distinct
+    /// composite scope keys. Backslashes are escaped first (<c>\</c> becomes <c>\\</c>), then colons
+    /// (<c>:</c> becomes <c>\:</c>), ensuring the <c>{user}::{chat}</c> format is unambiguous.
+    /// </summary>
+    private static string EscapeScopePart(string part) => part.Replace("\\", "\\\\").Replace(":", "\\:");
 
     private static HostedSessionContext GetRequiredHostedContext(AgentSession? session) =>
         session?.GetHostedContext()

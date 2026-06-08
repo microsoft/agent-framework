@@ -292,6 +292,7 @@ class FunctionTool(SerializationMixin):
         "_cached_parameters",
         "_input_schema",
         "_schema_supplied",
+        "_invoke_sync_on_event_loop",
     }
 
     def __init__(
@@ -366,6 +367,7 @@ class FunctionTool(SerializationMixin):
         self.description = description
         self.kind = kind
         self.additional_properties = additional_properties
+        self._invoke_sync_on_event_loop = False
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -537,6 +539,16 @@ class FunctionTool(SerializationMixin):
             self.invocation_exception_count += 1
             raise
 
+    async def _invoke_function(self, call_kwargs: Mapping[str, Any]) -> Any:
+        """Run sync tools off the event loop during async invocation."""
+        func = self.func.func if isinstance(self.func, FunctionTool) else self.func
+        if inspect.iscoroutinefunction(func) or getattr(self, "_invoke_sync_on_event_loop", False):
+            res = self.__call__(**call_kwargs)
+            return await res if inspect.isawaitable(res) else res
+
+        res = await asyncio.to_thread(self.__call__, **call_kwargs)
+        return await res if inspect.isawaitable(res) else res
+
     @overload
     async def invoke(
         self,
@@ -679,8 +691,7 @@ class FunctionTool(SerializationMixin):
         if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {observable_kwargs}")
-            res = self.__call__(**call_kwargs)
-            result = await res if inspect.isawaitable(res) else res
+            result = await self._invoke_function(call_kwargs)
             if skip_parsing:
                 logger.info(f"Function {self.name} succeeded.")
                 logger.debug(f"Function result: {type(result).__name__}")
@@ -730,8 +741,7 @@ class FunctionTool(SerializationMixin):
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
             try:
-                res = self.__call__(**call_kwargs)
-                result = await res if inspect.isawaitable(res) else res
+                result = await self._invoke_function(call_kwargs)
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
@@ -1418,6 +1428,7 @@ async def _auto_invoke_function(
     sequence_index: int | None = None,
     request_index: int | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+    live_tools: list[ToolTypes] | None = None,
 ) -> Content:
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
@@ -1432,6 +1443,8 @@ async def _auto_invoke_function(
         sequence_index: The index of the function call in the sequence.
         request_index: The index of the request iteration.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
+        live_tools: The live, mutable tools list for the current agent run, exposed on
+            the FunctionInvocationContext so tools can add/remove tools at runtime.
 
     Returns:
         The function result content.
@@ -1523,6 +1536,7 @@ async def _auto_invoke_function(
                     arguments=args,
                     session=invocation_session,
                     kwargs=runtime_kwargs.copy(),
+                    tools=live_tools,
                 )
             function_result = await tool.invoke(
                 arguments=args,
@@ -1537,6 +1551,10 @@ async def _auto_invoke_function(
         except UserInputRequiredException:
             raise
         except Exception as exc:
+            logger.warning(
+                f"Function '{tool.name}' raised an exception; returning an error result to the "
+                f"model. Set include_detailed_errors=True for the full detail. Exception: {exc!r}"
+            )
             message = "Error: Function failed."
             if config.get("include_detailed_errors", False):
                 message = f"{message} Exception: {exc}"
@@ -1552,6 +1570,7 @@ async def _auto_invoke_function(
         arguments=args,
         session=invocation_session,
         kwargs=runtime_kwargs.copy(),
+        tools=live_tools,
     )
 
     call_id = function_call_content.call_id
@@ -1608,6 +1627,10 @@ async def _auto_invoke_function(
     except UserInputRequiredException:
         raise
     except Exception as exc:
+        logger.warning(
+            f"Function '{tool.name}' raised an exception; returning an error result to the "
+            f"model. Set include_detailed_errors=True for the full detail. Exception: {exc!r}"
+        )
         message = "Error: Function failed."
         if config.get("include_detailed_errors", False):
             message = f"{message} Exception: {exc}"
@@ -1659,6 +1682,9 @@ async def _try_execute_function_calls(
     from ._types import Content
 
     tool_map = _get_tool_map(tools)
+    # The live tools list (when tools is the run-local list) is exposed on the
+    # FunctionInvocationContext so tools can add/remove tools during the run.
+    live_tools: list[ToolTypes] | None = cast("list[ToolTypes]", tools) if isinstance(tools, list) else None
     approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
     logger.debug(
         "_try_execute_function_calls: tool_map keys=%s, approval_tools=%s",
@@ -1733,6 +1759,7 @@ async def _try_execute_function_calls(
                 request_index=attempt_idx,
                 middleware_pipeline=middleware_pipeline,
                 config=config,
+                live_tools=live_tools,
             )
             return (result, False)
         except MiddlewareTermination as exc:
@@ -2371,6 +2398,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=filtered_kwargs,
             )
+        # Establish a single, run-local mutable tools list so that tools can add or remove
+        # tools during the run (progressive tool exposure). A fresh list is created via
+        # normalize_tools so the caller's original tools container is never mutated, while
+        # the same list object is shared with the model (options["tools"]) and the tool map
+        # rebuilt on every loop iteration.
+        if mutable_options.get("tools"):
+            mutable_options["tools"] = normalize_tools(mutable_options["tools"])
         if not stream:
 
             async def _get_response() -> ChatResponse[Any]:

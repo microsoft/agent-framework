@@ -24,6 +24,20 @@ namespace Microsoft.Agents.AI.Hosting;
 /// For production use with multiple instances or persistence across restarts, use a durable storage implementation
 /// such as Redis, SQL Server, or Azure Cosmos DB.
 /// </para>
+/// <para>
+/// <strong>Multi-user warning.</strong> This store keys threads by
+/// <c>(agent.Id, conversationId)</c> only — it has no principal/owner dimension. When
+/// the conversation identifier originates from the wire (for example, an AG-UI
+/// <c>RunAgentInput.ThreadId</c> or an A2A <c>contextId</c>), any caller who knows
+/// or guesses another caller's identifier can resume that other caller's persisted
+/// thread. Multi-user hosts must wrap this store in
+/// <see cref="IsolationKeyScopedAgentSessionStore"/> (typically by calling
+/// <c>UseClaimsBasedSessionIsolation(...)</c> from
+/// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> or by registering a custom
+/// <see cref="SessionIsolationKeyProvider"/>) so that the conversation namespace is
+/// scoped per principal. See the trust-model remarks on
+/// <see cref="AgentSessionStore"/> for the full background.
+/// </para>
 /// </remarks>
 public sealed class InMemoryAgentSessionStore : AgentSessionStore
 {

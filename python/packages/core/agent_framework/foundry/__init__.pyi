@@ -20,12 +20,14 @@ from agent_framework_foundry import (
     FoundryEmbeddingSettings,
     FoundryEvals,
     FoundryMemoryProvider,
+    GeneratedEvaluatorRef,
     RawFoundryAgent,
     RawFoundryAgentChatClient,
     RawFoundryChatClient,
     RawFoundryEmbeddingClient,
     evaluate_foundry_target,
     evaluate_traces,
+    to_prompt_agent,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -51,6 +53,7 @@ __all__ = [
     "FoundryLocalClient",
     "FoundryLocalSettings",
     "FoundryMemoryProvider",
+    "GeneratedEvaluatorRef",
     "RawAnthropicFoundryClient",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
@@ -58,4 +61,5 @@ __all__ = [
     "RawFoundryEmbeddingClient",
     "evaluate_foundry_target",
     "evaluate_traces",
+    "to_prompt_agent",
 ]

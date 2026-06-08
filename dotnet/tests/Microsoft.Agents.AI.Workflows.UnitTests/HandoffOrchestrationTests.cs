@@ -1157,6 +1157,299 @@ public class HandoffOrchestrationTests
         }
     }
 
+    #region Default Handoffs Tests
+
+    [Fact]
+    public async Task Handoffs_DefaultHandoffs_AllAgentsCanHandOffToAllOthersAsync()
+    {
+        // Verifies "default handoffs": when no explicit WithHandoff calls are made,
+        // every registered participant is wired to every other participant.
+
+        var agentA = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            // Expect tools to include handoffs for B and C (every other agent).
+            var transferTools = options?.Tools?.Where(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal)).ToList();
+            Assert.NotNull(transferTools);
+            Assert.Equal(2, transferTools!.Count);
+
+            // Pick the first one to hand off (it should route to either B or C).
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferTools[0].Name)]));
+        }), name: "agentA", description: "agent A");
+
+        var agentB = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "B responded"))),
+            name: "agentB", description: "agent B");
+
+        var agentC = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "C responded"))),
+            name: "agentC", description: "agent C");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(agentA)
+            .AddParticipants(agentB, agentC)
+            .Build();
+
+        (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "hi")]);
+
+        // The first response handed off — verify the second agent responded.
+        Assert.NotNull(result);
+        Assert.True(updateText is "B responded" or "C responded",
+            $"Expected B or C to respond, got '{updateText}'");
+    }
+
+    [Fact]
+    public async Task Handoffs_DefaultHandoffs_OnlyAppliesWhenNoExplicitHandoffsAsync()
+    {
+        // When explicit handoffs are defined, default handoffs do NOT activate — only the explicit edges apply.
+
+        var agentA = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            // Should only see one handoff tool (to B), not B and C.
+            var transferTools = options?.Tools?.Where(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal)).ToList();
+            Assert.NotNull(transferTools);
+            Assert.Single(transferTools!);
+
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferTools![0].Name)]));
+        }), name: "agentA", description: "agent A");
+
+        var agentB = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "B responded"))),
+            name: "agentB", description: "agent B");
+
+        // Only define an explicit A->B edge. Default mesh must not activate.
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(agentA)
+            .WithHandoff(agentA, agentB)
+            .Build();
+
+        (string updateText, _, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "hi")]);
+
+        Assert.Equal("B responded", updateText);
+    }
+
+    #endregion Default Handoffs Tests
+
+    #region Autonomous Mode Tests
+
+    [Fact]
+    public async Task Handoffs_AutonomousMode_IteratesUntilHandoffAsync()
+    {
+        // With autonomous mode enabled, an agent that does not handoff is invoked again with the
+        // continuation prompt until it eventually invokes a handoff (or hits the turn limit).
+
+        int agentACallCount = 0;
+        const int TargetIterations = 3;
+
+        var agentA = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            agentACallCount++;
+
+            if (agentACallCount < TargetIterations)
+            {
+                // Respond with text only (no handoff) — should trigger autonomous continuation.
+                return new(new ChatMessage(ChatRole.Assistant, $"iteration {agentACallCount}"));
+            }
+
+            // After TargetIterations calls, hand off.
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "agentA");
+
+        var agentB = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "B final"))),
+            name: "agentB", description: "agent B");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(agentA)
+            .WithHandoff(agentA, agentB)
+            .WithAutonomousMode()
+            .Build();
+
+        (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "go"),]);
+
+        Assert.Equal(TargetIterations, agentACallCount);
+        Assert.NotNull(result);
+        Assert.Contains("B final", updateText);
+
+        // Conversation should contain the continuation prompts injected between A's responses.
+        Assert.Contains(result, m => m.Role == ChatRole.User && m.Text == HandoffWorkflowBuilderDefaults.DefaultAutonomousContinuationPrompt);
+    }
+
+    [Fact]
+    public async Task Handoffs_AutonomousMode_RespectsTurnLimitAsync()
+    {
+        // With a turn limit of N, the agent should be invoked initial+N times before the workflow ends
+        // (when the agent never invokes a handoff).
+
+        int callCount = 0;
+        const int TurnLimit = 2;
+
+        var agentA = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            callCount++;
+            return new(new ChatMessage(ChatRole.Assistant, $"call {callCount}"));
+        }), name: "agentA");
+
+        var agentB = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            Assert.Fail("B should never be reached since A never hands off.");
+            return new();
+        }), name: "agentB", description: "agent B");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(agentA)
+            .WithHandoff(agentA, agentB)
+            .WithAutonomousMode(turnLimit: TurnLimit)
+            .Build();
+
+        (_, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "go")]);
+
+        // First call + TurnLimit continuation iterations = TurnLimit + 1 invocations.
+        Assert.Equal(TurnLimit + 1, callCount);
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task Handoffs_AutonomousMode_UsesCustomContinuationPromptAsync()
+    {
+        const string CustomPrompt = "Keep going, please.";
+        int callCount = 0;
+
+        var agentA = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            callCount++;
+            if (callCount > 1)
+            {
+                // After first call, verify the latest user message is the custom prompt.
+                var lastUserMessage = messages.LastOrDefault(m => m.Role == ChatRole.User);
+                Assert.NotNull(lastUserMessage);
+                Assert.Equal(CustomPrompt, lastUserMessage!.Text);
+            }
+
+            return new(new ChatMessage(ChatRole.Assistant, $"call {callCount}"));
+        }), name: "agentA");
+
+        var agentB = new ChatClientAgent(new MockChatClient((messages, options) => new()),
+            name: "agentB", description: "agent B");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(agentA)
+            .WithHandoff(agentA, agentB)
+            .WithAutonomousMode(turnLimit: 2, continuationPrompt: CustomPrompt)
+            .Build();
+
+        (_, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "go")]);
+
+        Assert.Equal(3, callCount); // 1 initial + 2 autonomous continuations
+        Assert.NotNull(result);
+        Assert.Contains(result, m => m.Role == ChatRole.User && m.Text == CustomPrompt);
+    }
+
+    #endregion Autonomous Mode Tests
+
+    #region Termination Condition Tests
+
+    [Fact]
+    public async Task Handoffs_SyncTerminationCondition_EndsAutonomousLoopAsync()
+    {
+        int callCount = 0;
+
+        var agentA = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            callCount++;
+            return new(new ChatMessage(ChatRole.Assistant, $"response {callCount}"));
+        }), name: "agentA");
+
+        var agentB = new ChatClientAgent(new MockChatClient((messages, options) => new()),
+            name: "agentB", description: "agent B");
+
+        // Sync termination: stop as soon as conversation contains a message with text "response 2".
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(agentA)
+            .WithHandoff(agentA, agentB)
+            .WithAutonomousMode(turnLimit: 10)
+            .WithTerminationCondition(conversation => conversation.Any(m => m.Text == "response 2"))
+            .Build();
+
+        (_, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "go")]);
+
+        // Agent should be invoked twice: once initially, once after the autonomous continuation,
+        // at which point the termination condition fires and the loop ends.
+        Assert.Equal(2, callCount);
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task Handoffs_AsyncTerminationCondition_EndsAutonomousLoopAsync()
+    {
+        int callCount = 0;
+
+        var agentA = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            callCount++;
+            return new(new ChatMessage(ChatRole.Assistant, $"response {callCount}"));
+        }), name: "agentA");
+
+        var agentB = new ChatClientAgent(new MockChatClient((messages, options) => new()),
+            name: "agentB", description: "agent B");
+
+        // Async termination: same effect, but exercises the async overload.
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(agentA)
+            .WithHandoff(agentA, agentB)
+            .WithAutonomousMode(turnLimit: 10)
+            .WithTerminationCondition(async conversation =>
+            {
+                await Task.Yield();
+                return conversation.Any(m => m.Text == "response 3");
+            })
+            .Build();
+
+        (_, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "go")]);
+
+        Assert.Equal(3, callCount);
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task Handoffs_TerminationCondition_NotInvokedOnHandoffAsync()
+    {
+        // The termination condition is only evaluated when the agent did not request a handoff.
+        // Verify a handoff occurs without consulting the predicate.
+
+        bool predicateInvoked = false;
+
+        var agentA = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "agentA");
+
+        var agentB = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "B done"))),
+            name: "agentB", description: "agent B");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(agentA)
+            .WithHandoff(agentA, agentB)
+            .WithTerminationCondition(_ =>
+            {
+                predicateInvoked = true;
+                return true;
+            })
+            .Build();
+
+        (string updateText, _, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "go")]);
+
+        // Only B's response should have ended the workflow; predicate evaluated on B (no further handoff).
+        Assert.Equal("B done", updateText);
+        Assert.True(predicateInvoked, "Predicate should have been invoked at least once (on the terminating agent).");
+    }
+
+    #endregion Termination Condition Tests
+
     #region Helper Types and Methods
 
     private sealed record WorkflowRunResult(string UpdateText, List<ChatMessage>? Result, CheckpointInfo? LastCheckpoint, List<RequestInfoEvent> PendingRequests);

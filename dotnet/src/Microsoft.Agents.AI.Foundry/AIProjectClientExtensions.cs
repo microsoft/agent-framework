@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -13,7 +12,6 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
 
@@ -22,7 +20,6 @@ namespace Azure.AI.Projects;
 /// <summary>
 /// Provides extension methods for <see cref="AIProjectClient"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static partial class AIProjectClientExtensions
 {
     /// <summary>
@@ -374,6 +371,7 @@ public static partial class AIProjectClientExtensions
         if (agentDefinition is DeclarativeAgentDefinition { Tools: { Count: > 0 } definitionTools })
         {
             // Check if no tools were provided while the agent definition requires in-proc tools.
+#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
             if (requireInvocableTools && chatOptions?.Tools is not { Count: > 0 } && definitionTools.Any(t => t is FunctionTool))
             {
                 throw new ArgumentException("The agent definition in-process tools must be provided in the extension method tools parameter.");
@@ -406,6 +404,7 @@ public static partial class AIProjectClientExtensions
 
                 (agentTools ??= []).Add(responseTool.AsAITool());
             }
+#pragma warning restore OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
             if (requireInvocableTools && missingTools is { Count: > 0 })
             {

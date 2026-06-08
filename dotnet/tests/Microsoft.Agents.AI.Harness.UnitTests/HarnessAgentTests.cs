@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Tools.Shell;
 #endif
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests;
@@ -641,6 +642,51 @@ public class HarnessAgentTests
 
         // Assert
         Assert.Null(agent.GetService<ToolApprovalAgent>());
+    }
+
+    /// <summary>
+    /// Verify that ToolApprovalAgentOptions auto-approval rules are passed through and actually used.
+    /// </summary>
+    [Fact]
+    public async Task ToolApproval_AutoApprovalRulesAreAppliedAsync()
+    {
+        // Arrange — inner client returns an approval request on first call, then final response on second.
+        var callCount = 0;
+        var approvalRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "ReadTool"));
+
+        var mockClient = new Mock<IChatClient>();
+        mockClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    return new ChatResponse(new ChatMessage(ChatRole.Assistant, [approvalRequest]));
+                }
+
+                return new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done"));
+            });
+
+        var options = CreateAllDisabledOptions();
+        options.DisableToolApproval = false;
+        options.ToolApprovalAgentOptions = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [fcc => new ValueTask<bool>(fcc.Name == "ReadTool")]
+        };
+
+        var agent = new HarnessAgent(mockClient.Object, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — the auto-approval rule approved the request, so we get "Done" (not an approval request)
+        Assert.Equal(2, callCount);
+        Assert.Equal("Done", response.Text);
     }
 
     #endregion
@@ -1460,4 +1506,131 @@ public class HarnessAgentTests
 
     #endregion
 #endif
+
+    #region LoggerFactory and ServiceProvider
+
+    /// <summary>
+    /// Verify that the constructor succeeds when loggerFactory is provided.
+    /// </summary>
+    [Fact]
+    public void Constructor_SucceedsWithLoggerFactory()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var loggerFactory = new Mock<ILoggerFactory>().Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), loggerFactory);
+
+        // Assert
+        Assert.NotNull(agent);
+    }
+
+    /// <summary>
+    /// Verify that the constructor succeeds when serviceProvider is provided.
+    /// </summary>
+    [Fact]
+    public void Constructor_SucceedsWithServiceProvider()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var services = new Mock<IServiceProvider>().Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), services: services);
+
+        // Assert
+        Assert.NotNull(agent);
+    }
+
+    /// <summary>
+    /// Verify that the constructor succeeds when both loggerFactory and serviceProvider are provided.
+    /// </summary>
+    [Fact]
+    public void Constructor_SucceedsWithLoggerFactoryAndServiceProvider()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var loggerFactory = new Mock<ILoggerFactory>().Object;
+        var services = new Mock<IServiceProvider>().Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), loggerFactory, services);
+
+        // Assert
+        Assert.NotNull(agent);
+    }
+
+    /// <summary>
+    /// Verify that AsHarnessAgent extension method accepts loggerFactory and serviceProvider.
+    /// </summary>
+    [Fact]
+    public void AsHarnessAgent_SucceedsWithLoggerFactoryAndServiceProvider()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var loggerFactory = new Mock<ILoggerFactory>().Object;
+        var services = new Mock<IServiceProvider>().Object;
+
+        // Act
+        var agent = chatClient.AsHarnessAgent(TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), loggerFactory, services);
+
+        // Assert
+        Assert.NotNull(agent);
+    }
+
+    /// <summary>
+    /// Verify that ILoggerFactory is threaded to downstream components by confirming CreateLogger is called.
+    /// </summary>
+    [Fact]
+    public void Constructor_LoggerFactoryIsUsedByDownstreamComponents()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var mockLoggerFactory = new Mock<ILoggerFactory>();
+        mockLoggerFactory
+            .Setup(lf => lf.CreateLogger(It.IsAny<string>()))
+            .Returns(new Mock<ILogger>().Object);
+
+        // Act — use options that leave CompactionProvider and AgentSkillsProvider enabled
+        var options = new HarnessAgentOptions
+        {
+            DisableToolApproval = true,
+            DisableOpenTelemetry = true,
+            DisableFileMemory = true,
+            DisableFileAccess = true,
+            DisableWebSearch = true,
+            DisableTodoProvider = true,
+            DisableAgentModeProvider = true,
+        };
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options, mockLoggerFactory.Object);
+
+        // Assert — CreateLogger should have been called by one or more downstream components
+        Assert.NotNull(agent);
+        mockLoggerFactory.Verify(lf => lf.CreateLogger(It.IsAny<string>()), Times.AtLeastOnce());
+    }
+
+    /// <summary>
+    /// Verify that IServiceProvider is propagated through the agent pipeline by confirming
+    /// it is queried during agent construction.
+    /// </summary>
+    [Fact]
+    public void Constructor_ServiceProviderIsQueriedDuringBuild()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var mockServices = new Mock<IServiceProvider>();
+        mockServices
+            .Setup(sp => sp.GetService(It.IsAny<Type>()))
+            .Returns(null!);
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), services: mockServices.Object);
+
+        // Assert — the service provider should have been queried during pipeline construction
+        Assert.NotNull(agent);
+        mockServices.Verify(sp => sp.GetService(It.IsAny<Type>()), Times.AtLeastOnce());
+    }
+
+    #endregion
 }

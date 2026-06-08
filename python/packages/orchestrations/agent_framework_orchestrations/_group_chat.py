@@ -52,7 +52,7 @@ from ._base_group_chat_orchestrator import (
 from ._orchestration_request_info import AgentApprovalExecutor
 from ._orchestrator_helpers import clean_conversation_for_handoff
 from ._participant_output_config import (
-    _MISSING,  # pyright: ignore[reportPrivateUsage]
+    UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
     _coerce_intermediate_output_from,  # pyright: ignore[reportPrivateUsage]
     _ParticipantIntermediateOutputSelection,  # pyright: ignore[reportPrivateUsage]
@@ -626,7 +626,7 @@ class GroupChatBuilder:
         termination_condition: TerminationCondition | None = None,
         max_rounds: int | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
-        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, _MISSING),
+        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
         intermediate_output_from: _ParticipantIntermediateOutputSelection = None,
     ) -> None:
         """Initialize the GroupChatBuilder.

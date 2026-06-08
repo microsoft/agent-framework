@@ -9,11 +9,10 @@ import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Sequence
-from contextlib import suppress
-from dataclasses import asdict, is_dataclass
-from pathlib import Path
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
+from dataclasses import asdict, dataclass, is_dataclass
+from pathlib import Path
 from typing import Protocol, cast
 
 from agent_framework import (
@@ -73,6 +72,7 @@ from azure.ai.agentserver.responses.models import (
     MessageContentOutputTextContent,
     MessageContentReasoningTextContent,
     MessageContentRefusalContent,
+    MessageRole,
     OAuthConsentRequestOutputItem,
     OutputItem,
     OutputItemApplyPatchToolCall,
@@ -116,6 +116,8 @@ from mcp import McpError
 from typing_extensions import Any
 
 logger = logging.getLogger(__name__)
+
+_AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
 
 
 # region Approval Storage
@@ -250,35 +252,85 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
     storage_path = (root_path / context_id).resolve()
     if not storage_path.is_relative_to(root_path):
         raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
-    return FileCheckpointStorage(storage_path)
+    return FileCheckpointStorage(
+        storage_path,
+        # Keep this provider-specific allowlist narrow. Hosted workflow
+        # checkpoints can persist Azure's role enum inside Message objects.
+        allowed_checkpoint_types=[_AZURE_RESPONSES_MESSAGE_ROLE_TYPE],
+    )
 
 
 # endregion Approval Storage
 
 # Foundry Toolbox Auth integration
 # Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
-CONSENT_ERROR_CODE = -32007
+CONSENT_ERROR_CODE = -32006
 
 
-def consent_url_from_error(exc: BaseException) -> str | None:
-    """Return the consent URL when ``exc`` wraps a Foundry MCP gateway consent error.
+@dataclass
+class ConsentError:
+    name: str
+    consent_url: str
 
-    The Agent Framework MCP layer surfaces gateway consent failures by wrapping the underlying
-    ``McpError`` inside an :class:`AgentFrameworkException` (typically a ``ToolExecutionException``
-    raised from ``MCPStreamableHTTPTool.__aenter__``). This helper inspects ``exc.args`` for a
-    wrapped ``McpError`` whose ``error.code`` is :data:`CONSENT_ERROR_CODE`; when found, the
-    consent link the gateway returned in ``error.message`` is returned. Returns ``None`` for
-    anything else, so callers can do ``if (url := consent_url_from_error(ex)) is None: raise``.
+
+def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
+    """Return the consent URLs when ``exc`` wraps Foundry MCP gateway consent errors.
 
     Args:
         exc: The exception to inspect.
 
     Returns:
-        The consent URL if ``exc`` wraps a consent ``McpError``, otherwise ``None``.
+        The consent URL(s) extracted from the error, or ``None`` if no consent error was found.
     """
     inner_exception = next((arg for arg in exc.args if isinstance(arg, McpError)), None)
     if inner_exception is not None and inner_exception.error.code == CONSENT_ERROR_CODE:
-        return inner_exception.error.message
+        # Parse the error message
+        # The error message is structured with the following format:
+        # "tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {"errors":[{"name": ..."
+        # where the second part is a JSON string that can be deserialized into an object with the following shape:
+        # ruff: disable[ERA001]
+        # {
+        #   "errors" : [
+        #       {
+        #           "name": "Name of the MCP tool that requires consent",
+        #           "type" : "mcp",
+        #           "error": {
+        #               "code": "CONSENT_REQUIRED",
+        #               "message": consent_url,
+        #           }
+        #       }
+        #   ]
+        # }
+        # ruff: enable[ERA001]
+        try:
+            consent_errors: list[ConsentError] = []
+            error_message_start = inner_exception.error.message.find("{")
+            if error_message_start == -1:
+                logger.warning("Consent error message does not contain JSON: %s", inner_exception.error.message)
+                return None
+            consent_details_json = inner_exception.error.message[error_message_start:]
+            consent_details = json.loads(consent_details_json)
+            if "errors" not in consent_details or not isinstance(consent_details["errors"], list):
+                logger.warning("Consent error message JSON does not contain 'errors' list: %s", consent_details_json)
+                return None
+            for error in consent_details["errors"]:
+                if (
+                    isinstance(error, dict)
+                    and error.get("type") == "mcp"  # type: ignore
+                    and "error" in error
+                    and isinstance(error["error"], dict)
+                    and error["error"].get("code") == "CONSENT_REQUIRED"  # type: ignore
+                    and "message" in error["error"]
+                ):
+                    consent_url = error["error"]["message"]  # type: ignore
+                    if isinstance(consent_url, str):
+                        consent_errors.append(ConsentError(name=error.get("name", "Unknown"), consent_url=consent_url))  # type: ignore
+                    else:
+                        logger.warning("Consent URL in error message is not a valid URL: %s", consent_url)  # type: ignore
+            if consent_errors:
+                return consent_errors
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse consent details JSON: %s", inner_exception.error.message)
     return None
 
 
@@ -441,18 +493,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         try:
             await self._ensure_agent_ready()
         except AgentFrameworkException as ex:
-            consent_url = consent_url_from_error(ex)
-            if consent_url is None:
+            consent_errors = consent_url_from_error(ex)
+            if consent_errors is None:
                 raise
-            logger.warning("OAuth consent required for Foundry MCP gateway.")
-            oauth_item = OAuthConsentRequestOutputItem(
-                id=IdGenerator.new_id("oacr"),
-                consent_link=consent_url,
-                server_label="Foundry Toolbox",
-            )
-            builder = response_event_stream.add_output_item(oauth_item.id)
-            yield builder.emit_added(oauth_item)
-            yield builder.emit_done(oauth_item)
+            for consent_error in consent_errors:
+                logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
+                oauth_item = OAuthConsentRequestOutputItem(
+                    id=IdGenerator.new_id("oacr"),
+                    consent_link=consent_error.consent_url,
+                    server_label=consent_error.name,
+                )
+                builder = response_event_stream.add_output_item(oauth_item.id)
+                yield builder.emit_added(oauth_item)
+                yield builder.emit_done(oauth_item)
             yield response_event_stream.emit_completed()
             return
 
@@ -465,14 +518,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # Run the agent in non-streaming mode
                 response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
 
-                for message in response.messages:
-                    for content in message.contents:
-                        async for item in _to_outputs(
-                            response_event_stream,
-                            content,
-                            approval_storage=self._approval_storage,
-                        ):
-                            yield item
+                async for item in _to_outputs_for_messages(
+                    response_event_stream,
+                    response.messages,
+                    approval_storage=self._approval_storage,
+                ):
+                    yield item
                 yield response_event_stream.emit_completed()
             else:
                 if tracker is None:  # pragma: no cover - defensive, set above
@@ -516,7 +567,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         by the hosting infrastructure or files will be preserved upon deactivation.
         """
         input_items = await context.get_input_items()
-        input_messages = await _items_to_messages(input_items)
+        input_messages = await _items_to_messages(input_items, approval_storage=self._approval_storage)
         is_streaming_request = request.stream is not None and request.stream is True
 
         _, are_options_set = _to_chat_options(request)
@@ -613,10 +664,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 checkpoint_storage=write_storage,
             )
 
-            for message in response.messages:
-                for content in message.contents:
-                    async for item in _to_outputs(response_event_stream, content):
-                        yield item
+            async for item in _to_outputs_for_messages(
+                response_event_stream,
+                response.messages,
+                approval_storage=self._approval_storage,
+            ):
+                yield item
 
             await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
             yield response_event_stream.emit_completed()
@@ -636,7 +689,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 for event in tracker.handle(content):
                     yield event
                 if tracker.needs_async:
-                    async for item in _to_outputs(response_event_stream, content):
+                    async for item in _to_outputs(
+                        response_event_stream, content, approval_storage=self._approval_storage
+                    ):
                         yield item
                     tracker.needs_async = False
 
@@ -722,7 +777,7 @@ class _OutputItemTracker:
                 yield self._fc_builder.emit_arguments_delta(args_str)
 
         elif content.type == "mcp_server_tool_call" and content.tool_name:
-            key = f"{content.server_name or 'default'}::{content.tool_name}"
+            key = content.call_id or f"{content.server_name or 'default'}::{content.tool_name}"
             if self._active_type != "mcp_server_tool_call" or self._active_id != key:
                 yield from self._close()
                 yield from self._open_mcp_call(content)
@@ -730,6 +785,24 @@ class _OutputItemTracker:
             self._accumulated.append(args_str)
             if self._mcp_builder is not None:
                 yield self._mcp_builder.emit_arguments_delta(args_str)
+
+        elif (
+            content.type == "mcp_server_tool_result"
+            and self._active_type == "mcp_server_tool_call"
+            and self._mcp_builder is not None
+            and content.call_id is not None
+            and content.call_id == self._mcp_builder.item_id
+        ):
+            accumulated = "".join(self._accumulated)
+            yield self._mcp_builder.emit_arguments_done(accumulated)
+            yield self._mcp_builder.emit_completed()
+            yield self._mcp_builder.emit_done(output=_stringify_mcp_output(content.output))
+            self._mcp_builder = None
+            self._active_type = None
+            self._active_id = None
+            self._accumulated.clear()
+            self.needs_async = False
+            return
 
         else:
             yield from self._close()
@@ -770,9 +843,10 @@ class _OutputItemTracker:
         self._mcp_builder = self._stream.add_output_item_mcp_call(
             server_label=content.server_name or "default",
             name=content.tool_name or "",
+            item_id=content.call_id,
         )
         self._active_type = "mcp_server_tool_call"
-        self._active_id = f"{content.server_name or 'default'}::{content.tool_name}"
+        self._active_id = content.call_id or f"{content.server_name or 'default'}::{content.tool_name}"
         yield self._mcp_builder.emit_added()
 
     def _close(self) -> Generator[ResponseStreamEvent]:
@@ -920,16 +994,19 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
 
     if item.type == "mcp_call":
         mcp = cast(ItemMcpToolCall, item)
+        contents = [
+            Content.from_mcp_server_tool_call(
+                mcp.id,
+                mcp.name,
+                server_name=mcp.server_label,
+                arguments=mcp.arguments,
+            )
+        ]
+        if getattr(mcp, "output", None) is not None:
+            contents.append(Content.from_mcp_server_tool_result(call_id=mcp.id, output=mcp.output))
         return Message(
             role="assistant",
-            contents=[
-                Content.from_mcp_server_tool_call(
-                    mcp.id,
-                    mcp.name,
-                    server_name=mcp.server_label,
-                    arguments=mcp.arguments,
-                )
-            ],
+            contents=contents,
         )
 
     if item.type == "mcp_approval_request":
@@ -1190,16 +1267,19 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
 
     if item.type == "mcp_call":
         mcp = cast(OutputItemMcpToolCall, item)
+        contents = [
+            Content.from_mcp_server_tool_call(
+                mcp.id,
+                mcp.name,
+                server_name=mcp.server_label,
+                arguments=mcp.arguments,
+            )
+        ]
+        if getattr(mcp, "output", None) is not None:
+            contents.append(Content.from_mcp_server_tool_result(call_id=mcp.id, output=mcp.output))
         return Message(
             role="assistant",
-            contents=[
-                Content.from_mcp_server_tool_call(
-                    mcp.id,
-                    mcp.name,
-                    server_name=mcp.server_label,
-                    arguments=mcp.arguments,
-                )
-            ],
+            contents=contents,
         )
 
     if item.type == "mcp_approval_request":
@@ -1576,6 +1656,7 @@ async def _to_outputs(
         mcp_call = stream.add_output_item_mcp_call(
             server_label=content.server_name or "default",
             name=content.tool_name or "",
+            item_id=content.call_id,
         )
         yield mcp_call.emit_added()
         async for event in mcp_call.aarguments(_arguments_to_str(content.arguments)):
@@ -1648,6 +1729,93 @@ async def _to_outputs(
     else:
         # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
         logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
+
+
+def _stringify_mcp_output(output: Any) -> str:
+    """Convert hosted MCP output payloads into the string shape expected by mcp_call.output."""
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output
+    if isinstance(output, Mapping):
+        text = cast(Any, output).get("text")
+        if isinstance(text, str):
+            return text
+        return json.dumps(output, default=str)
+    if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
+        parts: list[str] = []
+        entries = cast(Sequence[object], output)
+        for entry in entries:
+            if isinstance(entry, Content) and entry.type == "text":
+                parts.append(entry.text or "")
+                continue
+            parts.append(_stringify_mcp_output(entry))
+        return "".join(parts)
+    return str(output)
+
+
+def _emit_completed_mcp_call(
+    stream: ResponseEventStream,
+    call_content: Content,
+    *,
+    arguments: str,
+    output: str,
+) -> Generator[ResponseStreamEvent]:
+    """Emit a single completed MCP call item carrying both arguments and output."""
+    mcp_call = stream.add_output_item_mcp_call(
+        server_label=call_content.server_name or "default",
+        name=call_content.tool_name or "",
+        item_id=call_content.call_id,
+    )
+    yield mcp_call.emit_added()
+    yield mcp_call.emit_arguments_done(arguments)
+    yield mcp_call.emit_completed()
+    yield mcp_call.emit_done(output=output)
+
+
+async def _to_outputs_for_messages(
+    stream: ResponseEventStream,
+    messages: Sequence[Message],
+    *,
+    approval_storage: ApprovalStorage | None = None,
+) -> AsyncIterator[ResponseStreamEvent]:
+    """Convert messages to output events with hosted-MCP call/result coalescing.
+
+    Parse once in message/content order and emit either:
+    - a single canonical completed ``mcp_call`` when adjacent hosted MCP
+      call/result content are encountered, or
+    - standard output items for all other content types.
+    """
+    pending_mcp_call: Content | None = None
+
+    for message in messages:
+        for content in message.contents:
+            if pending_mcp_call is not None:
+                if content.type == "mcp_server_tool_result" and content.call_id == pending_mcp_call.call_id:
+                    for event in _emit_completed_mcp_call(
+                        stream,
+                        pending_mcp_call,
+                        arguments=_arguments_to_str(pending_mcp_call.arguments),
+                        output=_stringify_mcp_output(content.output),
+                    ):
+                        yield event
+                    pending_mcp_call = None
+                    continue
+
+                async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
+                    yield event
+                pending_mcp_call = None
+
+            if content.type == "mcp_server_tool_call" and content.call_id:
+                pending_mcp_call = content
+                continue
+
+            async for event in _to_outputs(stream, content, approval_storage=approval_storage):
+                yield event
+
+    if pending_mcp_call is not None:
+        async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
+            yield event
 
 
 # endregion
