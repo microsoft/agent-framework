@@ -978,7 +978,7 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
         return DurableAgentStateFunctionCallContent(call_id=content.call_id, name=content.name, arguments=arguments)
 
     def to_ai_content(self) -> Content:
-        return Content.from_function_call(call_id=self.call_id, name=self.name, arguments=self.arguments)
+        return Content.from_function_call(call_id=self.call_id, name=self.name, arguments=json.dumps(self.arguments))
 
 
 class DurableAgentStateFunctionResultContent(DurableAgentStateContent):

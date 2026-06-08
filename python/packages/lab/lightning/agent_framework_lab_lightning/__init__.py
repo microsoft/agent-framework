@@ -7,8 +7,8 @@ from __future__ import annotations
 import importlib.metadata
 
 from agent_framework.observability import enable_instrumentation
-from agentlightning.tracer import (
-    AgentOpsTracer,  # pyright: ignore[reportMissingImports]  # type: ignore[import-not-found]
+from agentlightning.tracer import (  # type: ignore[reportMissingImports]
+    AgentOpsTracer,  # type: ignore[reportMissingImports, import-not-found]
 )
 
 try:

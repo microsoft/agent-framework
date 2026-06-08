@@ -67,7 +67,7 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
     if enable_instrumentation or enable_sensitive_data:
         from opentelemetry.sdk.trace import TracerProvider
 
-        tracer_provider = TracerProvider(resource=observability_settings._resource)
+        tracer_provider = TracerProvider(resource=observability.create_resource())
         trace.set_tracer_provider(tracer_provider)
 
     monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)  # type: ignore

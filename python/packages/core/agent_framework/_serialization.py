@@ -7,6 +7,8 @@ import json
 import logging
 import re
 from collections.abc import Mapping, MutableMapping
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
 logger = logging.getLogger("agent_framework")
@@ -40,7 +42,7 @@ class SerializationProtocol(Protocol):
 
 
             # Message implements SerializationProtocol via SerializationMixin
-            user_msg = Message(role="user", text="What's the weather like today?")
+            user_msg = Message(role="user", contents=["What's the weather like today?"])
 
             # Serialize to dictionary - automatic type identification and nested serialization
             msg_dict = user_msg.to_dict()
@@ -425,13 +427,13 @@ class SerializationMixin:
                 from openai import AsyncOpenAI
 
 
-                # OpenAI chat client requires an AsyncOpenAI client instance
-                # The client is marked as INJECTABLE = {"client"} in OpenAIBase
+                # OpenAI chat client requires an AsyncOpenAI client instance.
+                # The client dependency is excluded from serialization.
 
                 # Serialized data contains only the model configuration
                 client_data = {
                     "type": "open_ai_chat_client",
-                    "model_id": "gpt-4o-mini",
+                    "model": "gpt-4o-mini",
                     # client is excluded from serialization
                 }
 
@@ -614,3 +616,46 @@ class SerializationMixin:
         # Fallback and default
         # Convert class name to snake_case
         return _CAMEL_TO_SNAKE_PATTERN.sub("_", cls.__name__).lower()
+
+
+def make_json_safe(obj: Any) -> Any:
+    """Recursively convert an object to a JSON-serializable form.
+
+    Handles dataclasses, Pydantic models, objects with ``to_dict``/``dict``/``__dict__``,
+    datetimes, lists, dicts, and primitives.  Falls back to ``str()`` for any remaining
+    non-serializable value so that ``json.dumps`` never raises a ``TypeError``.
+
+    Args:
+        obj: Object to make JSON safe.
+
+    Returns:
+        A JSON-serializable version of the object.
+    """
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return make_json_safe(asdict(obj))  # type: ignore[arg-type]
+    if callable(getattr(obj, "model_dump", None)):
+        try:
+            return make_json_safe(obj.model_dump())  # type: ignore[no-any-return]
+        except TypeError:
+            pass
+    if callable(getattr(obj, "to_dict", None)):
+        try:
+            return make_json_safe(obj.to_dict())  # type: ignore[no-any-return]
+        except TypeError:
+            pass
+    if callable(getattr(obj, "dict", None)):
+        try:
+            return make_json_safe(obj.dict())  # type: ignore[no-any-return]
+        except TypeError:
+            pass
+    if isinstance(obj, dict):
+        return {str(key): make_json_safe(value) for key, value in obj.items()}  # type: ignore[misc]
+    if isinstance(obj, (list, tuple)):
+        return [make_json_safe(item) for item in obj]  # type: ignore[misc]
+    if hasattr(obj, "__dict__"):
+        return {key: make_json_safe(value) for key, value in vars(obj).items()}  # type: ignore[misc]
+    return str(obj)

@@ -22,10 +22,13 @@ async def run_semantic_kernel() -> None:
     from semantic_kernel.agents import OpenAIResponsesAgent
     from semantic_kernel.connectors.ai.open_ai import OpenAISettings
 
+    openai_settings = OpenAISettings()
+    assert openai_settings.responses_model_id is not None, "Responses model ID must be set in OpenAISettings"
+
     client = OpenAIResponsesAgent.create_client()
     # SK response agents wrap OpenAI's hosted Responses API.
     agent = OpenAIResponsesAgent(
-        ai_model_id=OpenAISettings().responses_model_id,
+        ai_model_id=openai_settings.responses_model_id,
         client=client,
         instructions="Answer in one concise sentence.",
         name="Expert",
@@ -36,11 +39,11 @@ async def run_semantic_kernel() -> None:
 
 async def run_agent_framework() -> None:
     from agent_framework import Agent
-    from agent_framework.openai import OpenAIResponsesClient
+    from agent_framework.openai import OpenAIChatClient
 
-    # AF Agent can swap in an OpenAIResponsesClient directly.
+    # AF Agent can swap in an OpenAIChatClient directly.
     chat_agent = Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         instructions="Answer in one concise sentence.",
         name="Expert",
     )

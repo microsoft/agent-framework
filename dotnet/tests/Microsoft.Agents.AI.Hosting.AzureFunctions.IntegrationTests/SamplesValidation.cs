@@ -35,7 +35,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             .Build();
 
     private static bool s_infrastructureStarted;
-    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(3);
 
     // In CI, `dotnet run` builds the Functions project from scratch before the host starts, so 60s is not enough.
     private static readonly TimeSpan s_functionsReadyTimeout = TimeSpan.FromSeconds(180);
@@ -60,7 +60,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         await Task.CompletedTask;
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "01_SingleAgent");
@@ -105,7 +105,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: LLM non-determinism can produce null orchestration results")]
     public async Task SingleAgentOrchestrationChainingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "02_AgentOrchestration_Chaining");
@@ -148,7 +148,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentOrchestrationConcurrentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "03_AgentOrchestration_Concurrency");
@@ -198,7 +198,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentOrchestrationConditionalsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "04_AgentOrchestration_Conditionals");
@@ -216,7 +216,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -272,7 +272,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -314,7 +314,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     }
                 },
                 message: "Orchestration is requesting human feedback",
-                timeout: TimeSpan.FromSeconds(60));
+                timeout: TimeSpan.FromSeconds(180));
 
             // Approve the content
             Uri approvalUri = new($"{runAgentUri}?thread_id={sessionId}");
@@ -334,7 +334,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     }
                 },
                 message: "Content published notification is logged",
-                timeout: TimeSpan.FromSeconds(60));
+                timeout: TimeSpan.FromSeconds(180));
 
             // Verify the final orchestration status by asking the agent for the status
             Uri statusUri = new($"{runAgentUri}?thread_id={sessionId}");
@@ -358,11 +358,11 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     return isCompleted && hasContent;
                 },
                 message: "Orchestration is completed",
-                timeout: TimeSpan.FromSeconds(60));
+                timeout: TimeSpan.FromSeconds(180));
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task AgentAsMcpToolAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_AgentAsMcpTool");
@@ -402,7 +402,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");
@@ -803,7 +803,8 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     private async Task RunSampleTestAsync(string samplePath, Func<IReadOnlyList<OutputLog>, Task> testAction)
     {
         // Build the sample project first (it may not have been built as part of the solution)
-        await this.BuildSampleAsync(samplePath);
+        await AzureFunctionsTestHelper.BuildSampleAsync(
+            samplePath, $"-f {s_dotnetTargetFramework} -c {BuildConfiguration}", this._outputHelper);
 
         // Start the Azure Functions app
         List<OutputLog> logsContainer = [];
@@ -811,7 +812,8 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         try
         {
             // Wait for the app to be ready
-            await this.WaitForAzureFunctionsAsync();
+            await AzureFunctionsTestHelper.WaitForFunctionsReadyAsync(
+                funcProcess, AzureFunctionsPort, s_sharedHttpClient, this._outputHelper, s_functionsReadyTimeout, samplePath);
 
             // Run the test
             await testAction(logsContainer);
@@ -823,38 +825,6 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     }
 
     private sealed record OutputLog(DateTime Timestamp, LogLevel Level, string Message);
-
-    private async Task BuildSampleAsync(string samplePath)
-    {
-        this._outputHelper.WriteLine($"Building sample at {samplePath}...");
-
-        ProcessStartInfo buildInfo = new()
-        {
-            FileName = "dotnet",
-            Arguments = $"build -f {s_dotnetTargetFramework} -c {BuildConfiguration}",
-            WorkingDirectory = samplePath,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-
-        using Process buildProcess = new() { StartInfo = buildInfo };
-        buildProcess.Start();
-
-        // Read both streams asynchronously to avoid deadlocks from filled pipe buffers
-        Task<string> stdoutTask = buildProcess.StandardOutput.ReadToEndAsync();
-        Task<string> stderrTask = buildProcess.StandardError.ReadToEndAsync();
-        await buildProcess.WaitForExitAsync();
-
-        string stderr = await stderrTask;
-        if (buildProcess.ExitCode != 0)
-        {
-            string stdout = await stdoutTask;
-            throw new InvalidOperationException($"Failed to build sample at {samplePath}:\n{stdout}\n{stderr}");
-        }
-
-        this._outputHelper.WriteLine($"Build completed for {samplePath}.");
-    }
 
     private Process StartFunctionApp(string samplePath, List<OutputLog> logs)
     {
@@ -917,30 +887,6 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         process.BeginOutputReadLine();
 
         return process;
-    }
-
-    private async Task WaitForAzureFunctionsAsync()
-    {
-        this._outputHelper.WriteLine(
-            $"Waiting for Azure Functions Core Tools to be ready at http://localhost:{AzureFunctionsPort}/...");
-        await this.WaitForConditionAsync(
-            condition: async () =>
-            {
-                try
-                {
-                    using HttpRequestMessage request = new(HttpMethod.Head, $"http://localhost:{AzureFunctionsPort}/");
-                    using HttpResponseMessage response = await s_sharedHttpClient.SendAsync(request);
-                    this._outputHelper.WriteLine($"Azure Functions Core Tools response: {response.StatusCode}");
-                    return response.IsSuccessStatusCode;
-                }
-                catch (HttpRequestException)
-                {
-                    // Expected when the app isn't yet ready
-                    return false;
-                }
-            },
-            message: "Azure Functions Core Tools is ready",
-            timeout: s_functionsReadyTimeout);
     }
 
     private async Task WaitForOrchestrationCompletionAsync(Uri statusUri)

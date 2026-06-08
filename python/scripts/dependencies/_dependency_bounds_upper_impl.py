@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import logging
 import os
 import re
 import shutil
@@ -32,6 +33,8 @@ from scripts.dependencies._dependency_bounds_runtime import (
     next_zero_major_minor_boundary,
 )
 from scripts.task_runner import discover_projects, extract_poe_tasks, project_filter_matches
+
+logger = logging.getLogger(__name__)
 
 CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
@@ -264,6 +267,12 @@ def _collect_dev_pin_replacements(
     project = data.get("project", {}) or {}
     optional_dependencies = project.get("optional-dependencies", {}) or {}
     dependency_groups = data.get("dependency-groups", {}) or {}
+    logger.debug(
+        "Collecting dev dependency replacements from %s with optional_dependencies=%s and dependency_groups=%s",
+        pyproject_file,
+        optional_dependencies.keys(),
+        dependency_groups.keys(),
+    )
     workspace_versions = _load_workspace_package_versions(str(pyproject_file.parent.parent.parent.resolve()))
 
     dev_requirements: list[str] = []
@@ -273,6 +282,7 @@ def _collect_dev_pin_replacements(
     dev_requirements.extend(
         requirement for requirement in (dependency_groups.get("dev", []) or []) if isinstance(requirement, str)
     )
+    logger.debug(f"Found {len(dev_requirements)} dev requirements in {pyproject_file}")
 
     seen_requirements: set[str] = set()
     replacements: dict[str, str] = {}
@@ -293,9 +303,10 @@ def _collect_dev_pin_replacements(
         if dependency_name.startswith("agent-framework"):
             latest_version = workspace_versions.get(dependency_name)
         else:
-            latest_version = _select_latest_dev_version(catalog.get_lock(dependency_name))
-            if latest_version is None:
-                latest_version = _select_latest_dev_version(catalog.get(dependency_name))
+            # Dev-tool refreshes should follow the selected version source (PyPI by default)
+            # instead of being pinned by the current lockfile. VersionCatalog already falls
+            # back to lock data when PyPI cannot be reached or --version-source=lock is used.
+            latest_version = _select_latest_dev_version(catalog.get(dependency_name))
         if latest_version is None:
             continue
 

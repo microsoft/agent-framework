@@ -14,7 +14,7 @@ using OpenAI.Chat;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Create a sample function tool that the agent can use.
 [Description("Get the weather for a given location.")]
@@ -36,11 +36,11 @@ AIAgent agent = new AzureOpenAIClient(
 // For simplicity, we are assuming here that only function approvals are pending.
 AgentSession session = await agent.CreateSessionAsync();
 AgentResponse response = await agent.RunAsync("What is the weather like in Amsterdam?", session);
-List<FunctionApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+List<ToolApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
 
 // For streaming use:
 // var updates = await agent.RunStreamingAsync("What is the weather like in Amsterdam?", session).ToListAsync();
-// approvalRequests = updates.SelectMany(x => x.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+// approvalRequests = updates.SelectMany(x => x.Contents).OfType<ToolApprovalRequestContent>().ToList();
 
 while (approvalRequests.Count > 0)
 {
@@ -48,18 +48,18 @@ while (approvalRequests.Count > 0)
     List<ChatMessage> userInputResponses = approvalRequests
         .ConvertAll(functionApprovalRequest =>
         {
-            Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
+            Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {((FunctionCallContent)functionApprovalRequest.ToolCall).Name}");
             return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
         });
 
     // Pass the user input responses back to the agent for further processing.
     response = await agent.RunAsync(userInputResponses, session);
 
-    approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+    approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
 
     // For streaming use:
     // updates = await agent.RunStreamingAsync(userInputResponses, session).ToListAsync();
-    // approvalRequests = updates.SelectMany(x => x.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+    // approvalRequests = updates.SelectMany(x => x.Contents).OfType<ToolApprovalRequestContent>().ToList();
 }
 
 Console.WriteLine($"\nAgent: {response}");

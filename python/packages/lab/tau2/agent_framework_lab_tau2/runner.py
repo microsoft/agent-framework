@@ -211,7 +211,7 @@ class TaskRunner:
             client=assistant_chat_client,
             instructions=assistant_system_prompt,
             tools=tools,
-            temperature=self.assistant_sampling_temperature,
+            default_options={"temperature": self.assistant_sampling_temperature},
             context_providers=[
                 SlidingWindowHistoryProvider(
                     system_message=assistant_system_prompt,
@@ -246,7 +246,7 @@ class TaskRunner:
         return Agent(
             client=user_simuator_chat_client,
             instructions=user_sim_system_prompt,
-            temperature=0.0,
+            default_options={"temperature": 0.0},
             # No sliding window for user simulator to maintain full conversation context
             # TODO(yuge): Consider adding user tools in future for more realistic scenarios
         )
@@ -353,11 +353,11 @@ class TaskRunner:
         # Matches tau2's expected conversation start pattern
         logger.info(f"Starting workflow with hardcoded greeting: '{DEFAULT_FIRST_AGENT_MESSAGE}'")
 
-        first_message = Message(role="assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)
+        first_message = Message(role="assistant", contents=[DEFAULT_FIRST_AGENT_MESSAGE])
         initial_greeting = AgentExecutorResponse(
             executor_id=ASSISTANT_AGENT_ID,
             agent_response=AgentResponse(messages=[first_message]),
-            full_conversation=[Message(role="assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)],
+            full_conversation=[Message(role="assistant", contents=[DEFAULT_FIRST_AGENT_MESSAGE])],
         )
 
         # STEP 4: Execute the workflow and collect results

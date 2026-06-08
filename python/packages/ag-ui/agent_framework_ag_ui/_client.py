@@ -111,8 +111,8 @@ def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClien
 
 @_apply_server_function_call_unwrap
 class AGUIChatClient(
-    ChatMiddlewareLayer[AGUIChatOptionsT],
     FunctionInvocationLayer[AGUIChatOptionsT],
+    ChatMiddlewareLayer[AGUIChatOptionsT],
     ChatTelemetryLayer[AGUIChatOptionsT],
     BaseChatClient[AGUIChatOptionsT],
     Generic[AGUIChatOptionsT],

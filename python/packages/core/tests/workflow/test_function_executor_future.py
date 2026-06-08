@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from agent_framework import FunctionExecutor, WorkflowContext, executor
 
 
@@ -37,3 +39,20 @@ class TestFunctionExecutorFutureAnnotations:
         spec = process_complex._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] == dict[str, Any]
         assert spec["output_types"] == [list[str]]
+
+    def test_handler_unresolvable_annotation_raises(self):
+        """Test that an unresolvable forward-reference annotation raises ValueError.
+
+        When get_type_hints fails (e.g. NameError for NonExistentType), the code falls back
+        to raw string annotations. The ctx parameter's raw string annotation is then not
+        recognised as a valid WorkflowContext type, so a ValueError is still raised.
+        """
+        with pytest.raises(ValueError):
+            FunctionExecutor(
+                _func_with_bad_annotation,  # pyright: ignore[reportUnknownArgumentType]
+                id="bad",
+            )
+
+
+async def _func_with_bad_annotation(message: NonExistentType, ctx: WorkflowContext[int]) -> None:  # noqa: F821  # type: ignore[name-defined]
+    pass

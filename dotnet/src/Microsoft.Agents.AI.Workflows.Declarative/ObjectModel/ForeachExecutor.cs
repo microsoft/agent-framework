@@ -22,6 +22,11 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         public static string End(string id) => $"{id}_{nameof(End)}";
     }
 
+    // State keys for checkpoint persistence of iteration progress.
+    private const string IndexStateKey = nameof(_index);
+    private const string ValuesStateKey = nameof(_values);
+    private const string HasValueStateKey = nameof(HasValue);
+
     private int _index;
     private FormulaValue[] _values;
 
@@ -44,7 +49,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Items);
         if (expressionResult.Value is TableDataValue tableValue)
         {
-            this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormula())];
+            this._values = [.. tableValue.Values.Select(ToLoopValue)];
         }
         else
         {
@@ -92,5 +97,55 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         {
             await context.QueueStateResetAsync(this.Model.Index, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    // Power Fx wraps scalar array literals (`=[1, 2, 3]`) as `Table({Value: 1}, ...)`. Unwrap that single-column
+    // `Value`-record shape so `Local.LoopValue` is the scalar; multi-field and other shapes pass through unchanged.
+    private static FormulaValue ToLoopValue(DataValue value) =>
+        value is RecordDataValue record
+            && record.Properties.Count == 1
+            && record.Properties.TryGetValue("Value", out DataValue? singleColumn)
+                ? singleColumn.ToFormula()
+                : value.ToFormula();
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Persists the iteration cursor (<see cref="_index"/>), the materialized item snapshot
+    /// (<see cref="_values"/> as <see cref="PortableValue"/>[]), and <see cref="HasValue"/> so a
+    /// foreach loop can resume mid-iteration after a checkpoint (e.g. when a <c>Question</c>
+    /// inside the loop body pauses the workflow and the executor is re-instantiated on resume).
+    /// </remarks>
+    protected override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        PortableValue[] portableValues = [.. this._values.Select(value => new PortableValue(value.AsPortable()))];
+
+        await context.QueueStateUpdateAsync(IndexStateKey, this._index, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(ValuesStateKey, portableValues, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(HasValueStateKey, this.HasValue, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Restores the iteration cursor, item snapshot, and <see cref="HasValue"/> recorded by
+    /// <see cref="OnCheckpointingAsync"/>. The presence of the values snapshot is the source of
+    /// truth for "this foreach was previously checkpointed"; if it is absent the executor keeps
+    /// its constructor defaults (fresh-start semantics).
+    /// </remarks>
+    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+
+        PortableValue[]? savedValues =
+            await context.ReadStateAsync<PortableValue[]>(ValuesStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (savedValues is null)
+        {
+            return;
+        }
+
+        this._values = [.. savedValues.Select(value => value.ToFormula())];
+        this._index = await context.ReadStateAsync<int>(IndexStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this.HasValue = await context.ReadStateAsync<bool>(HasValueStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 }

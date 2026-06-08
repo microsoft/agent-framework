@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-local-tools
+displayName: "Seattle Hotel Agent with Local Tools"
+
+description: >
+  A travel assistant agent that helps users find hotels in Seattle.
+  Demonstrates local C# tool execution — a key advantage of code-based
+  hosted agents over prompt agents.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Local Tools
+    - Agent Framework
+
+template:
+  name: hosted-local-tools
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+parameters:
+  properties: []
+resources: []

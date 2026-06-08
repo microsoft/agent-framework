@@ -25,6 +25,7 @@ from ._declarative_base import (
     LoopIterationResult,
 )
 from ._declarative_builder import ALL_ACTION_EXECUTORS, DeclarativeWorkflowBuilder
+from ._errors import DeclarativeActionError, DeclarativeWorkflowError
 from ._executors_agents import (
     AGENT_ACTION_EXECUTORS,
     AGENT_REGISTRY_KEY,
@@ -37,10 +38,8 @@ from ._executors_agents import (
 )
 from ._executors_basic import (
     BASIC_ACTION_EXECUTORS,
-    AppendValueExecutor,
     ClearAllVariablesExecutor,
     CreateConversationExecutor,
-    EmitEventExecutor,
     ResetVariableExecutor,
     SendActivityExecutor,
     SetMultipleVariablesExecutor,
@@ -60,12 +59,19 @@ from ._executors_control_flow import (
 )
 from ._executors_external_input import (
     EXTERNAL_INPUT_EXECUTORS,
-    ConfirmationExecutor,
     ExternalInputRequest,
     ExternalInputResponse,
     QuestionExecutor,
     RequestExternalInputExecutor,
-    WaitForInputExecutor,
+)
+from ._executors_http import (
+    HTTP_ACTION_EXECUTORS,
+    HttpRequestActionExecutor,
+)
+from ._executors_mcp import (
+    MCP_ACTION_EXECUTORS,
+    InvokeMcpToolActionExecutor,
+    MCPToolApprovalRequest,
 )
 from ._executors_tools import (
     FUNCTION_TOOL_REGISTRY_KEY,
@@ -78,7 +84,19 @@ from ._executors_tools import (
     ToolApprovalState,
     ToolInvocationResult,
 )
-from ._factory import DeclarativeWorkflowError, WorkflowFactory
+from ._factory import WorkflowFactory
+from ._http_handler import (
+    DefaultHttpRequestHandler,
+    HttpRequestHandler,
+    HttpRequestInfo,
+    HttpRequestResult,
+)
+from ._mcp_handler import (
+    DefaultMCPToolHandler,
+    MCPToolHandler,
+    MCPToolInvocation,
+    MCPToolResult,
+)
 from ._state import WorkflowState
 
 __all__ = [
@@ -90,6 +108,8 @@ __all__ = [
     "DECLARATIVE_STATE_KEY",
     "EXTERNAL_INPUT_EXECUTORS",
     "FUNCTION_TOOL_REGISTRY_KEY",
+    "HTTP_ACTION_EXECUTORS",
+    "MCP_ACTION_EXECUTORS",
     "TOOL_ACTION_EXECUTORS",
     "TOOL_APPROVAL_STATE_KEY",
     "TOOL_REGISTRY_KEY",
@@ -98,21 +118,21 @@ __all__ = [
     "AgentExternalInputRequest",
     "AgentExternalInputResponse",
     "AgentResult",
-    "AppendValueExecutor",
     "BaseToolExecutor",
     "BreakLoopExecutor",
     "ClearAllVariablesExecutor",
-    "ConfirmationExecutor",
     "ContinueLoopExecutor",
     "ConversationData",
     "CreateConversationExecutor",
+    "DeclarativeActionError",
     "DeclarativeActionExecutor",
     "DeclarativeMessage",
     "DeclarativeStateData",
     "DeclarativeWorkflowBuilder",
     "DeclarativeWorkflowError",
     "DeclarativeWorkflowState",
-    "EmitEventExecutor",
+    "DefaultHttpRequestHandler",
+    "DefaultMCPToolHandler",
     "EndConversationExecutor",
     "EndWorkflowExecutor",
     "ExternalInputRequest",
@@ -120,11 +140,20 @@ __all__ = [
     "ExternalLoopState",
     "ForeachInitExecutor",
     "ForeachNextExecutor",
+    "HttpRequestActionExecutor",
+    "HttpRequestHandler",
+    "HttpRequestInfo",
+    "HttpRequestResult",
     "InvokeAzureAgentExecutor",
     "InvokeFunctionToolExecutor",
+    "InvokeMcpToolActionExecutor",
     "JoinExecutor",
     "LoopControl",
     "LoopIterationResult",
+    "MCPToolApprovalRequest",
+    "MCPToolHandler",
+    "MCPToolInvocation",
+    "MCPToolResult",
     "QuestionExecutor",
     "RequestExternalInputExecutor",
     "ResetVariableExecutor",
@@ -137,7 +166,6 @@ __all__ = [
     "ToolApprovalResponse",
     "ToolApprovalState",
     "ToolInvocationResult",
-    "WaitForInputExecutor",
     "WorkflowFactory",
     "WorkflowState",
 ]

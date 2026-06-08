@@ -71,7 +71,7 @@ class GAIATelemetryConfig:
 
         Note:
             For Azure Monitor integration, configure using environment variables
-            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or use AzureAIClient.configure_azure_monitor()
+            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or call ``configure_azure_monitor()``
             before creating the GAIA instance.
         """
         self.enable_tracing = enable_tracing
@@ -273,7 +273,7 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
 
     for p in parquet_files:
         try:
-            import pyarrow.parquet as pq
+            import pyarrow.parquet as pq  # type: ignore[reportMissingImports]
 
             pq_any = cast(Any, pq)
             table: Any = pq_any.read_table(p)

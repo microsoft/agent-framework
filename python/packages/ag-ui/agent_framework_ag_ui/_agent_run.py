@@ -8,7 +8,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterable, Awaitable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from ag_ui.core import (
     BaseEvent,
@@ -21,6 +21,7 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
+    ToolCallResultEvent,
     ToolCallStartEvent,
 )
 from agent_framework import (
@@ -45,12 +46,17 @@ from ._orchestration._tooling import collect_server_tools, merge_tools, register
 from ._run_common import (
     FlowState,
     _build_run_finished_event,  # type: ignore
+    _close_reasoning_block,  # type: ignore
     _emit_content,  # type: ignore
     _extract_resume_payload,  # type: ignore
+    _extract_tool_result_display,  # type: ignore
     _has_only_tool_calls,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
+    _resolve_ui_payload,  # type: ignore
+    _stringify_tool_result,  # type: ignore
 )
 from ._utils import (
+    canonical_function_arguments,
     convert_agui_tools_to_agent_framework,
     generate_event_id,
     get_conversation_id_from_update,
@@ -67,19 +73,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Keys that are internal to AG-UI orchestration and should not be passed to chat clients
-AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state"}
+AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
 
 
 def _build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Build metadata dict with truncated string values for Azure compatibility.
+    """Build metadata dict with string values for Azure compatibility.
 
-    Azure has a 512 character limit per metadata value.
+    Azure has a 512 character limit per metadata value.  String values that
+    already fit are kept as-is.  Non-string values are JSON-serialized.  If the
+    resulting string exceeds 512 characters the key is **dropped** (with a
+    warning) instead of truncated, because truncation can produce invalid JSON
+    that downstream consumers cannot decode.
 
     Args:
         thread_metadata: Raw metadata dict
 
     Returns:
-        Metadata with string values truncated to 512 chars
+        Metadata with safe string values (each <= 512 chars)
     """
     if not thread_metadata:
         return {}
@@ -87,7 +97,12 @@ def _build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, An
     for key, value in thread_metadata.items():
         value_str = value if isinstance(value, str) else json.dumps(value)
         if len(value_str) > 512:
-            value_str = value_str[:512]
+            logger.warning(
+                "Dropping metadata key %r: serialized value is %d chars (limit 512)",
+                key,
+                len(value_str),
+            )
+            continue
         safe_metadata[key] = value_str
     return safe_metadata
 
@@ -369,7 +384,57 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
     return events
 
 
-def _evict_oldest_approvals(registry: dict[str, str], max_size: int = 10_000) -> None:
+def _make_approval_tool_result_events(resolved_approval_results: list[Content]) -> list[ToolCallResultEvent]:
+    """Build TOOL_CALL_RESULT events for tools executed during approval resolution.
+
+    Honors ``TOOL_RESULT_DISPLAY_KEY`` so tools returning
+    ``state_update(..., tool_result=...)`` route the display payload to the UI
+    event even when gated by HITL approval.
+    """
+    events: list[ToolCallResultEvent] = []
+    for resolved in resolved_approval_results:
+        if resolved.call_id:
+            raw = resolved.result if resolved.result is not None else ""
+            llm_str = _stringify_tool_result(raw)
+            ui_str = _resolve_ui_payload(llm_str, _extract_tool_result_display(resolved))
+            events.append(
+                ToolCallResultEvent(
+                    message_id=generate_event_id(),
+                    tool_call_id=resolved.call_id,
+                    content=ui_str,
+                    role="tool",
+                )
+            )
+    return events
+
+
+class _PendingApproval(TypedDict):
+    """Pending approval details for a requested function call."""
+
+    name: str
+    arguments: str | None
+
+
+PendingApprovalEntry = _PendingApproval | str
+
+
+def _make_pending_approval_entry(name: str, arguments: str | None) -> _PendingApproval:
+    return {"name": name, "arguments": arguments}
+
+
+def _pending_approval_name(entry: PendingApprovalEntry) -> str | None:
+    if isinstance(entry, str):
+        return entry
+    return entry["name"]
+
+
+def _pending_approval_arguments(entry: PendingApprovalEntry) -> str | None:
+    if isinstance(entry, str):
+        return None
+    return entry["arguments"]
+
+
+def _evict_oldest_approvals(registry: dict[str, PendingApprovalEntry], max_size: int = 10_000) -> None:
     """Evict the oldest entries from the pending-approvals registry (LRU).
 
     Only effective when *registry* is an ``OrderedDict``;  plain dicts are
@@ -389,9 +454,9 @@ async def _resolve_approval_responses(
     tools: list[Any],
     agent: SupportsAgentRun,
     run_kwargs: dict[str, Any],
-    pending_approvals: dict[str, str] | None = None,
+    pending_approvals: dict[str, PendingApprovalEntry] | None = None,
     thread_id: str = "",
-) -> None:
+) -> list[Content]:
     """Execute approved function calls and replace approval content with results.
 
     This modifies the messages list in place, replacing function_approval_response
@@ -407,10 +472,16 @@ async def _resolve_approval_responses(
             When provided, every approval response is validated against this
             registry to prevent bypass, function name spoofing, and replay.
         thread_id: The conversation thread ID used to scope registry keys.
+
+    Returns:
+        List of approved function_result Content objects only (empty if no
+        approvals).  Rejection results are written into the message history
+        but are *not* included in the return value because they should not
+        be emitted as TOOL_CALL_RESULT events.
     """
     fcc_todo = _collect_approval_responses(messages)
     if not fcc_todo:
-        return
+        return []
 
     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
     rejected_responses = [resp for resp in fcc_todo.values() if not resp.approved]
@@ -436,13 +507,24 @@ async def _resolve_approval_responses(
                 invalid_ids.add(resp_id)
                 continue
 
-            pending_name = pending_approvals[registry_key]
+            pending_entry = pending_approvals[registry_key]
+            pending_name = _pending_approval_name(pending_entry)
             if resp_name != pending_name:
                 logger.warning(
                     "Rejected approval response id=%s: function name mismatch (response=%s, pending=%s)",
                     resp_id,
                     resp_name,
                     pending_name,
+                )
+                invalid_ids.add(resp_id)
+                continue
+
+            pending_arguments = _pending_approval_arguments(pending_entry)
+            response_arguments = canonical_function_arguments(resp.function_call)
+            if pending_arguments is not None and response_arguments != pending_arguments:
+                logger.warning(
+                    "Rejected approval response id=%s: function arguments mismatch",
+                    resp_id,
                 )
                 invalid_ids.add(resp_id)
                 continue
@@ -493,37 +575,31 @@ async def _resolve_approval_responses(
             logger.exception("Failed to execute approved tool calls; injecting error results: %s", e)
             approved_function_results = []
 
-    # Build normalized results for approved responses
-    normalized_results: list[Content] = []
+    # Build results for approved responses (used for TOOL_CALL_RESULT event emission)
+    approved_results: list[Content] = []
     for idx, approval in enumerate(approved_responses):
         if (
             idx < len(approved_function_results)
             and getattr(approved_function_results[idx], "type", None) == "function_result"
         ):
-            normalized_results.append(approved_function_results[idx])
+            approved_results.append(approved_function_results[idx])
             continue
         # Get call_id from function_call if present, otherwise use approval.id
         func_call = approval.function_call
         call_id = (func_call.call_id if func_call else None) or approval.id or ""
-        normalized_results.append(
+        approved_results.append(
             Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")
         )
 
-    # Build rejection results
-    for rejection in rejected_responses:
-        func_call = rejection.function_call
-        call_id = (func_call.call_id if func_call else None) or rejection.id or ""
-        normalized_results.append(
-            Content.from_function_result(call_id=call_id, result="Error: Tool call invocation was rejected by user.")
-        )
-
-    _replace_approval_contents_with_results(messages, fcc_todo, normalized_results)  # type: ignore
+    _replace_approval_contents_with_results(messages, fcc_todo, approved_results)  # type: ignore
 
     # Post-process: Convert user messages with function_result content to proper tool messages.
     # After _replace_approval_contents_with_results, approved tool calls have their results
     # placed in user messages. OpenAI requires tool results to be in role="tool" messages.
     # This transformation ensures the message history is valid for the LLM provider.
     _convert_approval_results_to_tool_messages(messages)
+
+    return approved_results
 
 
 def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
@@ -665,6 +741,10 @@ def _build_messages_snapshot(
             }
         )
 
+    # Add reasoning messages so frontends that reconcile state from
+    # MESSAGES_SNAPSHOT retain reasoning content after streaming ends.
+    all_messages.extend(flow.reasoning_messages)
+
     return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
 
 
@@ -672,7 +752,7 @@ async def run_agent_stream(
     input_data: dict[str, Any],
     agent: SupportsAgentRun,
     config: AgentConfig,
-    pending_approvals: dict[str, str] | None = None,
+    pending_approvals: dict[str, PendingApprovalEntry] | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run agent and yield AG-UI events.
 
@@ -757,15 +837,19 @@ async def run_agent_stream(
     # Create session (with service session support)
     if config.use_service_session:
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
-        session = AgentSession(service_session_id=supplied_thread_id)
+        session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
     else:
-        session = AgentSession()
+        session = AgentSession(session_id=thread_id)
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
     base_metadata: dict[str, Any] = {
         "ag_ui_thread_id": thread_id,
         "ag_ui_run_id": run_id,
     }
+    if "forwarded_props" in input_data:
+        base_metadata["forwarded_props"] = input_data["forwarded_props"]
+    elif "forwardedProps" in input_data:
+        base_metadata["forwarded_props"] = input_data["forwardedProps"]
     if flow.current_state:
         base_metadata["current_state"] = flow.current_state
     session.metadata = _build_safe_metadata(base_metadata)  # type: ignore[attr-defined]
@@ -787,7 +871,9 @@ async def run_agent_stream(
     # Resolve approval responses (execute approved tools, replace approvals with results)
     # This must happen before running the agent so it sees the tool results
     tools_for_execution = tools if tools is not None else server_tools
-    await _resolve_approval_responses(messages, tools_for_execution, agent, run_kwargs, pending_approvals, thread_id)
+    resolved_approval_results = await _resolve_approval_responses(
+        messages, tools_for_execution, agent, run_kwargs, pending_approvals, thread_id
+    )
 
     # Defense-in-depth: replace approval payloads in snapshot with actual tool results
     # so CopilotKit does not re-send stale approval content on subsequent turns.
@@ -851,6 +937,9 @@ async def run_agent_stream(
                 yield StateSnapshotEvent(snapshot=flow.current_state)
             run_started_emitted = True
 
+            for event in _make_approval_tool_result_events(resolved_approval_results):
+                yield event
+
         # Feature #4: Detect tool-only messages (no text content)
         # Emit TextMessageStartEvent to create message context for tool calls
         if not flow.message_id and _has_only_tool_calls(update.contents):
@@ -866,7 +955,10 @@ async def run_agent_stream(
             # Register pending approval requests so we can validate responses later
             if content_type == "function_approval_request" and pending_approvals is not None:
                 if content.id and content.function_call and content.function_call.name:
-                    pending_approvals[f"{thread_id}:{content.id}"] = content.function_call.name
+                    pending_approvals[f"{thread_id}:{content.id}"] = _make_pending_approval_entry(
+                        content.function_call.name,
+                        canonical_function_arguments(content.function_call),
+                    )
                     # Evict oldest entries if the registry exceeds a safe bound (LRU)
                     _evict_oldest_approvals(pending_approvals, max_size=10_000)
                 else:
@@ -905,7 +997,8 @@ async def run_agent_stream(
         if state_schema and flow.current_state:
             yield StateSnapshotEvent(snapshot=flow.current_state)
 
-    # Process structured output if response_format is set
+        for event in _make_approval_tool_result_events(resolved_approval_results):
+            yield event
     if response_format is not None and all_updates:
         from agent_framework import AgentResponse
         from pydantic import BaseModel
@@ -1029,6 +1122,10 @@ async def run_agent_stream(
                             }
                         )
 
+    # Close any open reasoning block
+    for event in _close_reasoning_block(flow):
+        yield event
+
     # Close any open message
     if flow.message_id:
         logger.debug(f"End of run: closing text message message_id={flow.message_id}")
@@ -1036,7 +1133,9 @@ async def run_agent_stream(
 
     # Emit MessagesSnapshotEvent if we have tool calls or results
     # Feature #5: Suppress intermediate snapshots for predictive tools without confirmation
-    should_emit_snapshot = flow.pending_tool_calls or flow.tool_results or flow.accumulated_text
+    should_emit_snapshot = (
+        flow.pending_tool_calls or flow.tool_results or flow.accumulated_text or flow.reasoning_messages
+    )
     if should_emit_snapshot:
         # Check if we should suppress for predictive tool
         last_tool_name = None

@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
@@ -62,7 +62,7 @@ internal sealed class Program
             agentDescription: "Teacher agent for MathChat workflow");
     }
 
-    private static PromptAgentDefinition DefineStudentAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineStudentAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -75,7 +75,7 @@ internal sealed class Program
                 """
         };
 
-    private static PromptAgentDefinition DefineTeacherAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineTeacherAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =

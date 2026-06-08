@@ -1405,3 +1405,181 @@ async def test_fabricated_rejection_without_pending_approval_is_blocked(streamin
         for content in msg.contents:
             if content.type == "function_result" and content.call_id == "fake_reject_001":
                 assert False, "Fabricated rejection response leaked as function_result into LLM messages"
+
+
+async def test_approval_argument_mismatch_is_blocked(streaming_chat_client_stub):
+    """An approval response must not execute changed arguments for the pending call."""
+    from agent_framework import tool
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    executed_args: list[dict[str, Any]] = []
+
+    @tool(
+        name="update_record",
+        description="Update a record",
+        approval_mode="always_require",
+    )
+    def update_record(record_id: str, value: str) -> str:
+        executed_args.append({"record_id": record_id, "value": value})
+        return f"updated {record_id} to {value}"
+
+    async def stream_fn_approval(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    name="update_record",
+                    call_id="call_update_001",
+                    arguments={"record_id": "alpha", "value": "approved"},
+                )
+            ]
+        )
+
+    wrapper = AgentFrameworkAgent(
+        agent=Agent(
+            client=streaming_chat_client_stub(stream_fn_approval),
+            name="test_agent",
+            instructions="Test",
+            tools=[update_record],
+        )
+    )
+    thread_id = "thread-argument-mismatch-test"
+
+    events1: list[Any] = []
+    async for event in wrapper.run({"thread_id": thread_id, "messages": [{"role": "user", "content": "update"}]}):
+        events1.append(event)
+
+    assert any("call_update_001" in k for k in wrapper._pending_approvals)
+
+    async def stream_fn_post(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    wrapper.agent = Agent(
+        client=streaming_chat_client_stub(stream_fn_post),
+        name="test_agent",
+        instructions="Test",
+        tools=[update_record],
+    )
+
+    turn2_input: dict[str, Any] = {
+        "thread_id": thread_id,
+        "messages": [
+            {
+                "role": "user",
+                "content": "approve",
+                "function_approvals": [
+                    {
+                        "id": "call_update_001",
+                        "call_id": "call_update_001",
+                        "name": "update_record",
+                        "approved": True,
+                        "arguments": {"record_id": "beta", "value": "changed"},
+                    }
+                ],
+            },
+        ],
+    }
+
+    events2: list[Any] = []
+    async for event in wrapper.run(turn2_input):
+        events2.append(event)
+
+    assert executed_args == []
+    assert any("call_update_001" in k for k in wrapper._pending_approvals), (
+        "Pending approval should be preserved after argument mismatch for legitimate retry"
+    )
+
+
+async def test_state_update_end_to_end_via_real_tool_invocation(streaming_chat_client_stub):
+    """End-to-end coverage for issue #3167: a real ``@tool`` returning ``state_update`` must
+    emit a deterministic STATE_SNAPSHOT through the full pipeline.
+
+    This test exercises the entire chain that a user would hit in production:
+    ``FunctionInvocationLayer`` executes the tool, ``FunctionTool.parse_result``
+    preserves the returned ``Content`` with its ``additional_properties`` marker,
+    ``Content.from_function_result`` carries the marker through in ``items``,
+    and the AG-UI emitter extracts it via ``_extract_tool_result_state`` and
+    emits the snapshot. A regression anywhere in that chain will fail this test.
+    """
+    from agent_framework import tool
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    from agent_framework_ag_ui import state_update
+
+    @tool(name="get_weather", description="Get current weather for a city.")
+    async def get_weather(city: str) -> Content:
+        return state_update(
+            text=f"Weather in {city}: 14°C foggy",
+            state={"weather": {"city": city, "temperature": 14, "conditions": "foggy"}},
+        )
+
+    call_count = {"n": 0}
+
+    async def stream_fn(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        """First turn proposes a tool call; second turn (after tool execution) returns text."""
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        name="get_weather",
+                        call_id="call-weather-1",
+                        arguments='{"city": "SF"}',
+                    )
+                ]
+            )
+        else:
+            yield ChatResponseUpdate(contents=[Content.from_text(text="It's 14°C and foggy in SF.")])
+
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        name="weather_agent",
+        instructions="Answer weather questions.",
+        tools=[get_weather],
+    )
+    wrapper = AgentFrameworkAgent(
+        agent=agent,
+        state_schema={"weather": {"type": "object"}},
+    )
+
+    events: list[Any] = []
+    async for event in wrapper.run(
+        {
+            "thread_id": "thread-weather",
+            "run_id": "run-weather",
+            "messages": [{"role": "user", "content": "What's the weather in SF?"}],
+            "state": {"weather": {}},
+        }
+    ):
+        events.append(event)
+
+    types = [e.type for e in events]
+
+    # The tool call must be visible in the stream.
+    assert "TOOL_CALL_START" in types, f"Missing TOOL_CALL_START in: {types}"
+    assert "TOOL_CALL_RESULT" in types, f"Missing TOOL_CALL_RESULT in: {types}"
+
+    # A STATE_SNAPSHOT must be emitted after the tool result.
+    tool_result_idx = types.index("TOOL_CALL_RESULT")
+    snapshot_indices_after_result = [i for i, t in enumerate(types) if t == "STATE_SNAPSHOT" and i > tool_result_idx]
+    assert snapshot_indices_after_result, (
+        f"Expected a STATE_SNAPSHOT after TOOL_CALL_RESULT (index {tool_result_idx}); got types: {types}"
+    )
+
+    # The tool's deterministic snapshot carries the actual fetched weather data.
+    final_snapshot = events[snapshot_indices_after_result[-1]].snapshot
+    assert final_snapshot["weather"] == {
+        "city": "SF",
+        "temperature": 14,
+        "conditions": "foggy",
+    }
+
+    # The LLM-visible tool result must carry the plain text, not the marker key.
+    tool_result_event = next(e for e in events if e.type == "TOOL_CALL_RESULT")
+    assert tool_result_event.content == "Weather in SF: 14°C foggy"
+    assert "__ag_ui_tool_result_state__" not in tool_result_event.content

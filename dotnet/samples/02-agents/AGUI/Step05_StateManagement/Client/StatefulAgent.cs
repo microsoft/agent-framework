@@ -72,10 +72,9 @@ internal sealed class StatefulAgent<TState> : DelegatingAIAgent
                 if (content is DataContent dataContent && dataContent.MediaType == "application/json")
                 {
                     // Deserialize the state
-                    TState? newState = JsonSerializer.Deserialize(
+                    if (JsonSerializer.Deserialize(
                         dataContent.Data.Span,
-                        this._jsonSerializerOptions.GetTypeInfo(typeof(TState))) as TState;
-                    if (newState != null)
+                        this._jsonSerializerOptions.GetTypeInfo(typeof(TState))) is TState newState)
                     {
                         this.State = newState;
                     }

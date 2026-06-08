@@ -11,6 +11,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 
 from ._clients import SupportsChatGetResponse
+from ._feature_stage import ExperimentalFeature, experimental
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -36,11 +37,10 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from ._agents import SupportsAgentRun
-    from ._clients import SupportsChatGetResponse
     from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._sessions import AgentSession
-    from ._tools import FunctionTool
-    from ._types import ChatOptions, ChatResponse, ChatResponseUpdate
+    from ._tools import FunctionTool, ToolTypes
+    from ._types import ChatOptions
 
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
@@ -100,6 +100,7 @@ class AgentContext:
         agent: The agent being invoked.
         messages: The messages being sent to the agent.
         session: The agent session for this invocation, if any.
+        tools: Run-level tool overrides for this invocation, if any.
         options: The options for the agent invocation as a dict.
         stream: Whether this is a streaming invocation.
         compaction_strategy: Optional per-run compaction override.
@@ -142,6 +143,7 @@ class AgentContext:
         agent: SupportsAgentRun,
         messages: list[Message],
         session: AgentSession | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: Mapping[str, Any] | None = None,
         stream: bool = False,
         compaction_strategy: CompactionStrategy | None = None,
@@ -165,6 +167,7 @@ class AgentContext:
             agent: The agent being invoked.
             messages: The messages being sent to the agent.
             session: The agent session for this invocation, if any.
+            tools: Run-level tool overrides for this invocation, if any.
             options: The options for the agent invocation as a dict.
             stream: Whether this is a streaming invocation.
             compaction_strategy: Optional per-run compaction override.
@@ -181,6 +184,7 @@ class AgentContext:
         self.agent = agent
         self.messages = messages
         self.session = session
+        self.tools = tools
         self.options = options
         self.stream = stream
         self.compaction_strategy = compaction_strategy
@@ -211,6 +215,12 @@ class FunctionInvocationContext:
         result: Function execution result. Can be observed after calling ``call_next()``
                 to see the actual execution result or can be set to override the execution result.
         kwargs: Additional runtime keyword arguments forwarded to the function invocation.
+        tools: The live, mutable list of tools available to the model for the current
+                agent run, or ``None`` when the function is invoked outside of a
+                function-calling loop (for example via ``FunctionTool.invoke`` directly).
+                Tools can add or remove tools during execution using :meth:`add_tools`
+                and :meth:`remove_tools` (progressive tool exposure). Mutations take
+                effect on the **next** model iteration, not the in-flight batch.
 
     Examples:
         .. code-block:: python
@@ -229,6 +239,18 @@ class FunctionInvocationContext:
 
                     # Continue execution
                     await call_next()
+
+        Progressive tool exposure from inside a tool:
+
+        .. code-block:: python
+
+            from agent_framework import FunctionInvocationContext, tool
+
+
+            @tool(approval_mode="never_require")
+            def load_math_tools(ctx: FunctionInvocationContext) -> str:
+                ctx.add_tools([factorial, fibonacci])
+                return "Math tools are now available."
     """
 
     def __init__(
@@ -239,6 +261,7 @@ class FunctionInvocationContext:
         metadata: Mapping[str, Any] | None = None,
         result: Any = None,
         kwargs: Mapping[str, Any] | None = None,
+        tools: list[ToolTypes] | None = None,
     ) -> None:
         """Initialize the FunctionInvocationContext.
 
@@ -249,6 +272,9 @@ class FunctionInvocationContext:
             metadata: Metadata dictionary for sharing data between function middleware.
             result: Function execution result.
             kwargs: Additional runtime keyword arguments forwarded to the function invocation.
+            tools: The live, mutable list of tools for the current agent run. When provided,
+                this is the same list object the model sees on the next iteration, so
+                appending or removing tools changes the model's available tools.
         """
         self.function = function
         self.arguments = arguments
@@ -256,6 +282,96 @@ class FunctionInvocationContext:
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
         self.result = result
         self.kwargs: dict[str, Any] = dict(kwargs) if kwargs is not None else {}
+        self.tools = tools
+
+    @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)
+    def add_tools(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
+    ) -> None:
+        """Add one or more tools to the current agent run (progressive tool exposure).
+
+        Callable inputs are converted to :class:`FunctionTool`, and tool collections are
+        flattened, using the same normalization as the rest of the framework. Added tools
+        become available to the model on the **next** iteration of the function-calling
+        loop; they do not affect tool calls already requested in the in-flight batch.
+
+        Adding a tool whose name already exists is a no-op when it is the same object, and
+        raises ``ValueError`` when it is a different object with a duplicate name.
+
+        Args:
+            tools: A single tool/callable or a sequence of tools/callables to add.
+
+        Raises:
+            RuntimeError: If the context has no live tools list (for example when the
+                function is invoked outside of a function-calling loop).
+            ValueError: If a different tool with a duplicate name is added.
+        """
+        from ._tools import _append_unique_tools, normalize_tools  # type: ignore[reportPrivateUsage]
+
+        if self.tools is None:
+            raise RuntimeError(
+                "Cannot add tools: this FunctionInvocationContext is not bound to a live "
+                "agent run. add_tools is only available for functions invoked within an "
+                "agent's function-calling loop."
+            )
+        # Validate the whole batch against a throwaway copy first, so a duplicate-name
+        # clash partway through the batch raises before the live tool list is mutated
+        # (all-or-nothing semantics).
+        merged = _append_unique_tools(list(self.tools), normalize_tools(tools))
+        self.tools[:] = merged
+
+    @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)
+    def remove_tools(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | str | Sequence[str],
+    ) -> None:
+        """Remove one or more tools from the current agent run (progressive tool exposure).
+
+        Tools may be specified by name, by tool object, or by the original callable. Names
+        that are not currently present are ignored. Removals take effect on the **next**
+        iteration of the function-calling loop; tool calls already requested in the
+        in-flight batch still execute.
+
+        Args:
+            tools: A tool name, tool/callable, or a sequence of any of these to remove.
+
+        Raises:
+            RuntimeError: If the context has no live tools list (for example when the
+                function is invoked outside of a function-calling loop).
+        """
+        from ._tools import _get_tool_name, normalize_tools  # type: ignore[reportPrivateUsage]
+
+        if self.tools is None:
+            raise RuntimeError(
+                "Cannot remove tools: this FunctionInvocationContext is not bound to a live "
+                "agent run. remove_tools is only available for functions invoked within an "
+                "agent's function-calling loop."
+            )
+
+        names_to_remove: set[str] = set()
+        raw_items: list[Any]
+        if isinstance(tools, str):
+            raw_items = [tools]
+        elif isinstance(tools, Sequence) and not isinstance(tools, (bytes, bytearray)):
+            raw_items = list(cast("Sequence[Any]", tools))
+        else:
+            raw_items = [tools]
+        for item in raw_items:
+            if isinstance(item, str):
+                names_to_remove.add(item)
+                continue
+            for normalized in normalize_tools(item):
+                if name := _get_tool_name(normalized):  # type: ignore[reportPrivateUsage]
+                    names_to_remove.add(name)
+
+        if not names_to_remove:
+            return
+        self.tools[:] = [
+            tool
+            for tool in self.tools
+            if _get_tool_name(tool) not in names_to_remove  # type: ignore[reportPrivateUsage]
+        ]
 
 
 class ChatContext:
@@ -290,7 +406,7 @@ class ChatContext:
                 async def process(self, context: ChatContext, call_next):
                     print(f"Chat client: {context.chat_client.__class__.__name__}")
                     print(f"Messages: {len(context.messages)}")
-                    print(f"Model: {context.options.get('model_id')}")
+                    print(f"Model: {context.options.get('model')}")
 
                     # Store metadata
                     context.metadata["input_tokens"] = self.count_tokens(context.messages)
@@ -498,7 +614,7 @@ class ChatMiddleware(ABC):
                     # Add system prompt to messages
                     from agent_framework import Message
 
-                    context.messages.insert(0, Message(role="system", text=self.system_prompt))
+                    context.messages.insert(0, Message(role="system", contents=[self.system_prompt]))
 
                     # Continue execution
                     await call_next()
@@ -742,11 +858,16 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             middleware: The list of agent middleware to include in the pipeline.
         """
         super().__init__()
+        self._source_middleware: tuple[AgentMiddlewareTypes, ...] = tuple(middleware)
         self._middleware: list[AgentMiddleware] = []
 
         if middleware:
             for mdlware in middleware:
                 self._register_middleware(mdlware)
+
+    def matches(self, middleware: Sequence[AgentMiddlewareTypes]) -> bool:
+        """Return whether this pipeline was built from the provided middleware sequence."""
+        return self._source_middleware == tuple(middleware)
 
     def _register_middleware(self, middleware: AgentMiddlewareTypes) -> None:
         """Register an agent middleware item.
@@ -824,11 +945,16 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
             middleware: The list of function middleware to include in the pipeline.
         """
         super().__init__()
+        self._source_middleware: tuple[FunctionMiddlewareTypes, ...] = tuple(middleware)
         self._middleware: list[FunctionMiddleware] = []
 
         if middleware:
             for mdlware in middleware:
                 self._register_middleware(mdlware)
+
+    def matches(self, middleware: Sequence[FunctionMiddlewareTypes]) -> bool:
+        """Return whether this pipeline was built from the provided middleware sequence."""
+        return self._source_middleware == tuple(middleware)
 
     def _register_middleware(self, middleware: FunctionMiddlewareTypes) -> None:
         """Register a function middleware item.
@@ -892,11 +1018,16 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             middleware: The list of chat middleware to include in the pipeline.
         """
         super().__init__()
+        self._source_middleware: tuple[ChatMiddlewareTypes, ...] = tuple(middleware)
         self._middleware: list[ChatMiddleware] = []
 
         if middleware:
             for mdlware in middleware:
                 self._register_middleware(mdlware)
+
+    def matches(self, middleware: Sequence[ChatMiddlewareTypes]) -> bool:
+        """Return whether this pipeline was built from the provided middleware sequence."""
+        return self._source_middleware == tuple(middleware)
 
     def _register_middleware(self, middleware: ChatMiddlewareTypes) -> None:
         """Register a chat middleware item.
@@ -980,15 +1111,25 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     def __init__(
         self,
         *,
-        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        middleware: Sequence[ChatMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> None:
-        middleware_list = categorize_middleware(*(middleware or []))
-        self.chat_middleware = middleware_list["chat"]
-        if "function_middleware" in kwargs and middleware_list["function"]:
-            raise ValueError("Cannot specify 'function_middleware' and 'middleware' at the same time.")
-        kwargs["function_middleware"] = middleware_list["function"]
+        self.chat_middleware = list(middleware) if middleware else []
+        self._cached_chat_middleware_pipeline: ChatMiddlewarePipeline | None = None
         super().__init__(**kwargs)
+
+    def _get_chat_middleware_pipeline(
+        self,
+        middleware: Sequence[ChatMiddlewareTypes],
+    ) -> ChatMiddlewarePipeline:
+        effective_middleware = [*self.chat_middleware, *middleware]
+        if self._cached_chat_middleware_pipeline is not None and self._cached_chat_middleware_pipeline.matches(
+            effective_middleware
+        ):
+            return self._cached_chat_middleware_pipeline
+
+        self._cached_chat_middleware_pipeline = ChatMiddlewarePipeline(*effective_middleware)
+        return self._cached_chat_middleware_pipeline
 
     @overload
     def get_response(
@@ -1000,7 +1141,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -1014,7 +1155,6 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -1028,7 +1168,6 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
@@ -1041,33 +1180,26 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Execute the chat pipeline if middleware is configured."""
         super_get_response = super().get_response  # type: ignore[misc]
-
-        if compaction_strategy is not None:
-            kwargs["compaction_strategy"] = compaction_strategy
-        if tokenizer is not None:
-            kwargs["tokenizer"] = tokenizer
-
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
-        call_middleware = kwargs.pop("middleware", effective_client_kwargs.pop("middleware", []))
-        middleware = categorize_middleware(call_middleware)
-        effective_client_kwargs["function_middleware"] = middleware["function"]
-
-        pipeline = ChatMiddlewarePipeline(
-            *self.chat_middleware,
-            *middleware["chat"],
-        )
+        call_middleware = effective_client_kwargs.pop("middleware", [])
+        context_kwargs = dict(effective_client_kwargs)
+        if compaction_strategy is not None:
+            context_kwargs["compaction_strategy"] = compaction_strategy
+        if tokenizer is not None:
+            context_kwargs["tokenizer"] = tokenizer
+        pipeline = self._get_chat_middleware_pipeline(call_middleware)  # type: ignore[reportUnknownArgumentType]
         if not pipeline.has_middlewares:
             return super_get_response(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
                 options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=effective_client_kwargs,
-                **kwargs,
             )
 
         context = ChatContext(
@@ -1075,7 +1207,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             messages=list(messages),
             options=options,
             stream=stream,
-            kwargs={**effective_client_kwargs, **kwargs},
+            kwargs=context_kwargs,
             function_invocation_kwargs=function_invocation_kwargs,
         )
 
@@ -1134,11 +1266,24 @@ class AgentMiddlewareLayer:
     ) -> None:
         middleware_list = categorize_middleware(middleware)
         self.agent_middleware = middleware_list["agent"]
+        self._cached_agent_middleware_pipeline: AgentMiddlewarePipeline | None = None
         # Pass middleware to super so BaseAgent can store it for dynamic rebuild
         super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
         # Note: We intentionally don't extend client's middleware lists here.
         # Chat and function middleware is passed to the chat client at runtime via kwargs
         # in AgentMiddlewareLayer.run(), where it's properly combined with run-level middleware.
+
+    def _get_agent_middleware_pipeline(
+        self,
+        middleware: Sequence[AgentMiddlewareTypes],
+    ) -> AgentMiddlewarePipeline:
+        if self._cached_agent_middleware_pipeline is not None and self._cached_agent_middleware_pipeline.matches(
+            middleware
+        ):
+            return self._cached_agent_middleware_pipeline
+
+        self._cached_agent_middleware_pipeline = AgentMiddlewarePipeline(*middleware)
+        return self._cached_agent_middleware_pipeline
 
     @overload
     def run(
@@ -1148,12 +1293,12 @@ class AgentMiddlewareLayer:
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -1164,12 +1309,12 @@ class AgentMiddlewareLayer:
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
@@ -1180,12 +1325,12 @@ class AgentMiddlewareLayer:
         stream: Literal[True],
         session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
@@ -1195,12 +1340,12 @@ class AgentMiddlewareLayer:
         stream: bool = False,
         session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """MiddlewareTypes-enabled unified run method."""
         # Re-categorize self.middleware at runtime to support dynamic changes
@@ -1210,7 +1355,7 @@ class AgentMiddlewareLayer:
         )
         base_middleware_list = categorize_middleware(base_middleware)
         run_middleware_list = categorize_middleware(middleware)
-        pipeline = AgentMiddlewarePipeline(*base_middleware_list["agent"], *run_middleware_list["agent"])
+        pipeline = self._get_agent_middleware_pipeline([*base_middleware_list["agent"], *run_middleware_list["agent"]])
 
         # Combine base and run-level function/chat middleware for forwarding to chat client
         combined_function_chat_middleware = (
@@ -1231,23 +1376,23 @@ class AgentMiddlewareLayer:
                 messages,
                 stream=stream,
                 session=session,
+                tools=tools,
                 options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
                 function_invocation_kwargs=effective_function_invocation_kwargs,
                 client_kwargs=effective_client_kwargs,
-                **kwargs,
             )
 
         context = AgentContext(
             agent=self,  # type: ignore[arg-type]
             messages=normalize_messages(messages),
             session=session,
+            tools=tools,
             options=options,
             stream=stream,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
-            kwargs=kwargs,
             client_kwargs=effective_client_kwargs,
             function_invocation_kwargs=effective_function_invocation_kwargs,
         )
@@ -1281,22 +1426,16 @@ class AgentMiddlewareLayer:
     def _middleware_handler(
         self, context: AgentContext
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-        # TODO(Copilot): Delete once direct ``run(**kwargs)`` compatibility is removed.
-        client_kwargs = {**context.client_kwargs, **context.kwargs}
-        # TODO(Copilot): Delete once direct ``run(**kwargs)`` compatibility is removed.
-        function_invocation_kwargs = {
-            **context.function_invocation_kwargs,
-            **{k: v for k, v in context.kwargs.items() if k != "middleware"},
-        }
         return super().run(  # type: ignore[misc, no-any-return]
             context.messages,
             stream=context.stream,
             session=context.session,
+            tools=context.tools,
             options=context.options,
             compaction_strategy=context.compaction_strategy,
             tokenizer=context.tokenizer,
-            function_invocation_kwargs=function_invocation_kwargs,
-            client_kwargs=client_kwargs,
+            function_invocation_kwargs=context.function_invocation_kwargs,
+            client_kwargs=context.client_kwargs,
         )
 
 
@@ -1392,7 +1531,7 @@ def categorize_middleware(
     all_middleware: list[Any] = []
     for source in middleware_sources:
         if source:
-            if isinstance(source, list):
+            if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
                 all_middleware.extend(source)  # type: ignore
             else:
                 all_middleware.append(source)

@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-workflows
+displayName: "Translation Chain Workflow Agent"
+
+description: >
+  A workflow agent that performs sequential translation through multiple languages.
+  Translates text from English to French, then to Spanish, and finally back to English,
+  demonstrating how AI agents can be composed as workflow executors.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Workflows
+    - Agent Framework
+
+template:
+  name: hosted-workflows
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+parameters:
+  properties: []
+resources: []

@@ -7,11 +7,12 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentContext,
     FunctionInvocationContext,
     tool,
 )
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -92,7 +93,8 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,

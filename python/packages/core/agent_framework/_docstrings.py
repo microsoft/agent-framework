@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import inspect
+import textwrap
 from collections.abc import Callable, Mapping
 from typing import Any
 
 _GOOGLE_SECTION_HEADERS = (
     "Args:",
     "Keyword Args:",
+    "Attributes:",
     "Returns:",
     "Raises:",
     "Examples:",
@@ -43,6 +45,29 @@ def _format_keyword_arg_lines(extra_keyword_args: Mapping[str, str]) -> list[str
         formatted_lines.append(f"    {name}: {description_lines[0]}")
         formatted_lines.extend(f"        {line}" for line in description_lines[1:])
     return formatted_lines
+
+
+def insert_docstring_block(docstring: str | None, *, block: str) -> str | None:
+    """Insert a preformatted block before the first Google-style section."""
+    cleaned_block = textwrap.dedent(block).strip()
+    if not cleaned_block:
+        return docstring
+    if not docstring:
+        return cleaned_block
+
+    lines = inspect.cleandoc(docstring).splitlines()
+    block_lines = cleaned_block.splitlines()
+    insert_index = _find_next_section_index(lines, 0)
+
+    insertion: list[str] = []
+    if insert_index > 0 and lines[insert_index - 1] != "":
+        insertion.append("")
+    insertion.extend(block_lines)
+    if insert_index < len(lines) and insertion[-1] != "":
+        insertion.append("")
+
+    lines[insert_index:insert_index] = insertion
+    return "\n".join(lines).rstrip()
 
 
 def build_layered_docstring(

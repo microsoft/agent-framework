@@ -46,6 +46,7 @@ from _tools import (
     validate_payment_method,
 )
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     AgentResponseUpdate,
     Executor,
@@ -56,7 +57,7 @@ from agent_framework import (
     executor,
     handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -74,9 +75,10 @@ async def start_executor(input: str, ctx: WorkflowContext[list[Message]]) -> Non
 class ResearchLead(Executor):
     """Aggregates and summarizes travel planning findings from all specialized agents."""
 
-    def __init__(self, client: AzureOpenAIResponsesClient, id: str = "travel-planning-coordinator"):
+    def __init__(self, client: FoundryChatClient, id: str = "travel-planning-coordinator"):
         # Use default_options to persist conversation history for evaluation.
-        self.agent = client.as_agent(
+        self.agent = Agent(
+            client=client,
             id="travel-planning-coordinator",
             instructions=(
                 "You are the final coordinator. You will receive responses from multiple agents: "
@@ -104,11 +106,15 @@ class ResearchLead(Executor):
         messages = [
             Message(
                 role="system",
-                text="You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query.",
+                contents=[
+                    "You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query."
+                ],
             ),
             Message(
                 role="user",
-                text=f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings.",
+                contents=[
+                    f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings."
+                ],
             ),
         ]
 
@@ -143,14 +149,14 @@ class ResearchLead(Executor):
 
 
 async def run_workflow_with_response_tracking(
-    query: str, client: AzureOpenAIResponsesClient | None = None, deployment_name: str | None = None
+    query: str, client: FoundryChatClient | None = None, model: str | None = None
 ) -> dict:
     """Run multi-agent workflow and track conversation IDs, response IDs, and interaction sequence.
 
     Args:
         query: The user query to process through the multi-agent workflow
-        client: Optional AzureOpenAIResponsesClient instance
-        deployment_name: Optional model deployment name for the workflow agents
+        client: Optional FoundryChatClient instance
+        model: Optional model for the workflow agents
 
     Returns:
         Dictionary containing interaction sequence, conversation/response IDs, and conversation analysis
@@ -159,12 +165,12 @@ async def run_workflow_with_response_tracking(
         try:
             async with DefaultAzureCredential() as credential:
                 project_client = AIProjectClient(
-                    endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+                    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
                     credential=credential,
                 )
 
                 async with project_client:
-                    client = AzureOpenAIResponsesClient(project_client=project_client, deployment_name=deployment_name)
+                    client = FoundryChatClient(project_client=project_client, model=model)
                     return await _run_workflow_with_client(query, client)
         except Exception as e:
             print(f"Error during workflow execution: {e}")
@@ -173,7 +179,7 @@ async def run_workflow_with_response_tracking(
         return await _run_workflow_with_client(query, client)
 
 
-async def _run_workflow_with_client(query: str, client: AzureOpenAIResponsesClient) -> dict:
+async def _run_workflow_with_client(query: str, client: FoundryChatClient) -> dict:
     """Execute workflow with given client and track all interactions."""
 
     # Initialize tracking variables - use lists to track multiple responses per agent
@@ -205,16 +211,17 @@ async def _run_workflow_with_client(query: str, client: AzureOpenAIResponsesClie
     }
 
 
-async def _create_workflow(client: AzureOpenAIResponsesClient):
+async def _create_workflow(client: FoundryChatClient):
     """Create the multi-agent travel planning workflow with specialized agents.
 
-    Uses a single shared AzureOpenAIResponsesClient for all agents.
+    Uses a single shared FoundryChatClient for all agents.
     """
 
     final_coordinator = ResearchLead(client=client, id="final-coordinator")
 
     # Agent 1: Travel Request Handler (initial coordinator)
-    travel_request_handler = client.as_agent(
+    travel_request_handler = Agent(
+        client=client,
         id="travel-request-handler",
         instructions=(
             "You receive user travel queries and relay them to specialized agents. Extract key information: destination, dates, budget, and preferences. Pass this information forward clearly to the next agents."
@@ -223,7 +230,8 @@ async def _create_workflow(client: AzureOpenAIResponsesClient):
     )
 
     # Agent 2: Hotel Search Executor
-    hotel_search_agent = client.as_agent(
+    hotel_search_agent = Agent(
+        client=client,
         id="hotel-search-agent",
         instructions=(
             "You are a hotel search specialist. Your task is ONLY to search for and provide hotel information. Use search_hotels to find options, get_hotel_details for specifics, and check_availability to verify rooms. Output format: List hotel names, prices per night, total cost for the stay, locations, ratings, amenities, and addresses. IMPORTANT: Only provide hotel information without additional commentary."
@@ -233,7 +241,8 @@ async def _create_workflow(client: AzureOpenAIResponsesClient):
     )
 
     # Agent 3: Flight Search Executor
-    flight_search_agent = client.as_agent(
+    flight_search_agent = Agent(
+        client=client,
         id="flight-search-agent",
         instructions=(
             "You are a flight search specialist. Your task is ONLY to search for and provide flight information. Use search_flights to find options, get_flight_details for specifics, and check_availability for seats. Output format: List flight numbers, airlines, departure/arrival times, prices, durations, and cabin class. IMPORTANT: Only provide flight information without additional commentary."
@@ -243,7 +252,8 @@ async def _create_workflow(client: AzureOpenAIResponsesClient):
     )
 
     # Agent 4: Activity Search Executor
-    activity_search_agent = client.as_agent(
+    activity_search_agent = Agent(
+        client=client,
         id="activity-search-agent",
         instructions=(
             "You are an activities specialist. Your task is ONLY to search for and provide activity information. Use search_activities to find options for activities. Output format: List activity names, descriptions, prices, durations, ratings, and categories. IMPORTANT: Only provide activity information without additional commentary."
@@ -253,7 +263,8 @@ async def _create_workflow(client: AzureOpenAIResponsesClient):
     )
 
     # Agent 5: Booking Confirmation Executor
-    booking_confirmation_agent = client.as_agent(
+    booking_confirmation_agent = Agent(
+        client=client,
         id="booking-confirmation-agent",
         instructions=(
             "You confirm bookings. Use check_hotel_availability and check_flight_availability to verify slots, then confirm_booking to finalize. Provide ONLY: confirmation numbers, booking references, and confirmation status."
@@ -263,7 +274,8 @@ async def _create_workflow(client: AzureOpenAIResponsesClient):
     )
 
     # Agent 6: Booking Payment Executor
-    booking_payment_agent = client.as_agent(
+    booking_payment_agent = Agent(
+        client=client,
         id="booking-payment-agent",
         instructions=(
             "You process payments. Use validate_payment_method to verify payment, then process_payment to complete transactions. Provide ONLY: payment confirmation status, transaction IDs, and payment amounts."
@@ -273,7 +285,8 @@ async def _create_workflow(client: AzureOpenAIResponsesClient):
     )
 
     # Agent 7: Booking Information Aggregation Executor
-    booking_info_aggregation_agent = client.as_agent(
+    booking_info_aggregation_agent = Agent(
+        client=client,
         id="booking-info-aggregation-agent",
         instructions=(
             "You aggregate hotel and flight search results. Receive options from search agents and organize them. Provide: top 2-3 hotel options with prices and top 2-3 flight options with prices in a structured format."
@@ -338,11 +351,11 @@ def _track_agent_ids(event, agent, response_ids, conversation_ids):
         conversation_ids[agent].append(raw.conversation_id)
 
 
-async def create_and_run_workflow(deployment_name: str | None = None):
+async def create_and_run_workflow(model: str | None = None):
     """Run the workflow evaluation and display results.
 
     Args:
-        deployment_name: Optional model deployment name for the workflow agents
+        model: Optional model for the workflow agents
 
     Returns:
         Dictionary containing agents data with conversation IDs, response IDs, and query information
@@ -356,7 +369,7 @@ async def create_and_run_workflow(deployment_name: str | None = None):
     query = example_queries[0]
     print(f"Query: {query}\n")
 
-    result = await run_workflow_with_response_tracking(query, deployment_name=deployment_name)
+    result = await run_workflow_with_response_tracking(query, model=model)
 
     # Create output data structure
     output_data = {"agents": {}, "query": result["query"], "output": result.get("output", "")}

@@ -15,7 +15,7 @@ The server requires Azure OpenAI credentials. Set the following environment vari
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"  # e.g., "gpt-4o"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"  # e.g., "gpt-5.4-mini"
 ```
 
 The server uses `DefaultAzureCredential` for authentication. Ensure you are logged in using one of the following methods:

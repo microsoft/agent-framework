@@ -3,8 +3,11 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 
 /// <summary>
@@ -36,7 +39,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
     private static bool s_infrastructureStarted;
     private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
 
-    // In CI, `dotnet run` builds the Functions project from scratch before the host starts, so 60s is not enough.
+    // Timeout for the Azure Functions host to become ready after building.
     private static readonly TimeSpan s_functionsReadyTimeout = TimeSpan.FromSeconds(180);
 
     private static readonly string s_samplesPath = Path.GetFullPath(
@@ -123,6 +126,45 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
                 },
                 message: "OrderStatus workflow completed",
                 timeout: s_orchestrationTimeout);
+
+            // Test the CancelOrder workflow with x-ms-wait-for-response header
+            this._outputHelper.WriteLine("Starting CancelOrder workflow with x-ms-wait-for-response: true...");
+
+            using HttpRequestMessage waitRequest = new(HttpMethod.Post, cancelOrderUri);
+            waitRequest.Content = new StringContent("55555", Encoding.UTF8, "text/plain");
+            waitRequest.Headers.Add("x-ms-wait-for-response", "true");
+            using HttpResponseMessage waitResponse = await s_sharedHttpClient.SendAsync(waitRequest);
+
+            Assert.True(waitResponse.IsSuccessStatusCode, $"CancelOrder wait-for-response request failed with status: {waitResponse.StatusCode}");
+            string waitResponseText = await waitResponse.Content.ReadAsStringAsync();
+            this._outputHelper.WriteLine($"CancelOrder wait-for-response result: {waitResponseText}");
+
+            // The response should contain the workflow result (not just "started for CancelOrder")
+            Assert.DoesNotContain("Workflow orchestration started", waitResponseText);
+            Assert.Contains("55555", waitResponseText);
+
+            // Test the wait-for-response with Accept: application/json header
+            this._outputHelper.WriteLine("Starting CancelOrder workflow with x-ms-wait-for-response and Accept: application/json...");
+
+            using HttpRequestMessage jsonWaitRequest = new(HttpMethod.Post, cancelOrderUri);
+            jsonWaitRequest.Content = new StringContent("77777", Encoding.UTF8, "text/plain");
+            jsonWaitRequest.Headers.Add("x-ms-wait-for-response", "true");
+            jsonWaitRequest.Headers.Add("Accept", "application/json");
+
+            using CancellationTokenSource jsonWaitCts = new(s_orchestrationTimeout);
+            using HttpResponseMessage jsonWaitResponse = await s_sharedHttpClient.SendAsync(jsonWaitRequest, jsonWaitCts.Token);
+
+            Assert.True(jsonWaitResponse.IsSuccessStatusCode, $"CancelOrder JSON wait-for-response request failed with status: {jsonWaitResponse.StatusCode}");
+            string jsonWaitResponseText = await jsonWaitResponse.Content.ReadAsStringAsync();
+            this._outputHelper.WriteLine($"CancelOrder JSON wait-for-response result: {jsonWaitResponseText}");
+
+            using JsonDocument jsonDoc = JsonDocument.Parse(jsonWaitResponseText);
+            JsonElement root = jsonDoc.RootElement;
+            Assert.True(root.TryGetProperty("runId", out _), "JSON response missing 'runId' property");
+            Assert.True(root.TryGetProperty("workflowStatus", out JsonElement statusEl), "JSON response missing 'workflowStatus' property");
+            Assert.Equal("Completed", statusEl.GetString());
+            Assert.True(root.TryGetProperty("result", out JsonElement resultEl), "JSON response missing 'result' property");
+            Assert.Contains("77777", resultEl.GetString());
         });
     }
 
@@ -231,6 +273,114 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
                     "BudgetApproval external event receipt not found in logs.");
                 Assert.True(logs.Any(log => log.Message.Contains("Received external event for RequestPort 'ComplianceApproval'")),
                     "ComplianceApproval external event receipt not found in logs.");
+            }
+        });
+    }
+
+    [Fact]
+    public async Task WorkflowMcpToolSampleValidationAsync()
+    {
+        string samplePath = Path.Combine(s_samplesPath, "04_WorkflowMcpTool");
+        await this.RunSampleTestAsync(samplePath, requiresOpenAI: false, async (logs) =>
+        {
+            // Connect to the MCP endpoint exposed by the Azure Functions host
+            IClientTransport clientTransport = new HttpClientTransport(new()
+            {
+                Endpoint = new Uri($"http://localhost:{AzureFunctionsPort}/runtime/webhooks/mcp")
+            });
+
+            await using McpClient mcpClient = await McpClient.CreateAsync(clientTransport);
+
+            // Verify both workflow tools are listed
+            IList<McpClientTool> tools = await mcpClient.ListToolsAsync();
+            this._outputHelper.WriteLine($"MCP tools found: {string.Join(", ", tools.Select(t => t.Name))}");
+
+            Assert.Single(tools, t => t.Name == "Translate");
+            Assert.Single(tools, t => t.Name == "OrderLookup");
+
+            // Invoke the Translate workflow via MCP tool (returns a string result)
+            this._outputHelper.WriteLine("Invoking MCP tool 'Translate'...");
+            CallToolResult translateResult = await mcpClient.CallToolAsync(
+                "Translate",
+                arguments: new Dictionary<string, object?> { { "input", "hello world" } });
+
+            Assert.NotEmpty(translateResult.Content);
+            string translateResponse = Assert.IsType<TextContentBlock>(translateResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"Translate MCP tool response: {translateResponse}");
+            Assert.NotEmpty(translateResponse);
+            Assert.Contains("HELLO WORLD", translateResponse);
+
+            // Invoke the OrderLookup workflow via MCP tool (returns a POCO serialized as JSON)
+            this._outputHelper.WriteLine("Invoking MCP tool 'OrderLookup'...");
+            CallToolResult orderResult = await mcpClient.CallToolAsync(
+                "OrderLookup",
+                arguments: new Dictionary<string, object?> { { "input", "ORD-2025-42" } });
+
+            Assert.NotEmpty(orderResult.Content);
+            string orderResponse = Assert.IsType<TextContentBlock>(orderResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"OrderLookup MCP tool response: {orderResponse}");
+            Assert.NotEmpty(orderResponse);
+            Assert.Contains("ORD-2025-42", orderResponse);
+
+            // Verify executor activities ran in the logs
+            lock (logs)
+            {
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] TranslateText:")), "TranslateText activity not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] FormatOutput:")), "FormatOutput activity not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] LookupOrder:")), "LookupOrder activity not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] EnrichOrder:")), "EnrichOrder activity not found in logs.");
+            }
+        });
+    }
+
+    [Fact]
+    public async Task WorkflowAndAgentsSampleValidationAsync()
+    {
+        string samplePath = Path.Combine(s_samplesPath, "05_WorkflowAndAgents");
+        await this.RunSampleTestAsync(samplePath, requiresOpenAI: true, async (logs) =>
+        {
+            // Connect to the MCP endpoint exposed by the Azure Functions host
+            IClientTransport clientTransport = new HttpClientTransport(new()
+            {
+                Endpoint = new Uri($"http://localhost:{AzureFunctionsPort}/runtime/webhooks/mcp")
+            });
+
+            await using McpClient mcpClient = await McpClient.CreateAsync(clientTransport);
+
+            // Verify both the agent and workflow tools are listed
+            IList<McpClientTool> tools = await mcpClient.ListToolsAsync();
+            this._outputHelper.WriteLine($"MCP tools found: {string.Join(", ", tools.Select(t => t.Name))}");
+
+            Assert.Single(tools, t => t.Name == "Assistant");
+            Assert.Single(tools, t => t.Name == "Translate");
+
+            // Invoke the Translate workflow via MCP tool
+            this._outputHelper.WriteLine("Invoking MCP tool 'Translate'...");
+            CallToolResult translateResult = await mcpClient.CallToolAsync(
+                "Translate",
+                arguments: new Dictionary<string, object?> { { "input", "hello world" } });
+
+            Assert.NotEmpty(translateResult.Content);
+            string translateResponse = Assert.IsType<TextContentBlock>(translateResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"Translate MCP tool response: {translateResponse}");
+            Assert.Contains("HELLO WORLD", translateResponse);
+
+            // Invoke the Assistant agent via MCP tool
+            this._outputHelper.WriteLine("Invoking MCP tool 'Assistant'...");
+            CallToolResult assistantResult = await mcpClient.CallToolAsync(
+                "Assistant",
+                arguments: new Dictionary<string, object?> { { "query", "What is 2 + 2?" } });
+
+            Assert.NotEmpty(assistantResult.Content);
+            string assistantResponse = Assert.IsType<TextContentBlock>(assistantResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"Assistant MCP tool response: {assistantResponse}");
+            Assert.NotEmpty(assistantResponse);
+
+            // Verify workflow executor activities ran in the logs
+            lock (logs)
+            {
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] TranslateText:")), "TranslateText activity not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] FormatOutput:")), "FormatOutput activity not found in logs.");
             }
         });
     }
@@ -425,11 +575,17 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
 
     private async Task RunSampleTestAsync(string samplePath, bool requiresOpenAI, Func<IReadOnlyList<OutputLog>, Task> testAction)
     {
+        // Build the sample project first (it may not have been built as part of the solution)
+        await AzureFunctionsTestHelper.BuildSampleAsync(
+            samplePath, $"-f {s_dotnetTargetFramework} -c {BuildConfiguration}", this._outputHelper);
+
+        // Start the Azure Functions app
         List<OutputLog> logsContainer = [];
         using Process funcProcess = this.StartFunctionApp(samplePath, logsContainer, requiresOpenAI);
         try
         {
-            await this.WaitForAzureFunctionsAsync();
+            await AzureFunctionsTestHelper.WaitForFunctionsReadyAsync(
+                funcProcess, AzureFunctionsPort, s_sharedHttpClient, this._outputHelper, s_functionsReadyTimeout, samplePath);
             await testAction(logsContainer);
         }
         finally
@@ -443,7 +599,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         ProcessStartInfo startInfo = new()
         {
             FileName = "dotnet",
-            Arguments = $"run -f {s_dotnetTargetFramework} -c {BuildConfiguration} --port {AzureFunctionsPort}",
+            Arguments = $"run --no-build -f {s_dotnetTargetFramework} -c {BuildConfiguration} --port {AzureFunctionsPort}",
             WorkingDirectory = samplePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -502,29 +658,6 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         process.BeginOutputReadLine();
 
         return process;
-    }
-
-    private async Task WaitForAzureFunctionsAsync()
-    {
-        this._outputHelper.WriteLine(
-            $"Waiting for Azure Functions Core Tools to be ready at http://localhost:{AzureFunctionsPort}/...");
-        await this.WaitForConditionAsync(
-            condition: async () =>
-            {
-                try
-                {
-                    using HttpRequestMessage request = new(HttpMethod.Head, $"http://localhost:{AzureFunctionsPort}/");
-                    using HttpResponseMessage response = await s_sharedHttpClient.SendAsync(request);
-                    this._outputHelper.WriteLine($"Azure Functions Core Tools response: {response.StatusCode}");
-                    return response.IsSuccessStatusCode;
-                }
-                catch (HttpRequestException)
-                {
-                    return false;
-                }
-            },
-            message: "Azure Functions Core Tools is ready",
-            timeout: s_functionsReadyTimeout);
     }
 
     private async Task RunCommandAsync(string command, string[] args)

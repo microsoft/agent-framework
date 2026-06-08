@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pull-requests: write
 
 jobs:
@@ -19,11 +20,11 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Download coverage report
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
           path: ./python
           merge-multiple: true
@@ -38,17 +39,17 @@ jobs:
             echo "PR number file 'pr_number' is missing or empty"
             exit 1
           fi
-          PR_NUMBER=$(head -1 pr_number | tr -dc '0-9')
-          if [ -z "$PR_NUMBER" ]; then
-            echo "PR number file 'pr_number' does not contain a valid PR number"
+          PR_NUMBER=$(cat pr_number)
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::PR number file contains invalid content"
             exit 1
           fi
           echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
       - name: Pytest coverage comment
         id: coverageComment
-        uses: MishaKav/pytest-coverage-comment@v1.6.0
+        uses: MishaKav/pytest-coverage-comment@26f986d2599c288bb62f623d29c2da98609e9cd4 # v1.6.0
         with:
-          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          github-token: ${{ github.token }}
           issue-number: ${{ env.PR_NUMBER }}
           pytest-xml-coverage-path: python/python-coverage.xml
           title: "Python Test Coverage Report"

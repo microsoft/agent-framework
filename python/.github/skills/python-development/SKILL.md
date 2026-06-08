@@ -72,11 +72,11 @@ def equal(arg1: str, arg2: str) -> bool:
 from agent_framework import Agent, Message, tool
 
 # Components
-from agent_framework.observability import enable_instrumentation
+from agent_framework.observability import enable_sensitive_telemetry
 
 # Connectors (lazy-loaded)
 from agent_framework.openai import OpenAIChatClient
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 ```
 
 ## Public API and Exports

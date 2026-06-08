@@ -36,9 +36,52 @@ When samples depend on external packages not included in the dev environment (e.
 
 This makes samples self-contained and runnable without installing extra packages into the dev environment. Do not add sample-only dependencies to the root `pyproject.toml` dev group.
 
+## Azure Credentials
+
+**Always use `AzureCliCredential`** in samples — never `DefaultAzureCredential`. `AzureCliCredential` is explicit about the authentication method (requires `az login`) and avoids unexpected credential resolution that can confuse newcomers.
+
+```python
+from azure.identity import AzureCliCredential
+
+credential = AzureCliCredential()
+```
+
 ## Environment Variables
 
-All samples that use environment variables (API keys, endpoints, etc.) must call `load_dotenv()` at the beginning of the file to load variables from a `.env` file. The `python-dotenv` package is already included as a dependency of `agent-framework-core`.
+### Basic / Getting Started Samples
+
+For getting started samples (`01-get-started/`) and `basic` samples, use **explicit placeholder values** for non-sensitive parameters to make the code immediately readable:
+
+```python
+# Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+
+"""
+Sample docstring explaining what the sample does.
+"""
+
+
+async def main() -> None:
+    client = FoundryChatClient(
+        project_endpoint="https://your-project.services.ai.azure.com",
+        model="gpt-4o",
+        credential=AzureCliCredential(),
+    )
+    agent = Agent(client=client, name="MyAgent", instructions="You are helpful.")
+    result = await agent.run("Hello!")
+    print(result)
+```
+
+Basic samples should NOT use `os.environ`, `load_dotenv()`, or `.env` files. The placeholder values make the code self-documenting.
+
+### Advanced Samples
+
+For advanced samples that require real credentials or multiple configuration values, use environment variables with `os.environ` and document the required variables in the module docstring:
 
 ```python
 # Copyright (c) Microsoft. All rights reserved.
@@ -46,19 +89,24 @@ All samples that use environment variables (API keys, endpoints, etc.) must call
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 """
-Sample docstring explaining what the sample does.
+Advanced sample demonstrating feature X.
+
+Environment variables:
+    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
+    FOUNDRY_MODEL            — Model deployment name (e.g. gpt-4o)
 """
 ```
 
-Users can create a `.env` file in the `python/` directory based on `.env.example` to set their environment variables without having to export them in their shell.
+### Default Client for Samples
+
+Unless a sample is specifically demonstrating a particular provider (OpenAI direct, Anthropic, Ollama, etc.), use `FoundryChatClient` from `agent_framework.azure` as the default client. This is the recommended client for Azure AI Foundry deployments.
+
+Provider-specific samples belong in `02-agents/providers/<provider>/` and should use the provider's native client (e.g., `OpenAIChatClient` for OpenAI, `AnthropicClient` for Anthropic).
 
 ## Syntax Checking
 

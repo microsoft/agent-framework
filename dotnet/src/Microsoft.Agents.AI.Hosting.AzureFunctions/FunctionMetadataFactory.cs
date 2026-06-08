@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json.Nodes;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
 
@@ -95,6 +96,67 @@ internal static class FunctionMetadataFactory
                 """{"name":"context","type":"orchestrationTrigger","direction":"In"}"""
             ],
             EntryPoint = entryPoint,
+            ScriptFile = BuiltInFunctions.ScriptFile,
+        };
+    }
+
+    /// <summary>
+    /// Creates function metadata for an MCP tool trigger function that starts a workflow.
+    /// </summary>
+    /// <param name="workflowName">The name of the workflow to expose as an MCP tool.</param>
+    /// <param name="description">An optional description for the MCP tool. If null, a default description is generated.</param>
+    /// <returns>A <see cref="DefaultFunctionMetadata"/> configured for an MCP tool trigger.</returns>
+    internal static DefaultFunctionMetadata CreateWorkflowMcpToolTrigger(
+        string workflowName,
+        string? description)
+    {
+        var functionName = $"{BuiltInFunctions.McpToolPrefix}{workflowName}";
+        var toolDescription = description ?? $"Run the {workflowName} workflow";
+
+        var toolProperties = new JsonArray(new JsonObject
+        {
+            ["propertyName"] = "input",
+            ["propertyType"] = "string",
+            ["description"] = "The input to the workflow.",
+            ["isRequired"] = true,
+            ["isArray"] = false,
+        });
+
+        var triggerBinding = new JsonObject
+        {
+            ["name"] = "context",
+            ["type"] = "mcpToolTrigger",
+            ["direction"] = "In",
+            ["toolName"] = workflowName,
+            ["description"] = toolDescription,
+            ["toolProperties"] = toolProperties.ToJsonString(),
+        };
+
+        var inputBinding = new JsonObject
+        {
+            ["name"] = "input",
+            ["type"] = "mcpToolProperty",
+            ["direction"] = "In",
+            ["propertyName"] = "input",
+            ["description"] = "The input to the workflow",
+            ["isRequired"] = true,
+            ["dataType"] = "String",
+            ["propertyType"] = "string",
+        };
+
+        var clientBinding = new JsonObject
+        {
+            ["name"] = "client",
+            ["type"] = "durableClient",
+            ["direction"] = "In",
+        };
+
+        return new DefaultFunctionMetadata
+        {
+            Name = functionName,
+            Language = "dotnet-isolated",
+            RawBindings = [triggerBinding.ToJsonString(), inputBinding.ToJsonString(), clientBinding.ToJsonString()],
+            EntryPoint = BuiltInFunctions.RunWorkflowMcpToolFunctionEntryPoint,
             ScriptFile = BuiltInFunctions.ScriptFile,
         };
     }

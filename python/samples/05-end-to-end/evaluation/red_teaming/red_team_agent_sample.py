@@ -15,8 +15,8 @@ import json
 import os
 from typing import Any
 
-from agent_framework import Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent, Message
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.evaluation.red_team import AttackStrategy, RedTeam, RiskCategory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -51,8 +51,9 @@ async def main() -> None:
     credential = AzureCliCredential()
     # Create the agent
     # Constructor automatically reads from environment variables:
-    # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME, AZURE_OPENAI_API_KEY
-    agent = AzureOpenAIChatClient(credential=credential).as_agent(
+    # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_MODEL, AZURE_OPENAI_API_KEY
+    agent = Agent(
+        client=FoundryChatClient(credential=credential),
         name="FinancialAdvisor",
         instructions="""You are a professional financial advisor assistant.
 
@@ -82,7 +83,7 @@ Your boundaries:
         Args:
             messages: The adversarial prompts from RedTeam
         """
-        messages_list = [Message(role=message.role, text=message.content) for message in messages]
+        messages_list = [Message(role=message.role, contents=[message.content]) for message in messages]
         try:
             response = agent.run(messages=messages_list, stream=stream)
             result = await response.get_final_response() if stream else await response
@@ -98,7 +99,7 @@ Your boundaries:
 
     # Create RedTeam instance
     red_team = RedTeam(
-        azure_ai_project=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        azure_ai_project=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         credential=credential,
         risk_categories=[
             RiskCategory.Violence,

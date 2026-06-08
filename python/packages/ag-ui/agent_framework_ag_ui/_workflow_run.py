@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import uuid
@@ -29,11 +30,12 @@ from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
     FlowState,
     _build_run_finished_event,
+    _close_reasoning_block,
     _emit_content,
     _extract_resume_payload,
     _normalize_resume_interrupts,
 )
-from ._utils import generate_event_id, make_json_safe
+from ._utils import canonical_function_arguments, generate_event_id, make_json_safe
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +324,29 @@ def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     return candidate
 
 
+def _approval_response_matches_request(request_id: str, request_event: Any, response: Any) -> bool:
+    """Check whether an approval response matches the pending approval request."""
+    request_data = getattr(request_event, "data", None)
+    if not isinstance(request_data, Content) or request_data.type != "function_approval_request":
+        return True
+
+    if not isinstance(response, Content) or response.type != "function_approval_response":
+        return False
+
+    if str(getattr(response, "id", "")) != request_id:
+        return False
+
+    request_call = getattr(request_data, "function_call", None)
+    response_call = getattr(response, "function_call", None)
+    if request_call is None or response_call is None:
+        return False
+
+    if getattr(response_call, "name", None) != getattr(request_call, "name", None):
+        return False
+
+    return canonical_function_arguments(response_call) == canonical_function_arguments(request_call)
+
+
 def _single_pending_response_from_value(pending_events: dict[str, Any], value: Any) -> dict[str, Any]:
     """Map a scalar resume payload to the single pending request (if unambiguous)."""
     if value is None or len(pending_events) != 1:
@@ -338,6 +363,13 @@ def _single_pending_response_from_value(pending_events: dict[str, Any], value: A
             "Ignoring pending request response for request_id=%s: expected %s",
             request_id,
             _response_type_name(request_event),
+        )
+        return {}
+
+    if not _approval_response_matches_request(str(request_id), request_event, coerced_value):
+        logger.info(
+            "Ignoring pending request response for request_id=%s: approval response does not match pending request",
+            request_id,
         )
         return {}
 
@@ -368,6 +400,12 @@ def _coerce_responses_for_pending_requests(
                 "Ignoring resume response for request_id=%s: expected %s",
                 request_key,
                 _response_type_name(request_event),
+            )
+            continue
+        if not _approval_response_matches_request(request_key, request_event, coerced_value):
+            logger.info(
+                "Ignoring resume response for request_id=%s: approval response does not match pending request",
+                request_key,
             )
             continue
         normalized[request_key] = coerced_value
@@ -580,11 +618,33 @@ async def run_workflow_stream(
         flow.accumulated_text = ""
         return [TextMessageEndEvent(message_id=current_message_id)]
 
+    fwd_kwargs: dict[str, Any] = {}
+    if "forwarded_props" in input_data:
+        forwarded_props = input_data["forwarded_props"]
+        fwd_kwargs["function_invocation_kwargs"] = {"forwarded_props": forwarded_props}
+    elif "forwardedProps" in input_data:
+        forwarded_props = input_data["forwardedProps"]
+        fwd_kwargs["function_invocation_kwargs"] = {"forwarded_props": forwarded_props}
+
+    # Only pass function_invocation_kwargs if the workflow.run signature accepts it
+    if fwd_kwargs:
+        try:
+            sig = inspect.signature(workflow.run)
+            params = sig.parameters
+            accepts_fwd = "function_invocation_kwargs" in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+        except (ValueError, TypeError):
+            accepts_fwd = False
+        if not accepts_fwd:
+            logger.debug("workflow.run() does not accept function_invocation_kwargs; dropping forwarded_props")
+            fwd_kwargs = {}
+
     try:
         if responses:
-            event_stream = workflow.run(responses=responses, stream=True)
+            event_stream = workflow.run(responses=responses, stream=True, **fwd_kwargs)
         else:
-            event_stream = workflow.run(message=messages, stream=True)
+            event_stream = workflow.run(message=messages, stream=True, **fwd_kwargs)
 
         async for event in event_stream:
             event_type = getattr(event, "type", None)
@@ -728,6 +788,9 @@ async def run_workflow_stream(
             yield RunErrorEvent(message=str(exc), code=type(exc).__name__)
             run_error_emitted = True
         terminal_emitted = True
+
+    for reasoning_evt in _close_reasoning_block(flow):
+        yield reasoning_evt
 
     for end_event in _drain_open_message():
         yield end_event

@@ -3,10 +3,15 @@
 import asyncio
 import os
 import sys
+
+# Uncomment this filter to suppress the experimental Skills warning before
+# using the sample's Skills APIs.
+# import warnings
+# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from pathlib import Path
 
 from agent_framework import Agent, SkillsProvider
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -40,13 +45,13 @@ load_dotenv()
 
 async def main() -> None:
     """Run the file-based skills demo."""
-    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    deployment = os.environ.get("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", "gpt-4o-mini")
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
 
     # Create the chat client
-    client = AzureOpenAIResponsesClient(
+    client = FoundryChatClient(
         project_endpoint=endpoint,
-        deployment_name=deployment,
+        model=deployment,
         credential=AzureCliCredential(),
     )
 
@@ -54,7 +59,7 @@ async def main() -> None:
     # Discovers skills from the 'skills' directory and configures the
     # subprocess_script_runner to run file-based scripts.
     skills_dir = Path(__file__).parent / "skills"
-    skills_provider = SkillsProvider(
+    skills_provider = SkillsProvider.from_paths(
         skill_paths=str(skills_dir),
         script_runner=subprocess_script_runner,
     )

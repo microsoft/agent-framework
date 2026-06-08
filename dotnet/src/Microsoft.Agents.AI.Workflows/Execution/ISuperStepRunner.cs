@@ -19,12 +19,21 @@ internal interface ISuperStepRunner
     bool HasUnprocessedMessages { get; }
 
     ValueTask EnqueueResponseAsync(ExternalResponse response, CancellationToken cancellationToken = default);
+    bool TryGetResponsePortExecutorId(string portId, out string? executorId);
 
     ValueTask<bool> IsValidInputTypeAsync<T>(CancellationToken cancellationToken = default);
     ValueTask<bool> EnqueueMessageAsync<T>(T message, CancellationToken cancellationToken = default);
     ValueTask<bool> EnqueueMessageUntypedAsync(object message, Type declaredType, CancellationToken cancellationToken = default);
 
     ConcurrentEventSink OutgoingEvents { get; }
+
+    /// <summary>
+    /// Re-emits <see cref="RequestInfoEvent"/>s for any pending external requests.
+    /// Called by event streams after subscribing to <see cref="OutgoingEvents"/> so that
+    /// requests restored from a checkpoint are observable even when the restore happened
+    /// before the subscription was active.
+    /// </summary>
+    ValueTask RepublishPendingEventsAsync(CancellationToken cancellationToken = default);
 
     ValueTask<bool> RunSuperStepAsync(CancellationToken cancellationToken);
 

@@ -104,6 +104,7 @@ class WorkflowGraphValidator:
         executors: dict[str, Executor],
         start_executor: Executor,
         output_executors: list[str],
+        intermediate_executors: list[str] | None = None,
     ) -> None:
         """Validate the entire workflow graph.
 
@@ -112,6 +113,7 @@ class WorkflowGraphValidator:
             executors: Map of executor IDs to executor instances
             start_executor: The starting executor
             output_executors: List of output executor IDs
+            intermediate_executors: List of intermediate executor IDs
 
         Raises:
             WorkflowValidationError: If any validation fails
@@ -158,7 +160,7 @@ class WorkflowGraphValidator:
         self._validate_graph_connectivity(start_executor.id)
         self._validate_self_loops()
         self._validate_dead_ends()
-        self._output_validation(output_executors)
+        self._output_validation(output_executors, intermediate_executors or [])
 
     def _validate_handler_output_annotations(self) -> None:
         """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
@@ -356,8 +358,15 @@ class WorkflowGraphValidator:
 
     # region Output Validation
 
-    def _output_validation(self, output_executors: list[str]) -> None:
-        """Validate that output executors exist in the workflow and have the correct workflow context annotations."""
+    def _output_validation(self, output_executors: list[str], intermediate_executors: list[str]) -> None:
+        """Validate that designated executors exist and have workflow output annotations."""
+        overlap = sorted(set(output_executors).intersection(intermediate_executors))
+        if overlap:
+            raise WorkflowValidationError(
+                f"Executors cannot be both output and intermediate designated: {overlap}",
+                validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+            )
+
         for output_id in output_executors:
             if output_id not in self._executors:
                 raise WorkflowValidationError(
@@ -369,6 +378,20 @@ class WorkflowGraphValidator:
             if not output_executor.workflow_output_types:
                 raise WorkflowValidationError(
                     f"Output executor '{output_id}' must have output type annotations defined.",
+                    validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+                )
+
+        for intermediate_id in intermediate_executors:
+            if intermediate_id not in self._executors:
+                raise WorkflowValidationError(
+                    f"Intermediate executor '{intermediate_id}' is not present in the workflow graph",
+                    validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+                )
+
+            intermediate_executor = self._executors[intermediate_id]
+            if not intermediate_executor.workflow_output_types:
+                raise WorkflowValidationError(
+                    f"Intermediate executor '{intermediate_id}' must have output type annotations defined.",
                     validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
                 )
 
@@ -415,6 +438,7 @@ def validate_workflow_graph(
     executors: dict[str, Executor],
     start_executor: Executor,
     output_executors: list[str],
+    intermediate_executors: list[str] | None = None,
 ) -> None:
     """Convenience function to validate a workflow graph.
 
@@ -423,6 +447,7 @@ def validate_workflow_graph(
         executors: Map of executor IDs to executor instances
         start_executor: The starting executor instance
         output_executors: List of output executor IDs
+        intermediate_executors: List of intermediate executor IDs
 
     Raises:
         WorkflowValidationError: If any validation fails
@@ -433,4 +458,5 @@ def validate_workflow_graph(
         executors,
         start_executor,
         output_executors,
+        intermediate_executors,
     )

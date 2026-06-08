@@ -2,16 +2,7 @@
 
 """Azure integration namespace for optional Agent Framework connectors.
 
-This module lazily re-exports objects from optional Azure connector packages and
-built-in core Azure OpenAI modules.
-
-Supported classes include:
-- AzureAIClient
-- AzureAIAgentClient
-- AzureOpenAIChatClient
-- AzureOpenAIResponsesClient
-- AzureAISearchContextProvider
-- DurableAIAgent
+This module lazily re-exports objects from optional Azure connector packages.
 """
 
 import importlib
@@ -21,27 +12,9 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AgentCallbackContext": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "AgentFunctionApp": ("agent_framework_azurefunctions", "agent-framework-azurefunctions"),
     "AgentResponseCallbackProtocol": ("agent_framework_durabletask", "agent-framework-durabletask"),
-    "AzureAIAgentClient": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
-    "AzureAIAgentOptions": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
-    "AzureAIProjectAgentOptions": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
-    "AzureAIClient": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
-    "AzureAIProjectAgentProvider": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureAISearchContextProvider": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
     "AzureAISearchSettings": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
-    "AzureAISettings": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
-    "AzureAIAgentsProvider": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
-    "AzureCredentialTypes": ("agent_framework.azure._entra_id_authentication", "agent-framework-core"),
-    "AzureTokenProvider": ("agent_framework.azure._entra_id_authentication", "agent-framework-core"),
-    "FoundryMemoryProvider": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
-    "AzureOpenAIAssistantsClient": ("agent_framework.azure._assistants_client", "agent-framework-core"),
-    "AzureOpenAIAssistantsOptions": ("agent_framework.azure._assistants_client", "agent-framework-core"),
-    "AzureOpenAIChatClient": ("agent_framework.azure._chat_client", "agent-framework-core"),
-    "AzureOpenAIChatOptions": ("agent_framework.azure._chat_client", "agent-framework-core"),
-    "AzureOpenAIEmbeddingClient": ("agent_framework.azure._embedding_client", "agent-framework-core"),
-    "AzureOpenAIResponsesClient": ("agent_framework.azure._responses_client", "agent-framework-core"),
-    "AzureOpenAIResponsesOptions": ("agent_framework.azure._responses_client", "agent-framework-core"),
-    "AzureOpenAISettings": ("agent_framework.azure._shared", "agent-framework-core"),
-    "AzureUserSecurityContext": ("agent_framework.azure._chat_client", "agent-framework-core"),
+    "CosmosHistoryProvider": ("agent_framework_azure_cosmos", "agent-framework-azure-cosmos"),
     "DurableAIAgent": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentClient": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentOrchestrationContext": ("agent_framework_durabletask", "agent-framework-durabletask"),

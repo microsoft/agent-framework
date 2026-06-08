@@ -74,7 +74,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 // ---------------------------------------------------------------------------
 string apiKey = builder.Configuration["OPENAI_API_KEY"]
     ?? throw new InvalidOperationException("Set the OPENAI_API_KEY environment variable.");
-string model = builder.Configuration["OPENAI_MODEL"] ?? "gpt-4.1-mini";
+string model = builder.Configuration["OPENAI_MODEL"] ?? "gpt-5.4-mini";
 
 // Here we are using Singleton lifetime, since none of the services, function tools and user context classes in the sample have state that are per request.
 // You should evaluate the appropriate lifetime for your own services and tools based on their behavior and dependencies.

@@ -38,6 +38,7 @@ internal static class SourceBuilder
         sb.AppendLine("using System.Collections.Generic;");
         sb.AppendLine("using Microsoft.Agents.AI.Workflows;");
         sb.AppendLine();
+        sb.AppendLine("using RouteBuilder = Microsoft.Agents.AI.Workflows.RouteBuilder;");
 
         // Namespace
         if (!string.IsNullOrWhiteSpace(info.Namespace))

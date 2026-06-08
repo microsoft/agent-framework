@@ -27,8 +27,15 @@ public static class FunctionsApplicationBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(configure);
 
+        // Create/get shared options BEFORE the DurableTask library call so it can find them.
+        FunctionsDurableOptions sharedOptions = GetOrCreateSharedOptions(builder.Services);
+
         // The main agent services registration is done in Microsoft.DurableTask.Agents.
         builder.Services.ConfigureDurableAgents(configure);
+
+        // Ensure all agents registered through this path have default FunctionsAgentOptions.
+        // This distinguishes them from agents auto-registered by workflows.
+        DurableAgentsOptionsExtensions.EnsureDefaultOptionsForAll(sharedOptions.Agents.GetAgentFactories().Keys);
 
         builder.Services.TryAddSingleton<IFunctionsAgentOptionsProvider>(_ =>
             new DefaultFunctionsAgentOptionsProvider(DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot()));
@@ -67,6 +74,13 @@ public static class FunctionsApplicationBuilderExtensions
 
         builder.Services.ConfigureDurableOptions(configure);
 
+        if (DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot().Count > 0)
+        {
+            builder.Services.TryAddSingleton<IFunctionsAgentOptionsProvider>(_ =>
+                new DefaultFunctionsAgentOptionsProvider(DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot()));
+            builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IFunctionMetadataTransformer, DurableAgentFunctionMetadataTransformer>());
+        }
+
         if (sharedOptions.Workflows.Workflows.Count > 0)
         {
             builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IFunctionMetadataTransformer, DurableWorkflowsFunctionMetadataTransformer>());
@@ -102,12 +116,14 @@ public static class FunctionsApplicationBuilderExtensions
 
         builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrchestrationHttpFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrchestrationFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.GetWorkflowStatusHttpFunctionEntryPoint, StringComparison.Ordinal) ||
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RespondToWorkflowHttpFunctionEntryPoint, StringComparison.Ordinal)
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RespondToWorkflowHttpFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowMcpToolFunctionEntryPoint, StringComparison.Ordinal)
         );
         builder.Services.TryAddSingleton<BuiltInFunctionExecutor>();
     }

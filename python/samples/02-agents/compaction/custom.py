@@ -50,11 +50,11 @@ class KeepLastUserTurnStrategy:
 
 def _messages() -> list[Message]:
     return [
-        Message(role="system", text="You are concise."),
-        Message(role="user", text="first request"),
-        Message(role="assistant", text="first response"),
-        Message(role="user", text="second request"),
-        Message(role="assistant", text="second response"),
+        Message(role="system", contents=["You are concise."]),
+        Message(role="user", contents=["first request"]),
+        Message(role="assistant", contents=["first response"]),
+        Message(role="user", contents=["second request"]),
+        Message(role="assistant", contents=["second response"]),
     ]
 
 

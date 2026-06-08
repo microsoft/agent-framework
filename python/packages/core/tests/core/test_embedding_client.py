@@ -25,7 +25,7 @@ class MockEmbeddingClient(BaseEmbeddingClient):
         options: EmbeddingGenerationOptions | None = None,
     ) -> GeneratedEmbeddings[list[float]]:
         return GeneratedEmbeddings(
-            [Embedding(vector=[0.1, 0.2, 0.3], model_id="mock-model") for _ in values],
+            [Embedding(vector=[0.1, 0.2, 0.3], model="mock-model") for _ in values],
             usage={"prompt_tokens": len(values), "total_tokens": len(values)},
         )
 
@@ -38,12 +38,12 @@ async def test_base_get_embeddings() -> None:
     result = await client.get_embeddings(["hello", "world"])
     assert len(result) == 2
     assert result[0].vector == [0.1, 0.2, 0.3]
-    assert result[0].model_id == "mock-model"
+    assert result[0].model == "mock-model"
 
 
 async def test_base_get_embeddings_with_options() -> None:
     client = MockEmbeddingClient()
-    options: EmbeddingGenerationOptions = {"model_id": "test", "dimensions": 3}
+    options: EmbeddingGenerationOptions = {"model": "test", "dimensions": 3}
     result = await client.get_embeddings(["hello"], options=options)
     assert len(result) == 1
 

@@ -5,14 +5,15 @@ import os
 import sys
 
 import uvicorn
-from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.server.request_handlers.default_request_handler import DefaultRequestHandler
-from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+from a2a.server.tasks import InMemoryTaskStore
 from agent_definitions import AGENT_CARD_FACTORIES, AGENT_FACTORIES
-from agent_executor import AgentFrameworkExecutor
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.a2a import A2AExecutor
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+from starlette.applications import Starlette
 
 # Load environment variables from .env file
 load_dotenv()
@@ -35,8 +36,8 @@ Usage:
   uv run python a2a_server.py --agent-type logistics --port 5002
 
 Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT              — Your Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
+  FOUNDRY_PROJECT_ENDPOINT              — Your Azure AI Foundry project endpoint
+  FOUNDRY_MODEL — Model deployment name (e.g. gpt-4o)
 """
 
 
@@ -66,21 +67,21 @@ def main() -> None:
     args = parse_args()
 
     # Validate environment
-    project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-    deployment_name = os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
+    model = os.getenv("FOUNDRY_MODEL")
 
     if not project_endpoint:
-        print("Error: AZURE_AI_PROJECT_ENDPOINT environment variable is not set.")
+        print("Error: FOUNDRY_PROJECT_ENDPOINT environment variable is not set.")
         sys.exit(1)
-    if not deployment_name:
-        print("Error: AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME environment variable is not set.")
+    if not model:
+        print("Error: FOUNDRY_MODEL environment variable is not set.")
         sys.exit(1)
 
     # Create the LLM client
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
+    client = FoundryChatClient(
         project_endpoint=project_endpoint,
-        deployment_name=deployment_name,
+        model=model,
         credential=credential,
     )
 
@@ -91,16 +92,19 @@ def main() -> None:
     # Build the A2A server components
     url = f"http://{args.host}:{args.port}/"
     agent_card = AGENT_CARD_FACTORIES[args.agent_type](url)
-    executor = AgentFrameworkExecutor(agent)
+    executor = A2AExecutor(agent, stream=True)
     task_store = InMemoryTaskStore()
     request_handler = DefaultRequestHandler(
         agent_executor=executor,
         task_store=task_store,
+        agent_card=agent_card,
     )
 
-    a2a_app = A2AStarletteApplication(
-        agent_card=agent_card,
-        http_handler=request_handler,
+    app = Starlette(
+        routes=[
+            *create_agent_card_routes(agent_card),
+            *create_jsonrpc_routes(request_handler, "/"),
+        ]
     )
 
     print(f"Starting A2A server: {agent_card.name}")
@@ -110,7 +114,7 @@ def main() -> None:
     print()
 
     uvicorn.run(
-        a2a_app.build(),
+        app,
         host=args.host,
         port=args.port,
     )

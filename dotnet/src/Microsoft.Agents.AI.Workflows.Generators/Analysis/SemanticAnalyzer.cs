@@ -254,7 +254,7 @@ internal static class SemanticAnalyzer
 
     /// <summary>
     /// Combines ClassProtocolInfo results into an AnalysisResult for classes that only have IO attributes
-    /// (no [MessageHandler] methods). This generates only .SendsMessage/.YieldsMessage calls in the protocol
+    /// (no [MessageHandler] methods). This generates only .SendsMessage/.YieldsOutput calls in the protocol
     /// configuration.
     /// </summary>
     /// <remarks>

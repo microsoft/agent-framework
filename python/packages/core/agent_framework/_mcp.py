@@ -4,35 +4,36 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import contextvars
 import json
 import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
+from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
-import httpx
-from anyio import ClosedResourceError
-from mcp import types
-from mcp.client.session import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamable_http_client
-from mcp.client.websocket import websocket_client
-from mcp.shared.context import RequestContext
-from mcp.shared.exceptions import McpError
-from mcp.shared.session import RequestResponder
 from opentelemetry import propagate
+from opentelemetry import trace as otel_trace
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._tools import FunctionTool
 from ._types import (
+    ChatOptions,
     Content,
     Message,
 )
 from .exceptions import ToolException, ToolExecutionException
+from .observability import (
+    OtelAttr,
+    create_mcp_client_span,
+    set_mcp_span_error,
+)
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -40,7 +41,17 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
+    from httpx import AsyncClient
+    from mcp import types
+    from mcp.client.session import ClientSession
+    from mcp.shared.context import RequestContext
+    from mcp.shared.session import RequestResponder
+
     from ._clients import SupportsChatGetResponse
+    from ._middleware import FunctionInvocationContext
+
+
+logger = logging.getLogger(__name__)
 
 
 class MCPSpecificApproval(TypedDict, total=False):
@@ -57,13 +68,15 @@ class MCPSpecificApproval(TypedDict, total=False):
     never_require_approval: Collection[str] | None
 
 
-logger = logging.getLogger(__name__)
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
+_mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
+MCP_DEFAULT_TIMEOUT = 30
+MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
 
 # region: Helpers
 
-LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
+LOG_LEVEL_MAPPING: dict[str, int] = {
     "debug": logging.DEBUG,
     "info": logging.INFO,
     "notice": logging.INFO,
@@ -73,269 +86,6 @@ LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
     "alert": logging.CRITICAL,
     "emergency": logging.CRITICAL,
 }
-
-
-def _parse_prompt_result_from_mcp(
-    mcp_type: types.GetPromptResult,
-) -> str:
-    """Parse an MCP GetPromptResult directly into a string representation.
-
-    Converts each message in the prompt result to its string form and combines them.
-
-    Args:
-        mcp_type: The MCP GetPromptResult object to convert.
-
-    Returns:
-        A string representation of the prompt result.
-    """
-    parts: list[str] = []
-    for message in mcp_type.messages:
-        content = message.content
-        if isinstance(content, types.TextContent):
-            parts.append(content.text)
-        elif isinstance(content, (types.ImageContent, types.AudioContent)):
-            parts.append(
-                json.dumps(
-                    {
-                        "type": "image" if isinstance(content, types.ImageContent) else "audio",
-                        "data": content.data,
-                        "mimeType": content.mimeType,
-                    },
-                    default=str,
-                )
-            )
-        elif isinstance(content, types.EmbeddedResource):
-            match content.resource:
-                case types.TextResourceContents():
-                    parts.append(content.resource.text)
-                case types.BlobResourceContents():
-                    parts.append(
-                        json.dumps(
-                            {
-                                "type": "blob",
-                                "data": content.resource.blob,
-                                "mimeType": content.resource.mimeType,
-                            },
-                            default=str,
-                        )
-                    )
-        else:
-            parts.append(str(content))
-    if not parts:
-        return ""
-    if len(parts) == 1:
-        return parts[0]
-    return json.dumps(parts, default=str)
-
-
-def _parse_message_from_mcp(
-    mcp_type: types.PromptMessage | types.SamplingMessage,
-) -> Message:
-    """Parse an MCP container type into an Agent Framework type."""
-    return Message(
-        role=mcp_type.role,
-        contents=_parse_content_from_mcp(mcp_type.content),
-        raw_representation=mcp_type,
-    )
-
-
-def _parse_tool_result_from_mcp(
-    mcp_type: types.CallToolResult,
-) -> list[Content]:
-    """Parse an MCP CallToolResult into a list of Content items.
-
-    Converts each content item in the MCP result to its appropriate
-    Content form.  Text items become ``Content(type="text")`` and media
-    items (images, audio) are preserved as rich Content.
-
-    Args:
-        mcp_type: The MCP CallToolResult object to convert.
-
-    Returns:
-        A list of Content items representing the tool result.
-    """
-    result: list[Content] = []
-    for item in mcp_type.content:
-        match item:
-            case types.TextContent():
-                result.append(Content.from_text(item.text))
-            case types.ImageContent() | types.AudioContent():
-                decoded = base64.b64decode(item.data)
-                result.append(
-                    Content.from_data(
-                        data=decoded,
-                        media_type=item.mimeType,
-                    )
-                )
-            case types.ResourceLink():
-                result.append(
-                    Content.from_uri(
-                        uri=str(item.uri),
-                        media_type=item.mimeType,
-                    )
-                )
-            case types.EmbeddedResource():
-                match item.resource:
-                    case types.TextResourceContents():
-                        result.append(Content.from_text(item.resource.text))
-                    case types.BlobResourceContents():
-                        blob = item.resource.blob
-                        mime = item.resource.mimeType or "application/octet-stream"
-                        if not blob.startswith("data:"):
-                            blob = f"data:{mime};base64,{blob}"
-                        result.append(
-                            Content.from_uri(
-                                uri=blob,
-                                media_type=mime,
-                            )
-                        )
-            case _:
-                result.append(Content.from_text(str(item)))
-
-    if not result:
-        result.append(Content.from_text("null"))
-    return result
-
-
-def _parse_content_from_mcp(
-    mcp_type: types.ImageContent
-    | types.TextContent
-    | types.AudioContent
-    | types.EmbeddedResource
-    | types.ResourceLink
-    | types.ToolUseContent
-    | types.ToolResultContent
-    | Sequence[
-        types.ImageContent
-        | types.TextContent
-        | types.AudioContent
-        | types.EmbeddedResource
-        | types.ResourceLink
-        | types.ToolUseContent
-        | types.ToolResultContent
-    ],
-) -> list[Content]:
-    """Parse an MCP type into an Agent Framework type."""
-    mcp_types = mcp_type if isinstance(mcp_type, Sequence) else [mcp_type]
-    return_types: list[Content] = []
-    for mcp_type in mcp_types:
-        match mcp_type:
-            case types.TextContent():
-                return_types.append(Content.from_text(text=mcp_type.text, raw_representation=mcp_type))
-            case types.ImageContent() | types.AudioContent():
-                # MCP protocol uses base64-encoded strings, convert to bytes
-                data_bytes = base64.b64decode(mcp_type.data) if isinstance(mcp_type.data, str) else mcp_type.data
-                return_types.append(
-                    Content.from_data(
-                        data=data_bytes,
-                        media_type=mcp_type.mimeType,
-                        raw_representation=mcp_type,
-                    )
-                )
-            case types.ResourceLink():
-                return_types.append(
-                    Content.from_uri(
-                        uri=str(mcp_type.uri),
-                        media_type=mcp_type.mimeType or "application/json",
-                        raw_representation=mcp_type,
-                    )
-                )
-            case types.ToolUseContent():
-                return_types.append(
-                    Content.from_function_call(
-                        call_id=mcp_type.id,
-                        name=mcp_type.name,
-                        arguments=mcp_type.input,
-                        raw_representation=mcp_type,
-                    )
-                )
-            case types.ToolResultContent():
-                return_types.append(
-                    Content.from_function_result(
-                        call_id=mcp_type.toolUseId,
-                        result=_parse_content_from_mcp(mcp_type.content)
-                        if mcp_type.content
-                        else mcp_type.structuredContent,
-                        exception=str(Exception()) if mcp_type.isError else None,  # type: ignore[arg-type]
-                        raw_representation=mcp_type,
-                    )
-                )
-            case types.EmbeddedResource():
-                match mcp_type.resource:
-                    case types.TextResourceContents():
-                        return_types.append(
-                            Content.from_text(
-                                text=mcp_type.resource.text,
-                                raw_representation=mcp_type,
-                                additional_properties=(
-                                    mcp_type.annotations.model_dump() if mcp_type.annotations else None
-                                ),
-                            )
-                        )
-                    case types.BlobResourceContents():
-                        return_types.append(
-                            Content.from_uri(
-                                uri=mcp_type.resource.blob,
-                                media_type=mcp_type.resource.mimeType,
-                                raw_representation=mcp_type,
-                                additional_properties=(
-                                    mcp_type.annotations.model_dump() if mcp_type.annotations else None
-                                ),
-                            )
-                        )
-    return return_types
-
-
-def _prepare_content_for_mcp(
-    content: Content,
-) -> types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None:
-    """Prepare an Agent Framework content type for MCP."""
-    if content.type == "text":
-        return types.TextContent(type="text", text=content.text)  # type: ignore[attr-defined]
-    if content.type == "data":
-        if content.media_type and content.media_type.startswith("image/"):  # type: ignore[attr-defined]
-            return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
-        if content.media_type and content.media_type.startswith("audio/"):  # type: ignore[attr-defined]
-            return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
-        if content.media_type and content.media_type.startswith("application/"):  # type: ignore[attr-defined]
-            return types.EmbeddedResource(
-                type="resource",
-                resource=types.BlobResourceContents(
-                    blob=content.uri,  # type: ignore[attr-defined]
-                    mimeType=content.media_type,  # type: ignore[attr-defined]
-                    # uri's are not limited in MCP but they have to be set.
-                    # the uri of data content, contains the data uri, which
-                    # is not the uri meant here, UriContent would match this.
-                    uri=(
-                        content.additional_properties.get("uri", "af://binary")
-                        if content.additional_properties
-                        else "af://binary"
-                    ),  # type: ignore[reportArgumentType]
-                ),
-            )
-        return None
-    if content.type == "uri":
-        return types.ResourceLink(
-            type="resource_link",
-            uri=content.uri,  # type: ignore[reportArgumentType,attr-defined]
-            mimeType=content.media_type,  # type: ignore[attr-defined]
-            name=(content.additional_properties.get("name", "Unknown") if content.additional_properties else "Unknown"),
-        )
-    return None
-
-
-def _prepare_message_for_mcp(
-    content: Message,
-) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink]:
-    """Prepare a Message for MCP format."""
-    messages: list[
-        types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
-    ] = []
-    for item in content.contents:
-        mcp_content = _prepare_content_for_mcp(item)
-        if mcp_content:
-            messages.append(mcp_content)
-    return messages
 
 
 def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
@@ -401,6 +151,112 @@ def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, 
     return meta
 
 
+def _url_origin(url: Any) -> tuple[str, str, int | None]:
+    port = url.port
+    if port is None:
+        port = 443 if url.scheme == "https" else 80 if url.scheme == "http" else None
+    return (url.scheme, url.host or "", port)
+
+
+# Internal polling bounds for MCP long-running tasks. Not user-tunable today;
+# promote to MCPTaskOptions if a concrete need arises.
+_MCP_TASK_MIN_POLL_INTERVAL = timedelta(milliseconds=500)
+_MCP_TASK_MAX_POLL_INTERVAL = timedelta(seconds=5)
+_MCP_TASK_CANCEL_TIMEOUT = timedelta(seconds=5)
+_MCP_TASK_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "cancelled", "input_required"})
+
+# Total send attempts for a Phase 2 request (initial try + one reconnect-and-retry).
+# A single transient disconnect should not abort a long-running task; sustained outages
+# surface as ``_MCPTaskAbandoned`` after the second failure.
+_MCP_RECONNECT_ATTEMPTS = 2
+
+
+class _MCPTaskAbandoned(ToolExecutionException):
+    """Raised when the remote MCP task may still be running and must be cancelled.
+
+    Subclass of ToolExecutionException so callers see a normal tool failure.
+    """
+
+
+class _MCPDeadlineExpired(Exception):
+    """Internal marker for ``max_task_wait`` expiry; distinct from inner TimeoutError."""
+
+
+@experimental(feature_id=ExperimentalFeature.MCP_LONG_RUNNING_TASKS)
+@dataclass(frozen=True)
+class MCPTaskOptions:
+    """Options controlling how MCPTool drives the MCP long-running task lifecycle.
+
+    When an MCP server advertises a tool with ``execution.taskSupport == "required"``,
+    the framework transparently drives the SEP-2663 ``tools/call`` → ``tasks/get``
+    (polled) → ``tasks/result`` lifecycle so the agent sees a normal tool result.
+
+    Instances are immutable; replace the whole object via
+    ``MCPTool.task_options = MCPTaskOptions(...)`` to change behavior.
+
+    Attributes:
+        default_ttl: Optional task-record retention time forwarded to the server as
+            ``params.task.ttl`` (milliseconds, integer). The server keeps the task
+            record around this long after the task reaches a terminal status so the
+            client can still call ``tasks/get`` / ``tasks/result``; it does not
+            cancel a running task. When ``None``, the server applies its own default.
+            Must be positive if set (zero would expire the record before any client
+            could read it).
+        cancel_remote_task_on_local_cancellation: If True (default), a local
+            cancellation of the awaiting coroutine triggers a best-effort
+            ``tasks/cancel`` on the server before re-raising ``CancelledError``.
+            Only gates ``CancelledError``; abandonment paths (max-wait,
+            unrecoverable poll errors, lost connection after task_id is known)
+            always cancel regardless of this flag.
+        max_task_wait: Optional client-side deadline for the whole post-create
+            lifecycle (poll + result fetch). When exceeded, raises
+            ``ToolExecutionException`` and fires a best-effort ``tasks/cancel``.
+            ``None`` (default) means no client-side bound. Must be positive if set.
+    """
+
+    default_ttl: timedelta | None = None
+    cancel_remote_task_on_local_cancellation: bool = True
+    max_task_wait: timedelta | None = None
+
+    def __post_init__(self) -> None:
+        if self.default_ttl is not None and self.default_ttl.total_seconds() <= 0:
+            raise ValueError("MCPTaskOptions.default_ttl must be positive.")
+        if self.max_task_wait is not None and self.max_task_wait.total_seconds() <= 0:
+            raise ValueError("MCPTaskOptions.max_task_wait must be positive.")
+
+
+def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextManager[Any, None]:
+    """Lazily import the MCP streamable HTTP transport."""
+    try:
+        from mcp.client.streamable_http import streamable_http_client as _streamable_http_client
+    except ModuleNotFoundError as ex:
+        missing_name = ex.name or str(ex)
+        if missing_name == "mcp" or missing_name.startswith("mcp.") or "mcp" in missing_name:
+            raise ModuleNotFoundError("`MCPStreamableHTTPTool` requires `mcp`. Please install `mcp`.") from ex
+        raise ModuleNotFoundError(
+            f"`MCPStreamableHTTPTool` requires streamable HTTP transport support. "
+            f"The optional dependency `{missing_name}` is not installed. Please update your dependencies."
+        ) from ex
+
+    return _streamable_http_client(*args, **kwargs)  # type: ignore[return-value]
+
+
+def _should_propagate_cancelled_error(ex: BaseException) -> bool:
+    """Return True if *ex* is a genuine task-cancellation that should propagate unchanged.
+
+    On Python >= 3.11, ``task.cancelling() > 0`` distinguishes a real caller-driven
+    cancellation from a CancelledError raised internally by a library (e.g. via an
+    anyio cancel scope).  On older Python versions the API is unavailable, so we
+    always return False and let callers wrap the error in ToolException instead.
+    """
+    if not isinstance(ex, asyncio.CancelledError):
+        return False
+    if sys.version_info < (3, 11):
+        return False
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
 # region: MCP Plugin
 
 
@@ -437,6 +293,7 @@ class MCPTool:
         request_timeout: int | None = None,
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
+        task_options: MCPTaskOptions | None = None,
     ) -> None:
         """Initialize the MCP Tool base.
 
@@ -462,12 +319,15 @@ class MCPTool:
                 ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
                 result parsing. When ``None`` (the default), the built-in parser converts
                 MCP prompt results to a string. If you need per-function result parsing,
-                access the ``.functions`` list after connecting and set ``result_parser`` on
-                individual ``FunctionTool`` instances.
+            access the ``.functions`` list after connecting and set ``result_parser`` on
+            individual ``FunctionTool`` instances.
             session: An existing MCP client session to use.
             request_timeout: Timeout in seconds for MCP requests.
             client: A chat client for sampling callbacks.
             additional_properties: Additional properties for the tool.
+            task_options: Options controlling how long-running MCP tasks are driven for
+                tools that advertise ``execution.taskSupport == "required"``. When ``None``,
+                the defaults from :class:`MCPTaskOptions` are used.
         """
         self.name = name
         self.description = description or ""
@@ -479,21 +339,299 @@ class MCPTool:
         self.parse_tool_results = parse_tool_results
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
+        # Defer constructing the default MCPTaskOptions so the experimental warning
+        # only fires when LRO is actually engaged (lazy-resolved by _effective_task_options).
+        self._task_options_explicit: MCPTaskOptions | None = task_options
+        self._task_options_default: MCPTaskOptions | None = None
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
-        self._lifecycle_queue: asyncio.Queue[tuple[str, bool, asyncio.Future[None]]] | None = None
+        self._function_load_lock = asyncio.Lock()
+        self._lifecycle_queue: asyncio.Queue[tuple[str, bool, bool, asyncio.Future[None]]] | None = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
         self.request_timeout = request_timeout
         self.client = client
         self._functions: list[FunctionTool] = []
+        self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
+        self._tool_task_support_by_name: dict[str, str] = {}
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
+        self._server_capabilities: types.ServerCapabilities | None = None
+        self._supports_tools: bool = True
+        self._supports_prompts: bool = True
+        self._supports_logging: bool | None = None
+        self._ping_available: bool = True
+        self._pending_reload_tasks: set[asyncio.Task[None]] = set()
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        """Return base MCP span attributes shared across all operations.
+
+        Subclasses override to add transport-specific attributes (server address, port, etc.).
+        """
+        return {}
+
+    def _parse_prompt_result_from_mcp(
+        self,
+        mcp_type: types.GetPromptResult,
+    ) -> str:
+        """Parse an MCP GetPromptResult directly into a string representation."""
+        from mcp import types
+
+        parts: list[str] = []
+        for message in mcp_type.messages:
+            content = message.content
+            if isinstance(content, types.TextContent):
+                parts.append(content.text)
+            elif isinstance(content, (types.ImageContent, types.AudioContent)):
+                parts.append(
+                    json.dumps(
+                        {
+                            "type": "image" if isinstance(content, types.ImageContent) else "audio",
+                            "data": content.data,
+                            "mimeType": content.mimeType,
+                        },
+                        default=str,
+                    )
+                )
+            elif isinstance(content, types.EmbeddedResource):
+                match content.resource:
+                    case types.TextResourceContents():
+                        parts.append(content.resource.text)
+                    case types.BlobResourceContents():
+                        parts.append(
+                            json.dumps(
+                                {
+                                    "type": "blob",
+                                    "data": content.resource.blob,
+                                    "mimeType": content.resource.mimeType,
+                                },
+                                default=str,
+                            )
+                        )
+            else:
+                parts.append(str(content))
+        if not parts:
+            return ""
+        if len(parts) == 1:
+            return parts[0]
+        return json.dumps(parts, default=str)
+
+    def _parse_message_from_mcp(
+        self,
+        mcp_type: types.PromptMessage | types.SamplingMessage,
+    ) -> Message:
+        """Parse an MCP container type into an Agent Framework type."""
+        return Message(
+            role=mcp_type.role,
+            contents=self._parse_content_from_mcp(mcp_type.content),
+            raw_representation=mcp_type,
+        )
+
+    def _parse_tool_result_from_mcp(
+        self,
+        mcp_type: types.CallToolResult,
+    ) -> list[Content]:
+        """Parse an MCP CallToolResult into a list of Content items."""
+        from mcp import types
+
+        result: list[Content] = []
+        for item in mcp_type.content:
+            match item:
+                case types.TextContent():
+                    result.append(Content.from_text(item.text))
+                case types.ImageContent() | types.AudioContent():
+                    decoded = base64.b64decode(item.data)
+                    result.append(
+                        Content.from_data(
+                            data=decoded,
+                            media_type=item.mimeType,
+                        )
+                    )
+                case types.ResourceLink():
+                    result.append(
+                        Content.from_uri(
+                            uri=str(item.uri),
+                            media_type=item.mimeType,
+                        )
+                    )
+                case types.EmbeddedResource():
+                    match item.resource:
+                        case types.TextResourceContents():
+                            result.append(Content.from_text(item.resource.text))
+                        case types.BlobResourceContents():
+                            blob = item.resource.blob
+                            mime = item.resource.mimeType or "application/octet-stream"
+                            if not blob.startswith("data:"):
+                                blob = f"data:{mime};base64,{blob}"
+                            result.append(
+                                Content.from_uri(
+                                    uri=blob,
+                                    media_type=mime,
+                                )
+                            )
+                case _:
+                    result.append(Content.from_text(str(item)))
+
+        if not result:
+            result.append(Content.from_text("null"))
+        return result
+
+    def _parse_content_from_mcp(
+        self,
+        mcp_type: types.ImageContent
+        | types.TextContent
+        | types.AudioContent
+        | types.EmbeddedResource
+        | types.ResourceLink
+        | types.ToolUseContent
+        | types.ToolResultContent
+        | Sequence[
+            types.ImageContent
+            | types.TextContent
+            | types.AudioContent
+            | types.EmbeddedResource
+            | types.ResourceLink
+            | types.ToolUseContent
+            | types.ToolResultContent
+        ],
+    ) -> list[Content]:
+        """Parse an MCP type into an Agent Framework type."""
+        from mcp import types
+
+        mcp_content_types: Sequence[Any] = (
+            cast(Sequence[Any], mcp_type) if isinstance(mcp_type, Sequence) else [mcp_type]
+        )  # type: ignore[redundant-cast]
+        return_types: list[Content] = []
+        for mcp_type in mcp_content_types:
+            match mcp_type:
+                case types.TextContent():
+                    return_types.append(Content.from_text(text=mcp_type.text, raw_representation=mcp_type))
+                case types.ImageContent() | types.AudioContent():
+                    data_bytes = base64.b64decode(mcp_type.data) if isinstance(mcp_type.data, str) else mcp_type.data
+                    return_types.append(
+                        Content.from_data(
+                            data=data_bytes,
+                            media_type=mcp_type.mimeType,
+                            raw_representation=mcp_type,
+                        )
+                    )
+                case types.ResourceLink():
+                    return_types.append(
+                        Content.from_uri(
+                            uri=str(mcp_type.uri),
+                            media_type=mcp_type.mimeType or "application/json",
+                            raw_representation=mcp_type,
+                        )
+                    )
+                case types.ToolUseContent():
+                    return_types.append(
+                        Content.from_function_call(
+                            call_id=mcp_type.id,
+                            name=mcp_type.name,
+                            arguments=mcp_type.input,
+                            raw_representation=mcp_type,
+                        )
+                    )
+                case types.ToolResultContent():
+                    return_types.append(
+                        Content.from_function_result(
+                            call_id=mcp_type.toolUseId,
+                            result=self._parse_content_from_mcp(mcp_type.content)
+                            if mcp_type.content
+                            else mcp_type.structuredContent,
+                            exception=str(Exception()) if mcp_type.isError else None,  # type: ignore[arg-type]
+                            raw_representation=mcp_type,
+                        )
+                    )
+                case types.EmbeddedResource():
+                    match mcp_type.resource:
+                        case types.TextResourceContents():
+                            return_types.append(
+                                Content.from_text(
+                                    text=mcp_type.resource.text,
+                                    raw_representation=mcp_type,
+                                    additional_properties=(
+                                        mcp_type.annotations.model_dump() if mcp_type.annotations else None
+                                    ),
+                                )
+                            )
+                        case types.BlobResourceContents():
+                            return_types.append(
+                                Content.from_uri(
+                                    uri=mcp_type.resource.blob,
+                                    media_type=mcp_type.resource.mimeType,
+                                    raw_representation=mcp_type,
+                                    additional_properties=(
+                                        mcp_type.annotations.model_dump() if mcp_type.annotations else None
+                                    ),
+                                )
+                            )
+                case _:
+                    pass
+        return return_types
+
+    def _prepare_content_for_mcp(
+        self,
+        content: Content,
+    ) -> (
+        types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None
+    ):
+        """Prepare an Agent Framework content type for MCP."""
+        from mcp import types
+
+        if content.type == "text":
+            return types.TextContent(type="text", text=content.text)  # type: ignore[attr-defined]
+        if content.type == "data":
+            if content.media_type and content.media_type.startswith("image/"):  # type: ignore[attr-defined]
+                return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+            if content.media_type and content.media_type.startswith("audio/"):  # type: ignore[attr-defined]
+                return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+            if content.media_type and content.media_type.startswith("application/"):  # type: ignore[attr-defined]
+                return types.EmbeddedResource(
+                    type="resource",
+                    resource=types.BlobResourceContents(
+                        blob=content.uri,  # type: ignore[attr-defined]
+                        mimeType=content.media_type,  # type: ignore[attr-defined]
+                        uri=(
+                            content.additional_properties.get("uri", "af://binary")
+                            if content.additional_properties
+                            else "af://binary"
+                        ),  # type: ignore[arg-type]
+                    ),
+                )
+            return None
+        if content.type == "uri":
+            resource_name = (
+                content.additional_properties.get("name", "Unknown") if content.additional_properties else "Unknown"
+            )
+            return types.ResourceLink(
+                type="resource_link",
+                uri=content.uri,  # type: ignore[arg-type,attr-defined]
+                mimeType=content.media_type,  # type: ignore[attr-defined]
+                name=resource_name,
+            )
+        return None
+
+    def _prepare_message_for_mcp(
+        self,
+        content: Message,
+    ) -> list[
+        types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
+    ]:
+        """Prepare a Message for MCP format."""
+        messages: list[
+            types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
+        ] = []
+        for item in content.contents:
+            mcp_content = self._prepare_content_for_mcp(item)
+            if mcp_content:
+                messages.append(mcp_content)
+        return messages
 
     @property
     def functions(self) -> list[FunctionTool]:
@@ -533,11 +671,11 @@ class MCPTool:
         stop_error: BaseException | None = None
         try:
             while True:
-                action, reset, future = await queue.get()
+                action, reset, load_configured, future = await queue.get()
 
                 try:
                     if action == "connect":
-                        await self._connect_on_owner(reset=reset)
+                        await self._connect_on_owner(reset=reset, load_configured=load_configured)
                     elif action == "close":
                         await self._close_on_owner()
                     else:
@@ -562,7 +700,7 @@ class MCPTool:
         finally:
             while True:
                 try:
-                    _, _, future = queue.get_nowait()
+                    _, _, _, future = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
                 if not future.done():
@@ -575,12 +713,18 @@ class MCPTool:
         owner_task = self._lifecycle_owner_task
         return owner_task is not None and asyncio.current_task() is owner_task
 
-    async def _run_on_lifecycle_owner(self, action: str, *, reset: bool = False) -> None:
+    async def _run_on_lifecycle_owner(
+        self,
+        action: str,
+        *,
+        reset: bool = False,
+        load_configured: bool = True,
+    ) -> None:
         await self._ensure_lifecycle_owner()
 
         if self._is_lifecycle_owner_task():
             if action == "connect":
-                await self._connect_on_owner(reset=reset)
+                await self._connect_on_owner(reset=reset, load_configured=load_configured)
             elif action == "close":
                 await self._close_on_owner()
             else:
@@ -592,7 +736,7 @@ class MCPTool:
             raise RuntimeError("MCP lifecycle owner is not available.")
 
         future = asyncio.get_running_loop().create_future()
-        await queue.put((action, reset, future))
+        await queue.put((action, reset, load_configured, future))
         await future
 
     async def _safe_close_exit_stack(self) -> None:
@@ -611,6 +755,48 @@ class MCPTool:
                 raise
         except asyncio.CancelledError:
             logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
+        except Exception as e:
+            if type(e).__name__ == "ExceptionGroup":
+                logger.warning("Could not cleanly close MCP exit stack due to cleanup error group. Error: %s", e)
+            else:
+                raise
+
+    async def _close_and_check_cancelled(self, ex: BaseException) -> bool:
+        """Close the exit stack and return True if *ex* is a genuine task cancellation.
+
+        Callers should immediately re-raise when this returns True::
+
+            if await self._close_and_check_cancelled(ex):
+                raise
+        """
+        await self._safe_close_exit_stack()
+        return _should_propagate_cancelled_error(ex)
+
+    def _reset_session_state(self) -> None:
+        self._server_capabilities = None
+        self._supports_tools = True
+        self._supports_prompts = True
+        self._supports_logging = None
+        self._ping_available = True
+
+    def _set_server_capabilities(self, capabilities: types.ServerCapabilities | None) -> None:
+        self._server_capabilities = capabilities
+        if capabilities is None:
+            self._supports_tools = False
+            self._supports_prompts = False
+            self._supports_logging = False
+            return
+
+        self._supports_tools = getattr(capabilities, "tools", None) is not None
+        self._supports_prompts = getattr(capabilities, "prompts", None) is not None
+        self._supports_logging = getattr(capabilities, "logging", None) is not None
+
+    async def _reconnect_without_loading(self) -> None:
+        if self._is_lifecycle_owner_task():
+            await self._connect_on_owner(reset=True, load_configured=False)
+            return
+
+        await self._run_on_lifecycle_owner("connect", reset=True, load_configured=False)
 
     async def connect(self, *, reset: bool = False) -> None:
         if self._is_lifecycle_owner_task():
@@ -620,7 +806,7 @@ class MCPTool:
         async with self._lifecycle_request_lock:
             await self._run_on_lifecycle_owner("connect", reset=reset)
 
-    async def _connect_on_owner(self, *, reset: bool = False) -> None:
+    async def _connect_on_owner(self, *, reset: bool = False, load_configured: bool = True) -> None:
         """Connect to the MCP server.
 
         Establishes a connection to the MCP server, initializes the session,
@@ -628,6 +814,7 @@ class MCPTool:
 
         Keyword Args:
             reset: If True, forces a reconnection even if already connected.
+            load_configured: If True, loads tools and prompts according to the constructor flags.
 
         Raises:
             ToolException: If connection or session initialization fails.
@@ -636,21 +823,46 @@ class MCPTool:
             await self._safe_close_exit_stack()
             self.session = None
             self.is_connected = False
+            self._reset_session_state()
             self._exit_stack = AsyncExitStack()
         if not self.session:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
-            except Exception as ex:
-                await self._safe_close_exit_stack()
+            except (Exception, asyncio.CancelledError) as ex:
+                # On Python >= 3.11, re-raise genuine task cancellation (task.cancelling() > 0)
+                # instead of wrapping it in ToolException. On Python < 3.11, task.cancelling()
+                # is unavailable so MCP-internal CancelledErrors cannot be distinguished from
+                # caller-driven cancellation; they are wrapped as ToolException in that case.
+                if await self._close_and_check_cancelled(ex):
+                    raise
                 command = getattr(self, "command", None)
                 if command:
                     error_msg = f"Failed to start MCP server '{command}': {ex}"
                 else:
                     error_msg = f"Failed to connect to MCP server: {ex}"
-                raise ToolException(error_msg, inner_exception=ex) from ex
+                # CancelledError is a BaseException (not Exception) on Python >= 3.8, so
+                # inner_exception=None and ToolException.__init__ won't log exc_info.
+                if isinstance(ex, asyncio.CancelledError):
+                    logger.debug(error_msg, exc_info=True)
+                raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             try:
+                try:
+                    from mcp import types
+                    from mcp.client.session import ClientSession as runtime_client_session
+                except ModuleNotFoundError as ex:
+                    await self._safe_close_exit_stack()
+                    raise ToolException(
+                        "MCP support requires `mcp`. Please install `mcp`.",
+                        inner_exception=ex,
+                    ) from ex
+
+                sampling_capabilities = None
+                if self.client is not None:
+                    sampling_capabilities = types.SamplingCapability(
+                        tools=types.SamplingToolsCapability(),
+                    )
                 session = await self._exit_stack.enter_async_context(
-                    ClientSession(
+                    runtime_client_session(
                         read_stream=transport[0],
                         write_stream=transport[1],
                         read_timeout_seconds=(
@@ -659,18 +871,27 @@ class MCPTool:
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
                         sampling_callback=self.sampling_callback,
+                        sampling_capabilities=sampling_capabilities,
                     )
                 )
-            except Exception as ex:
-                await self._safe_close_exit_stack()
+            except (Exception, asyncio.CancelledError) as ex:
+                if await self._close_and_check_cancelled(ex):
+                    raise
+                session_error_msg = f"Failed to create MCP session: {ex}"
+                if isinstance(ex, asyncio.CancelledError):
+                    logger.debug(session_error_msg, exc_info=True)
                 raise ToolException(
-                    message="Failed to create MCP session. Please check your configuration.",
-                    inner_exception=ex,
+                    message=session_error_msg,
+                    inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
             try:
-                await session.initialize()
-            except Exception as ex:
-                await self._safe_close_exit_stack()
+                with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
+                    initialize_result = await session.initialize()
+                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
+                    self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+            except (Exception, asyncio.CancelledError) as ex:
+                if await self._close_and_check_cancelled(ex):
+                    raise
                 # Provide context about initialization failure
                 command = getattr(self, "command", None)
                 if command:
@@ -679,25 +900,35 @@ class MCPTool:
                     error_msg = f"MCP server '{full_command}' failed to initialize: {ex}"
                 else:
                     error_msg = f"MCP server failed to initialize: {ex}"
-                raise ToolException(error_msg, inner_exception=ex) from ex
+                if isinstance(ex, asyncio.CancelledError):
+                    logger.debug(error_msg, exc_info=True)
+                raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
-        elif self.session._request_id == 0:  # type: ignore[reportPrivateUsage]
+        elif self.session._request_id == 0:  # type: ignore[attr-defined]
             # If the session is not initialized, we need to reinitialize it
-            await self.session.initialize()
+            with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
+                initialize_result = await self.session.initialize()
+                init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
+                self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+        elif self._server_capabilities is None:
+            self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
         logger.debug("Connected to MCP server: %s", self.session)
         self.is_connected = True
-        if self.load_tools_flag:
-            await self.load_tools()
+        if load_configured and self.load_tools_flag:
+            if self._supports_tools:
+                await self.load_tools()
             self._tools_loaded = True
-        if self.load_prompts_flag:
-            await self.load_prompts()
+        if load_configured and self.load_prompts_flag:
+            if self._supports_prompts:
+                await self.load_prompts()
             self._prompts_loaded = True
 
-        if logger.level != logging.NOTSET:
+        if logger.level != logging.NOTSET and self._supports_logging is not False:
             try:
-                await self.session.set_logging_level(
-                    next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
+                level_name = cast(
+                    Any, next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
                 )
+                await self.session.set_logging_level(level_name)
             except Exception as exc:
                 logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
 
@@ -723,6 +954,8 @@ class MCPTool:
         Returns:
             Either a CreateMessageResult with the generated message or ErrorData if generation fails.
         """
+        from mcp import types
+
         if not self.client:
             return types.ErrorData(
                 code=types.INTERNAL_ERROR,
@@ -731,15 +964,37 @@ class MCPTool:
         logger.debug("Sampling callback called with params: %s", params)
         messages: list[Message] = []
         for msg in params.messages:
-            messages.append(_parse_message_from_mcp(msg))
+            messages.append(self._parse_message_from_mcp(msg))
+
+        options: ChatOptions[None] = {}
+        if params.systemPrompt is not None:
+            options["instructions"] = params.systemPrompt
+        if params.tools is not None:
+            options["tools"] = [
+                FunctionTool(
+                    name=tool.name,
+                    description=tool.description or "",
+                    input_model=tool.inputSchema,
+                )
+                for tool in params.tools
+            ]
+        if params.toolChoice is not None and params.toolChoice.mode is not None:
+            options["tool_choice"] = params.toolChoice.mode
+
+        if params.temperature is not None:
+            options["temperature"] = params.temperature
+        options["max_tokens"] = params.maxTokens
+        if params.stopSequences is not None:
+            options["stop"] = params.stopSequences
+
         try:
-            response = await self.client.get_response(
+            chat_client: Any = self.client
+            response: Any = await chat_client.get_response(
                 messages,
-                temperature=params.temperature,
-                max_tokens=params.maxTokens,
-                stop=params.stopSequences,
+                options=options or None,
             )
         except Exception as ex:
+            logger.debug("Sampling callback error: %s", ex, exc_info=True)
             return types.ErrorData(
                 code=types.INTERNAL_ERROR,
                 message=f"Failed to get chat message content: {ex}",
@@ -749,7 +1004,7 @@ class MCPTool:
                 code=types.INTERNAL_ERROR,
                 message="Failed to get chat message content.",
             )
-        mcp_contents = _prepare_message_for_mcp(response.messages[0])
+        mcp_contents = self._prepare_message_for_mcp(response.messages[0])
         # grab the first content that is of type TextContent or ImageContent
         mcp_content = next(
             (content for content in mcp_contents if isinstance(content, (types.TextContent, types.ImageContent))),
@@ -763,7 +1018,7 @@ class MCPTool:
         return types.CreateMessageResult(
             role="assistant",
             content=mcp_content,
-            model=response.model_id or "unknown",
+            model=response.model or "unknown",
         )
 
     async def logging_callback(self, params: types.LoggingMessageNotificationParams) -> None:
@@ -798,17 +1053,54 @@ class MCPTool:
         Args:
             message: The message from the MCP server (request responder, notification, or exception).
         """
+        from mcp import types
+
         if isinstance(message, Exception):
             logger.error("Error from MCP server: %s", message, exc_info=message)
             return
         if isinstance(message, types.ServerNotification):
             match message.root.method:
                 case "notifications/tools/list_changed":
-                    await self.load_tools()
+                    self._schedule_reload(self.load_tools())
                 case "notifications/prompts/list_changed":
-                    await self.load_prompts()
+                    self._schedule_reload(self.load_prompts())
                 case _:
                     logger.debug("Unhandled notification: %s", message.root.method)
+
+    def _schedule_reload(self, coro: Coroutine[Any, Any, None]) -> None:
+        """Schedule a reload coroutine as a background task.
+
+        Reloads (load_tools / load_prompts) triggered by MCP server
+        notifications must NOT be awaited inside the message handler because
+        the handler runs on the MCP SDK's single-threaded receive loop.
+        Awaiting a session request (e.g. ``list_tools``) from within that loop
+        deadlocks: the receive loop cannot read the response while it is
+        blocked waiting for the handler to return.
+
+        Instead we fire the reload as an independent ``asyncio.Task`` and keep
+        a strong reference in ``_pending_reload_tasks`` so it is not garbage-
+        collected before completion.  Only one reload per kind (tools / prompts)
+        is kept in flight; a new notification cancels the previous pending task
+        for the same coroutine name to avoid unbounded growth.
+        """
+        # Cancel-and-replace: only one reload per kind should be in flight.
+        reload_name = f"mcp-reload:{self.name}:{coro.__qualname__}"
+        for existing in list(self._pending_reload_tasks):
+            if existing.get_name() == reload_name and not existing.done():
+                logger.debug("Cancelling in-flight reload %s; superseded by new notification", reload_name)
+                existing.cancel()
+
+        async def _safe_reload() -> None:
+            try:
+                await coro
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Background MCP reload failed", exc_info=True)
+
+        task = asyncio.create_task(_safe_reload(), name=reload_name)
+        self._pending_reload_tasks.add(task)
+        task.add_done_callback(self._pending_reload_tasks.discard)
 
     def _determine_approval_mode(
         self,
@@ -824,7 +1116,7 @@ class MCPTool:
             ):
                 return "never_require"
             return None
-        return self.approval_mode  # type: ignore[reportReturnType]
+        return self.approval_mode  # type: ignore[return-value]
 
     async def load_prompts(self) -> None:
         """Load prompts from the MCP server.
@@ -835,15 +1127,54 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        async with self._function_load_lock:
+            await self._load_prompts_locked()
+
+    async def _load_prompts_locked(self) -> None:
+        from anyio import ClosedResourceError
+        from mcp import types
+
+        if not self._supports_prompts:
+            logger.debug("Skipping MCP prompt loading because the server did not advertise prompts support.")
+            return
+
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
         params: types.PaginatedRequestParams | None = None
         while True:
-            # Ensure connection is still valid before each page request
-            await self._ensure_connected()
+            prompt_list: types.ListPromptsResult | None = None
+            for attempt in range(2):
+                try:
+                    # Ensure connection is still valid before each page request
+                    await self._ensure_connected()
+                    if not self._supports_prompts:
+                        logger.debug(
+                            "Skipping MCP prompt loading because the server did not advertise prompts support."
+                        )
+                        return
+                    with create_mcp_client_span("prompts/list", attributes=self._mcp_base_span_attributes()):
+                        prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                    break
+                except ClosedResourceError as cl_ex:
+                    if attempt == 0:
+                        logger.info("MCP connection closed unexpectedly while loading prompts. Reconnecting...")
+                        try:
+                            await self._reconnect_without_loading()
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                        continue
+                    logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
+                    raise ToolExecutionException(
+                        "Failed to load prompts - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
 
-            prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+            if prompt_list is None:
+                raise ToolExecutionException("Failed to load prompts.")
 
             for prompt in prompt_list.prompts:
                 normalized_name = _normalize_mcp_name(prompt.name)
@@ -870,7 +1201,7 @@ class MCPTool:
                 existing_names.add(local_name)
 
             # Check if there are more pages
-            if not prompt_list or not prompt_list.nextCursor:
+            if not prompt_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
 
@@ -883,17 +1214,63 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        async with self._function_load_lock:
+            await self._load_tools_locked()
+
+    async def _load_tools_locked(self) -> None:
+        from anyio import ClosedResourceError
+        from mcp import types
+
+        if not self._supports_tools:
+            logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
+            return
+
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
+        tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
+        tool_task_support_by_name: dict[str, str] = {}
 
         params: types.PaginatedRequestParams | None = None
         while True:
-            # Ensure connection is still valid before each page request
-            await self._ensure_connected()
+            tool_list: types.ListToolsResult | None = None
+            for attempt in range(2):
+                try:
+                    # Ensure connection is still valid before each page request
+                    await self._ensure_connected()
+                    if not self._supports_tools:
+                        logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
+                        return
+                    with create_mcp_client_span("tools/list", attributes=self._mcp_base_span_attributes()):
+                        tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                    break
+                except ClosedResourceError as cl_ex:
+                    if attempt == 0:
+                        logger.info("MCP connection closed unexpectedly while loading tools. Reconnecting...")
+                        try:
+                            await self._reconnect_without_loading()
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                        continue
+                    logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
+                    raise ToolExecutionException(
+                        "Failed to load tools - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
 
-            tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+            if tool_list is None:
+                raise ToolExecutionException("Failed to load tools.")
 
             for tool in tool_list.tools:
+                if tool.meta is not None:
+                    tool_call_meta_by_name[tool.name] = dict(tool.meta)
+
+                task_support = getattr(getattr(tool, "execution", None), "taskSupport", None)
+                if task_support is not None:
+                    tool_task_support_by_name[tool.name] = task_support
+
                 normalized_name = _normalize_mcp_name(tool.name)
                 local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
 
@@ -902,13 +1279,32 @@ class MCPTool:
                     continue
 
                 approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
+                # Normalize inputSchema: ensure "properties" exists for object schemas.
+                # Some MCP servers (e.g. zero-argument tools) omit "properties",
+                # which causes OpenAI API to reject the schema with a 400 error.
+                # Guard against non-conforming MCP servers that send inputSchema=None
+                # despite the MCP spec typing it as dict[str, Any].
+                input_schema = dict(tool.inputSchema or {})
+                if input_schema.get("type") == "object" and "properties" not in input_schema:
+                    input_schema["properties"] = {}
+
+                async def _call_tool_with_runtime_kwargs(
+                    ctx: FunctionInvocationContext,
+                    *,
+                    _remote_tool_name: str = tool.name,
+                    **kwargs: Any,
+                ) -> str | list[Content]:
+                    call_kwargs = dict(ctx.kwargs)
+                    call_kwargs.update(kwargs)
+                    return await self.call_tool(_remote_tool_name, **call_kwargs)
+
                 # Create FunctionTools out of each tool
                 func: FunctionTool = FunctionTool(
-                    func=partial(self.call_tool, tool.name),
+                    func=_call_tool_with_runtime_kwargs,
                     name=local_name,
                     description=tool.description or "",
                     approval_mode=approval_mode,
-                    input_model=tool.inputSchema,
+                    input_model=input_schema,
                     additional_properties={
                         _MCP_REMOTE_NAME_KEY: tool.name,
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
@@ -918,15 +1314,27 @@ class MCPTool:
                 existing_names.add(local_name)
 
             # Check if there are more pages
-            if not tool_list or not tool_list.nextCursor:
+            if not tool_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
+        self._tool_call_meta_by_name = tool_call_meta_by_name
+        self._tool_task_support_by_name = tool_task_support_by_name
+
     async def _close_on_owner(self) -> None:
+        # Cancel any pending reload tasks before tearing down the session.
+        tasks = list(self._pending_reload_tasks)
+        for task in tasks:
+            task.cancel()
+        self._pending_reload_tasks.clear()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
         self.session = None
         self.is_connected = False
+        self._reset_session_state()
 
     async def close(self) -> None:
         """Disconnect from the MCP server.
@@ -958,17 +1366,58 @@ class MCPTool:
         Raises:
             ToolExecutionException: If reconnection fails.
         """
+        from mcp.shared.exceptions import McpError
+
+        if not self._ping_available:
+            return
+
         try:
             await self.session.send_ping()  # type: ignore[union-attr]
-        except Exception:
+        except McpError as mcp_exc:
+            if mcp_exc.error.code == -32601:
+                self._ping_available = False
+                logger.debug("Skipping future MCP pings because the server does not support ping.")
+                return
             logger.info("MCP connection invalid or closed. Reconnecting...")
             try:
-                await self.connect(reset=True)
+                await self._reconnect_without_loading()
             except Exception as ex:
                 raise ToolExecutionException(
                     "Failed to establish MCP connection.",
                     inner_exception=ex,
                 ) from ex
+        except Exception:
+            logger.info("MCP connection invalid or closed. Reconnecting...")
+            try:
+                await self._reconnect_without_loading()
+            except Exception as ex:
+                raise ToolExecutionException(
+                    "Failed to establish MCP connection.",
+                    inner_exception=ex,
+                ) from ex
+
+    def _effective_task_options(self) -> MCPTaskOptions:
+        """Return the effective MCPTaskOptions, lazily constructing defaults on first use.
+
+        Defers the implicit ``MCPTaskOptions()`` so the experimental warning only
+        fires when LRO is actually engaged (server advertises ``taskSupport=required``).
+        """
+        explicit = self._task_options_explicit
+        if explicit is not None:
+            return explicit
+        if self._task_options_default is None:
+            self._task_options_default = MCPTaskOptions()
+        return self._task_options_default
+
+    @property
+    def task_options(self) -> MCPTaskOptions:
+        """The effective MCPTaskOptions for this tool (lazy defaults)."""
+        return self._effective_task_options()
+
+    @task_options.setter
+    def task_options(self, value: MCPTaskOptions | None) -> None:
+        self._task_options_explicit = value
+        self._task_options_default = None
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
@@ -977,7 +1426,11 @@ class MCPTool:
             tool_name: The name of the tool to call.
 
         Keyword Args:
-            kwargs: Arguments to pass to the tool.
+            _meta: Optional ``dict[str, Any]`` of MCP request metadata. This reserved key is passed as the
+                ``meta`` parameter of the underlying ``session.call_tool`` call rather than as a tool argument.
+                User-supplied keys override metadata from ``tools/list``; OpenTelemetry propagation fills in
+                non-conflicting keys.
+            kwargs: Remaining arguments to pass to the tool.
 
         Returns:
             A list of Content items representing the tool output.  The default
@@ -992,6 +1445,107 @@ class MCPTool:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
+
+        # Tools advertising taskSupport == "required" cannot complete via plain tools/call;
+        # route through the long-running task lifecycle transparently.
+        if self._tool_task_support_by_name.get(tool_name) == "required":
+            return await self.call_tool_as_task(tool_name, **kwargs)
+
+        filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
+
+        parser = self.parse_tool_results or self._parse_tool_result_from_mcp
+
+        # Build MCP span attributes for tools/call
+        mcp_span_attrs = self._mcp_base_span_attributes()
+        mcp_span_attrs.update({
+            OtelAttr.TOOL_NAME: tool_name,
+            OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        })
+        with create_mcp_client_span("tools/call", target=tool_name, attributes=mcp_span_attrs) as span:  # type: ignore
+            return await self._call_tool_with_retries(tool_name, filtered_kwargs, meta, parser, span)
+
+    async def _call_tool_with_retries(
+        self,
+        tool_name: str,
+        filtered_kwargs: dict[str, Any],
+        meta: dict[str, Any] | None,
+        parser: Callable[..., str | list[Content]],
+        span: otel_trace.Span,
+    ) -> str | list[Content]:
+        """Execute the MCP tools/call RPC with retry logic."""
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
+        for attempt in range(2):
+            try:
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
+                if result.isError:
+                    parsed = parser(result)
+                    text = (
+                        "\n".join(c.text for c in parsed if c.type == "text" and c.text)
+                        if isinstance(parsed, list)
+                        else str(parsed)
+                    )
+                    # Per OTel MCP semconv: set error.type="tool_error" for isError results
+                    if span.is_recording():
+                        set_mcp_span_error(span, "tool_error", text or str(parsed))
+                    raise ToolExecutionException(text or str(parsed))
+                return parser(result)
+            except ToolExecutionException:
+                raise
+            except (ClosedResourceError, McpError) as call_ex:
+                is_session_terminated = (
+                    isinstance(call_ex, McpError) and "session terminated" in call_ex.error.message.lower()
+                )
+                is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
+                if not is_connection_lost:
+                    error_message = call_ex.error.message if isinstance(call_ex, McpError) else str(call_ex)
+                    if span.is_recording():
+                        set_mcp_span_error(span, type(call_ex).__name__, error_message)
+                    raise ToolExecutionException(error_message, inner_exception=call_ex) from call_ex
+
+                if attempt == 0:
+                    # First attempt failed, try reconnecting.
+                    logger.info("MCP connection closed or terminated unexpectedly. Reconnecting...")
+                    try:
+                        await self.connect(reset=True)
+                        continue
+                    except Exception as reconn_ex:
+                        raise ToolExecutionException(
+                            "Failed to reconnect to MCP server.",
+                            inner_exception=reconn_ex,
+                        ) from reconn_ex
+
+                # Second attempt also failed, give up.
+                logger.error("MCP connection closed unexpectedly after reconnection: %s", call_ex)
+                if span.is_recording():
+                    set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
+                raise ToolExecutionException(
+                    f"Failed to call tool '{tool_name}' - connection lost.",
+                    inner_exception=call_ex,
+                ) from call_ex
+            except Exception as ex:
+                if span.is_recording():
+                    set_mcp_span_error(span, type(ex).__name__, str(ex))
+                raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
+        raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
+
+    def _prepare_call_kwargs(
+        self, tool_name: str, kwargs: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Filter framework-only kwargs and build the merged MCP request metadata."""
+        raw_user_meta: object | None = kwargs.get("_meta")
+        user_meta: dict[str, Any] | None = None
+        if raw_user_meta is not None and not isinstance(raw_user_meta, dict):
+            raise ToolExecutionException("MCP tool metadata provided via _meta must be a dict.")
+        if isinstance(raw_user_meta, dict):
+            raw_user_meta_dict = cast(Mapping[object, object], raw_user_meta)
+            user_meta = {}
+            for key, value in raw_user_meta_dict.items():
+                if not isinstance(key, str):
+                    raise ToolExecutionException("MCP tool metadata provided via _meta must use string keys.")
+                user_meta[key] = value
+
         # Filter out framework kwargs that cannot be serialized by the MCP SDK.
         # These are internal objects passed through the function invocation pipeline
         # that should not be forwarded to external MCP servers.
@@ -1011,53 +1565,443 @@ class MCPTool:
                 "conversation_id",
                 "options",
                 "response_format",
+                "_meta",
             }
         }
 
-        # Inject OpenTelemetry trace context into MCP _meta for distributed tracing.
-        otel_meta = _inject_otel_into_mcp_meta()
+        # Some MCP proxies require their tools/list metadata to be echoed on tools/call.
+        tool_meta = self._tool_call_meta_by_name.get(tool_name)
+        request_meta = dict(tool_meta) if tool_meta is not None else None
+        if user_meta is not None:
+            request_meta = {**(request_meta or {}), **user_meta}
+        meta = _inject_otel_into_mcp_meta(request_meta)
+        return filtered_kwargs, meta
 
-        parser = self.parse_tool_results or _parse_tool_result_from_mcp
+    async def call_tool_as_task(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
+        """Call an MCP tool via the long-running task lifecycle (SEP-2663).
 
-        # Try the operation, reconnecting once if the connection is closed
-        for attempt in range(2):
-            try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
-                if result.isError:
-                    parsed = parser(result)
-                    text = (
-                        "\n".join(c.text for c in parsed if c.type == "text" and c.text)
-                        if isinstance(parsed, list)
-                        else str(parsed)
-                    )
-                    raise ToolExecutionException(text or str(parsed))
-                return parser(result)
-            except ToolExecutionException:
+        Issues an augmented ``tools/call`` with ``params.task`` set from
+        ``self.task_options``, then polls ``tasks/get`` until the server reports a
+        terminal status. On ``completed`` the payload is fetched via ``tasks/result``,
+        validated as a ``CallToolResult`` and parsed identically to :meth:`call_tool`.
+
+        Local cancellation triggers a best-effort ``tasks/cancel`` (controlled by
+        :attr:`MCPTaskOptions.cancel_remote_task_on_local_cancellation`) before
+        ``asyncio.CancelledError`` is re-raised.
+
+        Args:
+            tool_name: The remote MCP tool name.
+
+        Keyword Args:
+            kwargs: Arguments forwarded to the tool. See :meth:`call_tool` for the
+                framework kwargs that are filtered out.
+
+        Returns:
+            A list of Content items (or a string when a custom ``parse_tool_results``
+            callback is configured).
+        """
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
+        if not self.load_tools_flag:
+            raise ToolExecutionException(
+                "Tools are not loaded for this server, please set load_tools=True in the constructor."
+            )
+
+        filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
+        parser = self.parse_tool_results or self._parse_tool_result_from_mcp
+
+        # Submit the task: issue augmented tools/call. Do NOT retry on connection loss here:
+        # the server may have accepted the request and created a task before the
+        # response was lost, so retrying could start the long-running operation twice.
+        # Reconnect-and-retry is only safe after the task_id is known.
+        try:
+            task_id, fallback_result = await self._call_tool_as_task_create(tool_name, filtered_kwargs, meta)
+        except (ClosedResourceError, McpError) as ex:
+            if not self._is_connection_lost(ex):
+                error_message = ex.error.message if isinstance(ex, McpError) else str(ex)
+                raise ToolExecutionException(error_message, inner_exception=ex) from ex
+            raise ToolExecutionException(
+                f"Failed to call tool '{tool_name}' - connection lost; task state unknown.",
+                inner_exception=ex,
+            ) from ex
+        except ToolExecutionException:
+            raise
+        except Exception as ex:
+            raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
+
+        # Server returned a CallToolResult (no task created) or fell back to plain tools/call.
+        if fallback_result is not None:
+            if fallback_result.isError:
+                parsed = parser(fallback_result)
+                text = (
+                    "\n".join(c.text for c in parsed if c.type == "text" and c.text)
+                    if isinstance(parsed, list)
+                    else str(parsed)
+                )
+                raise ToolExecutionException(text or str(parsed))
+            return parser(fallback_result)
+
+        if task_id is None:
+            raise ToolExecutionException(
+                f"MCP server did not return a task_id or fallback result for '{tool_name}'."
+            )
+
+        # Track to completion: poll until terminal, then fetch payload. Never re-issue
+        # tools/call past this point; reconnect-and-retry only against the same task_id.
+        opts = self._effective_task_options()
+        max_wait_s = opts.max_task_wait.total_seconds() if opts.max_task_wait is not None else None
+
+        async def _await_task_completion() -> str | list[Content]:
+            terminal = await self._poll_task_until_terminal(task_id)
+            return await self._handle_terminal_task(tool_name, task_id, terminal, parser)
+
+        try:
+            if max_wait_s is not None:
+                try:
+                    result = await self._await_with_deadline(_await_task_completion(), max_wait_s)
+                    return cast("str | list[Content]", result)
+                except _MCPDeadlineExpired as ex:
+                    self._spawn_best_effort_cancel(task_id)
+                    raise ToolExecutionException(
+                        f"MCP task '{task_id}' exceeded max_task_wait of {max_wait_s}s.",
+                        inner_exception=ex,
+                    ) from ex
+            else:
+                return await _await_task_completion()
+        except asyncio.CancelledError:
+            if opts.cancel_remote_task_on_local_cancellation:
+                self._spawn_best_effort_cancel(task_id)
+            raise
+        except _MCPTaskAbandoned:
+            # Pre-terminal abandonment (hard poll error, malformed get, second
+            # disconnect, reconnect failure): cancel + re-raise as plain
+            # ToolExecutionException to the function-calling loop.
+            self._spawn_best_effort_cancel(task_id)
+            raise
+        # Plain ToolExecutionException from terminal failures (failed/cancelled/
+        # input_required, completed+isError, malformed result post-completion)
+        # propagates without cancel — server is already done.
+
+    async def _call_tool_as_task_create(
+        self, tool_name: str, arguments: dict[str, Any], meta: dict[str, Any] | None
+    ) -> tuple[str | None, types.CallToolResult | None]:
+        """Send the augmented tools/call.
+
+        Returns ``(task_id, None)`` when the server created a task,
+        ``(None, CallToolResult)`` when it returned a non-task result, falling back
+        to plain ``tools/call`` if the server rejects the ``task`` field outright.
+        """
+        from mcp import types
+        from mcp.shared.exceptions import McpError
+        from pydantic import ValidationError
+
+        opts = self._effective_task_options()
+        ttl_ms: int | None = None
+        if opts.default_ttl is not None:
+            ttl_ms = int(opts.default_ttl.total_seconds() * 1000)
+        # Always send TaskMetadata to mark the call as task-augmented; ttl may be omitted.
+        task_metadata = types.TaskMetadata(ttl=ttl_ms)
+
+        request_meta = types.RequestParams.Meta(**meta) if meta else None
+        params = types.CallToolRequestParams(
+            name=tool_name,
+            arguments=arguments,
+            task=task_metadata,
+            _meta=request_meta,  # type: ignore[call-arg]
+        )
+        request = types.ClientRequest(types.CallToolRequest(params=params))
+
+        # Use the lenient Result type so we can extract the task_id even when
+        # the strict CreateTaskResult schema rejects the payload (the MCP Python
+        # SDK requires Task.ttl, but servers may legitimately omit it).
+        try:
+            lenient = await self.session.send_request(  # type: ignore[union-attr]
+                request,
+                types.Result,
+            )
+        except McpError as ex:
+            if ex.error.code not in (types.METHOD_NOT_FOUND, types.INVALID_PARAMS):
                 raise
-            except ClosedResourceError as cl_ex:
-                if attempt == 0:
-                    # First attempt failed, try reconnecting
-                    logger.info("MCP connection closed unexpectedly. Reconnecting...")
+            logger.debug(
+                "Server rejected augmented tools/call for '%s' (code=%s); falling back.",
+                tool_name,
+                ex.error.code,
+            )
+            fallback = await self.session.call_tool(tool_name, arguments=arguments, meta=meta)  # type: ignore[union-attr]
+            return None, fallback
+
+        # Inspect the raw payload: a CreateTaskResult carries `task.taskId`;
+        # a legacy CallToolResult carries `content` and/or `isError`.
+        raw: dict[str, Any] = lenient.model_dump(by_alias=True, exclude_none=True)
+        raw.pop("_meta", None)
+
+        task_field = raw.get("task")
+        if isinstance(task_field, dict):
+            task_id_val = cast(dict[str, Any], task_field).get("taskId")
+            if isinstance(task_id_val, str):
+                return task_id_val, None
+
+        try:
+            legacy = types.CallToolResult.model_validate(raw)
+        except ValidationError as ex:
+            # Augmented call succeeded server-side; re-issuing a plain tools/call
+            # could double-execute a side-effecting tool.
+            raise ToolExecutionException(
+                f"MCP server returned an unparseable response to augmented tools/call "
+                f"for '{tool_name}'; cannot safely retry (server may have started the operation).",
+                inner_exception=ex,
+            ) from ex
+
+        return None, legacy
+
+    async def _poll_task_until_terminal(self, task_id: str) -> types.GetTaskResult:
+        """Poll ``tasks/get`` until the task reaches a terminal status."""
+        import httpx
+        from mcp import types
+        from mcp.shared.exceptions import McpError
+
+        # SDK raises McpError(code=httpx.REQUEST_TIMEOUT=408) on session read timeout.
+        transient_codes: frozenset[int] = frozenset({int(httpx.codes.REQUEST_TIMEOUT)})
+
+        while True:
+            request = types.ClientRequest(
+                types.GetTaskRequest(params=types.GetTaskRequestParams(taskId=task_id))
+            )
+            try:
+                # GetTaskResult.ttl is required-but-Optional in the SDK; coerce below.
+                lenient = await self._send_with_one_reconnect(
+                    request, types.Result, operation="tasks/get", task_id=task_id
+                )
+            except McpError as ex:
+                if ex.error.code in transient_codes:
+                    logger.debug(
+                        "Transient %s on tasks/get for '%s'; will retry.", ex.error.code, task_id
+                    )
+                    await asyncio.sleep(_MCP_TASK_MIN_POLL_INTERVAL.total_seconds())
+                    continue
+                # Hard server error mid-poll: task may still be running.
+                raise _MCPTaskAbandoned(ex.error.message, inner_exception=ex) from ex
+
+            try:
+                snapshot = self._coerce_get_task_result(lenient, task_id)
+            except ToolExecutionException as ex:
+                # Malformed tasks/get response; task may still be running.
+                raise _MCPTaskAbandoned(str(ex), inner_exception=ex) from ex
+
+            if snapshot.status in _MCP_TASK_TERMINAL_STATUSES:
+                return snapshot
+
+            await asyncio.sleep(self._compute_poll_delay(snapshot.pollInterval).total_seconds())
+
+    @staticmethod
+    def _coerce_get_task_result(lenient: types.Result, task_id: str) -> types.GetTaskResult:
+        """Coerce a lenient Result into GetTaskResult, defaulting ``ttl`` when absent."""
+        from mcp import types
+
+        raw = lenient.model_dump(by_alias=True, exclude_none=True)
+        raw.pop("_meta", None)
+        raw.setdefault("ttl", None)
+        try:
+            return types.GetTaskResult.model_validate(raw)
+        except Exception as ex:
+            raise ToolExecutionException(
+                f"MCP server returned a malformed tasks/get response for task '{task_id}'.",
+                inner_exception=ex,
+            ) from ex
+
+    @staticmethod
+    def _compute_poll_delay(server_interval_ms: int | None) -> timedelta:
+        """Clamp the server-suggested poll interval to ``[min, max]``."""
+        if server_interval_ms is None or server_interval_ms <= 0:
+            return _MCP_TASK_MIN_POLL_INTERVAL
+        suggested = timedelta(milliseconds=server_interval_ms)
+        if suggested < _MCP_TASK_MIN_POLL_INTERVAL:
+            return _MCP_TASK_MIN_POLL_INTERVAL
+        if suggested > _MCP_TASK_MAX_POLL_INTERVAL:
+            return _MCP_TASK_MAX_POLL_INTERVAL
+        return suggested
+
+    async def _handle_terminal_task(
+        self,
+        tool_name: str,
+        task_id: str,
+        snapshot: types.GetTaskResult,
+        parser: Callable[[types.CallToolResult], str | list[Content]],
+    ) -> str | list[Content]:
+        """Map a terminal task snapshot to either a parsed result or an exception."""
+        status = snapshot.status
+        if status == "completed":
+            payload = await self._fetch_task_result(task_id)
+            if payload.isError:
+                parsed = parser(payload)
+                text = (
+                    "\n".join(c.text for c in parsed if c.type == "text" and c.text)
+                    if isinstance(parsed, list)
+                    else str(parsed)
+                )
+                raise ToolExecutionException(text or str(parsed))
+            return parser(payload)
+
+        # Non-completed terminal statuses surface as ToolExecutionException so the
+        # function-calling loop sees a normal failure for tool_name.
+        message = snapshot.statusMessage or f"MCP task ended with status '{status}'."
+        if status == "input_required":
+            # Spec-non-terminal; treated as terminal here because the framework does
+            # not implement the interactive input flow.
+            message = snapshot.statusMessage or "MCP task requires additional input and cannot continue."
+        raise ToolExecutionException(f"Tool '{tool_name}' task {status}: {message}")
+
+    async def _fetch_task_result(self, task_id: str) -> types.CallToolResult:
+        """Send ``tasks/result`` and reinterpret the open-typed payload as a CallToolResult."""
+        from mcp import types
+        from mcp.shared.exceptions import McpError
+        from pydantic import ValidationError
+
+        request = types.ClientRequest(
+            types.GetTaskPayloadRequest(params=types.GetTaskPayloadRequestParams(taskId=task_id))
+        )
+        # Connection-loss retry only via the helper; no transient-code retry — server
+        # has already completed the task, so a slow payload fetch is anomalous.
+        try:
+            payload = await self._send_with_one_reconnect(
+                request, types.GetTaskPayloadResult, operation="tasks/result", task_id=task_id
+            )
+        except McpError as ex:
+            # Server reported completed; a hard fetch error is a plain failure (no cancel).
+            raise ToolExecutionException(ex.error.message, inner_exception=ex) from ex
+
+        # GetTaskPayloadResult carries the tool result via extra fields; reinterpret as CallToolResult.
+        payload_dict = payload.model_dump(by_alias=True, exclude_none=True)
+        payload_dict.pop("_meta", None)
+        try:
+            return types.CallToolResult.model_validate(payload_dict)
+        except ValidationError as ex:
+            # Server reported completed; malformed payload is a plain failure (no cancel needed).
+            raise ToolExecutionException(
+                f"MCP task '{task_id}' result payload could not be parsed as a CallToolResult.",
+                inner_exception=ex,
+            ) from ex
+
+    async def _send_with_one_reconnect(
+        self,
+        request: types.ClientRequest,
+        result_type: type[Any],
+        *,
+        operation: str,
+        task_id: str,
+    ) -> Any:
+        """Send ``request`` with one reconnect-and-retry on connection loss.
+
+        After a second loss (or reconnect failure), raise ``_MCPTaskAbandoned``.
+        Non-connection errors propagate unchanged.
+        """
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
+        for attempt in range(_MCP_RECONNECT_ATTEMPTS):
+            try:
+                return await self.session.send_request(request, result_type)  # type: ignore[union-attr]
+            except (ClosedResourceError, McpError) as ex:
+                if not self._is_connection_lost(ex):
+                    raise
+                if attempt < _MCP_RECONNECT_ATTEMPTS - 1:
+                    logger.info(
+                        "MCP connection lost during %s; reconnecting (task_id=%s).", operation, task_id
+                    )
                     try:
                         await self.connect(reset=True)
-                        continue  # Retry the operation
                     except Exception as reconn_ex:
-                        raise ToolExecutionException(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
+                        # Reconnect failure: task may still be running.
+                        raise _MCPTaskAbandoned(
+                            "Failed to reconnect to MCP server.", inner_exception=reconn_ex
                         ) from reconn_ex
-                else:
-                    # Second attempt also failed, give up
-                    logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
-                    raise ToolExecutionException(
-                        f"Failed to call tool '{tool_name}' - connection lost.",
-                        inner_exception=cl_ex,
-                    ) from cl_ex
-            except McpError as mcp_exc:
-                raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
-            except Exception as ex:
-                raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
-        raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
+                    continue
+                # Final attempt also lost the connection: task may still be running.
+                raise _MCPTaskAbandoned(
+                    f"MCP connection lost; task state unknown (task_id={task_id}).",
+                    inner_exception=ex,
+                ) from ex
+        raise AssertionError(f"unreachable: {operation} for {task_id}")  # pragma: no cover
+
+    @staticmethod
+    async def _await_with_deadline(coro: Coroutine[Any, Any, Any], timeout_s: float) -> Any:
+        """Await ``coro`` with a deadline; raise ``_MCPDeadlineExpired`` only on deadline.
+
+        Unlike ``asyncio.wait_for``, an ``asyncio.TimeoutError`` raised by ``coro``
+        itself propagates unchanged so callers can distinguish their own deadline
+        from a stray inner timeout.
+        """
+        inner = asyncio.ensure_future(coro)
+        try:
+            done, _pending = await asyncio.wait({inner}, timeout=timeout_s)
+        except BaseException:
+            # Outer caller cancelled (or another exception): cancel inner + drain.
+            inner.cancel()
+            with contextlib.suppress(BaseException):
+                await inner
+            raise
+        if inner in done:
+            return inner.result()
+        # Deadline fired before inner finished.
+        inner.cancel()
+        with contextlib.suppress(BaseException):
+            await inner
+        raise _MCPDeadlineExpired
+
+    def _spawn_best_effort_cancel(self, task_id: str) -> None:
+        """Fire-and-forget ``tasks/cancel`` so local cancellation propagates server-side."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        cancel_task = loop.create_task(self._try_cancel_task(task_id))
+        # Reuse pending-reload bookkeeping so close-on-owner waits/cancels these too.
+        self._pending_reload_tasks.add(cancel_task)
+        cancel_task.add_done_callback(self._pending_reload_tasks.discard)
+
+    async def _try_cancel_task(self, task_id: str) -> None:
+        """Send ``tasks/cancel``; bounded by ``_MCP_TASK_CANCEL_TIMEOUT``.
+
+        Failures log at warning so unattributed orphan tasks are debuggable.
+        """
+        from mcp import types
+
+        request = types.ClientRequest(
+            types.CancelTaskRequest(params=types.CancelTaskRequestParams(taskId=task_id))
+        )
+        try:
+            await asyncio.wait_for(
+                self.session.send_request(request, types.CancelTaskResult),  # type: ignore[union-attr]
+                timeout=_MCP_TASK_CANCEL_TIMEOUT.total_seconds(),
+            )
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Best-effort tasks/cancel for '%s' timed out after %.1fs; "
+                "remote task may still be running.",
+                task_id,
+                _MCP_TASK_CANCEL_TIMEOUT.total_seconds(),
+            )
+        except Exception:
+            logger.warning(
+                "Best-effort tasks/cancel for '%s' failed; remote task may still be running.",
+                task_id,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _is_connection_lost(ex: BaseException) -> bool:
+        """Return True if *ex* indicates the MCP transport was torn down."""
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
+        if isinstance(ex, ClosedResourceError):
+            return True
+        if isinstance(ex, McpError):
+            return "session terminated" in ex.error.message.lower()
+        return False
 
     async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
         """Call a prompt with the given arguments.
@@ -1075,42 +2019,51 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, prompts are not loaded,
                 or the prompt call fails.
         """
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
         if not self.load_prompts_flag:
             raise ToolExecutionException(
                 "Prompts are not loaded for this server, please set load_prompts=True in the constructor."
             )
 
-        parser = self.parse_prompt_results or _parse_prompt_result_from_mcp
+        parser = self.parse_prompt_results or self._parse_prompt_result_from_mcp
+        mcp_span_attrs = self._mcp_base_span_attributes()
+        mcp_span_attrs.update({OtelAttr.PROMPT_NAME: prompt_name})
 
-        # Try the operation, reconnecting once if the connection is closed
-        for attempt in range(2):
-            try:
-                prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
-                return parser(prompt_result)
-            except ClosedResourceError as cl_ex:
-                if attempt == 0:
-                    # First attempt failed, try reconnecting
-                    logger.info("MCP connection closed unexpectedly. Reconnecting...")
-                    try:
-                        await self.connect(reset=True)
-                        continue  # Retry the operation
-                    except Exception as reconn_ex:
+        with create_mcp_client_span("prompts/get", target=prompt_name, attributes=mcp_span_attrs) as span:
+            for attempt in range(2):
+                try:
+                    prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
+                    return parser(prompt_result)
+                except ClosedResourceError as cl_ex:
+                    if attempt == 0:
+                        # First attempt failed, try reconnecting
+                        logger.info("MCP connection closed unexpectedly. Reconnecting...")
+                        try:
+                            await self.connect(reset=True)
+                            continue  # Retry the operation
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                    else:
+                        # Second attempt also failed, give up
+                        logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
+                        set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
                         raise ToolExecutionException(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
-                        ) from reconn_ex
-                else:
-                    # Second attempt also failed, give up
-                    logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
-                    raise ToolExecutionException(
-                        f"Failed to call prompt '{prompt_name}' - connection lost.",
-                        inner_exception=cl_ex,
-                    ) from cl_ex
-            except McpError as mcp_exc:
-                raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
-            except Exception as ex:
-                raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
-        raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
+                            f"Failed to call prompt '{prompt_name}' - connection lost.",
+                            inner_exception=cl_ex,
+                        ) from cl_ex
+                except McpError as mcp_exc:
+                    error_message = mcp_exc.error.message
+                    set_mcp_span_error(span, type(mcp_exc).__name__, error_message)
+                    raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
+                except Exception as ex:
+                    set_mcp_span_error(span, type(ex).__name__, str(ex))
+                    raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
+            raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager.
@@ -1199,6 +2152,7 @@ class MCPStdioTool(MCPTool):
         encoding: str | None = None,
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
+        task_options: MCPTaskOptions | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio tool.
@@ -1243,6 +2197,8 @@ class MCPStdioTool(MCPTool):
             env: The environment variables to set for the command.
             encoding: The encoding to use for the command output.
             client: The chat client to use for sampling.
+            task_options: Options for tools that advertise
+                ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -1259,12 +2215,18 @@ class MCPStdioTool(MCPTool):
             load_prompts=load_prompts,
             parse_prompt_results=parse_prompt_results,
             request_timeout=request_timeout,
+            task_options=task_options,
         )
         self.command = command
         self.args = args or []
         self.env = env
         self.encoding = encoding
         self._client_kwargs = kwargs
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        attrs = super()._mcp_base_span_attributes()
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "pipe"
+        return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP stdio client.
@@ -1281,6 +2243,11 @@ class MCPStdioTool(MCPTool):
             args["encoding"] = self.encoding
         if self._client_kwargs:
             args.update(self._client_kwargs)
+        try:
+            from mcp.client.stdio import StdioServerParameters, stdio_client
+        except ModuleNotFoundError as ex:
+            raise ModuleNotFoundError("`mcp` is required to use `MCPStdioTool`. Please install `mcp`.") from ex
+
         return stdio_client(server=StdioServerParameters(**args))
 
 
@@ -1325,7 +2292,9 @@ class MCPStreamableHTTPTool(MCPTool):
         terminate_on_close: bool | None = None,
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncClient | None = None,
+        header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
+        task_options: MCPTaskOptions | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -1333,7 +2302,7 @@ class MCPStreamableHTTPTool(MCPTool):
         Note:
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
-            If an httpx.AsyncClient is provided via ``http_client``, it will be used directly.
+            If an asyncClient is provided via ``http_client``, it will be used directly.
             Otherwise, the ``streamable_http_client`` API will create and manage a default client.
 
         Args:
@@ -1369,10 +2338,17 @@ class MCPStreamableHTTPTool(MCPTool):
             additional_properties: Additional properties.
             terminate_on_close: Close the transport when the MCP client is terminated.
             client: The chat client to use for sampling.
-            http_client: Optional httpx.AsyncClient to use. If not provided, the
+            http_client: Optional asyncClient to use. If not provided, the
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
-                and pass your own ``httpx.AsyncClient`` instance.
+                and pass your own ``asyncClient`` instance.
+            header_provider: Optional callable that receives the runtime keyword arguments
+                (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
+                of HTTP headers to inject into every outbound request to the MCP server.
+                Use this to forward per-request context (e.g. authentication tokens set in
+                agent middleware) without creating a separate ``httpx.AsyncClient``.
+            task_options: Options for tools that advertise
+                ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -1389,10 +2365,30 @@ class MCPStreamableHTTPTool(MCPTool):
             load_prompts=load_prompts,
             parse_prompt_results=parse_prompt_results,
             request_timeout=request_timeout,
+            task_options=task_options,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
-        self._httpx_client: httpx.AsyncClient | None = http_client
+        self._httpx_client: AsyncClient | None = http_client
+        self._header_provider = header_provider
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        attrs = super()._mcp_base_span_attributes()
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
+        attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "http"
+        try:
+            from httpx import URL
+
+            parsed = URL(self.url)
+            if parsed.host:
+                attrs[OtelAttr.ADDRESS] = parsed.host
+            port = parsed.port
+            if port is None:
+                port = 443 if parsed.scheme == "https" else 80
+            attrs[OtelAttr.PORT] = port
+        except Exception:
+            logger.debug("Failed to parse URL for MCP span transport attributes", exc_info=True)
+        return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -1400,12 +2396,61 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        # Pass the http_client (which may be None) to streamable_http_client
+        from httpx import URL, AsyncClient, Request, Timeout
+
+        http_client = self._httpx_client
+        if self._header_provider is not None:
+            target_origin = _url_origin(URL(self.url))
+            if http_client is None:
+                http_client = AsyncClient(
+                    follow_redirects=True,
+                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                )
+                self._httpx_client = http_client
+
+            if not hasattr(self, "_inject_headers_hook"):
+
+                async def _inject_headers(request: Request) -> None:  # noqa: RUF029
+                    if _url_origin(request.url) != target_origin:
+                        return
+                    headers = _mcp_call_headers.get({})
+                    for key, value in headers.items():
+                        request.headers[key] = value
+
+                self._inject_headers_hook = _inject_headers  # type: ignore[attr-defined]
+                http_client.event_hooks["request"].append(self._inject_headers_hook)  # type: ignore[attr-defined]
+
         return streamable_http_client(
             url=self.url,
-            http_client=self._httpx_client,
+            http_client=http_client,
             terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
         )
+
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
+        """Call a tool, injecting headers from the header_provider if configured.
+
+        When a ``header_provider`` was supplied at construction time, the runtime
+        *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
+        to the provider.  The returned headers are attached to every HTTP request
+        made during this tool call via a ``contextvars.ContextVar``.
+
+        Args:
+            tool_name: The name of the tool to call.
+
+        Keyword Args:
+            kwargs: Arguments to pass to the tool.
+
+        Returns:
+            A list of Content items representing the tool output.
+        """
+        if self._header_provider is not None:
+            headers = self._header_provider(kwargs)
+            token = _mcp_call_headers.set(headers)
+            try:
+                return await super().call_tool(tool_name, **kwargs)
+            finally:
+                _mcp_call_headers.reset(token)
+        return await super().call_tool(tool_name, **kwargs)
 
 
 class MCPWebsocketTool(MCPTool):
@@ -1446,6 +2491,7 @@ class MCPWebsocketTool(MCPTool):
         allowed_tools: Collection[str] | None = None,
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
+        task_options: MCPTaskOptions | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP WebSocket tool.
@@ -1488,6 +2534,8 @@ class MCPWebsocketTool(MCPTool):
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
             client: The chat client to use for sampling.
+            task_options: Options for tools that advertise
+                ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(
@@ -1504,9 +2552,28 @@ class MCPWebsocketTool(MCPTool):
             load_prompts=load_prompts,
             parse_prompt_results=parse_prompt_results,
             request_timeout=request_timeout,
+            task_options=task_options,
         )
         self.url = url
         self._client_kwargs = kwargs
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        attrs = super()._mcp_base_span_attributes()
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
+        attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "websocket"
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.url)
+            if parsed.hostname:
+                attrs[OtelAttr.ADDRESS] = parsed.hostname
+            port = parsed.port
+            if port is None:
+                port = 443 if parsed.scheme == "wss" else 80
+            attrs[OtelAttr.PORT] = port
+        except Exception:
+            logger.debug("Failed to parse URL for MCP span transport attributes", exc_info=True)
+        return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP WebSocket client.
@@ -1514,6 +2581,21 @@ class MCPWebsocketTool(MCPTool):
         Returns:
             An async context manager for the WebSocket client transport.
         """
+        try:
+            from mcp.client.websocket import websocket_client
+        except ModuleNotFoundError as ex:
+            missing_name = ex.name or "mcp/websocket dependencies"
+            if missing_name == "mcp" or missing_name.startswith("mcp."):
+                reason = "The `mcp` package is not installed."
+            elif missing_name == "websockets" or missing_name.startswith("websockets."):
+                reason = "WebSocket transport support is not installed."
+            else:
+                reason = f"The optional dependency `{missing_name}` is not installed."
+            raise ModuleNotFoundError(
+                f"`MCPWebsocketTool` requires websocket transport support. {reason} "
+                "Please install `mcp[ws]` and update your dependencies."
+            ) from ex
+
         args: dict[str, Any] = {
             "url": self.url,
         }

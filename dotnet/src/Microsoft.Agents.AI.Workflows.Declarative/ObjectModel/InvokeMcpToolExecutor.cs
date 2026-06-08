@@ -27,6 +27,14 @@ internal sealed class InvokeMcpToolExecutor(
     WorkflowFormulaState state) :
     DeclarativeActionExecutor<InvokeMcpTool>(model, state)
 {
+    private const string ApprovalSnapshotStateKey = nameof(_approvalSnapshot);
+
+    /// <summary>
+    /// Snapshot of evaluated parameters at approval-request time.
+    /// Used to prevent TOCTOU attacks where state mutates during the approval window.
+    /// </summary>
+    private ApprovalSnapshot? _approvalSnapshot;
+
     /// <summary>
     /// Step identifiers for the MCP tool invocation workflow.
     /// </summary>
@@ -46,12 +54,14 @@ internal sealed class InvokeMcpToolExecutor(
     /// <summary>
     /// Determines if the message indicates external input is required.
     /// </summary>
-    public static bool RequiresInput(object? message) => message is ExternalInputRequest;
+    public static bool RequiresInput(object? message) =>
+        message is ExternalInputRequest || (message is PortableValue pv && pv.IsType(out ExternalInputRequest? _));
 
     /// <summary>
     /// Determines if the message indicates no external input is required.
     /// </summary>
-    public static bool RequiresNothing(object? message) => message is ActionExecutorResult;
+    public static bool RequiresNothing(object? message) =>
+        message is ActionExecutorResult || (message is PortableValue pv && pv.IsType(out ActionExecutorResult? _));
 
     /// <inheritdoc/>
     protected override bool EmitResultEvent => false;
@@ -73,19 +83,19 @@ internal sealed class InvokeMcpToolExecutor(
 
         if (requireApproval)
         {
-            // Create tool call content for approval request
+            // Snapshot the evaluated parameters to prevent TOCTOU attacks.
+            // If state mutates during the approval window, the approved values are used on resume.
+            this._approvalSnapshot = new ApprovalSnapshot(serverUrl, serverLabel, toolName, arguments, connectionName);
+
+            // Create tool call content for approval request.
+            // Transport headers (e.g. Authorization) are intentionally excluded from the
+            // approval event: they must not cross into the externally-surfaced approval request.
             McpServerToolCallContent toolCall = new(this.Id, toolName, serverLabel ?? serverUrl)
             {
                 Arguments = arguments
             };
 
-            if (headers != null)
-            {
-                toolCall.AdditionalProperties ??= [];
-                toolCall.AdditionalProperties.Add(headers);
-            }
-
-            McpServerToolApprovalRequestContent approvalRequest = new(this.Id, toolCall);
+            ToolApprovalRequestContent approvalRequest = new(this.Id, toolCall);
 
             ChatMessage requestMessage = new(ChatRole.Assistant, [approvalRequest]);
             AgentResponse agentResponse = new([requestMessage]);
@@ -127,11 +137,10 @@ internal sealed class InvokeMcpToolExecutor(
         ExternalInputResponse response,
         CancellationToken cancellationToken)
     {
-        // Check for approval response
-        McpServerToolApprovalResponseContent? approvalResponse = response.Messages
+        ToolApprovalResponseContent? approvalResponse = response.Messages
             .SelectMany(m => m.Contents)
-            .OfType<McpServerToolApprovalResponseContent>()
-            .FirstOrDefault(r => r.Id == this.Id);
+            .OfType<ToolApprovalResponseContent>()
+            .FirstOrDefault(r => r.RequestId == this.Id);
 
         if (approvalResponse?.Approved != true)
         {
@@ -140,13 +149,14 @@ internal sealed class InvokeMcpToolExecutor(
             return;
         }
 
-        // Approved - now invoke the tool
-        string serverUrl = this.GetServerUrl();
-        string? serverLabel = this.GetServerLabel();
-        string toolName = this.GetToolName();
-        Dictionary<string, object?>? arguments = this.GetArguments();
+        // Approved - use the snapshot from approval-request time to prevent TOCTOU attacks.
+        // Headers are re-evaluated (they may contain auth secrets that should not be persisted).
+        string serverUrl = this._approvalSnapshot?.ServerUrl ?? this.GetServerUrl();
+        string? serverLabel = this._approvalSnapshot?.ServerLabel ?? this.GetServerLabel();
+        string toolName = this._approvalSnapshot?.ToolName ?? this.GetToolName();
+        Dictionary<string, object?>? arguments = this._approvalSnapshot?.Arguments ?? this.GetArguments();
         Dictionary<string, string>? headers = this.GetHeaders();
-        string? connectionName = this.GetConnectionName();
+        string? connectionName = this._approvalSnapshot?.ConnectionName ?? this.GetConnectionName();
 
         McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
             serverUrl,
@@ -165,7 +175,31 @@ internal sealed class InvokeMcpToolExecutor(
     /// </summary>
     public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
+        // Clear the approval snapshot after successful completion.
+        this._approvalSnapshot = null;
+        await ClearSnapshotStateAsync(context, cancellationToken).ConfigureAwait(false);
+
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Persists the approval snapshot to workflow state so it survives checkpoint/restore cycles.
+    /// </remarks>
+    protected override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        await context.QueueStateUpdateAsync(ApprovalSnapshotStateKey, this._approvalSnapshot, null, cancellationToken).ConfigureAwait(false);
+        await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Restores the approval snapshot from workflow state after a checkpoint restore.
+    /// </remarks>
+    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+        this._approvalSnapshot = await context.ReadStateAsync<ApprovalSnapshot>(ApprovalSnapshotStateKey, null, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask ProcessResultAsync(IWorkflowContext context, McpServerToolResultContent resultContent, CancellationToken cancellationToken)
@@ -174,7 +208,7 @@ internal sealed class InvokeMcpToolExecutor(
         string? conversationId = this.GetConversationId();
 
         await this.AssignResultAsync(context, resultContent).ConfigureAwait(false);
-        ChatMessage resultMessage = new(ChatRole.Tool, resultContent.Output);
+        ChatMessage resultMessage = new(ChatRole.Tool, resultContent.Outputs);
 
         // Store messages if output path is configured
         if (this.Model.Output?.Messages is not null)
@@ -192,20 +226,20 @@ internal sealed class InvokeMcpToolExecutor(
         // Add messages to conversation if conversationId is provided
         if (conversationId is not null)
         {
-            ChatMessage assistantMessage = new(ChatRole.Assistant, resultContent.Output);
+            ChatMessage assistantMessage = new(ChatRole.Assistant, resultContent.Outputs);
             await agentProvider.CreateMessageAsync(conversationId, assistantMessage, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private async ValueTask AssignResultAsync(IWorkflowContext context, McpServerToolResultContent toolResult)
     {
-        if (this.Model.Output?.Result is null || toolResult.Output is null || toolResult.Output.Count == 0)
+        if (this.Model.Output?.Result is null || toolResult.Outputs is null || toolResult.Outputs.Count == 0)
         {
             return;
         }
 
         List<object?> parsedResults = [];
-        foreach (AIContent resultContent in toolResult.Output)
+        foreach (AIContent resultContent in toolResult.Outputs)
         {
             object? resultValue = resultContent switch
             {
@@ -310,12 +344,16 @@ internal sealed class InvokeMcpToolExecutor(
 
     private bool GetAutoSendValue()
     {
-        if (this.Model.Output?.AutoSend is null)
+        // InvokeToolOutput.AutoSend is never null — it returns a literal-false default
+        // when the YAML omits the field. Use AutoSendIsDefaultValue to distinguish an
+        // explicit autoSend value from the implicit default, and treat the implicit
+        // default as autoSend = true (the historical behavior).
+        if (this.Model.Output is { AutoSendIsDefaultValue: false } output)
         {
-            return true;
+            return this.Evaluator.GetValue(output.AutoSend).Value;
         }
 
-        return this.Evaluator.GetValue(this.Model.Output.AutoSend).Value;
+        return true;
     }
 
     private string? GetConnectionName()
@@ -364,4 +402,24 @@ internal sealed class InvokeMcpToolExecutor(
 
         return result;
     }
+
+    /// <summary>
+    /// Clears the persisted approval snapshot state after a successful tool invocation.
+    /// </summary>
+    private static async ValueTask ClearSnapshotStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        await context.QueueStateUpdateAsync<ApprovalSnapshot?>(ApprovalSnapshotStateKey, null, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Stores the evaluated parameters at approval-request time so that
+    /// <see cref="CaptureResponseAsync"/> uses the values the user reviewed,
+    /// even if <see cref="WorkflowFormulaState"/> mutates during the approval window.
+    /// </summary>
+    internal sealed record ApprovalSnapshot(
+        string ServerUrl,
+        string? ServerLabel,
+        string ToolName,
+        Dictionary<string, object?>? Arguments,
+        string? ConnectionName);
 }

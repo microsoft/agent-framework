@@ -104,6 +104,30 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     }
 
     /// <summary>
+    /// Verifies that a handoff workflow can be named from the DI workflow key.
+    /// </summary>
+    [Fact]
+    public void AddWorkflow_HandoffWorkflowWithName_ResolvesWorkflow()
+    {
+        var builder = new HostApplicationBuilder();
+        const string WorkflowName = "handoffWorkflow";
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Name).Returns("handoffAgent");
+
+#pragma warning disable MAAIW001 // This test covers hosting handoff workflows.
+        builder.AddWorkflow(WorkflowName, (sp, key) =>
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(mockAgent.Object)
+                .WithName(key)
+                .Build());
+#pragma warning restore MAAIW001
+
+        var workflow = builder.Build().Services.GetRequiredKeyedService<Workflow>(WorkflowName);
+
+        Assert.Equal(WorkflowName, workflow.Name);
+    }
+
+    /// <summary>
     /// Verifies that AddWorkflow handles empty strings for name.
     /// </summary>
     [Fact]

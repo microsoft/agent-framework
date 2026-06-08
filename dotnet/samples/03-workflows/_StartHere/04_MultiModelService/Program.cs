@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Amazon.BedrockRuntime;
+using Google.GenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
@@ -9,22 +9,20 @@ using Microsoft.Extensions.AI;
 const string Topic = "Goldendoodles make the best pets.";
 
 // Create the IChatClients to talk to different services.
-IChatClient aws = new AmazonBedrockRuntimeClient(
-    Environment.GetEnvironmentVariable("BEDROCK_ACCESS_KEY"!),
-    Environment.GetEnvironmentVariable("BEDROCK_SECRET_KEY")!,
-    Amazon.RegionEndpoint.USEast1)
-    .AsIChatClient("amazon.nova-pro-v1:0");
+IChatClient google = new Client(vertexAI: false, apiKey: Environment.GetEnvironmentVariable("GOOGLE_GENAI_API_KEY"))
+    .AsIChatClient("gemini-2.5-flash");
 
 IChatClient anthropic = new Anthropic.AnthropicClient(
     new() { ApiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") })
     .AsIChatClient("claude-sonnet-4-20250514");
 
 IChatClient openai = new OpenAI.OpenAIClient(
-    Environment.GetEnvironmentVariable("OPENAI_API_KEY")!).GetChatClient("gpt-4o-mini")
-    .AsIChatClient();
+    Environment.GetEnvironmentVariable("OPENAI_API_KEY"))
+    .GetResponsesClient()
+    .AsIChatClient("gpt-5.4-mini");
 
 // Define our agents.
-AIAgent researcher = new ChatClientAgent(aws,
+AIAgent researcher = new ChatClientAgent(google,
     instructions: """
         Write a short essay on topic specified by the user. The essay should be three to five paragraphs, written at a
         high school reading level, and include relevant background information, key claims, and notable perspectives.
@@ -60,6 +58,12 @@ AIAgent workflowAgent = AgentWorkflowBuilder.BuildSequential(researcher, factChe
 string? lastAuthor = null;
 await foreach (var update in workflowAgent.RunStreamingAsync(Topic))
 {
+    // Skip WorkflowEvent-only updates
+    if ((update.Contents == null || update.Contents.Count == 0) && update.RawRepresentation is WorkflowEvent)
+    {
+        continue;
+    }
+
     if (lastAuthor != update.AuthorName)
     {
         lastAuthor = update.AuthorName;

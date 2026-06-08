@@ -59,18 +59,18 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
             {
                 switch (content)
                 {
-                    case FunctionApprovalRequestContent approvalRequest:
-                        DisplayApprovalRequest(approvalRequest);
+                    case ToolApprovalRequestContent approvalRequest when approvalRequest.ToolCall is FunctionCallContent fcc:
+                        DisplayApprovalRequest(approvalRequest, fcc);
 
-                        Console.Write($"\nApprove '{approvalRequest.FunctionCall.Name}'? (yes/no): ");
+                        Console.Write($"\nApprove '{fcc.Name}'? (yes/no): ");
                         string? userInput = Console.ReadLine();
                         bool approved = userInput?.ToUpperInvariant() is "YES" or "Y";
 
-                        FunctionApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved);
+                        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved);
 
                         if (approvalRequest.AdditionalProperties != null)
                         {
-                            approvalResponse.AdditionalProperties = new AdditionalPropertiesDictionary();
+                            approvalResponse.AdditionalProperties = [];
                             foreach (var kvp in approvalRequest.AdditionalProperties)
                             {
                                 approvalResponse.AdditionalProperties[kvp.Key] = kvp.Value;
@@ -128,19 +128,19 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
 }
 
 #pragma warning disable MEAI001
-static void DisplayApprovalRequest(FunctionApprovalRequestContent approvalRequest)
+static void DisplayApprovalRequest(ToolApprovalRequestContent approvalRequest, FunctionCallContent fcc)
 {
     Console.ForegroundColor = ConsoleColor.Yellow;
     Console.WriteLine();
     Console.WriteLine("============================================================");
     Console.WriteLine("APPROVAL REQUIRED");
     Console.WriteLine("============================================================");
-    Console.WriteLine($"Function: {approvalRequest.FunctionCall.Name}");
+    Console.WriteLine($"Function: {fcc.Name}");
 
-    if (approvalRequest.FunctionCall.Arguments != null)
+    if (fcc.Arguments != null)
     {
         Console.WriteLine("Arguments:");
-        foreach (var arg in approvalRequest.FunctionCall.Arguments)
+        foreach (var arg in fcc.Arguments)
         {
             Console.WriteLine($"  {arg.Key} = {arg.Value}");
         }

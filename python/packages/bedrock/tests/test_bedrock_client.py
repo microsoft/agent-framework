@@ -34,7 +34,7 @@ class _StubBedrockRuntime:
 def _make_client() -> BedrockChatClient:
     """Create a BedrockChatClient with a stub runtime for unit tests."""
     return BedrockChatClient(
-        model_id="amazon.titan-text",
+        model="amazon.titan-text",
         region="us-west-2",
         client=_StubBedrockRuntime(),
     )
@@ -43,7 +43,7 @@ def _make_client() -> BedrockChatClient:
 async def test_get_response_invokes_bedrock_runtime() -> None:
     stub = _StubBedrockRuntime()
     client = BedrockChatClient(
-        model_id="amazon.titan-text",
+        model="amazon.titan-text",
         region="us-west-2",
         client=stub,
     )
@@ -65,7 +65,7 @@ async def test_get_response_invokes_bedrock_runtime() -> None:
 
 def test_build_request_requires_non_system_messages() -> None:
     client = BedrockChatClient(
-        model_id="amazon.titan-text",
+        model="amazon.titan-text",
         region="us-west-2",
         client=_StubBedrockRuntime(),
     )
@@ -137,3 +137,35 @@ def test_prepare_options_tool_choice_required_includes_any() -> None:
 
     assert "toolConfig" in request
     assert request["toolConfig"]["toolChoice"] == {"any": {}}
+
+
+def test_prepare_options_tool_choice_auto_without_tools_omits_tool_config() -> None:
+    """When tool_choice='auto' but no tools are provided, toolConfig must be omitted.
+
+    Without tools, setting toolChoice would cause a ParamValidationError from Bedrock.
+    """
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "auto",
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" not in request, (
+        f"toolConfig should be omitted when no tools are provided, got: {request.get('toolConfig')}"
+    )
+
+
+def test_prepare_options_tool_choice_required_without_tools_raises() -> None:
+    """When tool_choice='required' but no tools are provided, a ValueError must be raised."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "required",
+    }
+
+    with pytest.raises(ValueError, match="tool_choice='required' requires at least one tool"):
+        client._prepare_options(messages, options)

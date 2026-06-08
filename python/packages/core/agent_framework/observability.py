@@ -4,6 +4,8 @@
 
 Commonly used exports:
 - enable_instrumentation
+- disable_instrumentation
+- enable_sensitive_telemetry
 - configure_otel_providers
 - AgentTelemetryLayer
 - ChatTelemetryLayer
@@ -14,6 +16,7 @@ Commonly used exports:
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -25,10 +28,8 @@ from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
 
 from dotenv import load_dotenv
+from opentelemetry import context as otel_context
 from opentelemetry import metrics, trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.semconv.attributes import service_attributes
-from opentelemetry.semconv_ai import Meters
 
 from . import __version__ as version_info
 from ._settings import load_settings
@@ -42,6 +43,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk._logs.export import LogRecordExporter
     from opentelemetry.sdk.metrics.export import MetricExporter
     from opentelemetry.sdk.metrics.view import View
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace.export import SpanExporter
     from opentelemetry.trace import Tracer
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
@@ -50,8 +52,9 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._agents import SupportsAgentRun
     from ._clients import SupportsChatGetResponse
     from ._compaction import CompactionStrategy, TokenizerProtocol
+    from ._middleware import MiddlewareTypes
     from ._sessions import AgentSession
-    from ._tools import FunctionTool
+    from ._tools import FunctionTool, ToolTypes
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
@@ -65,6 +68,7 @@ if TYPE_CHECKING:  # pragma: no cover
         GeneratedEmbeddings,
         Message,
         ResponseStream,
+        UsageDetails,
     )
 
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -76,11 +80,15 @@ __all__ = [
     "EmbeddingTelemetryLayer",
     "OtelAttr",
     "configure_otel_providers",
+    "create_mcp_client_span",
     "create_metric_views",
     "create_resource",
+    "disable_instrumentation",
     "enable_instrumentation",
+    "enable_sensitive_telemetry",
     "get_meter",
     "get_tracer",
+    "set_mcp_span_error",
 ]
 
 
@@ -92,6 +100,17 @@ ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 logger = logging.getLogger("agent_framework")
 
+
+INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS: Final[contextvars.ContextVar[set[str] | None]] = contextvars.ContextVar(
+    "inner_response_telemetry_captured_fields", default=None
+)
+INNER_RESPONSE_ID_CAPTURED_FIELD: Final[str] = "response_id"
+INNER_USAGE_CAPTURED_FIELD: Final[str] = "usage"
+
+# Tracks accumulated token usage from all inner chat completion spans within an agent invoke.
+INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = contextvars.ContextVar(
+    "inner_accumulated_usage", default=None
+)
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
 TOKEN_USAGE_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
@@ -192,6 +211,8 @@ class OtelAttr(str, Enum):
     TOOL_RESULT = "gen_ai.tool.call.result"
     # Agent attributes
     AGENT_ID = "gen_ai.agent.id"
+    SERVICE_NAME = "service.name"
+    SERVICE_VERSION = "service.version"
     # Client attributes
     # replaced TOKEN with T, because both ruff and bandit,
     # complain about TOKEN being a potential secret
@@ -200,6 +221,8 @@ class OtelAttr(str, Enum):
     T_TYPE_INPUT = "input"
     T_TYPE_OUTPUT = "output"
     DURATION_UNIT = "s"
+    LLM_OPERATION_DURATION = "gen_ai.client.operation.duration"
+    LLM_TOKEN_USAGE = "gen_ai.client.token.usage"  # nosec B105 # noqa: S105 - OpenTelemetry metric name, not a secret.
 
     # Agent attributes
     AGENT_NAME = "gen_ai.agent.name"
@@ -210,8 +233,6 @@ class OtelAttr(str, Enum):
     INPUT_MESSAGES = "gen_ai.input.messages"
     OUTPUT_MESSAGES = "gen_ai.output.messages"
     SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions"
-    # Attributes previously from opentelemetry-semantic-conventions-ai SpanAttributes,
-    # removed in v0.4.14. Defined here for forward compatibility.
     SYSTEM = "gen_ai.system"
     REQUEST_MAX_TOKENS = "gen_ai.request.max_tokens"
     REQUEST_TEMPERATURE = "gen_ai.request.temperature"
@@ -268,9 +289,17 @@ class OtelAttr(str, Enum):
     CHAT_COMPLETION_OPERATION = "chat"
     EMBEDDING_OPERATION = "embeddings"
     TOOL_EXECUTION_OPERATION = "execute_tool"
-    #    Describes GenAI agent creation and is usually applicable when working with remote agent services.
+    # Describes GenAI agent creation and is usually applicable when working with remote agent services.
     AGENT_CREATE_OPERATION = "create_agent"
     AGENT_INVOKE_OPERATION = "invoke_agent"
+
+    # MCP attributes (https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/)
+    MCP_METHOD_NAME = "mcp.method.name"
+    MCP_PROTOCOL_VERSION = "mcp.protocol.version"
+    MCP_SESSION_ID = "mcp.session.id"
+    PROMPT_NAME = "gen_ai.prompt.name"
+    NETWORK_TRANSPORT = "network.transport"
+    NETWORK_PROTOCOL_NAME = "network.protocol.name"
 
     # Agent Framework specific attributes
     MEASUREMENT_FUNCTION_TAG_NAME = "agent_framework.function.name"
@@ -362,11 +391,15 @@ def _create_otlp_exporters(
     if protocol == "grpc":
         # Import all gRPC exporters
         try:
-            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter as GRPCLogExporter
-            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
-                OTLPMetricExporter as GRPCMetricExporter,
+            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (  # type: ignore[reportMissingImports]
+                OTLPLogExporter as GRPCLogExporter,  # type: ignore[reportUnknownVariableType]
             )
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GRPCSpanExporter
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (  # type: ignore[reportMissingImports]
+                OTLPMetricExporter as GRPCMetricExporter,  # type: ignore[reportUnknownVariableType]
+            )
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # type: ignore[reportMissingImports]
+                OTLPSpanExporter as GRPCSpanExporter,  # type: ignore[reportUnknownVariableType]
+            )
         except ImportError as exc:
             raise ImportError(
                 "opentelemetry-exporter-otlp-proto-grpc is required for OTLP gRPC exporters. "
@@ -375,21 +408,21 @@ def _create_otlp_exporters(
 
         if actual_logs_endpoint:
             exporters.append(
-                GRPCLogExporter(
+                GRPCLogExporter(  # type: ignore[reportUnknownArgumentType]
                     endpoint=actual_logs_endpoint,
                     headers=actual_logs_headers if actual_logs_headers else None,
                 )
             )
         if actual_traces_endpoint:
             exporters.append(
-                GRPCSpanExporter(
+                GRPCSpanExporter(  # type: ignore[reportUnknownArgumentType]
                     endpoint=actual_traces_endpoint,
                     headers=actual_traces_headers if actual_traces_headers else None,
                 )
             )
         if actual_metrics_endpoint:
             exporters.append(
-                GRPCMetricExporter(
+                GRPCMetricExporter(  # type: ignore[reportUnknownArgumentType]
                     endpoint=actual_metrics_endpoint,
                     headers=actual_metrics_headers if actual_metrics_headers else None,
                 )
@@ -474,13 +507,33 @@ def _get_exporters_from_env(
     # Get base endpoint
     base_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
-    # Get signal-specific endpoints (these override base endpoint)
-    traces_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or base_endpoint
-    metrics_endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") or base_endpoint
-    logs_endpoint = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") or base_endpoint
+    # Get signal-specific endpoints (these override base endpoint and are used verbatim)
+    traces_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+    metrics_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
+    logs_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
 
     # Get protocol (default is grpc)
     protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
+
+    # Per the OTel spec, OTEL_EXPORTER_OTLP_ENDPOINT is a *base* URL for HTTP — the SDK
+    # auto-appends /v1/{traces,metrics,logs} when it reads the env var directly. The
+    # signal-specific endpoint env vars are *full* URLs used verbatim. Because we read
+    # the env vars here and forward them as the ``endpoint=`` constructor argument
+    # (which the SDK always treats as a full URL), we must replicate the auto-append
+    # ourselves for HTTP when falling back to the base endpoint. For gRPC, the base
+    # endpoint is used as-is.
+    traces_endpoint: str | None
+    metrics_endpoint: str | None
+    logs_endpoint: str | None
+    if protocol in ("http/protobuf", "http") and base_endpoint:
+        base_for_http = base_endpoint.rstrip("/")
+        traces_endpoint = traces_endpoint_specific or f"{base_for_http}/v1/traces"
+        metrics_endpoint = metrics_endpoint_specific or f"{base_for_http}/v1/metrics"
+        logs_endpoint = logs_endpoint_specific or f"{base_for_http}/v1/logs"
+    else:
+        traces_endpoint = traces_endpoint_specific or base_endpoint
+        metrics_endpoint = metrics_endpoint_specific or base_endpoint
+        logs_endpoint = logs_endpoint_specific or base_endpoint
 
     # Get base headers
     base_headers_str = os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "")
@@ -558,25 +611,27 @@ def create_resource(
             # Load from custom .env file
             resource = create_resource(env_file_path="config/.env")
     """
-    # Load environment variables from a .env file only when explicitly provided
+    try:
+        from opentelemetry.sdk.resources import Resource
+    except ModuleNotFoundError as ex:
+        raise ModuleNotFoundError(
+            "`opentelemetry-sdk` is required to use `create_resource()`. "
+            "Please install `opentelemetry-sdk` and update your dependencies."
+        ) from ex
+
     if env_file_path is not None:
         load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
-    # Start with provided attributes
     resource_attributes: dict[str, Any] = dict(attributes)
 
-    # Set service name
     if service_name is None:
         service_name = os.getenv("OTEL_SERVICE_NAME", "agent_framework")
-    resource_attributes[service_attributes.SERVICE_NAME] = service_name
+    resource_attributes[OtelAttr.SERVICE_NAME] = service_name
 
-    # Set service version
     if service_version is None:
         service_version = os.getenv("OTEL_SERVICE_VERSION", version_info)
-    resource_attributes[service_attributes.SERVICE_VERSION] = service_version
+    resource_attributes[OtelAttr.SERVICE_VERSION] = service_version
 
-    # Parse OTEL_RESOURCE_ATTRIBUTES environment variable
-    # Format: key1=value1,key2=value2
     if resource_attrs_env := os.getenv("OTEL_RESOURCE_ATTRIBUTES"):
         resource_attributes.update(_parse_headers(resource_attrs_env))
     return Resource.create(resource_attributes)
@@ -584,10 +639,15 @@ def create_resource(
 
 def create_metric_views() -> list[View]:
     """Create the default OpenTelemetry metric views for Agent Framework."""
-    from opentelemetry.sdk.metrics.view import DropAggregation, View
+    try:
+        from opentelemetry.sdk.metrics.view import DropAggregation, View
+    except ModuleNotFoundError as ex:
+        raise ModuleNotFoundError(
+            "`opentelemetry-sdk` is required to use `create_metric_views()`. "
+            "Please install `opentelemetry-sdk` and update your dependencies."
+        ) from ex
 
     return [
-        # Dropping all enable_instrumentation names except for those starting with "agent_framework"
         View(instrument_name="agent_framework*"),
         View(instrument_name="gen_ai*"),
         View(instrument_name="*", aggregation=DropAggregation()),
@@ -616,8 +676,8 @@ class ObservabilitySettings:
         Sensitive events should only be enabled on test and development environments.
 
     Keyword Args:
-        enable_instrumentation: Enable OpenTelemetry diagnostics. Default is False.
-            Can be set via environment variable ENABLE_INSTRUMENTATION.
+        enable_instrumentation: Enable OpenTelemetry diagnostics. Default is True.
+            Can be disabled by setting environment variable ENABLE_INSTRUMENTATION=false.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
             Can be set via environment variable ENABLE_SENSITIVE_DATA.
         enable_console_exporters: Enable console exporters for traces, logs, and metrics.
@@ -632,16 +692,16 @@ class ObservabilitySettings:
             from agent_framework import ObservabilitySettings
 
             # Using environment variables
-            # Set ENABLE_INSTRUMENTATION=true
+            # Instrumentation is enabled by default; set ENABLE_INSTRUMENTATION=false to disable.
             # Set ENABLE_CONSOLE_EXPORTERS=true
             settings = ObservabilitySettings()
 
             # Or passing parameters directly
-            settings = ObservabilitySettings(enable_instrumentation=True, enable_console_exporters=True)
+            settings = ObservabilitySettings(enable_console_exporters=True)
     """
 
     def __init__(self, **kwargs: Any) -> None:
-        """Initialize the settings and create the resource."""
+        """Initialize the settings."""
         env_file_path = kwargs.pop("env_file_path", None)
         env_file_encoding = kwargs.pop("env_file_encoding", None)
         data = load_settings(
@@ -650,17 +710,73 @@ class ObservabilitySettings:
             env_file_encoding=env_file_encoding,
             **kwargs,
         )
-        self.enable_instrumentation: bool = data.get("enable_instrumentation") or False
-        self.enable_sensitive_data: bool = data.get("enable_sensitive_data") or False
+        # Sticky-disable flag, set by `disable_instrumentation()`. When True, this
+        # singleton refuses to be re-enabled by any subsequent assignment to the
+        # `enable_instrumentation` / `enable_sensitive_data` properties (including
+        # direct third-party writes). It can only be cleared by an explicit
+        # `enable_instrumentation(force=True)` / `enable_sensitive_telemetry(force=True)`
+        # call, which is the user re-stating their intent.
+        self._user_disabled: bool = False
+        # `enable_instrumentation` is defaulted to True if not set
+        instrumentation_value = data.get("enable_instrumentation")
+        self._enable_instrumentation: bool = True if instrumentation_value is None else instrumentation_value
+        self._enable_sensitive_data: bool = data.get("enable_sensitive_data") or False
+        if self._enable_sensitive_data and not self._enable_instrumentation:
+            logger.warning(
+                "Sensitive data capture is enabled but instrumentation is disabled. "
+                "Sensitive data will not be captured. Please enable instrumentation to capture sensitive data."
+            )
+
         self.enable_console_exporters: bool = data.get("enable_console_exporters") or False
         self.vs_code_extension_port: int | None = data.get("vs_code_extension_port")
         self.env_file_path = env_file_path
         self.env_file_encoding = env_file_encoding
-        self._resource = create_resource(
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
         self._executed_setup = False
+
+    @property
+    def enable_instrumentation(self) -> bool:
+        """Whether instrumentation is enabled.
+
+        Always returns False once ``disable_instrumentation()`` has been called,
+        regardless of the stored value, until ``enable_instrumentation(force=True)``
+        clears the sticky disable.
+        """
+        if self._user_disabled:
+            return False
+        return self._enable_instrumentation
+
+    @enable_instrumentation.setter
+    def enable_instrumentation(self, value: bool) -> None:
+        if self._user_disabled and value:
+            # Defense in depth: a third-party (or internal) write of True is
+            # silently dropped while the user-disabled flag is set, so the
+            # sticky disable cannot be circumvented by direct attribute writes.
+            logger.debug(
+                "Ignoring enable_instrumentation=True assignment: instrumentation was explicitly disabled via "
+                "disable_instrumentation(). Call enable_instrumentation(force=True) to clear the disable."
+            )
+            return
+        self._enable_instrumentation = value
+
+    @property
+    def enable_sensitive_data(self) -> bool:
+        """Whether sensitive-data capture is enabled.
+
+        Always returns False once ``disable_instrumentation()`` has been called.
+        """
+        if self._user_disabled:
+            return False
+        return self._enable_sensitive_data
+
+    @enable_sensitive_data.setter
+    def enable_sensitive_data(self, value: bool) -> None:
+        if self._user_disabled and value:
+            logger.debug(
+                "Ignoring enable_sensitive_data=True assignment: instrumentation was explicitly disabled via "
+                "disable_instrumentation(). Call enable_sensitive_telemetry(force=True) to clear the disable."
+            )
+            return
+        self._enable_sensitive_data = value
 
     @property
     def ENABLED(self) -> bool:
@@ -682,6 +798,17 @@ class ObservabilitySettings:
     def is_setup(self) -> bool:
         """Check if the setup has been executed."""
         return self._executed_setup
+
+    @property
+    def is_user_disabled(self) -> bool:
+        """Whether ``disable_instrumentation()`` has been called and the disable is still in effect.
+
+        Integrations that perform telemetry setup as a side-effect (e.g. provisioning Azure Monitor
+        providers from a Foundry project's connection string) should consult this flag before doing
+        their setup work, so the user's explicit opt-out is respected end-to-end and not just at the
+        framework's span-emission boundary.
+        """
+        return self._user_disabled
 
     def _configure(
         self,
@@ -744,17 +871,27 @@ class ObservabilitySettings:
             exporters: A list of exporters for logs, metrics and/or spans.
             views: Optional list of OpenTelemetry views for metrics. Default is empty list.
         """
-        from opentelemetry._logs import set_logger_provider
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExporter
-        from opentelemetry.sdk.metrics import MeterProvider
-        from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
+        try:
+            from opentelemetry._logs import set_logger_provider
+            from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+            from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExporter
+            from opentelemetry.sdk.metrics import MeterProvider
+            from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
+        except ModuleNotFoundError as ex:
+            raise ModuleNotFoundError(
+                "`opentelemetry-sdk` is required to use `configure_otel_providers()`. "
+                "Please install `opentelemetry-sdk` and update your dependencies."
+            ) from ex
 
         span_exporters: list[SpanExporter] = []
         log_exporters: list[LogRecordExporter] = []
         metric_exporters: list[MetricExporter] = []
+        resource = create_resource(
+            env_file_path=self.env_file_path,
+            env_file_encoding=self.env_file_encoding,
+        )
         for exp in exporters:
             if isinstance(exp, SpanExporter):
                 span_exporters.append(exp)
@@ -765,14 +902,14 @@ class ObservabilitySettings:
 
         # Tracing
         if span_exporters:
-            tracer_provider = TracerProvider(resource=self._resource)
+            tracer_provider = TracerProvider(resource=resource)
             trace.set_tracer_provider(tracer_provider)
             for exporter in span_exporters:
                 tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
 
         # Logging
         if log_exporters:
-            logger_provider = LoggerProvider(resource=self._resource)
+            logger_provider = LoggerProvider(resource=resource)
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
             # Attach a handler with the provider to the root logger
@@ -787,7 +924,7 @@ class ObservabilitySettings:
                     PeriodicExportingMetricReader(exporter, export_interval_millis=5000)
                     for exporter in metric_exporters
                 ],
-                resource=self._resource,
+                resource=resource,
                 views=views or [],
             )
             metrics.set_meter_provider(meter_provider)
@@ -918,24 +1055,91 @@ def _read_int_env(name: str, *, default: int | None = None) -> int | None:
         return default
 
 
+def enable_sensitive_telemetry(*, force: bool = False) -> None:
+    """Enable capture of sensitive data in telemetry for your application.
+
+    Instrumentation is enabled by default; this method exists to opt-in to capturing
+    sensitive event payloads (e.g., chat messages, tool arguments).
+
+    This method does not configure exporters or providers. It also ensures that
+    instrumentation is enabled (in case it was explicitly disabled via the
+    ENABLE_INSTRUMENTATION environment variable).
+
+    Keyword Args:
+        force: When True, clears any sticky disable previously set by
+            ``disable_instrumentation()`` before enabling. Without it, calls are
+            no-ops if instrumentation has been explicitly disabled.
+
+    Warning:
+        Sensitive events should only be enabled on test and development environments.
+    """
+    global OBSERVABILITY_SETTINGS
+    if OBSERVABILITY_SETTINGS._user_disabled and not force:  # type: ignore[reportPrivateUsage]
+        logger.info(
+            "enable_sensitive_telemetry() ignored: instrumentation was explicitly disabled via "
+            "disable_instrumentation(). Pass force=True to re-enable."
+        )
+        return
+    if force:
+        OBSERVABILITY_SETTINGS._user_disabled = False  # type: ignore[reportPrivateUsage]
+    OBSERVABILITY_SETTINGS.enable_instrumentation = True
+    OBSERVABILITY_SETTINGS.enable_sensitive_data = True
+
+
+def disable_instrumentation() -> None:
+    """Explicitly disable Agent Framework instrumentation for this process.
+
+    The disable is **sticky**: subsequent attempts by framework auto-setup paths,
+    library integrations, ``enable_instrumentation()``, ``enable_sensitive_telemetry()``,
+    ``configure_otel_providers()``, or direct writes to
+    ``OBSERVABILITY_SETTINGS.enable_instrumentation`` are ignored and no spans, metrics,
+    or logs are emitted by Agent Framework code paths.
+
+    To override the disable later, call ``enable_instrumentation(force=True)`` or
+    ``enable_sensitive_telemetry(force=True)``. This makes the user's intent to opt out
+    win against framework code that would otherwise re-enable instrumentation
+    automatically.
+
+    Note:
+        Disabling does not tear down already-configured OpenTelemetry providers,
+        exporters, or in-flight spans; it gates future captures by Agent Framework
+        instrumentation only. To stop emitting telemetry from third-party
+        instrumentations as well, configure them separately.
+    """
+    global OBSERVABILITY_SETTINGS
+    OBSERVABILITY_SETTINGS._user_disabled = True  # type: ignore[reportPrivateUsage]
+    OBSERVABILITY_SETTINGS._enable_instrumentation = False  # type: ignore[reportPrivateUsage]
+    OBSERVABILITY_SETTINGS._enable_sensitive_data = False  # type: ignore[reportPrivateUsage]
+
+
 def enable_instrumentation(
     *,
     enable_sensitive_data: bool | None = None,
+    force: bool = False,
 ) -> None:
-    """Enable instrumentation for your application.
+    """Enable instrumentation for Microsoft Agent Framework.
 
-    Calling this method implies you want to enable observability in your application.
-
-    This method does not configure exporters or providers.
-    It only updates the global variables that trigger the instrumentation code.
-    If you have already set the environment variable ENABLE_INSTRUMENTATION=true,
-    calling this method has no effect, unless you want to enable or disable sensitive data events.
+    Note that instrumentation is enabled by default, so this method is only necessary
+    if you need a programmatic way to enable it (e.g., if you are not sure whether the
+    environment variable ENABLE_INSTRUMENTATION is set to True or False and want to
+    ensure it is enabled).
 
     Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+        force: When True, clears any sticky disable previously set by
+            ``disable_instrumentation()`` before enabling. Without it, calls are
+            no-ops if instrumentation has been explicitly disabled.
     """
     global OBSERVABILITY_SETTINGS
+    if OBSERVABILITY_SETTINGS._user_disabled and not force:  # type: ignore[reportPrivateUsage]
+        logger.info(
+            "enable_instrumentation() ignored: instrumentation was explicitly disabled via "
+            "disable_instrumentation(). Pass force=True to re-enable."
+        )
+        return
+    if force:
+        OBSERVABILITY_SETTINGS._user_disabled = False  # type: ignore[reportPrivateUsage]
     OBSERVABILITY_SETTINGS.enable_instrumentation = True
     if enable_sensitive_data is not None:
         OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
@@ -975,7 +1179,7 @@ def configure_otel_providers(
         Since you can only setup one provider per signal type (logs, traces, metrics),
         you can choose to use this method and take the exporter and provider that we created.
         Alternatively, you can setup the providers yourself, or through another library
-        (e.g., Azure Monitor) and just call `enable_instrumentation()` to enable instrumentation.
+        (e.g., Azure Monitor) and just call `enable_sensitive_telemetry()` to opt-in to sensitive data capture.
 
     Note:
         By default, the Agent Framework emits metrics with the prefixes `agent_framework`
@@ -1009,7 +1213,6 @@ def configure_otel_providers(
             from agent_framework.observability import configure_otel_providers
 
             # Using environment variables (recommended)
-            # Set ENABLE_INSTRUMENTATION=true
             # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
             configure_otel_providers()
 
@@ -1054,18 +1257,25 @@ def configure_otel_providers(
         .. code-block:: python
 
             # when azure monitor is installed
-            from agent_framework.observability import enable_instrumentation
+            from agent_framework.observability import enable_sensitive_telemetry
             from azure.monitor.opentelemetry import configure_azure_monitor
 
             connection_string = "InstrumentationKey=your_instrumentation_key_here;..."
             configure_azure_monitor(connection_string=connection_string)
-            enable_instrumentation()
+            # Optional: opt into capturing sensitive data
+            enable_sensitive_telemetry()
 
     References:
         - https://opentelemetry.io/docs/languages/sdk-configuration/general/
         - https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/
     """
     global OBSERVABILITY_SETTINGS
+    if OBSERVABILITY_SETTINGS._user_disabled:  # type: ignore[reportPrivateUsage]
+        logger.info(
+            "configure_otel_providers(): instrumentation was explicitly disabled via "
+            "disable_instrumentation(); providers and exporters will still be configured but "
+            "Agent Framework will emit no telemetry until enable_instrumentation(force=True) is called."
+        )
     if env_file_path:
         # Build kwargs, excluding None values
         settings_kwargs: dict[str, Any] = {
@@ -1088,7 +1298,6 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = updated_settings.vs_code_extension_port
         OBSERVABILITY_SETTINGS.env_file_path = updated_settings.env_file_path
         OBSERVABILITY_SETTINGS.env_file_encoding = updated_settings.env_file_encoding
-        OBSERVABILITY_SETTINGS._resource = updated_settings._resource  # type: ignore[reportPrivateUsage]
         OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
     else:
         # Re-read settings from current environment in case env vars were set
@@ -1105,7 +1314,6 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = (
             vs_code_extension_port if vs_code_extension_port is not None else _read_int_env("VS_CODE_EXTENSION_PORT")
         )
-        OBSERVABILITY_SETTINGS._resource = create_resource()  # type: ignore[reportPrivateUsage]
         OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
 
     OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]
@@ -1119,7 +1327,7 @@ def configure_otel_providers(
 
 def _get_duration_histogram() -> metrics.Histogram:
     return get_meter().create_histogram(
-        name=Meters.LLM_OPERATION_DURATION,
+        name=OtelAttr.LLM_OPERATION_DURATION,
         unit=OtelAttr.DURATION_UNIT,
         description="Captures the duration of operations of function-invoking chat clients",
         explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
@@ -1128,7 +1336,7 @@ def _get_duration_histogram() -> metrics.Histogram:
 
 def _get_token_usage_histogram() -> metrics.Histogram:
     return get_meter().create_histogram(
-        name=Meters.LLM_TOKEN_USAGE,
+        name=OtelAttr.LLM_TOKEN_USAGE,
         unit=OtelAttr.T_UNIT,
         description="Captures the token usage of chat clients",
         explicit_bucket_boundaries_advisory=TOKEN_USAGE_BUCKET_BOUNDARIES,
@@ -1153,6 +1361,22 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         self.duration_histogram = _get_duration_histogram()
         self.otel_provider_name = otel_provider_name or getattr(self, "OTEL_PROVIDER_NAME", "unknown")
 
+    @staticmethod
+    def _backfill_request_model(span: trace.Span, attributes: dict[str, Any]) -> None:
+        """Backfill REQUEST_MODEL and the span name from RESPONSE_MODEL when unknown.
+
+        Chat-completion spans use REQUEST_MODEL as part of the span name. If the
+        request model was not known at span creation time (e.g. the client could
+        not resolve it before sending the request), update both the attribute and
+        the span name to the actual model returned in the response. Mutates
+        ``attributes`` in place.
+        """
+        response_model = attributes.get(OtelAttr.RESPONSE_MODEL)
+        if response_model and attributes.get(OtelAttr.REQUEST_MODEL, "unknown") == "unknown":
+            attributes[OtelAttr.REQUEST_MODEL] = response_model
+            operation = attributes.get(OtelAttr.OPERATION, "operation")
+            span.update_name(f"{operation} {response_model}")
+
     @overload
     def get_response(
         self,
@@ -1162,7 +1386,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -1174,7 +1399,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -1186,7 +1412,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
@@ -1197,7 +1424,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics.
 
@@ -1209,25 +1437,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             tokenizer: Optional tokenizer used by token-aware compaction strategies.
 
         Keyword Args:
-            kwargs: Compatibility keyword arguments from higher client layers. This layer does
-                not consume ``function_invocation_kwargs`` directly; if present, it is ignored
-                because function invocation has already been processed above. If a ``client_kwargs``
-                mapping is present, it is flattened into ordinary keyword arguments for tracing and
-                forwarding so clients that use those values continue to work while clients that
-                ignore extra kwargs remain compatible.
+            function_invocation_kwargs: Keyword arguments forwarded only to tool invocation layers.
+            client_kwargs: Additional client-specific keyword arguments for downstream chat clients.
         """
         from ._types import ChatResponse, ChatResponseUpdate, ResponseStream  # type: ignore[reportUnusedImport]
 
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
-        compatibility_client_kwargs = kwargs.pop("client_kwargs", None)
-        kwargs.pop("function_invocation_kwargs", None)
-        merged_client_kwargs = (
-            dict(cast(Mapping[str, Any], compatibility_client_kwargs))
-            if isinstance(compatibility_client_kwargs, Mapping)
-            else {}
-        )
-        merged_client_kwargs.update(kwargs)
+        merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
             return super_get_response(  # type: ignore[no-any-return]
@@ -1236,46 +1453,27 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
-                **merged_client_kwargs,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=merged_client_kwargs,
             )
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
-        model_id = (
-            merged_client_kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
-        )
+        model = merged_client_kwargs.get("model") or opts.get("model") or getattr(self, "model", None) or "unknown"
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
             operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
             provider_name=provider_name,
-            model=model_id,
+            model=model,
             service_url=service_url,
             **merged_client_kwargs,
         )
 
         if stream:
-            result_stream = cast(
-                ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-                super_get_response(
-                    messages=messages,
-                    stream=True,
-                    options=opts,
-                    compaction_strategy=compaction_strategy,
-                    tokenizer=tokenizer,
-                    **merged_client_kwargs,
-                ),
-            )
+            span = _start_streaming_span(attributes, OtelAttr.REQUEST_MODEL)
 
-            # Create span directly without trace.use_span() context attachment.
-            # Streaming spans are closed asynchronously in cleanup hooks, which run
-            # in a different async context than creation — using use_span() would
-            # cause "Failed to detach context" errors from OpenTelemetry.
-            operation = attributes.get(OtelAttr.OPERATION, "operation")
-            span_name = attributes.get(OtelAttr.REQUEST_MODEL, "unknown")
-            span = get_tracer().start_span(f"{operation} {span_name}")
-            span.set_attributes(attributes)
-            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                 _capture_messages(
                     span=span,
                     provider_name=provider_name,
@@ -1296,13 +1494,38 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
 
+            try:
+                result_stream = cast(
+                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                    super_get_response(
+                        messages=messages,
+                        stream=True,
+                        options=opts,
+                        compaction_strategy=compaction_strategy,
+                        tokenizer=tokenizer,
+                        function_invocation_kwargs=function_invocation_kwargs,
+                        client_kwargs=merged_client_kwargs,
+                    ),
+                )
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
+                _close_span()
+                raise
+
             async def _finalize_stream() -> None:
                 from ._types import ChatResponse
 
                 try:
+                    if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
+                        # Stream errored; skip get_final_response() to avoid firing
+                        # result hooks such as after_run context providers on error
+                        # paths. Capture the error on the span before returning.
+                        capture_exception(span=span, exception=result_stream._stream_error, timestamp=time_ns())  # pyright: ignore[reportPrivateUsage]
+                        return
                     response: ChatResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(attributes, response)
+                    self._backfill_request_model(span, response_attributes)
                     _capture_response(
                         span=span,
                         attributes=response_attributes,
@@ -1310,10 +1533,12 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         operation_duration_histogram=getattr(self, "duration_histogram", None),
                         duration=duration,
                     )
+                    _mark_inner_response_telemetry_captured(response)
                     if (
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
                         and isinstance(response, ChatResponse)
                         and response.messages
+                        and span.is_recording()
                     ):
                         _capture_messages(
                             span=span,
@@ -1327,17 +1552,24 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 finally:
                     _close_span()
 
-            # Register a weak reference callback to close the span if stream is garbage collected
-            # without being consumed. This ensures spans don't leak if users don't consume streams.
-            wrapped_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = result_stream.with_cleanup_hook(
-                _record_duration
-            ).with_cleanup_hook(_finalize_stream)
+            # The pull context manager attaches the span around each underlying iterator pull so
+            # that child spans created during the pull (e.g. HTTP requests, inner tool execution)
+            # are parented under this chat span. Attach and detach happen in the same async
+            # context as the pull, avoiding cross-context cleanup issues. The weakref finalizer
+            # ensures the span is closed even if the stream is garbage collected without being
+            # consumed.
+            wrapped_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = (
+                result_stream
+                .with_cleanup_hook(_record_duration)
+                .with_cleanup_hook(_finalize_stream)
+                .with_pull_context_manager(lambda: _activate_span(span))
+            )
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
         async def _get_response() -> ChatResponse:
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                     _capture_messages(
                         span=span,
                         provider_name=provider_name,
@@ -1354,7 +1586,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                             options=opts,
                             compaction_strategy=compaction_strategy,
                             tokenizer=tokenizer,
-                            **merged_client_kwargs,
+                            function_invocation_kwargs=function_invocation_kwargs,
+                            client_kwargs=merged_client_kwargs,
                         ),
                     )
                 except Exception as exception:
@@ -1362,6 +1595,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     raise
                 duration = perf_counter() - start_time_stamp
                 response_attributes = _get_response_attributes(attributes, response)
+                self._backfill_request_model(span, response_attributes)
                 _capture_response(
                     span=span,
                     attributes=response_attributes,
@@ -1369,7 +1603,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     operation_duration_histogram=getattr(self, "duration_histogram", None),
                     duration=duration,
                 )
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                _mark_inner_response_telemetry_captured(response)
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages and span.is_recording():
                     finish_reason = cast(
                         "FinishReason | None",
                         response.finish_reason if response.finish_reason in FINISH_REASON_MAP else None,
@@ -1421,13 +1656,13 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
-        model_id = opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        model = opts.get("model") or getattr(self, "model", None) or "unknown"
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
             operation_name=OtelAttr.EMBEDDING_OPERATION,
             provider_name=provider_name,
-            model=model_id,
+            model=model,
             service_url=service_url,
         )
 
@@ -1474,74 +1709,25 @@ class AgentTelemetryLayer:
         self.token_usage_histogram = _get_token_usage_histogram()
         self.duration_histogram = _get_duration_histogram()
 
-    @overload
-    def run(
+    def _trace_agent_invocation(
         self,
-        messages: AgentRunInputs | None = None,
         *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = None,
-        compaction_strategy: CompactionStrategy | None = None,
-        tokenizer: TokenizerProtocol | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse[Any]]: ...
-
-    @overload
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = None,
-        compaction_strategy: CompactionStrategy | None = None,
-        tokenizer: TokenizerProtocol | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
-
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        compaction_strategy: CompactionStrategy | None = None,
-        tokenizer: TokenizerProtocol | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
+        messages: AgentRunInputs | None,
+        session: AgentSession | None,
+        merged_options: Mapping[str, Any],
+        client_kwargs: Mapping[str, Any] | None,
+        stream: bool,
+        execute: Callable[[], Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]],
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
-        """Trace agent runs with OpenTelemetry spans and metrics."""
+        """Trace an agent invocation while delegating execution to ``execute``."""
         global OBSERVABILITY_SETTINGS
-        from ._types import ResponseStream, merge_chat_options
-
-        super_run = cast(
-            "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
-            super().run,  # type: ignore[misc]
-        )
-        provider_name = str(self.otel_provider_name)
-        capture_usage = bool(getattr(self, "_otel_capture_usage", True))
+        from ._types import ResponseStream
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
-            return super_run(  # type: ignore[no-any-return]
-                messages=messages,
-                stream=stream,
-                session=session,
-                compaction_strategy=compaction_strategy,
-                tokenizer=tokenizer,
-                function_invocation_kwargs=function_invocation_kwargs,
-                client_kwargs=client_kwargs,
-                **kwargs,
-            )
+            return execute()
 
-        default_options = getattr(self, "default_options", {})
-        options = kwargs.get("options")
+        provider_name = str(self.otel_provider_name)
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
-        merged_client_kwargs.update(kwargs)
-        merged_options: dict[str, Any] = merge_chat_options(default_options, options or {})
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1549,42 +1735,25 @@ class AgentTelemetryLayer:
             agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
             agent_description=getattr(self, "description", None),
             thread_id=session.service_session_id if session else None,
-            all_options=merged_options,
+            all_options=dict(merged_options),
             **merged_client_kwargs,
         )
 
-        if stream:
-            run_result: object = super_run(
-                messages=messages,
-                stream=True,
-                session=session,
-                compaction_strategy=compaction_strategy,
-                tokenizer=tokenizer,
-                function_invocation_kwargs=function_invocation_kwargs,
-                client_kwargs=client_kwargs,
-                **kwargs,
-            )
-            if isinstance(run_result, ResponseStream):
-                result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
-            elif isinstance(run_result, Awaitable):
-                result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
-            else:
-                raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
+        inner_response_telemetry_captured_fields: set[str] = set()
+        inner_response_telemetry_captured_fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(
+            inner_response_telemetry_captured_fields
+        )
+        inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
 
-            # Create span directly without trace.use_span() context attachment.
-            # Streaming spans are closed asynchronously in cleanup hooks, which run
-            # in a different async context than creation — using use_span() would
-            # cause "Failed to detach context" errors from OpenTelemetry.
-            operation = attributes.get(OtelAttr.OPERATION, "operation")
-            span_name = attributes.get(OtelAttr.AGENT_NAME, "unknown")
-            span = get_tracer().start_span(f"{operation} {span_name}")
-            span.set_attributes(attributes)
-            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+        if stream:
+            span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
+
+            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                 _capture_messages(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_options(merged_options),
+                    system_instructions=_get_instructions_from_options(dict(merged_options)),
                 )
 
             span_state = {"closed": False}
@@ -1600,22 +1769,47 @@ class AgentTelemetryLayer:
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
 
+            try:
+                run_result: object = execute()
+                if isinstance(run_result, ResponseStream):
+                    result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
+                elif isinstance(run_result, Awaitable):
+                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+                else:
+                    raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                _close_span()
+                raise
+
             async def _finalize_stream() -> None:
                 from ._types import AgentResponse
 
                 try:
+                    if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
+                        # Stream errored; skip get_final_response() to avoid firing
+                        # result hooks such as after_run context providers on error
+                        # paths. Capture the error on the span before returning.
+                        capture_exception(span=span, exception=result_stream._stream_error, timestamp=time_ns())  # pyright: ignore[reportPrivateUsage]
+                        return
                     response: AgentResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(
                         attributes,
                         response,
-                        capture_usage=capture_usage,
+                        capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
+                        not in inner_response_telemetry_captured_fields,
+                        capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
                     )
+                    _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if (
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
                         and isinstance(response, AgentResponse)
                         and response.messages
+                        and span.is_recording()
                     ):
                         _capture_messages(
                             span=span,
@@ -1626,54 +1820,162 @@ class AgentTelemetryLayer:
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                 finally:
+                    INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                    INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
                     _close_span()
 
-            # Register a weak reference callback to close the span if stream is garbage collected
-            # without being consumed. This ensures spans don't leak if users don't consume streams.
-            wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = result_stream.with_cleanup_hook(
-                _record_duration
-            ).with_cleanup_hook(_finalize_stream)
+            # The pull context manager attaches the span around each underlying iterator pull so
+            # that child spans created during the pull (e.g. inner chat completion spans from the
+            # underlying ChatTelemetryLayer) are parented under this agent invoke span. Attach and
+            # detach happen in the same async context as the pull, avoiding cross-context cleanup
+            # issues. The weakref finalizer ensures the span is closed even if the stream is
+            # garbage collected without being consumed.
+            wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = (
+                result_stream
+                .with_cleanup_hook(_record_duration)
+                .with_cleanup_hook(_finalize_stream)
+                .with_pull_context_manager(lambda: _activate_span(span))
+            )
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
-        async def _run() -> AgentResponse:
-            with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
-                    _capture_messages(
-                        span=span,
-                        provider_name=provider_name,
-                        messages=messages,
-                        system_instructions=_get_instructions_from_options(merged_options),
-                    )
-                start_time_stamp = perf_counter()
-                try:
-                    response: AgentResponse[Any] = await super_run(
-                        messages=messages,
-                        stream=False,
-                        session=session,
-                        compaction_strategy=compaction_strategy,
-                        tokenizer=tokenizer,
-                        function_invocation_kwargs=function_invocation_kwargs,
-                        client_kwargs=client_kwargs,
-                        **kwargs,
-                    )
-                except Exception as exception:
-                    capture_exception(span=span, exception=exception, timestamp=time_ns())
-                    raise
-                duration = perf_counter() - start_time_stamp
-                if response:
-                    response_attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
-                    _capture_response(span=span, attributes=response_attributes, duration=duration)
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+        async def _run() -> AgentResponse[Any]:
+            try:
+                with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                         _capture_messages(
                             span=span,
                             provider_name=provider_name,
-                            messages=response.messages,
-                            output=True,
+                            messages=messages,
+                            system_instructions=_get_instructions_from_options(dict(merged_options)),
                         )
-                return response  # type: ignore[return-value,no-any-return]
+                    start_time_stamp = perf_counter()
+                    try:
+                        response: AgentResponse[Any] = await execute()
+                    except Exception as exception:
+                        capture_exception(span=span, exception=exception, timestamp=time_ns())
+                        raise
+                    duration = perf_counter() - start_time_stamp
+                    if response:
+                        response_attributes = _get_response_attributes(
+                            attributes,
+                            response,
+                            capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
+                            not in inner_response_telemetry_captured_fields,
+                            capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
+                        )
+                        _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
+                        _capture_response(span=span, attributes=response_attributes, duration=duration)
+                        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages and span.is_recording():
+                            _capture_messages(
+                                span=span,
+                                provider_name=provider_name,
+                                messages=response.messages,
+                                output=True,
+                            )
+                    return response  # type: ignore[return-value,no-any-return]
+            finally:
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
 
         return _run()
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Trace agent runs with OpenTelemetry spans and metrics."""
+        from ._types import merge_chat_options
+
+        super_run = cast(
+            "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
+            super().run,  # type: ignore[misc]
+        )
+        super_run_kwargs: dict[str, Any] = {
+            "messages": messages,
+            "stream": stream,
+            "session": session,
+            "tools": tools,
+            "options": options,
+            "compaction_strategy": compaction_strategy,
+            "tokenizer": tokenizer,
+            "function_invocation_kwargs": function_invocation_kwargs,
+            "client_kwargs": client_kwargs,
+        }
+        if middleware is not None:
+            super_run_kwargs["middleware"] = middleware
+
+        default_options = dict(getattr(self, "default_options", {}))
+        merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        merged_options: dict[str, Any] = merge_chat_options(
+            default_options, dict(options) if options is not None else {}
+        )
+        return self._trace_agent_invocation(
+            messages=messages,
+            session=session,
+            merged_options=merged_options,
+            client_kwargs=merged_client_kwargs,
+            stream=stream,
+            execute=lambda: super_run(**super_run_kwargs),
+        )
 
 
 # region Otel Helpers
@@ -1720,6 +2022,82 @@ def get_function_span(
     )
 
 
+# region MCP span helpers
+
+
+@contextlib.contextmanager
+def create_mcp_client_span(
+    method_name: str,
+    target: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> Generator[trace.Span, Any, Any]:
+    """Create an MCP client span per OTel MCP semantic conventions.
+
+    Span name follows the format ``{mcp.method.name} {target}`` when a target
+    is available, otherwise just ``{mcp.method.name}``.
+
+    See: https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#client
+
+    Args:
+        method_name: The MCP method name (e.g. ``initialize``, ``tools/call``).
+        target: Optional low-cardinality target (tool name, prompt name).
+        attributes: Additional span attributes.
+    """
+    span_name = f"{method_name} {target}" if target else method_name
+    attrs: dict[str, Any] = {OtelAttr.MCP_METHOD_NAME: method_name}
+    if attributes:
+        attrs.update(attributes)
+    tracer = get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
+    span = tracer.start_span(span_name, kind=trace.SpanKind.CLIENT, attributes=attrs)
+    with trace.use_span(
+        span=span,
+        end_on_exit=True,
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as current_span:
+        yield current_span
+
+
+def set_mcp_span_error(
+    span: trace.Span,
+    error_type: str,
+    description: str | None = None,
+) -> None:
+    """Set error status and ``error.type`` on an MCP span.
+
+    Args:
+        span: The span to mark as errored.
+        error_type: The error type string (e.g. ``tool_error``, exception class name).
+        description: Optional description (e.g. JSON-RPC error message).
+    """
+    span.set_attribute(OtelAttr.ERROR_TYPE, error_type)
+    span.set_status(trace.StatusCode.ERROR, description=description)
+
+
+# endregion
+
+
+@contextlib.contextmanager
+def _activate_span(span: trace.Span) -> Generator[None]:
+    """Attach ``span`` as the current span in the OpenTelemetry context.
+
+    Designed to be used as a per-pull context manager registered on a
+    ``ResponseStream`` via ``with_pull_context_manager``: it attaches the span
+    before each underlying iterator pull and detaches immediately after, so
+    child spans created during the pull (HTTP clients, inner chat completions,
+    tool execution) are correctly parented under ``span``.
+
+    Because attach and detach happen within the same ``__anext__`` invocation
+    (and therefore the same async task / contextvars context), there is no risk
+    of "Failed to detach context" warnings from cross-context cleanup.
+    """
+    token = otel_context.attach(trace.set_span_in_context(span))
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
+
+
 @contextlib.contextmanager
 def _get_span(
     attributes: dict[str, Any],
@@ -1740,6 +2118,29 @@ def _get_span(
         set_status_on_exception=False,
     ) as current_span:
         yield current_span
+
+
+def _start_streaming_span(attributes: dict[str, Any], span_name_attribute: str) -> trace.Span:
+    """Start a non-current span for a streaming operation.
+
+    Unlike :func:`_get_span`, the returned span is not attached to the current
+    OpenTelemetry context. The caller is responsible for:
+
+    - Ending the span via cleanup hooks on the wrapped
+      :class:`~agent_framework._types.ResponseStream`.
+    - Activating the span around each iterator pull via
+      :func:`_activate_span` registered with ``with_pull_context_manager`` so
+      that child spans created during stream production inherit it as parent.
+
+    Streaming spans are closed asynchronously in cleanup hooks that run in a
+    different async context than creation, so attaching the span at creation
+    time would cause "Failed to detach context" errors from OpenTelemetry.
+    """
+    operation = attributes.get(OtelAttr.OPERATION, "operation")
+    span_name = attributes.get(span_name_attribute, "unknown")
+    span = get_tracer().start_span(f"{operation} {span_name}")
+    span.set_attributes(attributes)
+    return span
 
 
 def _get_instructions_from_options(options: Any) -> str | list[str] | None:
@@ -1787,8 +2188,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     "agent_id": (OtelAttr.AGENT_ID, None, False, None),
     "agent_name": (OtelAttr.AGENT_NAME, None, False, None),
     "agent_description": (OtelAttr.AGENT_DESCRIPTION, None, False, None),
-    # Multiple source keys - checks model_id in options, then model in kwargs, then model_id in kwargs
-    ("model_id", "model"): (OtelAttr.REQUEST_MODEL, None, True, None),
+    "model": (OtelAttr.REQUEST_MODEL, None, True, None),
     # Tools with validation - returns None if no valid tools
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
@@ -1855,15 +2255,14 @@ def _capture_messages(
     finish_reason: FinishReason | None = None,
 ) -> None:
     """Log messages with extra information."""
-    from ._types import normalize_messages, prepend_instructions_to_messages
+    from ._types import normalize_messages
 
-    prepped = prepend_instructions_to_messages(normalize_messages(messages), system_instructions)
+    normalized_messages = normalize_messages(messages)
     otel_messages: list[dict[str, Any]] = []
-    for index, message in enumerate(prepped):
+    for index, message in enumerate(normalized_messages):
         # Reuse the otel message representation for logging instead of calling to_dict()
         # to avoid expensive Pydantic serialization overhead
         otel_message = _to_otel_message(message)
-        otel_messages.append(otel_message)
         logger.info(
             otel_message,
             extra={
@@ -1872,6 +2271,7 @@ def _capture_messages(
                 MessageListTimestampFilter.INDEX_KEY: index,
             },
         )
+        otel_messages.append(otel_message)
     if finish_reason:
         otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
     span.set_attribute(
@@ -1927,24 +2327,56 @@ def _to_otel_part(content: Content) -> dict[str, Any] | None:
     return None
 
 
+def _mark_inner_response_telemetry_captured(response: ChatResponse | AgentResponse) -> None:
+    """Record when an inner chat telemetry span already captured response metadata."""
+    captured_fields = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.get()
+    if captured_fields is None:
+        return
+    if response.response_id:
+        captured_fields.add(INNER_RESPONSE_ID_CAPTURED_FIELD)
+    if response.usage_details:
+        captured_fields.add(INNER_USAGE_CAPTURED_FIELD)
+        accumulated = INNER_ACCUMULATED_USAGE.get()
+        if accumulated is not None:
+            from ._types import add_usage_details
+
+            INNER_ACCUMULATED_USAGE.set(add_usage_details(accumulated, response.usage_details))
+
+
+def _apply_accumulated_usage(attributes: dict[str, Any], captured_fields: set[str]) -> None:
+    """Apply accumulated usage from inner chat spans to the invoke_agent span attributes."""
+    if INNER_USAGE_CAPTURED_FIELD not in captured_fields:
+        return
+    accumulated = INNER_ACCUMULATED_USAGE.get()
+    if not accumulated:
+        return
+    input_tokens = accumulated.get("input_token_count")
+    if input_tokens:
+        attributes[OtelAttr.INPUT_TOKENS] = input_tokens
+    output_tokens = accumulated.get("output_token_count")
+    if output_tokens:
+        attributes[OtelAttr.OUTPUT_TOKENS] = output_tokens
+
+
 def _get_response_attributes(
     attributes: dict[str, Any],
     response: ChatResponse | AgentResponse,
     *,
+    capture_response_id: bool = True,
     capture_usage: bool = True,
 ) -> dict[str, Any]:
     """Get the response attributes from a response."""
-    if response.response_id:
+    if capture_response_id and response.response_id:
         attributes[OtelAttr.RESPONSE_ID] = response.response_id
     finish_reason = getattr(response, "finish_reason", None)
     if not finish_reason:
         finish_reason = (
             getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
         )
-    if finish_reason:
+    if isinstance(finish_reason, str) and finish_reason:
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason])
-    if model_id := getattr(response, "model_id", None):
-        attributes[OtelAttr.RESPONSE_MODEL] = model_id
+    if model := getattr(response, "model", None):
+        attributes[OtelAttr.RESPONSE_MODEL] = model
     if capture_usage and (usage := response.usage_details):
         input_tokens = usage.get("input_token_count")
         if input_tokens:

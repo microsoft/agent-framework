@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ from scripts.dependencies._dependency_bounds_upper_impl import (
 )
 from scripts.task_runner import discover_projects
 
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class WorkspaceProject:
@@ -125,7 +127,13 @@ def main() -> None:
         action="store_true",
         help="Print planned replacements without updating files.",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show debug logging.",
+    )
     args = parser.parse_args()
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(message)s")
 
     workspace_root = Path(__file__).resolve().parents[2]
     lock_versions = _load_lock_versions(workspace_root)
@@ -137,6 +145,7 @@ def main() -> None:
         _discover_workspace_projects(workspace_root),
         package_filters=args.packages,
     )
+    logger.debug(f"Selected projects for dev dependency refresh: {[project.pyproject_path for project in selected_projects]}")
     if not selected_projects:
         filters = ", ".join(args.packages or [])
         raise SystemExit(f"No matching workspace projects found for: {filters}")

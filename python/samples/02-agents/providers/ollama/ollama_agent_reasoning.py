@@ -2,6 +2,7 @@
 
 import asyncio
 
+from agent_framework import Agent
 from agent_framework.ollama import OllamaChatClient
 from dotenv import load_dotenv
 
@@ -15,7 +16,7 @@ This sample demonstrates implementing a Ollama agent with reasoning.
 
 Ensure to install Ollama and have a model running locally before running the sample
 Not all Models support reasoning, to test reasoning try qwen3:8b
-Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the code below.
+Set the model to use via the OLLAMA_MODEL environment variable or modify the code below.
 https://ollama.com/
 
 """
@@ -24,7 +25,8 @@ https://ollama.com/
 async def main() -> None:
     print("=== Response Reasoning Example ===")
 
-    agent = OllamaChatClient().as_agent(
+    agent = Agent(
+        client=OllamaChatClient(),
         name="TimeAgent",
         instructions="You are a helpful agent answer in one sentence.",
         default_options={"think": True},  # Enable Reasoning on agent level

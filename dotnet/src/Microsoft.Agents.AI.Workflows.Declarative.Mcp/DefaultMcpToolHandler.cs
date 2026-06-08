@@ -3,12 +3,16 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -24,6 +28,16 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// </remarks>
 public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 {
+    private const string FilenameAdditionalPropertyName = "filename";
+
+    /// <summary>
+    /// Reserved <c>toolName</c> value that maps an <see cref="IMcpToolHandler.InvokeToolAsync"/> request
+    /// to the MCP protocol <c>tools/list</c> discovery operation.
+    /// </summary>
+    public const string ListToolsToolName = "tools/list";
+
+    private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
+
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Dictionary<string, McpClient> _clients = [];
     private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
@@ -53,8 +67,17 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         // TODO: Handle connectionName and server label appropriately when Hosted scenario supports them. For now, ignore
-        McpServerToolResultContent resultContent = new(Guid.NewGuid().ToString());
+        if (IsListToolsToolName(toolName))
+        {
+            ThrowIfListToolsArgumentsSpecified(arguments);
+            McpClient listToolsClient = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
+            IList<McpClientTool> tools = await listToolsClient.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            return CreateListToolsResultContent(tools.Select(tool => tool.ProtocolTool));
+        }
+
         McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
+
+        McpServerToolResultContent resultContent = new(Guid.NewGuid().ToString());
 
         // Convert IDictionary to IReadOnlyDictionary for CallToolAsync
         IReadOnlyDictionary<string, object?>? readOnlyArguments = arguments is null
@@ -68,6 +91,23 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
         // Map MCP content blocks to MEAI AIContent types
         PopulateResultContent(resultContent, result);
+
+        return resultContent;
+    }
+
+    internal static bool IsListToolsToolName(string toolName) =>
+        string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal);
+
+    internal static McpServerToolResultContent CreateListToolsResultContent(IEnumerable<Tool> tools)
+    {
+        Throw.IfNull(tools);
+
+        McpServerToolResultContent resultContent = new(Guid.NewGuid().ToString())
+        {
+            Outputs = []
+        };
+
+        resultContent.Outputs.Add(new TextContent(SerializeToolsList(tools)));
 
         return resultContent;
     }
@@ -183,10 +223,20 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         return hashCode.ToString(CultureInfo.InvariantCulture);
     }
 
+    private static void ThrowIfListToolsArgumentsSpecified(IDictionary<string, object?>? arguments)
+    {
+        if (arguments is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                $"The reserved MCP '{ListToolsToolName}' operation does not accept tool arguments.",
+                nameof(arguments));
+        }
+    }
+
     private static void PopulateResultContent(McpServerToolResultContent resultContent, CallToolResult result)
     {
-        // Ensure Output list is initialized
-        resultContent.Output ??= [];
+        // Ensure Outputs list is initialized
+        resultContent.Outputs ??= [];
 
         if (result.IsError == true)
         {
@@ -203,7 +253,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
                 }
             }
 
-            resultContent.Output.Add(new TextContent($"Error: {errorText ?? "Unknown error from MCP Server call"}"));
+            resultContent.Outputs.Add(new TextContent($"Error: {errorText ?? "Unknown error from MCP Server call"}"));
             return;
         }
 
@@ -218,41 +268,87 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             AIContent content = ConvertContentBlock(block);
             if (content is not null)
             {
-                resultContent.Output.Add(content);
+                resultContent.Outputs.Add(content);
             }
         }
     }
 
     internal static AIContent ConvertContentBlock(ContentBlock block)
     {
-        return block switch
+        // Delegate to the MCP SDK's canonical converter. It maps every known
+        // ContentBlock subtype (Text/Image/Audio/EmbeddedResource/ToolUse/ToolResult)
+        // and sets RawRepresentation + AdditionalProperties from block.Meta.
+        // It intentionally returns null for ResourceLinkBlock — map that to
+        // UriContent here so callers always receive a usable AIContent.
+        return block.ToAIContent() ?? block switch
         {
-            TextContentBlock text => new TextContent(text.Text),
-            ImageContentBlock image => CreateDataContent(image.Data, image.MimeType ?? "image/*"),
-            AudioContentBlock audio => CreateDataContent(audio.Data, audio.MimeType ?? "audio/*"),
-            _ => new TextContent(block.ToString() ?? string.Empty),
+            ResourceLinkBlock link => new UriContent(link.Uri, link.MimeType ?? "application/octet-stream")
+            {
+                RawRepresentation = link,
+                AdditionalProperties = CreateAdditionalProperties(link),
+            },
+            _ => new TextContent(block.ToString() ?? string.Empty)
+            {
+                RawRepresentation = block,
+                AdditionalProperties = CreateAdditionalProperties(block),
+            },
         };
     }
 
-    private static DataContent CreateDataContent(ReadOnlyMemory<byte> base64Utf8Data, string mediaType)
+    private static AdditionalPropertiesDictionary? CreateAdditionalProperties(ContentBlock block)
     {
-        if (base64Utf8Data.IsEmpty)
+        AdditionalPropertiesDictionary? properties = null;
+
+        if (block.Meta is not null)
         {
-            return new DataContent($"data:{mediaType};base64,", mediaType);
+            foreach (var property in block.Meta)
+            {
+                properties ??= new AdditionalPropertiesDictionary();
+                properties.Add(property.Key, property.Value);
+            }
         }
 
-#if NET8_0_OR_GREATER
-        string base64 = Encoding.UTF8.GetString(base64Utf8Data.Span);
-#else
-        string base64 = Encoding.UTF8.GetString(base64Utf8Data.ToArray());
-#endif
-
-        // If it's already a data URI, use it directly
-        if (base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        if (block is ResourceLinkBlock { Name: { Length: > 0 } name })
         {
-            return new DataContent(base64, mediaType);
+            properties ??= new AdditionalPropertiesDictionary();
+            properties.TryAdd(FilenameAdditionalPropertyName, name);
         }
 
-        return new DataContent($"data:{mediaType};base64,{base64}", mediaType);
+        return properties;
+    }
+
+    private static string SerializeToolsList(IEnumerable<Tool> tools)
+    {
+        using MemoryStream stream = new();
+        using (Utf8JsonWriter writer = new(stream, s_toolListJsonWriterOptions))
+        {
+            writer.WriteStartObject();
+            writer.WriteStartArray("tools");
+
+            foreach (Tool tool in tools)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("name", tool.Name);
+                writer.WriteString("description", tool.Description);
+                writer.WritePropertyName("inputSchema");
+                tool.InputSchema.WriteTo(writer);
+                writer.WritePropertyName("outputSchema");
+                if (tool.OutputSchema is JsonElement outputSchema)
+                {
+                    outputSchema.WriteTo(writer);
+                }
+                else
+                {
+                    writer.WriteNullValue();
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(stream.GetBuffer(), 0, (int)stream.Length);
     }
 }

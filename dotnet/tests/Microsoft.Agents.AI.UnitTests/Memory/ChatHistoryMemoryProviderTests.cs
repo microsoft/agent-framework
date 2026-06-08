@@ -270,16 +270,21 @@ public class ChatHistoryMemoryProviderTests
     }
 
     [Theory]
-    [InlineData(false, false, 0)]
-    [InlineData(true, false, 0)]
-    [InlineData(false, true, 2)]
-    [InlineData(true, true, 2)]
-    public async Task InvokedAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
+    [InlineData(false, false, false, 0)]
+    [InlineData(false, false, true, 0)]
+    [InlineData(true, false, false, 0)]
+    [InlineData(true, false, true, 0)]
+    [InlineData(false, true, false, 2)]
+    [InlineData(false, true, true, 2)]
+    [InlineData(true, true, false, 2)]
+    [InlineData(true, true, true, 2)]
+    public async Task InvokedAsync_RedactsLogDataBasedOnOptionsAsync(bool enableSensitiveTelemetryData, bool requestThrows, bool useCustomRedactor, int expectedLogInvocations)
     {
         // Arrange
         var options = new ChatHistoryMemoryProviderOptions
         {
-            EnableSensitiveTelemetryData = enableSensitiveTelemetryData
+            EnableSensitiveTelemetryData = enableSensitiveTelemetryData,
+            Redactor = useCustomRedactor ? new ReplacingRedactor("***") : null
         };
 
         if (requestThrows)
@@ -309,7 +314,7 @@ public class ChatHistoryMemoryProviderTests
         // Act
         await provider.InvokedAsync(invokedContext, CancellationToken.None);
 
-        // Assert
+        // Assert — EnableSensitiveTelemetryData takes precedence over Redactor
         Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
         foreach (var logInvocation in this._loggerMock.Invocations)
         {
@@ -320,7 +325,8 @@ public class ChatHistoryMemoryProviderTests
 
             var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
             var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
-            Assert.Equal(enableSensitiveTelemetryData ? "user1" : "<redacted>", userIdValue);
+            string expectedRedaction = enableSensitiveTelemetryData ? "user1" : (useCustomRedactor ? "***" : "<redacted>");
+            Assert.Equal(expectedRedaction, userIdValue);
         }
     }
 
@@ -526,17 +532,22 @@ public class ChatHistoryMemoryProviderTests
     }
 
     [Theory]
-    [InlineData(false, false, 2)]
-    [InlineData(true, false, 2)]
-    [InlineData(false, true, 2)]
-    [InlineData(true, true, 2)]
-    public async Task InvokingAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
+    [InlineData(false, false, false, 2)]
+    [InlineData(false, false, true, 2)]
+    [InlineData(true, false, false, 2)]
+    [InlineData(true, false, true, 2)]
+    [InlineData(false, true, false, 2)]
+    [InlineData(false, true, true, 2)]
+    [InlineData(true, true, false, 2)]
+    [InlineData(true, true, true, 2)]
+    public async Task InvokingAsync_RedactsLogDataBasedOnOptionsAsync(bool enableSensitiveTelemetryData, bool requestThrows, bool useCustomRedactor, int expectedLogInvocations)
     {
         // Arrange
         var options = new ChatHistoryMemoryProviderOptions
         {
             SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke,
-            EnableSensitiveTelemetryData = enableSensitiveTelemetryData
+            EnableSensitiveTelemetryData = enableSensitiveTelemetryData,
+            Redactor = useCustomRedactor ? new ReplacingRedactor("***") : null
         };
 
         var scope = new ChatHistoryMemoryProviderScope
@@ -578,7 +589,8 @@ public class ChatHistoryMemoryProviderTests
         // Act
         await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
-        // Assert
+        // Assert — EnableSensitiveTelemetryData takes precedence over Redactor
+        string expectedRedaction = enableSensitiveTelemetryData ? "user1" : (useCustomRedactor ? "***" : "<redacted>");
         Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
         foreach (var logInvocation in this._loggerMock.Invocations)
         {
@@ -589,18 +601,18 @@ public class ChatHistoryMemoryProviderTests
 
             var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
             var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
-            Assert.Equal(enableSensitiveTelemetryData ? "user1" : "<redacted>", userIdValue);
+            Assert.Equal(expectedRedaction, userIdValue);
 
             var inputValue = state.FirstOrDefault(kvp => kvp.Key == "Input").Value;
             if (inputValue != null)
             {
-                Assert.Equal(enableSensitiveTelemetryData ? "Who am I?" : "<redacted>", inputValue);
+                Assert.Equal(enableSensitiveTelemetryData ? "Who am I?" : expectedRedaction, inputValue);
             }
 
             var messageTextValue = state.FirstOrDefault(kvp => kvp.Key == "MessageText").Value;
             if (messageTextValue != null)
             {
-                Assert.Equal(enableSensitiveTelemetryData ? "## Memories\nConsider the following memories when answering user questions:\nName is Caoimhe" : "<redacted>", messageTextValue);
+                Assert.Equal(enableSensitiveTelemetryData ? "## Memories\nConsider the following memories when answering user questions:\nName is Caoimhe" : expectedRedaction, messageTextValue);
             }
         }
     }

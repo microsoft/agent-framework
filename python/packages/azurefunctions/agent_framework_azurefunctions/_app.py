@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 import azure.durable_functions as df
 import azure.functions as func
 from agent_framework import AgentExecutor, SupportsAgentRun, Workflow, WorkflowEvent
+from agent_framework._workflows._runner_context import YieldOutputEventType
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -124,16 +125,17 @@ class AgentFunctionApp(DFAppBase):
 
     .. code-block:: python
 
-        from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+        from agent_framework.azure import AgentFunctionApp
+        from agent_framework.openai import OpenAIChatCompletionClient
 
         # Create agents with unique names
-        weather_agent = AzureOpenAIChatClient(...).as_agent(
+        weather_agent = OpenAIChatCompletionClient(...).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=[get_weather],
         )
 
-        math_agent = AzureOpenAIChatClient(...).as_agent(
+        math_agent = OpenAIChatCompletionClient(...).as_agent(
             name="MathAgent",
             instructions="You are a helpful math assistant.",
             tools=[calculate],
@@ -306,6 +308,18 @@ class AgentFunctionApp(DFAppBase):
             async def run() -> dict[str, Any]:
                 # Create runner context and shared state
                 runner_context = CapturingRunnerContext()
+                workflow = self.workflow
+
+                def classify_yielded_output(executor_id: str) -> YieldOutputEventType | None:
+                    if workflow is None:
+                        return "output"
+                    if workflow.is_terminal_executor(executor_id):
+                        return "output"
+                    if workflow.is_intermediate_executor(executor_id):
+                        return "intermediate"
+                    return None
+
+                runner_context.set_yield_output_classifier(classify_yielded_output)
                 shared_state = State()
 
                 # Deserialize shared state values to reconstruct dataclasses/Pydantic models

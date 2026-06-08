@@ -6,9 +6,13 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 
 /// <summary>
-/// Transforms function metadata by registering durable agent functions for each configured agent.
+/// Transforms function metadata by registering durable agent functions for each explicitly configured agent.
 /// </summary>
-/// <remarks>This transformer adds both entity trigger and HTTP trigger functions for every agent registered in the application.</remarks>
+/// <remarks>
+/// This transformer adds entity, HTTP, and MCP tool trigger functions for agents that have
+/// explicit <see cref="FunctionsAgentOptions"/>. Agents auto-registered by workflows
+/// (which lack explicit options) are handled by <see cref="DurableWorkflowsFunctionMetadataTransformer"/>.
+/// </remarks>
 internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadataTransformer
 {
     private readonly ILogger<DurableAgentFunctionMetadataTransformer> _logger;
@@ -38,24 +42,27 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
         {
             string agentName = kvp.Key;
 
-            this._logger.LogRegisteringTriggerForAgent(agentName, "entity");
+            // Only generate triggers for agents with explicit Functions agent options.
+            // Agents auto-registered by workflows are handled by DurableWorkflowsFunctionMetadataTransformer.
+            if (!this._functionsAgentOptionsProvider.TryGet(agentName, out FunctionsAgentOptions? agentTriggerOptions))
+            {
+                continue;
+            }
 
+            this._logger.LogRegisteringTriggerForAgent(agentName, "entity");
             original.Add(FunctionMetadataFactory.CreateEntityTrigger(agentName));
 
-            if (this._functionsAgentOptionsProvider.TryGet(agentName, out FunctionsAgentOptions? agentTriggerOptions))
+            if (agentTriggerOptions.HttpTrigger.IsEnabled)
             {
-                if (agentTriggerOptions.HttpTrigger.IsEnabled)
-                {
-                    this._logger.LogRegisteringTriggerForAgent(agentName, "http");
-                    original.Add(FunctionMetadataFactory.CreateHttpTrigger(agentName, $"agents/{agentName}/run", BuiltInFunctions.RunAgentHttpFunctionEntryPoint));
-                }
+                this._logger.LogRegisteringTriggerForAgent(agentName, "http");
+                original.Add(FunctionMetadataFactory.CreateHttpTrigger(agentName, $"agents/{agentName}/run", BuiltInFunctions.RunAgentHttpFunctionEntryPoint));
+            }
 
-                if (agentTriggerOptions.McpToolTrigger.IsEnabled)
-                {
-                    AIAgent agent = kvp.Value(this._serviceProvider);
-                    this._logger.LogRegisteringTriggerForAgent(agentName, "mcpTool");
-                    original.Add(CreateMcpToolTrigger(agentName, agent.Description));
-                }
+            if (agentTriggerOptions.McpToolTrigger.IsEnabled)
+            {
+                AIAgent agent = kvp.Value(this._serviceProvider);
+                this._logger.LogRegisteringTriggerForAgent(agentName, "mcpTool");
+                original.Add(CreateMcpToolTrigger(agentName, agent.Description));
             }
         }
     }

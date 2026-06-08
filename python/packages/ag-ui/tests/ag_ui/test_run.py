@@ -5,6 +5,13 @@
 import pytest
 from ag_ui.core import (
     CustomEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
+    TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCallArgsEvent,
@@ -23,9 +30,13 @@ from agent_framework_ag_ui._agent_run import (
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
+    _close_reasoning_block,
     _emit_approval_request,
     _emit_content,
+    _emit_mcp_tool_call,
+    _emit_mcp_tool_result,
     _emit_text,
+    _emit_text_reasoning,
     _emit_tool_call,
     _emit_tool_result,
     _extract_resume_payload,
@@ -52,12 +63,12 @@ class TestBuildSafeMetadata:
         result = _build_safe_metadata(metadata)
         assert result == metadata
 
-    def test_truncates_long_strings(self):
-        """Truncates strings over 512 chars."""
+    def test_drops_long_strings(self):
+        """Drops strings over 512 chars instead of truncating."""
         long_value = "x" * 1000
         metadata = {"key": long_value}
         result = _build_safe_metadata(metadata)
-        assert len(result["key"]) == 512
+        assert "key" not in result
 
     def test_serializes_non_strings(self):
         """Serializes non-string values to JSON."""
@@ -66,12 +77,12 @@ class TestBuildSafeMetadata:
         assert result["count"] == "42"
         assert result["items"] == "[1, 2, 3]"
 
-    def test_truncates_serialized_values(self):
-        """Truncates serialized values over 512 chars."""
+    def test_drops_oversized_serialized_values(self):
+        """Drops serialized values over 512 chars instead of truncating."""
         long_list = list(range(200))
         metadata = {"data": long_list}
         result = _build_safe_metadata(metadata)
-        assert len(result["data"]) == 512
+        assert "data" not in result
 
 
 class TestHasOnlyToolCalls:
@@ -991,3 +1002,784 @@ def test_emit_oauth_consent_request_no_link():
     events = _emit_content(content, flow)
 
     assert len(events) == 0
+
+
+# ============================================================================
+# Tests for MCP tool call, MCP tool result, and text reasoning event emission
+# ============================================================================
+
+
+class TestEmitMcpToolCall:
+    """Tests for _emit_mcp_tool_call function."""
+
+    def test_produces_start_and_args_events(self):
+        """MCP tool call emits ToolCallStart + ToolCallArgs events."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="mcp_call_1",
+            tool_name="search",
+            server_name="brave",
+            arguments={"query": "weather"},
+        )
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert len(events) == 2
+        assert events[0].type == "TOOL_CALL_START"
+        assert events[0].tool_call_id == "mcp_call_1"
+        assert events[0].tool_call_name == "search"
+        assert events[1].type == "TOOL_CALL_ARGS"
+        assert events[1].tool_call_id == "mcp_call_1"
+        assert "weather" in events[1].delta
+
+    def test_tracks_in_flow_state(self):
+        """MCP tool call is tracked in flow.pending_tool_calls and tool_calls_by_id."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="mcp_call_2",
+            tool_name="get_file",
+            arguments='{"path": "/tmp/test.txt"}',
+        )
+
+        _emit_mcp_tool_call(content, flow)
+
+        assert len(flow.pending_tool_calls) == 1
+        assert flow.pending_tool_calls[0]["id"] == "mcp_call_2"
+        assert "mcp_call_2" in flow.tool_calls_by_id
+        assert flow.tool_calls_by_id["mcp_call_2"]["function"]["name"] == "get_file"
+        assert flow.tool_calls_by_id["mcp_call_2"]["function"]["arguments"] == '{"path": "/tmp/test.txt"}'
+
+    def test_no_server_name_uses_tool_name_only(self):
+        """Without server_name, display name is just tool_name."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="mcp_call_3",
+            tool_name="list_files",
+        )
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert events[0].tool_call_name == "list_files"
+
+    def test_no_arguments_skips_args_event(self):
+        """No arguments produces only ToolCallStart, no ToolCallArgs."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="mcp_call_4",
+            tool_name="ping",
+        )
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert len(events) == 1
+        assert events[0].type == "TOOL_CALL_START"
+
+    def test_generates_id_when_missing(self):
+        """A tool_call_id is generated when call_id is None."""
+        flow = FlowState()
+        content = Content(type="mcp_server_tool_call", tool_name="test_tool")
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert len(events) >= 1
+        assert events[0].tool_call_id is not None
+        assert events[0].tool_call_id != ""
+        assert events[0].tool_call_name == "test_tool"
+
+    def test_missing_tool_name_falls_back_to_mcp_tool(self):
+        """When tool_name is None, the fallback 'mcp_tool' is used."""
+        flow = FlowState()
+        content = Content(type="mcp_server_tool_call")
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert len(events) >= 1
+        assert events[0].tool_call_name == "mcp_tool"
+
+
+class TestEmitMcpToolResult:
+    """Tests for _emit_mcp_tool_result function."""
+
+    def test_produces_end_and_result_events(self):
+        """MCP tool result emits ToolCallEnd + ToolCallResult events."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_1",
+            output={"results": [{"title": "Weather", "url": "https://example.com"}]},
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        assert len(events) == 2
+        assert events[0].type == "TOOL_CALL_END"
+        assert events[0].tool_call_id == "mcp_call_1"
+        assert events[1].type == "TOOL_CALL_RESULT"
+        assert events[1].tool_call_id == "mcp_call_1"
+        assert "Weather" in events[1].content
+
+    def test_tracks_in_flow_state(self):
+        """MCP tool result is tracked in flow.tool_results and tool_calls_ended."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_5",
+            output="Success",
+        )
+
+        _emit_mcp_tool_result(content, flow)
+
+        assert "mcp_call_5" in flow.tool_calls_ended
+        assert len(flow.tool_results) == 1
+        assert flow.tool_results[0]["toolCallId"] == "mcp_call_5"
+        assert flow.tool_results[0]["content"] == "Success"
+
+    def test_no_call_id_returns_empty(self):
+        """Missing call_id returns empty events list with a warning."""
+        flow = FlowState()
+        content = Content(type="mcp_server_tool_result", output="data")
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        assert events == []
+
+    def test_serializes_non_string_output(self):
+        """Non-string output is serialized to JSON."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_6",
+            output={"key": "value", "count": 42},
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        result_event = events[1]
+        assert isinstance(result_event.content, str)
+        assert '"key": "value"' in result_event.content
+
+    def test_output_none_falls_back_to_empty_string(self):
+        """When output is None (default), the result content is an empty string."""
+        flow = FlowState()
+        content = Content(type="mcp_server_tool_result", call_id="mcp_call_none")
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        assert len(events) == 2
+        assert events[1].type == "TOOL_CALL_RESULT"
+        assert events[1].content == ""
+
+    def test_resets_flow_state_like_emit_tool_result(self):
+        """MCP tool result performs same FlowState cleanup as _emit_tool_result."""
+        flow = FlowState()
+        flow.tool_call_id = "mcp_call_7"
+        flow.tool_call_name = "brave/search"
+        flow.message_id = "open-msg-456"
+        flow.accumulated_text = "Let me search for that..."
+
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_7",
+            output="search results",
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        assert flow.tool_call_id is None
+        assert flow.tool_call_name is None
+        assert flow.message_id is None
+        assert flow.accumulated_text == ""
+
+        text_end_events = [e for e in events if isinstance(e, TextMessageEndEvent)]
+        assert len(text_end_events) == 1
+        assert text_end_events[0].message_id == "open-msg-456"
+
+    def test_no_open_message_skips_text_end(self):
+        """MCP tool result without open text message skips TextMessageEndEvent."""
+        flow = FlowState()
+        flow.message_id = None
+
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_8",
+            output="result",
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        text_end_events = [e for e in events if isinstance(e, TextMessageEndEvent)]
+        assert len(text_end_events) == 0
+
+    def test_predictive_handler_emits_state_snapshot(self):
+        """MCP tool result applies pending updates and emits StateSnapshotEvent when predictive_handler is set."""
+        from unittest.mock import MagicMock
+
+        from ag_ui.core import StateSnapshotEvent
+
+        flow = FlowState()
+        flow.current_state = {"doc": "hello"}
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_9",
+            output="done",
+        )
+
+        handler = MagicMock()
+        events = _emit_mcp_tool_result(content, flow, predictive_handler=handler)
+
+        handler.apply_pending_updates.assert_called_once()
+        snapshot_events = [e for e in events if isinstance(e, StateSnapshotEvent)]
+        assert len(snapshot_events) == 1
+        assert snapshot_events[0].snapshot == {"doc": "hello"}
+
+
+class TestEmitTextReasoning:
+    """Tests for _emit_text_reasoning function."""
+
+    def test_produces_reasoning_events(self):
+        """Text reasoning emits the full reasoning event sequence."""
+        content = Content.from_text_reasoning(
+            id="reason_1",
+            text="The user is asking about weather, so I should call the weather tool.",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        assert len(events) == 5
+        assert isinstance(events[0], ReasoningStartEvent)
+        assert events[0].message_id == "reason_1"
+        assert isinstance(events[1], ReasoningMessageStartEvent)
+        assert events[1].message_id == "reason_1"
+        assert events[1].role == "reasoning"
+        assert isinstance(events[2], ReasoningMessageContentEvent)
+        assert events[2].message_id == "reason_1"
+        assert events[2].delta == "The user is asking about weather, so I should call the weather tool."
+        assert isinstance(events[3], ReasoningMessageEndEvent)
+        assert events[3].message_id == "reason_1"
+        assert isinstance(events[4], ReasoningEndEvent)
+        assert events[4].message_id == "reason_1"
+
+    def test_protected_data_emits_encrypted_value_event(self):
+        """protected_data is emitted as a ReasoningEncryptedValueEvent."""
+        content = Content.from_text_reasoning(
+            id="reason_2",
+            text="visible reasoning",
+            protected_data="encrypted metadata",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        encrypted_events = [e for e in events if isinstance(e, ReasoningEncryptedValueEvent)]
+        assert len(encrypted_events) == 1
+        assert encrypted_events[0].subtype == "message"
+        assert encrypted_events[0].entity_id == "reason_2"
+        assert encrypted_events[0].encrypted_value == "encrypted metadata"
+
+    def test_protected_data_only_emits_event(self):
+        """Content with only protected_data (no text) still emits reasoning events."""
+        content = Content.from_text_reasoning(
+            protected_data="encrypted reasoning content",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        # Should have start, msg_start, msg_end, encrypted_value, end (no content event)
+        assert len(events) == 5
+        assert isinstance(events[0], ReasoningStartEvent)
+        assert isinstance(events[1], ReasoningMessageStartEvent)
+        assert isinstance(events[2], ReasoningMessageEndEvent)
+        assert isinstance(events[3], ReasoningEncryptedValueEvent)
+        assert events[3].encrypted_value == "encrypted reasoning content"
+        assert isinstance(events[4], ReasoningEndEvent)
+
+    def test_empty_text_and_no_protected_data_returns_empty(self):
+        """Empty text and no protected_data returns no events."""
+        content = Content.from_text_reasoning()
+
+        events = _emit_text_reasoning(content)
+
+        assert events == []
+
+    def test_generates_message_id_when_missing(self):
+        """When id is None, a message_id is generated."""
+        content = Content.from_text_reasoning(text="thinking...")
+
+        events = _emit_text_reasoning(content)
+
+        assert len(events) == 5
+        assert events[0].message_id is not None
+        assert events[0].message_id != ""
+        # All events share the same message_id
+        assert events[1].message_id == events[0].message_id
+
+
+class TestEmitContentMcpRouting:
+    """Tests that _emit_content correctly routes MCP and reasoning types."""
+
+    def test_routes_mcp_server_tool_call(self):
+        """_emit_content dispatches mcp_server_tool_call to _emit_mcp_tool_call."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="route_test_1",
+            tool_name="test_tool",
+            server_name="test_server",
+        )
+
+        events = _emit_content(content, flow)
+
+        assert len(events) >= 1
+        assert events[0].type == "TOOL_CALL_START"
+        assert events[0].tool_call_name == "test_tool"
+
+    def test_routes_mcp_server_tool_result(self):
+        """_emit_content dispatches mcp_server_tool_result to _emit_mcp_tool_result."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_result(
+            call_id="route_test_2",
+            output="result data",
+        )
+
+        events = _emit_content(content, flow)
+
+        assert len(events) == 2
+        assert events[0].type == "TOOL_CALL_END"
+        assert events[1].type == "TOOL_CALL_RESULT"
+
+    def test_routes_text_reasoning(self):
+        """_emit_content dispatches text_reasoning to _emit_text_reasoning."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(text="I need to think about this...")
+
+        events = _emit_content(content, flow)
+
+        # Streaming pattern: Start + MessageStart + Content (no End events yet)
+        assert len(events) == 3
+        assert isinstance(events[0], ReasoningStartEvent)
+        assert isinstance(events[1], ReasoningMessageStartEvent)
+        assert isinstance(events[2], ReasoningMessageContentEvent)
+
+
+class TestReasoningInSnapshot:
+    """Tests for reasoning message inclusion in MESSAGES_SNAPSHOT."""
+
+    def test_reasoning_persisted_to_flow_state(self):
+        """_emit_text_reasoning with flow persists reasoning into flow.reasoning_messages."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_persist",
+            text="Let me think step by step.",
+        )
+
+        _emit_text_reasoning(content, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["id"] == "reason_persist"
+        assert flow.reasoning_messages[0]["role"] == "reasoning"
+        assert flow.reasoning_messages[0]["content"] == "Let me think step by step."
+        assert "encryptedValue" not in flow.reasoning_messages[0]
+
+    def test_reasoning_with_encrypted_value_persisted(self):
+        """Reasoning with protected_data preserves encryptedValue in flow state."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_enc",
+            text="visible reasoning",
+            protected_data="encrypted-data-123",
+        )
+
+        _emit_text_reasoning(content, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["encryptedValue"] == "encrypted-data-123"
+
+    def test_snapshot_includes_reasoning(self):
+        """_build_messages_snapshot includes reasoning messages from flow state."""
+        from agent_framework_ag_ui._agent_run import _build_messages_snapshot
+
+        flow = FlowState()
+        flow.accumulated_text = "Here is my answer."
+        flow.reasoning_messages = [
+            {"id": "r1", "role": "reasoning", "content": "Thinking..."},
+        ]
+
+        snapshot = _build_messages_snapshot(flow, [])
+
+        roles = [m.get("role") if isinstance(m, dict) else getattr(m, "role", None) for m in snapshot.messages]
+        assert "reasoning" in roles
+
+    def test_snapshot_preserves_reasoning_encrypted_value(self):
+        """Snapshot reasoning with encryptedValue is preserved end-to-end."""
+        from agent_framework_ag_ui._agent_run import _build_messages_snapshot
+
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_e2e",
+            text="visible",
+            protected_data="secret-data",
+        )
+        _emit_text_reasoning(content, flow)
+
+        text_content = Content.from_text("Final answer.")
+        _emit_text(text_content, flow)
+
+        snapshot = _build_messages_snapshot(flow, [])
+
+        reasoning_msgs = [
+            m
+            for m in snapshot.messages
+            if (m.get("role") if isinstance(m, dict) else getattr(m, "role", None)) == "reasoning"
+        ]
+        assert len(reasoning_msgs) == 1
+        msg = reasoning_msgs[0]
+        if isinstance(msg, dict):
+            assert msg["content"] == "visible"
+            assert msg["encryptedValue"] == "secret-data"
+
+    def test_emit_content_routes_reasoning_with_flow(self):
+        """_emit_content passes flow to _emit_text_reasoning for persistence."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(text="routed reasoning")
+
+        _emit_content(content, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["content"] == "routed reasoning"
+
+    def test_reasoning_without_flow_does_not_error(self):
+        """Calling _emit_text_reasoning without flow still works (backward compat)."""
+        content = Content.from_text_reasoning(text="no flow")
+
+        events = _emit_text_reasoning(content)
+
+        assert len(events) == 5
+        assert isinstance(events[0], ReasoningStartEvent)
+
+    def test_snapshot_reasoning_ordering(self):
+        """Reasoning messages appear after assistant text in snapshot."""
+        from agent_framework_ag_ui._agent_run import _build_messages_snapshot
+
+        flow = FlowState()
+        reasoning_content = Content.from_text_reasoning(id="r1", text="Thinking...")
+        _emit_text_reasoning(reasoning_content, flow)
+
+        text_content = Content.from_text("Answer")
+        _emit_text(text_content, flow)
+
+        snapshot = _build_messages_snapshot(flow, [{"id": "u1", "role": "user", "content": "Hi"}])
+
+        # user -> assistant text -> reasoning
+        assert len(snapshot.messages) == 3
+        roles = [m.get("role") if isinstance(m, dict) else getattr(m, "role", None) for m in snapshot.messages]
+        assert roles == ["user", "assistant", "reasoning"]
+
+    def test_reasoning_accumulates_incremental_deltas(self):
+        """Multiple reasoning deltas with the same id accumulate into one entry."""
+        flow = FlowState()
+        content1 = Content.from_text_reasoning(id="reason_inc", text="First ")
+        content2 = Content.from_text_reasoning(id="reason_inc", text="second ")
+        content3 = Content.from_text_reasoning(id="reason_inc", text="third.")
+
+        _emit_text_reasoning(content1, flow)
+        _emit_text_reasoning(content2, flow)
+        _emit_text_reasoning(content3, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["id"] == "reason_inc"
+        assert flow.reasoning_messages[0]["content"] == "First second third."
+
+    def test_reasoning_accumulates_distinct_message_ids(self):
+        """Reasoning entries with different ids are stored separately."""
+        flow = FlowState()
+        content_a = Content.from_text_reasoning(id="a", text="alpha")
+        content_b = Content.from_text_reasoning(id="b", text="beta")
+
+        _emit_text_reasoning(content_a, flow)
+        _emit_text_reasoning(content_b, flow)
+
+        assert len(flow.reasoning_messages) == 2
+        assert flow.reasoning_messages[0]["content"] == "alpha"
+        assert flow.reasoning_messages[1]["content"] == "beta"
+
+    def test_reasoning_encrypted_value_updated_on_later_delta(self):
+        """encryptedValue is set even when it arrives with a later delta."""
+        flow = FlowState()
+        content1 = Content.from_text_reasoning(id="enc_late", text="part1 ")
+        content2 = Content.from_text_reasoning(id="enc_late", text="part2", protected_data="encrypted-payload")
+
+        _emit_text_reasoning(content1, flow)
+        _emit_text_reasoning(content2, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["content"] == "part1 part2"
+        assert flow.reasoning_messages[0]["encryptedValue"] == "encrypted-payload"
+
+    def test_reasoning_done_after_deltas_does_not_duplicate(self):
+        """A done-style content arriving after deltas does not duplicate accumulated text.
+
+        The upstream client should skip done events when deltas preceded them,
+        but if one leaks through, the accumulator must not double-append.
+        This test verifies that only the delta-produced text is stored.
+        """
+        flow = FlowState()
+        msg_id = "reason_dedup"
+
+        delta1 = Content.from_text_reasoning(id=msg_id, text="Hello ")
+        delta2 = Content.from_text_reasoning(id=msg_id, text="world")
+
+        _emit_text_reasoning(delta1, flow)
+        _emit_text_reasoning(delta2, flow)
+
+        # Accumulated text should equal the concatenation of deltas only
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["content"] == "Hello world"
+        assert flow.reasoning_messages[0]["id"] == msg_id
+
+    def test_reasoning_deltas_emit_one_content_event_each(self):
+        """Each reasoning delta emits exactly one ReasoningMessageContentEvent
+        within a single Start/End sequence (streaming pattern)."""
+        flow = FlowState()
+        msg_id = "reason_evt"
+
+        delta1 = Content.from_text_reasoning(id=msg_id, text="Think ")
+        delta2 = Content.from_text_reasoning(id=msg_id, text="hard")
+
+        events1 = _emit_text_reasoning(delta1, flow)
+        events2 = _emit_text_reasoning(delta2, flow)
+        close_events = _close_reasoning_block(flow)
+
+        all_events = events1 + events2 + close_events
+        content_events = [e for e in all_events if isinstance(e, ReasoningMessageContentEvent)]
+
+        assert len(content_events) == 2
+        assert content_events[0].delta == "Think "
+        assert content_events[1].delta == "hard"
+
+        # Streaming pattern: one Start/End sequence wrapping both content events
+        start_events = [e for e in all_events if isinstance(e, ReasoningStartEvent)]
+        end_events = [e for e in all_events if isinstance(e, ReasoningEndEvent)]
+        msg_start_events = [e for e in all_events if isinstance(e, ReasoningMessageStartEvent)]
+        msg_end_events = [e for e in all_events if isinstance(e, ReasoningMessageEndEvent)]
+        assert len(start_events) == 1
+        assert len(end_events) == 1
+        assert len(msg_start_events) == 1
+        assert len(msg_end_events) == 1
+
+    def test_reasoning_streaming_event_order(self):
+        """Streaming reasoning emits Start once, then Content per delta, then End on close."""
+        flow = FlowState()
+        msg_id = "reason_order"
+
+        d1 = Content.from_text_reasoning(id=msg_id, text="A ")
+        d2 = Content.from_text_reasoning(id=msg_id, text="B ")
+        d3 = Content.from_text_reasoning(id=msg_id, text="C")
+
+        events = []
+        events.extend(_emit_text_reasoning(d1, flow))
+        events.extend(_emit_text_reasoning(d2, flow))
+        events.extend(_emit_text_reasoning(d3, flow))
+        events.extend(_close_reasoning_block(flow))
+
+        assert isinstance(events[0], ReasoningStartEvent)
+        assert isinstance(events[1], ReasoningMessageStartEvent)
+        assert isinstance(events[2], ReasoningMessageContentEvent)
+        assert events[2].delta == "A "
+        assert isinstance(events[3], ReasoningMessageContentEvent)
+        assert events[3].delta == "B "
+        assert isinstance(events[4], ReasoningMessageContentEvent)
+        assert events[4].delta == "C"
+        assert isinstance(events[5], ReasoningMessageEndEvent)
+        assert isinstance(events[6], ReasoningEndEvent)
+        assert len(events) == 7
+
+    def test_close_reasoning_block_noop_when_not_open(self):
+        """_close_reasoning_block returns empty list when no reasoning block is open."""
+        flow = FlowState()
+        assert _close_reasoning_block(flow) == []
+
+    def test_close_reasoning_block_resets_state(self):
+        """_close_reasoning_block clears reasoning_message_id."""
+        flow = FlowState()
+        _emit_text_reasoning(Content.from_text_reasoning(id="r1", text="x"), flow)
+        assert flow.reasoning_message_id == "r1"
+
+        _close_reasoning_block(flow)
+        assert flow.reasoning_message_id is None
+
+    def test_emit_content_closes_reasoning_on_text(self):
+        """Switching from reasoning to text content auto-closes reasoning block."""
+        flow = FlowState()
+        reasoning = Content.from_text_reasoning(id="r1", text="thinking")
+        text = Content.from_text("answer")
+
+        r_events = _emit_content(reasoning, flow)
+        t_events = _emit_content(text, flow)
+
+        # reasoning events: Start + MsgStart + Content
+        assert isinstance(r_events[0], ReasoningStartEvent)
+        # text events should start with reasoning End events
+        assert isinstance(t_events[0], ReasoningMessageEndEvent)
+        assert isinstance(t_events[1], ReasoningEndEvent)
+        # then text start
+
+        assert isinstance(t_events[2], TextMessageStartEvent)
+        assert isinstance(t_events[3], TextMessageContentEvent)
+
+    def test_reasoning_distinct_ids_close_previous_block(self):
+        """Emitting reasoning with a new message_id auto-closes the previous block."""
+        flow = FlowState()
+        c1 = Content.from_text_reasoning(id="block1", text="first")
+        c2 = Content.from_text_reasoning(id="block2", text="second")
+
+        events1 = _emit_text_reasoning(c1, flow)
+        events2 = _emit_text_reasoning(c2, flow)
+        close = _close_reasoning_block(flow)
+
+        # events1: Start(block1) + MsgStart(block1) + Content(block1)
+        assert events1[0].message_id == "block1"
+        # events2: MsgEnd(block1) + End(block1) + Start(block2) + MsgStart(block2) + Content(block2)
+        assert isinstance(events2[0], ReasoningMessageEndEvent)
+        assert events2[0].message_id == "block1"
+        assert isinstance(events2[1], ReasoningEndEvent)
+        assert events2[1].message_id == "block1"
+        assert isinstance(events2[2], ReasoningStartEvent)
+        assert events2[2].message_id == "block2"
+        # close: MsgEnd(block2) + End(block2)
+        assert isinstance(close[0], ReasoningMessageEndEvent)
+        assert close[0].message_id == "block2"
+
+
+class TestReasoningEventRole:
+    """Tests that reasoning events use role='reasoning' per AG-UI spec."""
+
+    def test_reasoning_role_without_flow(self):
+        """ReasoningMessageStartEvent uses role='reasoning' in non-flow mode."""
+        content = Content.from_text_reasoning(
+            id="reason_role_1",
+            text="Thinking about the question.",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        msg_starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
+        assert len(msg_starts) == 1
+        assert msg_starts[0].role == "reasoning"
+
+    def test_reasoning_role_with_flow(self):
+        """ReasoningMessageStartEvent uses role='reasoning' in streaming flow mode."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_role_2",
+            text="Reasoning in streaming mode.",
+        )
+
+        events = _emit_text_reasoning(content, flow)
+
+        msg_starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
+        assert len(msg_starts) == 1
+        assert msg_starts[0].role == "reasoning"
+
+
+async def test_session_id_matches_thread_id():
+    """Session created by run_agent_stream uses the client thread_id as session_id."""
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub)
+
+    payload = {
+        "thread_id": "my-thread-123",
+        "run_id": "run-1",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "my-thread-123"
+
+
+async def test_session_id_matches_camel_case_thread_id():
+    """Session uses threadId (camelCase) as session_id when snake_case is absent."""
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub)
+
+    payload = {
+        "threadId": "camel-thread-456",
+        "run_id": "run-2",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "camel-thread-456"
+
+
+async def test_session_id_matches_thread_id_with_service_session():
+    """Session uses thread_id as session_id even when use_service_session is enabled."""
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-3",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "service-thread-789"
+    assert stub.last_session.service_session_id == "service-thread-789"
+
+
+async def test_session_id_generated_when_no_thread_id():
+    """Session gets a generated UUID as session_id when no thread_id is provided."""
+    import uuid
+
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub)
+
+    payload = {
+        "run_id": "run-4",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    # Should be a valid UUID (auto-generated)
+    uuid.UUID(stub.last_session.session_id)
+
+
+async def test_service_session_no_thread_id_generates_uuid():
+    """With use_service_session=True and no thread_id, session_id is a UUID and service_session_id is None."""
+    import uuid
+
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+
+    payload = {
+        "run_id": "run-5",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    # session_id should be a valid auto-generated UUID
+    uuid.UUID(stub.last_session.session_id)
+    # service_session_id should be None since no thread_id was supplied
+    assert stub.last_session.service_session_id is None

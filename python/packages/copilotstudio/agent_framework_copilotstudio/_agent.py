@@ -11,8 +11,8 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
-    BaseContextProvider,
     Content,
+    ContextProvider,
     Message,
     ResponseStream,
     normalize_messages,
@@ -60,7 +60,7 @@ class CopilotStudioAgent(BaseAgent):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: list[AgentMiddlewareTypes] | None = None,
         environment_id: str | None = None,
         agent_identifier: str | None = None,
@@ -244,7 +244,8 @@ class CopilotStudioAgent(BaseAgent):
         """Non-streaming implementation of run."""
         if not session:
             session = self.create_session()
-        session.service_session_id = await self._start_new_conversation()
+        if not session.service_session_id:
+            session.service_session_id = await self._start_new_conversation()
 
         input_messages = normalize_messages(messages)
 
@@ -271,7 +272,8 @@ class CopilotStudioAgent(BaseAgent):
             nonlocal session
             if not session:
                 session = self.create_session()
-            session.service_session_id = await self._start_new_conversation()
+            if not session.service_session_id:
+                session.service_session_id = await self._start_new_conversation()
 
             input_messages = normalize_messages(messages)
 

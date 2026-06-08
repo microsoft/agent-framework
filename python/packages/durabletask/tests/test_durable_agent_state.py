@@ -11,6 +11,7 @@ from agent_framework import Content, Message, UsageDetails
 from agent_framework_durabletask._durable_agent_state import (
     DurableAgentState,
     DurableAgentStateContent,
+    DurableAgentStateFunctionCallContent,
     DurableAgentStateMessage,
     DurableAgentStateRequest,
     DurableAgentStateTextContent,
@@ -216,6 +217,38 @@ class TestDurableAgentState:
         assert restored.schema_version == state.schema_version
         assert len(restored.data.conversation_history) == len(state.data.conversation_history)
         assert restored.data.conversation_history[0].correlation_id == "test-456"
+
+    def test_function_call_round_trip_preserves_string_arguments(self) -> None:
+        """Function call arguments should remain strings across durable state replay."""
+        original = Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call-123",
+                    name="get_weather",
+                    arguments='{"location":"Chicago"}',
+                )
+            ],
+        )
+
+        durable_message = DurableAgentStateMessage.from_chat_message(original)
+        restored = durable_message.to_chat_message()
+
+        assert restored.contents[0].type == "function_call"
+        assert restored.contents[0].arguments == '{"location": "Chicago"}'
+
+    def test_function_call_content_supports_legacy_mapping_arguments(self) -> None:
+        """Existing persisted mapping arguments should still restore successfully."""
+        content = DurableAgentStateFunctionCallContent(
+            call_id="call-123",
+            name="get_weather",
+            arguments={"location": "Chicago"},
+        )
+
+        restored = content.to_ai_content()
+
+        assert restored.type == "function_call"
+        assert restored.arguments == '{"location": "Chicago"}'
 
 
 class TestDurableAgentStateUsage:

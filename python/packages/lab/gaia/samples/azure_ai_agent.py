@@ -6,8 +6,8 @@ This module provides a factory function to create an Azure AI agent
 configured for GAIA benchmark tasks.
 
 Required Environment Variables:
-    AZURE_AI_PROJECT_ENDPOINT: Azure AI project endpoint URL
-    AZURE_AI_MODEL_DEPLOYMENT_NAME: Name of the model deployment to use
+    FOUNDRY_PROJECT_ENDPOINT: Azure AI project endpoint URL
+    FOUNDRY_MODEL: Name of the model deployment to use
 
 Optional Environment Variables:
     BING_CONNECTION_ID: ID of the Bing connection for web search
@@ -17,17 +17,18 @@ Authentication:
     Run `az login` before executing to authenticate.
 
 Example:
-    export AZURE_AI_PROJECT_ENDPOINT="https://your-project.azure.com"
-    export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"
+    export FOUNDRY_PROJECT_ENDPOINT="https://your-project.azure.com"
+    export FOUNDRY_MODEL="gpt-4o"
     export BING_CONNECTION_ID="connection-id"
     az login
 """
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from agent_framework import Agent
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
 
@@ -49,13 +50,17 @@ async def create_gaia_agent() -> AsyncIterator[Agent]:
     """
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=credential,
+        ).as_agent(
             name="GaiaAgent",
             instructions="Solve tasks to your best ability. Use Bing Search to find "
             "information and Code Interpreter to perform calculations and data analysis.",
             tools=[
-                AzureAIAgentClient.get_web_search_tool(),
-                AzureAIAgentClient.get_code_interpreter_tool(),
+                FoundryChatClient.get_web_search_tool(),
+                FoundryChatClient.get_code_interpreter_tool(),
             ],
         ) as agent,
     ):

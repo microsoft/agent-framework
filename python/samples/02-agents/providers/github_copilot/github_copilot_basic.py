@@ -19,6 +19,7 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.github import GitHubCopilotAgent
+from copilot.session import PermissionHandler
 from dotenv import load_dotenv
 from pydantic import Field
 
@@ -45,6 +46,7 @@ async def non_streaming_example() -> None:
     agent = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
     )
 
     async with agent:
@@ -61,6 +63,7 @@ async def streaming_example() -> None:
     agent = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
     )
 
     async with agent:
@@ -80,6 +83,7 @@ async def runtime_options_example() -> None:
     agent = GitHubCopilotAgent(
         instructions="Always respond in exactly 3 words.",
         tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
     )
 
     async with agent:

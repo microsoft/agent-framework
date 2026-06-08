@@ -140,8 +140,9 @@ def evaluate(result: AgentResponse, ground_truth: str) -> float:
 AGENT_INSTRUCTION = """
 Solve the following math problem. Use the calculator tool to help you calculate math expressions.
 
-Output the answer when you are ready. The answer should be after three sharps (`###`), with no extra punctuations or texts. For example: ### 123
-""".strip()  # noqa: E501
+Output the answer when you are ready. The answer should be after three sharps (`###`),
+with no extra punctuations or texts. For example: ### 123
+""".strip()
 
 
 # The @rollout decorator is the key integration point with agent-lightning.
@@ -168,7 +169,7 @@ async def math_agent(task: MathProblem, llm: LLM) -> float:
         MCPStdioTool(name="calculator", command="uvx", args=["mcp-server-calculator"]) as mcp_server,
         Agent(
             client=OpenAIChatClient(
-                model_id=llm.model,  # This is the model being trained
+                model=llm.model,  # This is the model being trained
                 api_key=os.getenv("OPENAI_API_KEY") or "dummy",  # Can be dummy when connecting to training LLM
                 base_url=llm.endpoint,  # vLLM server endpoint provided by agent-lightning
             ),

@@ -15,16 +15,16 @@ pip install agent-framework-ag-ui
 ```python
 from fastapi import FastAPI
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Create your agent
 agent = Agent(
     name="my_agent",
     instructions="You are a helpful assistant.",
-    client=AzureOpenAIChatClient(
-        endpoint="https://your-resource.openai.azure.com/",
-        deployment_name="gpt-4o-mini",
+    client=OpenAIChatCompletionClient(
+        azure_endpoint="https://your-resource.openai.azure.com/",
+        model="gpt-4o-mini",
         api_key="your-api-key",
     ),
 )
@@ -98,6 +98,30 @@ The `AGUIChatClient` supports:
 - Automatic thread management for conversation continuity
 - Integration with `Agent` for client-side history management
 - Interrupt metadata passthrough (`availableInterrupts` and `resume`)
+
+## Tool Return Helpers
+
+Use `state_update` when a backend tool needs to send different payloads to the model, the UI, and shared state. The `text` value remains the LLM-bound tool result, `tool_result` becomes the AG-UI `ToolCallResultEvent.content` for frontend rendering, and `state` is merged into durable shared state.
+
+```python
+from agent_framework import Content, tool
+from agent_framework.ag_ui import state_update
+
+@tool
+async def get_weather(city: str) -> Content:
+    data = await fetch_weather(city)
+    return state_update(
+        text=f"{city}: {data['temp']}°C and {data['conditions']}",
+        tool_result={
+            "component": "weather-card",
+            "city": city,
+            "temperature": data["temp"],
+            "conditions": data["conditions"],
+            "humidity": data["humidity"],
+        },
+        state={"weather": {"city": city, **data}},
+    )
+```
 
 ## Documentation
 

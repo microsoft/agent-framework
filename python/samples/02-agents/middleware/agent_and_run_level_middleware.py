@@ -7,13 +7,14 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentContext,
     AgentMiddleware,
     AgentResponse,
     FunctionInvocationContext,
     tool,
 )
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -51,10 +52,10 @@ Agent Middleware Execution Order:
     - Run middleware wraps only the agent for that specific run
     - Each middleware can modify the context before AND after calling next()
 
-    Note: Function and chat middleware (e.g., ``function_logging_middleware``) execute
-    during tool invocation *inside* the agent execution, not in the outer agent-middleware
-    chain shown above. They follow the same ordering principle: agent-level function/chat
-    middleware runs before run-level function/chat middleware.
+    Note: Function middleware executes during tool invocation, and chat middleware
+    executes around each model call inside the agent execution, not in the outer
+    agent-middleware chain shown above. They follow the same ordering principle:
+    agent-level function/chat middleware runs before run-level function/chat middleware.
 """
 
 
@@ -194,7 +195,8 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,

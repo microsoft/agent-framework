@@ -11,7 +11,7 @@
 import asyncio
 from typing import Any
 
-import tiktoken
+import tiktoken  # type: ignore
 from agent_framework import (
     Message,
     TokenizerProtocol,
@@ -33,9 +33,9 @@ Key components:
 class TiktokenTokenizer(TokenizerProtocol):
     """TokenizerProtocol implementation backed by tiktoken's o200k_base (gpt-4.1 and up default) encoding."""
 
-    def __init__(self, *, encoding_name: str = "o200k_base", model_name: str | None = None) -> None:
-        if model_name is not None:
-            self._encoding = tiktoken.encoding_for_model(model_name)
+    def __init__(self, *, encoding_name: str = "o200k_base", model: str | None = None) -> None:
+        if model is not None:
+            self._encoding = tiktoken.encoding_for_model(model)
         else:
             self._encoding: Any = tiktoken.get_encoding(encoding_name)
 
@@ -45,30 +45,34 @@ class TiktokenTokenizer(TokenizerProtocol):
 
 def _build_messages() -> list[Message]:
     return [
-        Message(role="system", text="You are a migration assistant."),
+        Message(role="system", contents=["You are a migration assistant."]),
         Message(
             role="user",
-            text="List all migration risks and include detailed mitigations for each risk category.",
+            contents=["List all migration risks and include detailed mitigations for each risk category."],
         ),
         Message(
             role="assistant",
-            text=(
-                "Primary risks include schema drift, missing foreign key constraints, "
-                "and data quality regressions. Mitigations include staged validation, "
-                "shadow writes, and replay-based verification."
-            ),
+            contents=[
+                (
+                    "Primary risks include schema drift, missing foreign key constraints, "
+                    "and data quality regressions. Mitigations include staged validation, "
+                    "shadow writes, and replay-based verification."
+                )
+            ],
         ),
         Message(
             role="user",
-            text=("Now provide a detailed checklist with owners, rollback gates, and validation criteria."),
+            contents=[("Now provide a detailed checklist with owners, rollback gates, and validation criteria.")],
         ),
         Message(
             role="assistant",
-            text=(
-                "Checklist: baseline snapshots, migration dry-run, production "
-                "canary, progressive deployment, automated integrity checks, and "
-                "post-migration reconciliation."
-            ),
+            contents=[
+                (
+                    "Checklist: baseline snapshots, migration dry-run, production "
+                    "canary, progressive deployment, automated integrity checks, and "
+                    "post-migration reconciliation."
+                )
+            ],
         ),
     ]
 
