@@ -17,12 +17,14 @@ internal static class AgentInlineSkillContentBuilder
     /// <param name="name">The skill name.</param>
     /// <param name="description">The skill description.</param>
     /// <param name="instructions">The raw instructions text.</param>
+    /// <param name="resources">Optional resources associated with the skill.</param>
     /// <param name="scripts">Optional scripts associated with the skill.</param>
     /// <returns>An XML-structured content string.</returns>
     public static string Build(
         string name,
         string description,
         string instructions,
+        IReadOnlyList<AgentSkillResource>? resources,
         IReadOnlyList<AgentSkillScript>? scripts)
     {
         _ = Throw.IfNullOrWhitespace(name);
@@ -37,10 +39,19 @@ internal static class AgentInlineSkillContentBuilder
         .Append(EscapeXmlString(instructions))
         .Append("\n</instructions>");
 
+        if (resources is not { Count: > 0 })
+        {
+            sb.Append("\n<resources />");
+        }
+
         if (scripts is { Count: > 0 })
         {
             sb.Append('\n');
             sb.Append(BuildScriptSchemasBlock(scripts));
+        }
+        else
+        {
+            sb.Append("\n<script_schemas />");
         }
 
         return sb.ToString();

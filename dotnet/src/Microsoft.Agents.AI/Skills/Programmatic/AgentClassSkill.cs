@@ -114,6 +114,7 @@ public abstract class AgentClassSkill<
             this.Frontmatter.Name,
             this.Frontmatter.Description,
             this.Instructions,
+            this.Resources,
             this.Scripts));
     }
 

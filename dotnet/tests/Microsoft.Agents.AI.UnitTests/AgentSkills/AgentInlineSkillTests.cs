@@ -417,7 +417,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public async Task Content_NoResourcesOrScripts_DoesNotContainResourcesOrScriptsTagsAsync()
+    public async Task Content_NoResourcesOrScripts_EmitsEmptyCapabilityMarkersAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -426,6 +426,8 @@ public sealed class AgentInlineSkillTests
         var content = await skill.GetContentAsync();
 
         // Assert
+        Assert.Contains("<resources />", content);
+        Assert.Contains("<script_schemas />", content);
         Assert.DoesNotContain("<resources>", content);
         Assert.DoesNotContain("<script_schemas>", content);
     }
@@ -443,6 +445,7 @@ public sealed class AgentInlineSkillTests
 
         // Assert — the late resource should not appear because content was cached
         Assert.DoesNotContain("late-resource", content);
+        Assert.Contains("<resources />", content);
     }
 
     [Fact]
@@ -458,6 +461,7 @@ public sealed class AgentInlineSkillTests
 
         // Assert — the late script should not appear because content was cached
         Assert.DoesNotContain("late-script", content);
+        Assert.Contains("<script_schemas />", content);
     }
 
     [Fact]

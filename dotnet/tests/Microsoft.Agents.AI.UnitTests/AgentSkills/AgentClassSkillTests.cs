@@ -398,6 +398,22 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
+    public async Task Content_NoResourcesOrScripts_EmitsEmptyCapabilityMarkersAsync()
+    {
+        // Arrange
+        var skill = new NoAttributesNoOverridesSkill();
+
+        // Act
+        var content = await skill.GetContentAsync();
+
+        // Assert
+        Assert.Contains("<resources />", content);
+        Assert.Contains("<script_schemas />", content);
+        Assert.DoesNotContain("<resources>", content);
+        Assert.DoesNotContain("<script_schemas>", content);
+    }
+
+    [Fact]
     public void NoAttributedMembers_NoOverrides_ReturnsNull()
     {
         // Arrange — skill with no attributes and no overrides; base discovery returns null (not empty list)

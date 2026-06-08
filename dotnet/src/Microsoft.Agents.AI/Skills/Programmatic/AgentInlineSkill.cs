@@ -95,7 +95,12 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <inheritdoc/>
     public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
-        return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._scripts));
+        return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(
+            this.Frontmatter.Name,
+            this.Frontmatter.Description,
+            this._instructions,
+            this._resources,
+            this._scripts));
     }
 
     /// <inheritdoc/>
