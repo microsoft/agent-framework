@@ -4,6 +4,7 @@
 
 import importlib.metadata
 
+from ._async_bridge import run_agent_coroutine
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._client import DurableAIAgentClient
 from ._constants import (
@@ -50,6 +51,13 @@ from ._orchestration_context import DurableAIAgentOrchestrationContext
 from ._response_utils import ensure_response_format, load_agent_response
 from ._shim import DurableAIAgent
 from ._worker import DurableAIAgentWorker
+from ._workflow_activity import execute_workflow_activity
+from ._workflow_client import DurableWorkflowClient
+from ._workflow_context import WorkflowOrchestrationContext
+from ._workflow_dt_context import DurableTaskWorkflowContext
+from ._workflow_orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
+from ._workflow_registration import WorkflowRegistrationPlan, plan_workflow_registration
+from ._workflow_runner_context import CapturingRunnerContext
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -67,12 +75,14 @@ __all__ = [
     "THREAD_ID_HEADER",
     "WAIT_FOR_RESPONSE_FIELD",
     "WAIT_FOR_RESPONSE_HEADER",
+    "WORKFLOW_ORCHESTRATOR_NAME",
     "AgentCallbackContext",
     "AgentEntity",
     "AgentEntityStateProviderMixin",
     "AgentResponseCallbackProtocol",
     "AgentSessionId",
     "ApiResponseFields",
+    "CapturingRunnerContext",
     "ContentTypes",
     "DurableAIAgent",
     "DurableAIAgentClient",
@@ -101,8 +111,16 @@ __all__ = [
     "DurableAgentStateUsage",
     "DurableAgentStateUsageContent",
     "DurableStateFields",
+    "DurableTaskWorkflowContext",
+    "DurableWorkflowClient",
     "RunRequest",
+    "WorkflowOrchestrationContext",
+    "WorkflowRegistrationPlan",
     "__version__",
     "ensure_response_format",
+    "execute_workflow_activity",
     "load_agent_response",
+    "plan_workflow_registration",
+    "run_agent_coroutine",
+    "run_workflow_orchestrator",
 ]
