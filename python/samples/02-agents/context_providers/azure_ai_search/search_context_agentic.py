@@ -100,7 +100,7 @@ async def main() -> None:
             credential=AzureCliCredential() if not search_key else None,
             mode="agentic",
             azure_openai_resource_url=azure_openai_resource_url,
-            model_deployment_name=model_deployment,
+            model=model_deployment,
             # Optional: Configure retrieval behavior
             knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
             retrieval_reasoning_effort="minimal",  # or "medium", "low"

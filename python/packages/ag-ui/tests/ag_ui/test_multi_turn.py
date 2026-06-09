@@ -13,10 +13,13 @@ import json
 from typing import Any
 
 from agent_framework import AgentResponseUpdate, Content
-from conftest import StubAgent
+from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sse_helpers import parse_sse_response, parse_sse_to_event_stream
+from sse_helpers import (  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+    parse_sse_response,
+    parse_sse_to_event_stream,
+)
 
 from agent_framework_ag_ui import AgentFrameworkAgent, add_agent_framework_fastapi_endpoint
 
@@ -152,7 +155,7 @@ async def test_approval_interrupt_resume_round_trip() -> None:
     The confirm_changes flow uses a specific message format that bypasses the agent
     and directly emits a confirmation text message.
     """
-    from event_stream import EventStream
+    from event_stream import EventStream  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
     steps = [{"description": "Execute task", "status": "enabled"}]
 
@@ -268,7 +271,7 @@ async def test_approval_interrupt_resume_round_trip() -> None:
 
 async def test_workflow_interrupt_resume_round_trip() -> None:
     """Turn 1: workflow request_info → interrupt. Turn 2: resume → completion."""
-    from event_stream import EventStream
+    from event_stream import EventStream  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
     from agent_framework_ag_ui_examples.agents.subgraphs_agent import subgraphs_agent
 

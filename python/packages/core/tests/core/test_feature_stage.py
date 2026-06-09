@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import warnings
+from collections.abc import Generator
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
@@ -45,7 +46,7 @@ class HelperReleaseCandidateFeature(str, Enum):
 
 
 @pytest.fixture(autouse=True)
-def clear_feature_warning_state() -> None:
+def clear_feature_warning_state() -> Generator[None]:  # type: ignore[misc]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
     _WARNED_FEATURES.clear()
     yield
     _WARNED_FEATURES.clear()
@@ -60,7 +61,7 @@ def test_experimental_decorator_accepts_feature_enum() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
-        @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+        @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         def skill_function() -> None:
             pass
 
@@ -72,14 +73,14 @@ def test_experimental_decorator_accepts_feature_enum() -> None:
     assert len(caught) == 1
     assert f"[{AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value}]" in str(caught[0].message)
     assert "skill_function" in str(caught[0].message)
-    assert skill_function.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value
+    assert skill_function.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 def test_experimental_function_warns_on_call_and_not_on_definition() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
-        @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+        @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         def my_function(value: int) -> int:
             """Double the input.
 
@@ -100,8 +101,8 @@ def test_experimental_function_warns_on_call_and_not_on_definition() -> None:
     assert len(caught) == 1
     assert f"[{AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value}]" in str(caught[0].message)
     assert "my_function" in str(caught[0].message)
-    assert my_function.__feature_stage__ == "experimental"
-    assert my_function.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value
+    assert my_function.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert my_function.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert my_function.__doc__ is not None
     lines = my_function.__doc__.splitlines()
     warning_index = next(i for i, line in enumerate(lines) if line == ".. warning:: Experimental")
@@ -113,7 +114,7 @@ def test_experimental_class_warns_on_instantiation_and_not_on_definition() -> No
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
-        @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+        @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         class ExperimentalClass:
             """An experimental class.
 
@@ -127,7 +128,7 @@ def test_experimental_class_warns_on_instantiation_and_not_on_definition() -> No
     assert not caught
 
     with warnings.catch_warnings(record=True) as caught:
-        instantiation_line = inspect.currentframe().f_lineno + 1
+        instantiation_line = inspect.currentframe().f_lineno + 1  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         instance = ExperimentalClass(4)
         second_instance = ExperimentalClass(5)
 
@@ -138,8 +139,8 @@ def test_experimental_class_warns_on_instantiation_and_not_on_definition() -> No
     assert caught[0].lineno == instantiation_line
     assert instance.value == 4
     assert second_instance.value == 5
-    assert ExperimentalClass.__feature_stage__ == "experimental"
-    assert ExperimentalClass.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value
+    assert ExperimentalClass.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert ExperimentalClass.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 def test_experimental_abc_subclass_warning_points_at_user_file() -> None:
@@ -151,14 +152,14 @@ def test_experimental_abc_subclass_warning_points_at_user_file() -> None:
     """
     from abc import ABC, abstractmethod
 
-    @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+    @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     class ExperimentalABC(ABC):
         @abstractmethod
         def do(self) -> int: ...
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        subclass_line = inspect.currentframe().f_lineno + 1
+        subclass_line = inspect.currentframe().f_lineno + 1  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
         class Concrete(ExperimentalABC):
             def do(self) -> int:
@@ -180,7 +181,7 @@ def test_experimental_runtime_checkable_protocol_keeps_protocol_runtime_checks()
         warnings.simplefilter("always")
 
         @runtime_checkable
-        @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+        @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         class ExampleProtocol(Protocol):
             """A protocol used for runtime checks.
 
@@ -206,11 +207,11 @@ def test_experimental_warning_is_emitted_once_per_feature() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
-        @experimental(feature_id=AlternateExperimentalFeature.SHARED_FEATURE)  # type: ignore[arg-type]
+        @experimental(feature_id=AlternateExperimentalFeature.SHARED_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         def first() -> None:
             pass
 
-        @experimental(feature_id=AlternateExperimentalFeature.SHARED_FEATURE)  # type: ignore[arg-type]
+        @experimental(feature_id=AlternateExperimentalFeature.SHARED_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         class Second:
             pass
 
@@ -260,8 +261,8 @@ def test_release_candidate_internal_helper_adds_metadata_without_runtime_warning
 
     assert instance.value == 5
     assert not caught
-    assert ReleaseCandidateClass.__feature_stage__ == "release_candidate"
-    assert ReleaseCandidateClass.__feature_id__ == HelperReleaseCandidateFeature.RC_FEATURE.value
+    assert ReleaseCandidateClass.__feature_stage__ == "release_candidate"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert ReleaseCandidateClass.__feature_id__ == HelperReleaseCandidateFeature.RC_FEATURE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert ReleaseCandidateClass.__doc__ is not None
     assert ".. note:: Release candidate" in ReleaseCandidateClass.__doc__
 
@@ -272,7 +273,7 @@ def test_experimental_property_warns_on_access_and_not_on_definition() -> None:
 
         class Example:
             @property
-            @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+            @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             def value(self) -> int:
                 """Return the value.
 
@@ -302,7 +303,7 @@ def test_experimental_staticmethod_warns_when_decorator_wraps_descriptor() -> No
         warnings.simplefilter("always")
 
         class Example:
-            @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+            @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             @staticmethod
             def value() -> int:
                 """Return the value.
@@ -321,7 +322,7 @@ def test_experimental_staticmethod_warns_when_decorator_wraps_descriptor() -> No
     assert len(caught) == 1
     assert f"[{AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value}]" in str(caught[0].message)
     assert "Example.value" in str(caught[0].message)
-    assert Example.value.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value
+    assert Example.value.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert Example.value.__doc__ is not None
     lines = Example.value.__doc__.splitlines()
     warning_index = next(i for i, line in enumerate(lines) if line == ".. warning:: Experimental")
@@ -334,7 +335,7 @@ def test_experimental_classmethod_warns_when_decorator_wraps_descriptor() -> Non
         warnings.simplefilter("always")
 
         class Example:
-            @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+            @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             @classmethod
             def value(cls) -> int:
                 """Return the value.
@@ -353,7 +354,7 @@ def test_experimental_classmethod_warns_when_decorator_wraps_descriptor() -> Non
     assert len(caught) == 1
     assert f"[{AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value}]" in str(caught[0].message)
     assert "Example.value" in str(caught[0].message)
-    assert Example.value.__func__.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value
+    assert Example.value.__func__.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert Example.value.__doc__ is not None
     lines = Example.value.__doc__.splitlines()
     warning_index = next(i for i, line in enumerate(lines) if line == ".. warning:: Experimental")
@@ -382,14 +383,14 @@ def test_feature_id_allows_lowercase_values() -> None:
     assert len(caught) == 1
     assert "[skills]" in str(caught[0].message)
     assert "lowercase_feature" in str(caught[0].message)
-    assert lowercase_feature.__feature_id__ == "skills"
+    assert lowercase_feature.__feature_id__ == "skills"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 def test_experimental_decorator_allows_string_feature_id_at_runtime() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
-        @experimental(feature_id="STRING_FEATURE")  # type: ignore[arg-type]
+        @experimental(feature_id="STRING_FEATURE")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         def skill_function() -> None:
             pass
 
@@ -401,14 +402,14 @@ def test_experimental_decorator_allows_string_feature_id_at_runtime() -> None:
     assert len(caught) == 1
     assert "[STRING_FEATURE]" in str(caught[0].message)
     assert "skill_function" in str(caught[0].message)
-    assert skill_function.__feature_id__ == "STRING_FEATURE"
+    assert skill_function.__feature_id__ == "STRING_FEATURE"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 def test_experimental_decorator_allows_other_enum_values_at_runtime() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
-        @experimental(feature_id=AlternateExperimentalFeature.ALTERNATE_FEATURE)  # type: ignore[arg-type]
+        @experimental(feature_id=AlternateExperimentalFeature.ALTERNATE_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         def my_function() -> None:
             pass
 
@@ -420,20 +421,20 @@ def test_experimental_decorator_allows_other_enum_values_at_runtime() -> None:
     assert len(caught) == 1
     assert f"[{AlternateExperimentalFeature.ALTERNATE_FEATURE.value}]" in str(caught[0].message)
     assert "my_function" in str(caught[0].message)
-    assert my_function.__feature_id__ == AlternateExperimentalFeature.ALTERNATE_FEATURE.value
+    assert my_function.__feature_id__ == AlternateExperimentalFeature.ALTERNATE_FEATURE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 def test_release_candidate_decorator_allows_string_feature_id_at_runtime() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
-        @release_candidate(feature_id="RC_FEATURE")  # type: ignore[arg-type]
+        @release_candidate(feature_id="RC_FEATURE")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         class ReleaseCandidateClass:
             """A release-candidate class."""
 
     assert not caught
-    assert ReleaseCandidateClass.__feature_stage__ == "release_candidate"
-    assert ReleaseCandidateClass.__feature_id__ == "RC_FEATURE"
+    assert ReleaseCandidateClass.__feature_stage__ == "release_candidate"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert ReleaseCandidateClass.__feature_id__ == "RC_FEATURE"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 def test_feature_id_stringifies_non_string_enum_values() -> None:
@@ -457,4 +458,4 @@ def test_feature_id_stringifies_non_string_enum_values() -> None:
     assert len(caught) == 1
     assert "[1]" in str(caught[0].message)
     assert "numeric_feature" in str(caught[0].message)
-    assert numeric_feature.__feature_id__ == "1"
+    assert numeric_feature.__feature_id__ == "1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]

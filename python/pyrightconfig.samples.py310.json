@@ -12,7 +12,13 @@
         "**/azure_responses_client_with_foundry.py",
         "**/github_copilot/**"
     ],
-    "typeCheckingMode": "off",
+    "typeCheckingMode": "basic",
     "reportMissingImports": "error",
+    "reportMissingModuleSource": false,
+    "reportMissingTypeStubs": false,
+    "reportPrivateImportUsage": false,
+    "reportPrivateUsage": false,
+    "reportTypedDictNotRequiredAccess": false,
+    "reportInvalidTypeVarUse": false,
     "reportAttributeAccessIssue": "error"
 }

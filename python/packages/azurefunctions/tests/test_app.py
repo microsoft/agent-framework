@@ -1182,11 +1182,11 @@ class TestAgentFunctionAppErrorPaths:
         mock_agent.name = "TestAgent"
 
         # Test with invalid type
-        app = AgentFunctionApp(agents=[mock_agent], max_poll_retries="invalid")
+        app = AgentFunctionApp(agents=[mock_agent], max_poll_retries="invalid")  # type: ignore[arg-type] # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
         assert app.max_poll_retries >= 1  # Should use default
 
         # Test with None
-        app2 = AgentFunctionApp(agents=[mock_agent], max_poll_retries=None)
+        app2 = AgentFunctionApp(agents=[mock_agent], max_poll_retries=None)  # type: ignore[arg-type] # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
         assert app2.max_poll_retries >= 1  # Should use default
 
     def test_init_with_invalid_poll_interval_seconds(self) -> None:
@@ -1195,11 +1195,11 @@ class TestAgentFunctionAppErrorPaths:
         mock_agent.name = "TestAgent"
 
         # Test with invalid type
-        app = AgentFunctionApp(agents=[mock_agent], poll_interval_seconds="invalid")
+        app = AgentFunctionApp(agents=[mock_agent], poll_interval_seconds="invalid")  # type: ignore[arg-type] # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
         assert app.poll_interval_seconds > 0  # Should use default
 
         # Test with None
-        app2 = AgentFunctionApp(agents=[mock_agent], poll_interval_seconds=None)
+        app2 = AgentFunctionApp(agents=[mock_agent], poll_interval_seconds=None)  # type: ignore[arg-type] # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
         assert app2.poll_interval_seconds > 0  # Should use default
 
     def test_get_agent_raises_for_unregistered_agent(self) -> None:

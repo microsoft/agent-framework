@@ -1,0 +1,17 @@
+# Basic-mode ty profile for samples. Mirrors pyrefly.samples.toml: catch real mistakes
+# in teaching code without forcing casts/overload workarounds for third-party SDK stubs.
+[rules]
+# Signature/cast/overload noise -- off for samples.
+invalid-argument-type = "ignore"
+invalid-return-type = "ignore"
+no-matching-overload = "ignore"
+invalid-assignment = "ignore"
+invalid-typed-dict-field = "ignore"
+not-subscriptable = "ignore"
+missing-argument = "ignore"
+unknown-argument = "ignore"
+invalid-key = "ignore"
+redundant-cast = "ignore"
+unused-type-ignore-comment = "ignore"
+# Kept on (real bugs a reader would hit): unresolved-import, unresolved-attribute,
+# not-iterable, invalid-await.

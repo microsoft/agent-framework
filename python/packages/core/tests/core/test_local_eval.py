@@ -62,7 +62,7 @@ class TestTier1SimpleChecks:
         def has_temperature(query: str, response: str) -> bool:
             return "°F" in response
 
-        result = await has_temperature(_make_item())
+        result = await has_temperature(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
         assert result.check_name == "has_temperature"
 
@@ -72,7 +72,7 @@ class TestTier1SimpleChecks:
         def has_celsius(query: str, response: str) -> bool:
             return "°C" in response
 
-        result = await has_celsius(_make_item())
+        result = await has_celsius(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is False
 
     @pytest.mark.asyncio
@@ -81,7 +81,7 @@ class TestTier1SimpleChecks:
         def length_score(response: str) -> float:
             return min(len(response) / 10, 1.0)
 
-        result = await length_score(_make_item())
+        result = await length_score(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
         assert "score=" in result.reason
 
@@ -91,7 +91,7 @@ class TestTier1SimpleChecks:
         def always_low(response: str) -> float:
             return 0.1
 
-        result = await always_low(_make_item())
+        result = await always_low(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is False
 
     @pytest.mark.asyncio
@@ -102,7 +102,7 @@ class TestTier1SimpleChecks:
         def is_short(response: str) -> bool:
             return len(response) < 1000
 
-        result = await is_short(_make_item())
+        result = await is_short(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
 
     @pytest.mark.asyncio
@@ -113,7 +113,7 @@ class TestTier1SimpleChecks:
         def is_question(query: str) -> bool:
             return "?" in query
 
-        result = await is_question(_make_item())
+        result = await is_question(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
 
 
@@ -130,10 +130,10 @@ class TestTier2GroundTruth:
             return response.strip() == expected_output.strip()
 
         item = _make_item(response="42", expected_output="42")
-        assert (await exact_match(item)).passed is True
+        assert (await exact_match(item)).passed is True  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
 
         item2 = _make_item(response="43", expected_output="42")
-        assert (await exact_match(item2)).passed is False
+        assert (await exact_match(item2)).passed is False  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
 
     @pytest.mark.asyncio
     async def test_expected_output_defaults_to_empty(self):
@@ -143,7 +143,7 @@ class TestTier2GroundTruth:
         def check_expected(expected_output: str) -> bool:
             return expected_output == ""
 
-        result = await check_expected(_make_item(expected_output=None))
+        result = await check_expected(_make_item(expected_output=None))  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
 
     @pytest.mark.asyncio
@@ -157,7 +157,7 @@ class TestTier2GroundTruth:
             return len(r_words & e_words) / len(e_words)
 
         item = _make_item(response="sunny warm day", expected_output="warm sunny afternoon")
-        result = await word_overlap(item)
+        result = await word_overlap(item)  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True  # 2/3 overlap ≥ 0.5
 
 
@@ -174,10 +174,10 @@ class TestTier3FullContext:
             return len(conversation) >= 2
 
         item = _make_item(conversation=[Message("user", []), Message("assistant", [])])
-        assert (await multi_turn(item)).passed is True
+        assert (await multi_turn(item)).passed is True  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
 
         item2 = _make_item(conversation=[Message("user", [])])
-        assert (await multi_turn(item2)).passed is False
+        assert (await multi_turn(item2)).passed is False  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
 
     @pytest.mark.asyncio
     async def test_tools_access(self):
@@ -191,7 +191,7 @@ class TestTier3FullContext:
             {"name": "get_weather", "description": "Get weather", "parameters": lambda self: {}},
         )()
         item = _make_item(tools=[mock_tool])
-        assert (await has_tools(item)).passed is True
+        assert (await has_tools(item)).passed is True  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
 
     @pytest.mark.asyncio
     async def test_context_access(self):
@@ -202,7 +202,7 @@ class TestTier3FullContext:
             return any(word in response.lower() for word in context.lower().split())
 
         item = _make_item(response="It's sunny", context="sunny warm")
-        assert (await grounded(item)).passed is True
+        assert (await grounded(item)).passed is True  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
 
     @pytest.mark.asyncio
     async def test_all_params(self):
@@ -218,7 +218,7 @@ class TestTier3FullContext:
             return all([query, response, expected_output is not None, isinstance(conversation, list)])
 
         item = _make_item(expected_output="foo", context="bar")
-        assert (await full_check(item)).passed is True
+        assert (await full_check(item)).passed is True  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +233,7 @@ class TestReturnTypeCoercion:
         def scored(response: str) -> dict:
             return {"score": 0.9, "reason": "good answer"}
 
-        result = await scored(_make_item())
+        result = await scored(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
         assert result.reason == "good answer"
 
@@ -243,7 +243,7 @@ class TestReturnTypeCoercion:
         def low_scored(response: str) -> dict:
             return {"score": 0.3}
 
-        result = await low_scored(_make_item())
+        result = await low_scored(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is False
 
     @pytest.mark.asyncio
@@ -252,7 +252,7 @@ class TestReturnTypeCoercion:
         def custom_threshold(response: str) -> dict:
             return {"score": 0.3, "threshold": 0.2}
 
-        result = await custom_threshold(_make_item())
+        result = await custom_threshold(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
 
     @pytest.mark.asyncio
@@ -261,7 +261,7 @@ class TestReturnTypeCoercion:
         def explicit_pass(response: str) -> dict:
             return {"passed": True, "reason": "all good"}
 
-        result = await explicit_pass(_make_item())
+        result = await explicit_pass(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
         assert result.reason == "all good"
 
@@ -271,7 +271,7 @@ class TestReturnTypeCoercion:
         def returns_check_result(response: str) -> CheckResult:
             return CheckResult(True, "direct result", "custom")
 
-        result = await returns_check_result(_make_item())
+        result = await returns_check_result(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
         assert result.reason == "direct result"
         assert result.check_name == "custom"
@@ -283,7 +283,7 @@ class TestReturnTypeCoercion:
             return "oops"
 
         with pytest.raises(TypeError, match="unsupported type"):
-            await bad_return(_make_item())
+            await bad_return(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
 
     @pytest.mark.asyncio
     async def test_int_return(self):
@@ -291,7 +291,7 @@ class TestReturnTypeCoercion:
         def int_score(response: str) -> int:
             return 1
 
-        result = await int_score(_make_item())
+        result = await int_score(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
 
 
@@ -307,7 +307,7 @@ class TestDecoratorVariants:
         def my_check(response: str) -> bool:
             return True
 
-        assert (await my_check(_make_item())).passed is True
+        assert (await my_check(_make_item())).passed is True  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
 
     @pytest.mark.asyncio
     async def test_decorator_with_name(self):
@@ -316,7 +316,7 @@ class TestDecoratorVariants:
             return True
 
         assert my_check.__name__ == "custom_name"
-        result = await my_check(_make_item())
+        result = await my_check(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.check_name == "custom_name"
 
     @pytest.mark.asyncio
@@ -324,7 +324,7 @@ class TestDecoratorVariants:
         def raw_fn(query: str, response: str) -> bool:
             return len(response) > 0
 
-        check = evaluator(raw_fn, name="direct")
+        check = evaluator(raw_fn, name="direct")  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
         result = await check(_make_item())
         assert result.passed is True
         assert result.check_name == "direct"
@@ -350,7 +350,7 @@ class TestErrorHandling:
         def optional_unknown(query: str, foo: str = "default") -> bool:
             return foo == "default"
 
-        result = await optional_unknown(_make_item())
+        result = await optional_unknown(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
 
     @pytest.mark.asyncio
@@ -365,7 +365,7 @@ class TestErrorHandling:
         # Should return an awaitable
         assert inspect.isawaitable(result)
         check_result = await result
-        assert check_result.passed is True
+        assert check_result.passed is True  # ty: ignore[unresolved-attribute]
 
 
 # ---------------------------------------------------------------------------
@@ -390,8 +390,8 @@ class TestLocalEvaluatorIntegration:
         results = await local.evaluate(items, eval_name="mixed test")
 
         assert results.status == "completed"
-        assert results.result_counts["passed"] == 1
-        assert results.result_counts["failed"] == 0
+        assert results.result_counts["passed"] == 1  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+        assert results.result_counts["failed"] == 0  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     @pytest.mark.asyncio
     async def test_evaluator_failure_counted(self):
@@ -402,7 +402,7 @@ class TestLocalEvaluatorIntegration:
         local = LocalEvaluator(always_fail)
         results = await local.evaluate([_make_item()])
 
-        assert results.result_counts["failed"] == 1
+        assert results.result_counts["failed"] == 1  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     @pytest.mark.asyncio
     async def test_multiple_evaluators(self):
@@ -421,7 +421,7 @@ class TestLocalEvaluatorIntegration:
         local = LocalEvaluator(check_a, check_b, check_c)
         results = await local.evaluate([_make_item(expected_output="test")])
 
-        assert results.result_counts["passed"] == 1
+        assert results.result_counts["passed"] == 1  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
         assert "check_a" in results.per_evaluator
         assert "check_b" in results.per_evaluator
         assert "check_c" in results.per_evaluator
@@ -441,7 +441,7 @@ class TestAsyncFunctionEvaluator:
 
         local = LocalEvaluator(async_check)
         results = await local.evaluate([_make_item()])
-        assert results.result_counts["passed"] == 1
+        assert results.result_counts["passed"] == 1  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     @pytest.mark.asyncio
     async def test_async_with_name(self):
@@ -449,7 +449,7 @@ class TestAsyncFunctionEvaluator:
         async def my_async(response: str) -> float:
             return 0.75
 
-        result = await my_async(_make_item())
+        result = await my_async(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
         assert result.check_name == "named_async"
 
@@ -472,7 +472,7 @@ class TestAutoWrapEvalChecks:
         items = [_make_item(response="It is sunny and warm today")]
         results = await _run_evaluators(is_long, items, eval_name="test")
         assert len(results) == 1
-        assert results[0].result_counts["passed"] == 1
+        assert results[0].result_counts["passed"] == 1  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     @pytest.mark.asyncio
     async def test_mixed_evaluators_and_checks(self):
@@ -488,7 +488,7 @@ class TestAutoWrapEvalChecks:
         items = [_make_item(response="It is sunny")]
         results = await _run_evaluators([local, has_words], items, eval_name="test")
         assert len(results) == 2
-        assert all(r.result_counts["passed"] == 1 for r in results)
+        assert all(r.result_counts["passed"] == 1 for r in results)  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     @pytest.mark.asyncio
     async def test_adjacent_checks_grouped(self):
@@ -507,7 +507,7 @@ class TestAutoWrapEvalChecks:
         results = await _run_evaluators([check_a, check_b], items, eval_name="test")
         # Two adjacent checks → one LocalEvaluator → one result
         assert len(results) == 1
-        assert results[0].result_counts["passed"] == 1
+        assert results[0].result_counts["passed"] == 1  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +642,7 @@ class TestExpectedToolCallsFieldInjection:
             calls=[],
             expected=[ExpectedToolCall("a"), ExpectedToolCall("b")],
         )
-        result = await check_tools(item)
+        result = await check_tools(item)  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
 
     @pytest.mark.asyncio
@@ -652,7 +652,7 @@ class TestExpectedToolCallsFieldInjection:
             return len(expected_tool_calls) == 0
 
         item = _make_tool_call_item(calls=[])
-        result = await check_tools(item)
+        result = await check_tools(item)  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
         assert result.passed is True
 
 
@@ -861,7 +861,7 @@ class TestToolCalledCheckModeAny:
         )
         check = tool_called_check("tool_a", "tool_b", mode="any")
         result = check(item)
-        assert result.passed is True
+        assert result.passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     async def test_any_mode_none_called(self):
         """mode='any' fails when no expected tools are called."""
@@ -873,8 +873,8 @@ class TestToolCalledCheckModeAny:
         )
         check = tool_called_check("tool_a", "tool_b", mode="any")
         result = check(item)
-        assert result.passed is False
-        assert "None of expected tools" in result.reason
+        assert result.passed is False  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert "None of expected tools" in result.reason  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 class TestCoerceResultScoreError:

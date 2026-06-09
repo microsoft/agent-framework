@@ -345,7 +345,7 @@ class FileCheckpointStorage:
 
         def _read() -> dict[str, Any]:
             with open(file_path) as f:
-                return json.load(f)  # type: ignore[no-any-return]
+                return json.load(f)
 
         encoded_checkpoint = await asyncio.to_thread(_read)
 

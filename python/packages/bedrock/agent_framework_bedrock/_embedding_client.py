@@ -26,9 +26,9 @@ from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.bedrock")
@@ -143,7 +143,7 @@ class RawBedrockEmbeddingClient(
                 config=BotoConfig(user_agent_extra=get_user_agent()),
             )
 
-        self.model: str = settings["embedding_model"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+        self.model: str = settings["embedding_model"]  # type: ignore[assignment]
         self.region = resolved_region
         super().__init__(additional_properties=additional_properties)
 
@@ -261,7 +261,7 @@ class BedrockEmbeddingClient(
             print(result[0].vector)
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"
 
     def __init__(
         self,

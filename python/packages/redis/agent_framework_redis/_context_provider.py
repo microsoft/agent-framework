@@ -33,9 +33,9 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
@@ -379,12 +379,12 @@ class RedisContextProvider(ContextProvider):
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
                     alpha=alpha,
-                    dtype=self.redis_vectorizer.dtype,  # pyright: ignore[reportUnknownMemberType]
+                    dtype=self.redis_vectorizer.dtype,
                     num_results=num_results,
                     return_fields=return_fields,
                     stopwords=None,
                 )
-                return await self.redis_index.query(query)  # type: ignore[no-any-return]
+                return await self.redis_index.query(query)
             query = TextQuery(
                 text=q,
                 text_field_name="content",
@@ -394,7 +394,7 @@ class RedisContextProvider(ContextProvider):
                 return_fields=return_fields,
                 stopwords=None,
             )
-            return await self.redis_index.query(query)  # type: ignore[no-any-return]
+            return await self.redis_index.query(query)
         except Exception as exc:  # pragma: no cover
             raise IntegrationInvalidRequestException(f"Redis text search failed: {exc}") from exc
 

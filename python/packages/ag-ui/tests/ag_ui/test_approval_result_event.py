@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 from agent_framework import AgentResponseUpdate, Content, FunctionTool
-from conftest import StubAgent
+from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import run_agent_stream

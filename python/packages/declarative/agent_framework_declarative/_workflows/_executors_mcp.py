@@ -135,7 +135,7 @@ def _format_outputs_for_send(parsed_results: list[Any]) -> str:
     if not parsed_results:
         return ""
     if all(isinstance(item, str) for item in parsed_results):
-        return "\n".join(parsed_results)  # type: ignore[arg-type]
+        return "\n".join(parsed_results)
     if len(parsed_results) == 1:
         return json.dumps(parsed_results[0], ensure_ascii=False)
     return json.dumps(parsed_results, ensure_ascii=False)

@@ -18,14 +18,14 @@ IS_TELEMETRY_ENABLED = os.environ.get(USER_AGENT_TELEMETRY_DISABLED_ENV_VAR, "fa
 
 APP_INFO = (
     {
-        "agent-framework-version": f"python/{version_info}",  # type: ignore[has-type]
+        "agent-framework-version": f"python/{version_info}",
     }
     if IS_TELEMETRY_ENABLED
     else None
 )
 USER_AGENT_KEY: Final[str] = "User-Agent"
 HTTP_USER_AGENT: Final[str] = "agent-framework-python"
-AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"  # type: ignore[has-type]
+AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"
 
 # This environment variable is reserved by the Foundry hosting environment to
 # indicate that the agent is running in a hosted environment.
@@ -79,11 +79,11 @@ def _detect_hosted_environment() -> None:
     except (ImportError, ValueError):
         return
     with contextlib.suppress(ImportError, AttributeError):
-        from azure.ai.agentserver.core import (  # pyright: ignore[reportMissingImports]
-            AgentConfig,  # pyright: ignore[reportUnknownVariableType]
+        from azure.ai.agentserver.core import (
+            AgentConfig,
         )
 
-        if AgentConfig.from_env().is_hosted:  # pyright: ignore[reportUnknownMemberType]
+        if AgentConfig.from_env().is_hosted:
             _add_user_agent_prefix(_HOSTED_USER_AGENT_PREFIX)
             _hosted_env_detected = True
 

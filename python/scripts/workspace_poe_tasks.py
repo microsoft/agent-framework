@@ -10,7 +10,6 @@ aliases in one place so docs and automation can share the same command surface.
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -20,7 +19,13 @@ import tomli
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 from rich import print
-from task_runner import build_work_items, discover_projects, project_filter_matches, run_tasks
+from task_runner import (
+    build_work_items,
+    discover_projects,
+    project_filter_matches,
+    run_command_items,
+    run_tasks,
+)
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_PYPROJECT = WORKSPACE_ROOT / "pyproject.toml"
@@ -99,6 +104,11 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     add_project_option(mypy)
     add_all_option(mypy)
 
+    test_typing = subparsers.add_parser("test-typing")
+    add_project_option(test_typing)
+    add_all_option(test_typing)
+    add_samples_option(test_typing)
+
     typing = subparsers.add_parser("typing")
     add_project_option(typing)
     add_all_option(typing)
@@ -116,6 +126,7 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     prek_check.add_argument("files", nargs="*", default=["."], help="Files reported by pre-commit.")
 
     subparsers.add_parser("ci-mypy")
+    subparsers.add_parser("ci-test-typing")
 
     return parser.parse_known_args(argv)
 
@@ -312,19 +323,170 @@ def run_aggregate_pyright(project_pattern: str, extra_args: list[str]) -> None:
     run_command(["uv", "run", "pyright", *extra_args, *project_paths])
 
 
-def run_aggregate_mypy(project_pattern: str, extra_args: list[str]) -> None:
-    """Run a single MyPy sweep across the selected project import roots."""
+# Type checkers that run over tests (and, where supported, samples). Pyright is the strict
+# SOURCE-code checker, and ALSO runs over tests + samples in a relaxed ``basic`` profile
+# (see pyrightconfig.tests.json / pyrightconfig.samples.json). mypy/pyrefly/ty/zuban
+# exercise the public API the way users do. All five run by default and gate CI. ``zuban``
+# is the strictest of the mypy-compatible pair and only runs on tests (samples are
+# script-style and unsupported by mypy/zuban -- see SAMPLE_TYPING_CHECKERS).
+GATING_TEST_TYPING_CHECKERS = ("mypy", "pyrefly", "ty", "zuban", "pyright")
+
+
+def _gating_checker_args() -> list[str]:
+    """Build ``--checker`` selectors for the CI-gating test/sample checkers."""
+    args: list[str] = []
+    for checker in GATING_TEST_TYPING_CHECKERS:
+        args.extend(["--checker", checker])
+    return args
+
+
+# Samples that are intentionally excluded from type checking (migrations, generated, etc.).
+SAMPLE_TYPING_EXCLUDES = (
+    "autogen-migration",
+    "semantic-kernel-migration",
+    "autogen",
+    "demos",
+    "_to_delete",
+    "05-end-to-end",
+    "harness",
+)
+
+
+def _mypy_command(paths: list[str], *, samples: bool) -> list[str]:
+    command = [
+        "uv",
+        "run",
+        "mypy",
+        "--config-file",
+        "pyproject.toml",
+        "--explicit-package-bases",
+        "--namespace-packages",
+    ]
+    if samples:
+        for excluded in SAMPLE_TYPING_EXCLUDES:
+            command.extend(["--exclude", excluded])
+    command.extend(paths)
+    return command
+
+
+def _zuban_command(paths: list[str], *, samples: bool) -> list[str]:
+    command = ["uv", "run", "zuban", "mypy", "--config-file", "pyproject.toml"]
+    if samples:
+        for excluded in SAMPLE_TYPING_EXCLUDES:
+            command.extend(["--exclude", excluded])
+    command.extend(paths)
+    return command
+
+
+def _pyrefly_command(paths: list[str], *, samples: bool) -> list[str]:
+    config = "pyrefly.samples.toml" if samples else "pyrefly.toml"
+    command = ["uv", "run", "pyrefly", "check", "-c", config]
+    if samples:
+        for excluded in SAMPLE_TYPING_EXCLUDES:
+            command.extend(["--project-excludes", f"**/{excluded}/**"])
+    command.extend(paths)
+    return command
+
+
+def _ty_command(paths: list[str], *, samples: bool) -> list[str]:
+    command = ["uv", "run", "ty", "check"]
+    if samples:
+        command.extend(["--config-file", "ty.samples.toml"])
+        for excluded in SAMPLE_TYPING_EXCLUDES:
+            command.extend(["--exclude", f"**/{excluded}/**"])
+    command.extend(paths)
+    return command
+
+
+def _pyright_command(paths: list[str], *, samples: bool) -> list[str]:
+    # Pyright owns source in strict mode; over tests + samples it runs in a relaxed
+    # ``basic`` profile via a dedicated config (see pyrightconfig.tests.json /
+    # pyrightconfig.samples.json). CLI paths override the config ``include``; the sample
+    # excludes live in the config itself (Pyright has no ``--exclude`` CLI flag).
+    config = sample_pyright_config() if samples else "pyrightconfig.tests.json"
+    return ["uv", "run", "pyright", "-p", config, *paths]
+
+
+CHECKER_COMMANDS = {
+    "mypy": _mypy_command,
+    "zuban": _zuban_command,
+    "pyrefly": _pyrefly_command,
+    "ty": _ty_command,
+    "pyright": _pyright_command,
+}
+
+
+def _resolve_checkers(extra_args: list[str]) -> tuple[list[str], list[str]]:
+    """Split a ``--checker NAME`` selector (repeatable) from pass-through args.
+
+    With no explicit ``--checker``, all gating checkers (mypy, pyrefly, ty, zuban,
+    pyright) run. A single checker can be isolated via e.g. ``--checker pyright``.
+    """
+    checkers: list[str] = []
+    passthrough: list[str] = []
+    index = 0
+    while index < len(extra_args):
+        argument = extra_args[index]
+        if argument == "--checker" and index + 1 < len(extra_args):
+            checkers.append(extra_args[index + 1])
+            index += 2
+            continue
+        passthrough.append(argument)
+        index += 1
+    selected = checkers or list(GATING_TEST_TYPING_CHECKERS)
+    unknown = [name for name in selected if name not in CHECKER_COMMANDS]
+    if unknown:
+        print(f"[red]Unknown checker(s): {', '.join(unknown)}.[/red]")
+        raise SystemExit(2)
+    return selected, passthrough
+
+
+def run_test_typing(project_pattern: str, extra_args: list[str]) -> None:
+    """Run the test-suite type checkers (mypy, pyrefly, ty, zuban, pyright) per package.
+
+    Each (package, checker) pair is fanned out in parallel via the same executor
+    used by the pyright source fan-out, so the presentation and parallelism match.
+    """
+    checkers, passthrough = _resolve_checkers(extra_args)
     projects = select_projects(project_pattern)
     if not projects:
         print("[yellow]No selected projects support the current Python version, skipping.[/yellow]")
         return
 
-    source_dirs = [relative_path(path) for path in collect_source_dirs(projects)]
-    if not source_dirs:
-        print("[yellow]No import roots found for the selected projects, skipping MyPy.[/yellow]")
-        return
+    command_items: list[tuple[str, list[str]]] = []
+    for project in projects:
+        test_dirs = collect_test_dirs([project])
+        if not test_dirs:
+            continue
+        paths = [relative_path(path) for path in test_dirs]
+        for checker in checkers:
+            command = CHECKER_COMMANDS[checker]([*paths, *passthrough], samples=False)
+            command_items.append((f"{checker} :: {project.name}", command))
 
-    run_command(["uv", "run", "mypy", "--config-file", "pyproject.toml", *extra_args, *source_dirs])
+    run_command_items(command_items, WORKSPACE_ROOT)
+
+
+# Checkers that work on the script-style samples tree. MyPy/zuban are excluded because
+# samples are standalone scripts (numeric-prefixed dirs, duplicate filenames like main.py)
+# that cannot be resolved into a module package tree without per-file invocation. Pyright
+# handles the script-style tree fine and runs in the relaxed ``basic`` samples profile.
+SAMPLE_TYPING_CHECKERS = ("pyrefly", "ty", "pyright")
+
+
+def run_sample_typing(extra_args: list[str]) -> None:
+    """Run the sample-capable type checkers over samples/ in the relaxed/basic profile."""
+    checkers, passthrough = _resolve_checkers(extra_args)
+    sample_checkers = [checker for checker in checkers if checker in SAMPLE_TYPING_CHECKERS]
+    skipped = [checker for checker in checkers if checker not in SAMPLE_TYPING_CHECKERS]
+    if skipped:
+        print(f"[yellow]Skipping {', '.join(skipped)} for samples (script-style tree is unsupported).[/yellow]")
+    if not sample_checkers:
+        return
+    command_items = [
+        (f"{checker} :: samples", CHECKER_COMMANDS[checker](["samples", *passthrough], samples=True))
+        for checker in sample_checkers
+    ]
+    run_command_items(command_items, WORKSPACE_ROOT)
 
 
 def run_aggregate_test(project_pattern: str, cov: bool, extra_args: list[str]) -> None:
@@ -417,58 +579,10 @@ def run_prek_check(files: list[str]) -> None:
         print("[yellow]No sample files changed, skipping sample checks.[/yellow]")
 
 
-def git_diff_name_only(*revisions: str) -> list[str] | None:
-    """Try a git diff strategy and return changed files if it succeeds."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", *revisions, "--", "."],
-        cwd=WORKSPACE_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    return [line for line in result.stdout.splitlines() if line]
-
-
-def detect_ci_changed_files() -> list[str]:
-    """Detect changed files for change-based mypy runs."""
-    base_ref = os.environ.get("GITHUB_BASE_REF")
-    if base_ref:
-        subprocess.run(
-            ["git", "fetch", "origin", base_ref, "--depth=1"],
-            cwd=WORKSPACE_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        strategies = [
-            (f"origin/{base_ref}...HEAD",),
-            ("FETCH_HEAD...HEAD",),
-            ("HEAD^...HEAD",),
-        ]
-    else:
-        strategies = [
-            ("origin/main...HEAD",),
-            ("main...HEAD",),
-            ("HEAD~1",),
-        ]
-
-    for strategy in strategies:
-        changed_files = git_diff_name_only(*strategy)
-        if changed_files is not None:
-            return changed_files or ["."]
-
-    return ["."]
-
-
-def run_ci_mypy() -> None:
-    """Run MyPy only where changes require it, mirroring CI behaviour."""
-    changed_files = detect_ci_changed_files()
-    print("[cyan]Changed files for CI mypy:[/cyan]")
-    for file_path in changed_files:
-        print(f"  {file_path}")
-    run_changed_package_tasks(["mypy"], changed_files)
+def run_ci_test_typing() -> None:
+    """Run the gating test/sample type checkers across the workspace, mirroring CI."""
+    run_test_typing("*", _gating_checker_args())
+    run_sample_typing(_gating_checker_args())
 
 
 def ensure_no_extra_args(command_name: str, extra_args: list[str]) -> None:
@@ -594,23 +708,29 @@ def main() -> None:
         return
 
     if args.command == "mypy":
-        if args.all:
-            run_aggregate_mypy(args.project, extra_args)
+        # MyPy no longer runs on source code (Pyright owns source). The ``mypy`` task is a
+        # convenience alias that runs MyPy over the test suite.
+        run_test_typing(args.project, ["--checker", "mypy", *extra_args])
+        return
+
+    if args.command == "test-typing":
+        if args.samples:
+            if args.all or args.project != "*":
+                print("[red]--samples cannot be combined with --all or --package.[/red]")
+                raise SystemExit(2)
+            run_sample_typing(extra_args)
             return
-        run_fan_out(["mypy"], args.project, extra_args)
+        run_test_typing(args.project, extra_args)
         return
 
     if args.command == "typing":
         ensure_no_extra_args(args.command, extra_args)
+        # Pyright over source, then the multi-checker sweep over the tests.
         if args.all:
-            # Start MyPy first so combined typing runs follow the requested
-            # ordering even though completion still depends on runtime duration.
-            run_aggregate_mypy(args.project, [])
             run_aggregate_pyright(args.project, [])
-            return
-        # Preserve the same "MyPy first" ordering for the per-package fan-out
-        # path as well.
-        run_fan_out(["mypy", "pyright"], args.project, [])
+        else:
+            run_fan_out(["pyright"], args.project, [])
+        run_test_typing(args.project, [])
         return
 
     if args.command == "test":
@@ -655,7 +775,7 @@ def main() -> None:
                 check_selected=False,
                 extra_args=[],
             )
-            run_sample_pyright([])
+            run_sample_typing(_gating_checker_args())
             return
         run_syntax(
             project_pattern=args.project,
@@ -665,6 +785,7 @@ def main() -> None:
             extra_args=[],
         )
         run_fan_out(["pyright"], args.project, [])
+        run_test_typing(args.project, _gating_checker_args())
         run_fan_out(["test"], args.project, [])
         # Sample validation and markdown lint are intentionally workspace-wide;
         # a package-scoped check should stay focused on the selected package set.
@@ -676,7 +797,7 @@ def main() -> None:
                 check_selected=False,
                 extra_args=[],
             )
-            run_sample_pyright([])
+            run_sample_typing(_gating_checker_args())
             run_markdown_code_lint()
         return
 
@@ -685,9 +806,9 @@ def main() -> None:
         run_prek_check(args.files)
         return
 
-    if args.command == "ci-mypy":
+    if args.command in ("ci-mypy", "ci-test-typing"):
         ensure_no_extra_args(args.command, extra_args)
-        run_ci_mypy()
+        run_ci_test_typing()
         return
 
     print(f"[red]Unsupported command: {args.command}[/red]")

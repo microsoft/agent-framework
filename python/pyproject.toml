@@ -39,6 +39,9 @@ dev = [
     "pytest-retry==1.7.0",
     "mypy==1.20.0",
     "pyright==1.1.408",
+    "pyrefly==1.0.0",
+    "ty==0.0.46",
+    "zuban==0.8.2",
     "mcp[ws]==1.27.2",
     "opentelemetry-sdk==1.40.0",
     "azure-monitor-opentelemetry==1.8.8",
@@ -185,56 +188,40 @@ omit = [
 ]
 
 [tool.pyright]
-exclude = ["**/tests/**", "**/.venv/**", "packages/devui/frontend/**"]
+# Pyright is the sole SOURCE-code type checker. Tests + samples are covered by mypy,
+# pyrefly, ty (and zuban) instead, so Pyright excludes them entirely -- no per-package
+# test executionEnvironments are needed anymore.
+exclude = ["**/tests/**", "**/ag_ui_tests/**", "samples/**", "**/.venv/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
 reportUnnecessaryCast = "error"
-# Tests intentionally probe internal implementation details.
-executionEnvironments = [
-    { root = "packages/a2a/tests", reportPrivateUsage = "none" },
-    { root = "packages/ag-ui/tests", reportPrivateUsage = "none" },
-    { root = "packages/anthropic/tests", reportPrivateUsage = "none" },
-    { root = "packages/azure-ai-search/tests", reportPrivateUsage = "none" },
-    { root = "packages/azure-contentunderstanding/tests", reportPrivateUsage = "none" },
-    { root = "packages/azure-cosmos/tests", reportPrivateUsage = "none" },
-    { root = "packages/azurefunctions/tests", reportPrivateUsage = "none" },
-    { root = "packages/bedrock/tests", reportPrivateUsage = "none" },
-    { root = "packages/chatkit/tests", reportPrivateUsage = "none" },
-    { root = "packages/claude/tests", reportPrivateUsage = "none" },
-    { root = "packages/copilotstudio/tests", reportPrivateUsage = "none" },
-    { root = "packages/core/tests", reportPrivateUsage = "none" },
-    { root = "packages/declarative/tests", reportPrivateUsage = "none" },
-    { root = "packages/devui/tests", reportPrivateUsage = "none" },
-    { root = "packages/durabletask/tests", reportPrivateUsage = "none" },
-    { root = "packages/foundry/tests", reportPrivateUsage = "none" },
-    { root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
-    { root = "packages/github_copilot/tests", reportPrivateUsage = "none" },
-    { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },
-    { root = "packages/lab/lightning/tests", reportPrivateUsage = "none" },
-    { root = "packages/lab/tau2/tests", reportPrivateUsage = "none" },
-    { root = "packages/mem0/tests", reportPrivateUsage = "none" },
-    { root = "packages/mistral/tests", reportPrivateUsage = "none" },
-    { root = "packages/ollama/tests", reportPrivateUsage = "none" },
-    { root = "packages/orchestrations/tests", reportPrivateUsage = "none" },
-    { root = "packages/purview/tests", reportPrivateUsage = "none" },
-    { root = "packages/redis/tests", reportPrivateUsage = "none" },
-    { root = "tests", reportPrivateUsage = "none" },
-]
+# With MyPy off source, mypy-only ``# type: ignore`` comments are now dead weight. Flag
+# them so they get removed and do not creep back in.
+reportUnnecessaryTypeIgnoreComment = "error"
 
+# MyPy (and zuban, which reads this [mypy]-compatible config) no longer run on source
+# code -- Pyright is the sole source-code type checker. These checkers run over the
+# tests + samples instead, in a deliberately relaxed mode: real type errors in how the
+# public API is exercised are caught, but test/sample authors are not burdened with
+# annotating every function. See docs/skills/python-code-quality.
 [tool.mypy]
 plugins = ['pydantic.mypy']
-strict = true
 python_version = "3.10"
 ignore_missing_imports = true
-disallow_untyped_defs = true
-no_implicit_optional = true
 check_untyped_defs = true
-warn_return_any = true
-show_error_codes = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_return_any = false
 warn_unused_ignores = false
-disallow_incomplete_defs = true
-disallow_untyped_decorators = true
+show_error_codes = true
+
+# ty (preview) over tests + samples. Relaxed: ty's defaults are gradual, and a few
+# categories are too noisy on test/mock-heavy code to gate on yet.
+[tool.ty.rules]
+unused-type-ignore-comment = "ignore"
 
 [tool.bandit]
 targets = ["agent_framework"]
@@ -292,11 +279,15 @@ help = "Run Pyright for -P/--package packages, use -A/--all for one aggregate sw
 cmd = "python scripts/workspace_poe_tasks.py pyright"
 
 [tool.poe.tasks.mypy]
-help = "Run MyPy for -P/--package packages, or use -A/--all for one aggregate sweep."
+help = "Run MyPy over -P/--package test suites (alias for `test-typing --checker mypy`)."
 cmd = "python scripts/workspace_poe_tasks.py mypy"
 
+[tool.poe.tasks.test-typing]
+help = "Run the tests/samples type checkers (mypy, pyrefly, ty, zuban) for -P/--package, -A/--all, or -S/--samples. Narrow with `--checker NAME` (repeatable)."
+cmd = "python scripts/workspace_poe_tasks.py test-typing"
+
 [tool.poe.tasks.typing]
-help = "Run both MyPy and Pyright for -P/--package packages, or use -A/--all for aggregate mode."
+help = "Run Pyright over source and the tests/samples checkers for -P/--package packages, or use -A/--all."
 cmd = "python scripts/workspace_poe_tasks.py typing"
 
 [tool.poe.tasks.samples-syntax]

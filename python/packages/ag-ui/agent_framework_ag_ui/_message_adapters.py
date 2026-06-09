@@ -118,13 +118,13 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                 user_text = ""
                 for content in msg.contents or []:
                     if content.type == "text":
-                        user_text = content.text  # type: ignore[assignment]
+                        user_text = content.text
                         break
 
                 if not user_text:
                     continue
                 try:
-                    parsed = json.loads(user_text)  # type: ignore[arg-type]
+                    parsed = json.loads(user_text)
                     if "accepted" in parsed:
                         logger.info(
                             f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}"
@@ -843,14 +843,14 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 )
                 approval_contents.append(approval_response)
 
-            chat_msg = Message(role=role, contents=approval_contents)  # type: ignore[call-overload]
+            chat_msg = Message(role=role, contents=approval_contents)
         else:
             # Regular message content (text or multimodal)
             content = msg.get("content", "")
             converted_contents = _convert_agui_content_to_framework(content)
             if not converted_contents:
                 converted_contents = [Content.from_text(text="")]
-            chat_msg = Message(role=role, contents=converted_contents)  # type: ignore[call-overload]
+            chat_msg = Message(role=role, contents=converted_contents)
 
         if "id" in msg:
             chat_msg.message_id = msg["id"]
@@ -894,7 +894,7 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
             continue
 
         # Convert Message to AG-UI format
-        role_value: str = msg.role if hasattr(msg.role, "value") else msg.role  # type: ignore[assignment]
+        role_value: str = msg.role if hasattr(msg.role, "value") else msg.role
         role = FRAMEWORK_TO_AGUI_ROLE.get(role_value, "user")
 
         content_text = ""

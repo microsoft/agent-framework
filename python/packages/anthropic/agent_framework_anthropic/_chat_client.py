@@ -52,17 +52,17 @@ from anthropic.types.beta.beta_encrypted_code_execution_result_block import Beta
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 
 __all__ = [
@@ -243,7 +243,7 @@ class RawAnthropicClient(
         Use ``AnthropicClient`` instead for a fully-featured client with all layers applied.
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"
 
     def __init__(
         self,
@@ -539,7 +539,7 @@ class RawAnthropicClient(
         if stream:
             # Streaming mode
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):  # type: ignore[misc]
+                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
                     parsed_chunk = self._process_stream_event(chunk)
                     if parsed_chunk:
                         yield parsed_chunk
@@ -548,7 +548,7 @@ class RawAnthropicClient(
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
-            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)  # type: ignore[misc]
+            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
             return self._process_message(message, options)
 
         return _get_response()
@@ -723,7 +723,7 @@ class RawAnthropicClient(
                         a_content.append({
                             "type": "image",
                             "source": {
-                                "data": _get_data_bytes_as_str(content),  # type: ignore[attr-defined]
+                                "data": _get_data_bytes_as_str(content),
                                 "media_type": content.media_type,
                                 "type": "base64",
                             },
@@ -755,7 +755,7 @@ class RawAnthropicClient(
                                 tool_content.append({
                                     "type": "image",
                                     "source": {
-                                        "data": _get_data_bytes_as_str(item),  # type: ignore[attr-defined]
+                                        "data": _get_data_bytes_as_str(item),
                                         "media_type": item.media_type,
                                         "type": "base64",
                                     },
@@ -1023,11 +1023,10 @@ class RawAnthropicClient(
         if usage.input_tokens is not None:
             usage_details["input_token_count"] = usage.input_tokens
         if usage.cache_creation_input_tokens is not None:
-            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens  # type: ignore[typeddict-unknown-key]
+            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
             usage_details["cache_creation_input_token_count"] = usage.cache_creation_input_tokens
         if usage.cache_read_input_tokens is not None:
-            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens  # type: ignore[typeddict-unknown-key]
-            usage_details["cache_read_input_token_count"] = usage.cache_read_input_tokens
+            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
         return usage_details
 
     def _parse_contents_from_anthropic(

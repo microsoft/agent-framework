@@ -34,7 +34,7 @@ class AnthropicVertexSettings(TypedDict, total=False):
 class RawAnthropicVertexClient(RawAnthropicClient[AnthropicOptionsT], Generic[AnthropicOptionsT]):
     """Raw Anthropic Vertex chat client without middleware, telemetry, or function invocation support."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "google.vertex.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "google.vertex.ai"
 
     def __init__(
         self,
@@ -100,7 +100,7 @@ class RawAnthropicVertexClient(RawAnthropicClient[AnthropicOptionsT], Generic[An
         )
 
 
-class AnthropicVertexClient(  # type: ignore[misc]
+class AnthropicVertexClient(
     FunctionInvocationLayer[AnthropicOptionsT],
     ChatMiddlewareLayer[AnthropicOptionsT],
     ChatTelemetryLayer[AnthropicOptionsT],

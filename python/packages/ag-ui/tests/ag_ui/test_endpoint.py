@@ -83,7 +83,7 @@ async def test_add_endpoint_with_workflow_protocol():
 
     @executor(id="start")
     async def start(message: Any, ctx: WorkflowContext) -> None:
-        await ctx.yield_output("Workflow response")
+        await ctx.yield_output("Workflow response")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     app = FastAPI()
     workflow = WorkflowBuilder(start_executor=start).build()
@@ -222,7 +222,7 @@ async def test_endpoint_with_workflow_as_agent_stream_output(build_chat_client):
     reviewer_agent = Agent(name="reviewer", instructions="Review ideas", client=build_chat_client("Review"))
     agent = SequentialBuilder(participants=[brainstorm_agent, reviewer_agent]).build().as_agent()
 
-    add_agent_framework_fastapi_endpoint(app, agent, path="/workflow-like")
+    add_agent_framework_fastapi_endpoint(app, agent, path="/workflow-like")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
 
     client = TestClient(app)
     response = client.post("/workflow-like", json={"messages": [{"role": "user", "content": "Hello"}]})
@@ -580,7 +580,7 @@ async def test_endpoint_invalid_agent_type_raises_typeerror():
     app = FastAPI()
 
     with pytest.raises(TypeError, match="must be SupportsAgentRun"):
-        add_agent_framework_fastapi_endpoint(app, agent="not_an_agent")  # type: ignore[arg-type]
+        add_agent_framework_fastapi_endpoint(app, agent="not_an_agent")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 async def test_endpoint_requires_snapshot_scope_resolver_when_store_configured(build_chat_client):

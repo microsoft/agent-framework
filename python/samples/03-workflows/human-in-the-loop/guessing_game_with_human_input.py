@@ -4,6 +4,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
+from typing import Any
 
 from agent_framework import (
     Agent,
@@ -19,6 +20,7 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -211,7 +213,7 @@ async def main() -> None:
             "No explanations or additional text."
         ),
         # response_format enforces that the model produces JSON compatible with GuessOutput.
-        default_options={"response_format": GuessOutput},
+        default_options=OpenAIChatOptions[Any](response_format=GuessOutput),
     )
     turn_manager = TurnManager(id="turn_manager")
 

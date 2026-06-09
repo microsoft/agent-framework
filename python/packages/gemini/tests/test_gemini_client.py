@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,7 +45,7 @@ def _make_part(
     *,
     text: str | None = None,
     thought: bool = False,
-    function_call: tuple[str, str, dict[str, Any]] | None = None,
+    function_call: tuple[str | None, str, dict[str, Any]] | None = None,
     executable_code: str | None = None,
     code_execution_result: str | None = None,
 ) -> MagicMock:
@@ -127,7 +127,7 @@ async def _async_iter(items: list[Any]):
 
 
 def _make_gemini_client(
-    model: str = "gemini-2.5-flash",
+    model: str | None = "gemini-2.5-flash",
     mock_client: MagicMock | None = None,
 ) -> tuple[GeminiChatClient, MagicMock]:
     """Return a (GeminiChatClient, mock_genai_client) pair."""
@@ -136,6 +136,25 @@ def _make_gemini_client(
     mock._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
     client = GeminiChatClient(client=mock, model=model)
     return client, mock
+
+
+def _parts(content: types.Content) -> list[types.Part]:
+    assert content.parts is not None
+    return content.parts
+
+
+def _function_calling_config(config: types.GenerateContentConfig) -> types.FunctionCallingConfig:
+    assert config.tool_config is not None
+    function_calling_config = config.tool_config.function_calling_config
+    assert function_calling_config is not None
+    return function_calling_config
+
+
+def _first_function_declaration(config: types.GenerateContentConfig) -> types.FunctionDeclaration:
+    assert config.tools is not None
+    tool = cast(types.Tool, config.tools[0])
+    assert tool.function_declarations is not None
+    return tool.function_declarations[0]
 
 
 # settings & initialisation
@@ -429,6 +448,7 @@ async def test_multiple_system_messages_concatenated() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert isinstance(config.system_instruction, str)
     assert "Be concise." in config.system_instruction
     assert "Use bullet points." in config.system_instruction
 
@@ -447,6 +467,7 @@ async def test_instructions_option_merged_with_system_instruction() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert isinstance(config.system_instruction, str)
     assert "Always respond in French." in config.system_instruction
     assert "Be concise." in config.system_instruction
 
@@ -508,7 +529,7 @@ async def test_tool_messages_collapsed_into_single_user_message() -> None:
     contents: list[types.Content] = mock.aio.models.generate_content.call_args.kwargs["contents"]
     # user, model (with 2 function calls), user (with 2 function responses)
     assert contents[-1].role == "user"
-    assert len(contents[-1].parts) == 2
+    assert len(_parts(contents[-1])) == 2
 
 
 async def test_function_result_name_resolved_from_call_history() -> None:
@@ -530,7 +551,8 @@ async def test_function_result_name_resolved_from_call_history() -> None:
     contents: list[types.Content] = mock.aio.models.generate_content.call_args.kwargs["contents"]
     tool_user_msg = contents[-1]
     assert tool_user_msg.role == "user"
-    function_response = tool_user_msg.parts[0].function_response
+    function_response = _parts(tool_user_msg)[0].function_response
+    assert function_response is not None
     assert function_response.name == "get_weather"
     assert function_response.id == "call-42"
 
@@ -549,7 +571,7 @@ async def test_function_result_resolved_when_call_id_was_generated() -> None:
                 Message(role="user", contents=[Content.from_text("Go")]),
                 Message(
                     role="assistant",
-                    contents=[Content.from_function_call(call_id=None, name="get_weather", arguments={})],  # type: ignore[arg-type]
+                    contents=[Content.from_function_call(call_id=cast(str, None), name="get_weather", arguments={})],
                 ),
                 Message(
                     role="tool",
@@ -559,9 +581,11 @@ async def test_function_result_resolved_when_call_id_was_generated() -> None:
         )
 
     contents: list[types.Content] = mock.aio.models.generate_content.call_args.kwargs["contents"]
-    tool_turn = next(c for c in contents if c.role == "user" and any(p.function_response for p in c.parts))
-    assert tool_turn.parts[0].function_response.name == "get_weather"
-    assert tool_turn.parts[0].function_response.id == generated_id
+    tool_turn = next(c for c in contents if c.role == "user" and any(p.function_response for p in _parts(c)))
+    function_response = _parts(tool_turn)[0].function_response
+    assert function_response is not None
+    assert function_response.name == "get_weather"
+    assert function_response.id == generated_id
 
 
 async def test_function_result_without_matching_call_is_skipped(caplog: pytest.LogCaptureFixture) -> None:
@@ -598,7 +622,7 @@ async def test_message_with_only_unsupported_content_type_is_skipped() -> None:
 
     contents: list[types.Content] = mock.aio.models.generate_content.call_args.kwargs["contents"]
     assert len(contents) == 1
-    assert contents[0].parts[0].text == "Follow up"
+    assert _parts(contents[0])[0].text == "Follow up"
 
 
 async def test_non_function_result_content_in_tool_message_is_skipped() -> None:
@@ -819,7 +843,7 @@ async def test_prepare_config_unknown_key_is_forwarded() -> None:
         mock_config.return_value = MagicMock()
         await client.get_response(
             messages=[Message(role="user", contents=[Content.from_text("Hi")])],
-            options={"some_future_param": "value"},
+            options=cast(Any, {"some_future_param": "value"}),
         )
         assert mock_config.call_args.kwargs.get("some_future_param") == "value"
 
@@ -970,7 +994,7 @@ async def test_agent_default_options_response_format_raw_schema_added_to_config(
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text='{"answer": "hello"}')]))
     schema = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
-    agent = Agent(client=client, default_options={"response_format": schema})
+    agent = Agent(client=cast(Any, client), default_options=cast(Any, {"response_format": schema}))
 
     await agent.run("Hi")
 
@@ -1181,7 +1205,7 @@ async def test_response_format_raw_schema_kept_with_tools() -> None:
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_schema == schema
     assert config.tools is not None
-    assert config.tools[0].function_declarations[0].name == "calculator"
+    assert _first_function_declaration(config).name == "calculator"
 
 
 async def test_streaming_response_format_raw_schema_added_to_config() -> None:
@@ -1304,7 +1328,7 @@ async def test_function_tool_converted_to_function_declaration() -> None:
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.tools is not None
     assert len(config.tools) == 1
-    function_declaration = config.tools[0].function_declarations[0]
+    function_declaration = _first_function_declaration(config)
     assert function_declaration.name == "get_weather"
 
 
@@ -1327,7 +1351,7 @@ async def test_callable_tool_resolved_via_validate_options() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.tools is not None
-    function_declaration = config.tools[0].function_declarations[0]
+    function_declaration = _first_function_declaration(config)
     assert function_declaration.name == "get_weather"
 
 
@@ -1373,7 +1397,7 @@ def test_coerce_to_dict_with_json_string_literal() -> None:
 
 
 def _get_function_calling_mode(config: types.GenerateContentConfig) -> str:
-    return config.tool_config.function_calling_config.mode
+    return str(_function_calling_config(config).mode)
 
 
 def _make_dummy_tool() -> FunctionTool:
@@ -1391,7 +1415,7 @@ async def _get_config_for_tool_choice(tool_choice: str) -> types.GenerateContent
 
     await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Hi")])],
-        options={"tools": [tool], "tool_choice": tool_choice},
+        options=cast(Any, {"tools": [tool], "tool_choice": tool_choice}),
     )
 
     return mock.aio.models.generate_content.call_args.kwargs["config"]
@@ -1429,8 +1453,9 @@ async def test_tool_choice_required_with_name_sets_allowed_function_names() -> N
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    function_calling_config = config.tool_config.function_calling_config
+    function_calling_config = _function_calling_config(config)
     assert function_calling_config.mode == "ANY"
+    assert function_calling_config.allowed_function_names is not None
     assert "dummy" in function_calling_config.allowed_function_names
 
 
@@ -1464,7 +1489,7 @@ async def test_tool_choice_auto_with_allowed_tools_uses_VALIDATED() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    function_calling_config = config.tool_config.function_calling_config
+    function_calling_config = _function_calling_config(config)
     assert function_calling_config.mode == "VALIDATED"
     assert function_calling_config.allowed_function_names == ["dummy", "other"]
 
@@ -1484,7 +1509,7 @@ async def test_tool_choice_auto_with_empty_allowed_tools_uses_VALIDATED() -> Non
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    function_calling_config = config.tool_config.function_calling_config
+    function_calling_config = _function_calling_config(config)
     assert function_calling_config.mode == "VALIDATED"
     assert function_calling_config.allowed_function_names == []
 
@@ -1504,7 +1529,7 @@ async def test_tool_choice_required_with_allowed_tools_uses_ANY() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    function_calling_config = config.tool_config.function_calling_config
+    function_calling_config = _function_calling_config(config)
     assert function_calling_config.mode == "ANY"
     assert function_calling_config.allowed_function_names == ["dummy"]
 
@@ -1524,7 +1549,7 @@ async def test_tool_choice_required_function_name_takes_precedence_over_allowed_
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    function_calling_config = config.tool_config.function_calling_config
+    function_calling_config = _function_calling_config(config)
     assert function_calling_config.mode == "ANY"
     assert function_calling_config.allowed_function_names == ["dummy"]
 
@@ -1620,7 +1645,9 @@ def test_get_mcp_tool_forwards_transport_kwargs() -> None:
         url="https://mcp.example.com/sse",
         headers={"Authorization": "Bearer token"},
     )
-    server = tool.mcp_servers[0]  # type: ignore[index]
+    assert tool.mcp_servers is not None
+    server = tool.mcp_servers[0]
+    assert server.streamable_http_transport is not None
     assert server.streamable_http_transport.headers == {"Authorization": "Bearer token"}
 
 
@@ -1637,7 +1664,7 @@ async def test_types_tool_passed_in_tools_list_is_forwarded() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.tools is not None
-    assert any(tool.google_search for tool in config.tools)
+    assert any(cast(types.Tool, tool).google_search for tool in config.tools)
 
 
 async def test_function_response_part_in_response_mapped_to_content() -> None:

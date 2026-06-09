@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -101,7 +102,7 @@ class TestRedisContextProviderInit:
         from agent_framework.exceptions import AgentException
 
         with pytest.raises(AgentException, match="not a valid type"):
-            RedisContextProvider(source_id="ctx", user_id="u1", redis_vectorizer="bad")  # type: ignore[arg-type]
+            RedisContextProvider(source_id="ctx", user_id="u1", redis_vectorizer="bad")  # type: ignore[arg-type] # ty: ignore[invalid-argument-type]
 
 
 class TestRedisContextProviderValidateFilters:
@@ -112,7 +113,7 @@ class TestRedisContextProviderValidateFilters:
 
     def test_any_single_filter_ok(self, patch_index_from_dict: MagicMock):  # noqa: ARG002
         for kwargs in [{"user_id": "u"}, {"agent_id": "a"}, {"application_id": "app"}]:
-            provider = RedisContextProvider(source_id="ctx", **kwargs)
+            provider = RedisContextProvider(source_id="ctx", **cast(Any, kwargs))
             provider._validate_filters()  # should not raise
 
 
@@ -144,7 +145,10 @@ class TestRedisContextProviderBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test query"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "ctx" in ctx.context_messages
@@ -163,7 +167,10 @@ class TestRedisContextProviderBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["   "])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_index.query.assert_not_called()
@@ -182,7 +189,10 @@ class TestRedisContextProviderBeforeRun:
 
         with patch.object(provider, "_redis_search", wraps=provider._redis_search) as spy:
             await provider.before_run(
-                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
             )  # type: ignore[arg-type]
 
             spy.assert_called_once()
@@ -200,7 +210,10 @@ class TestRedisContextProviderBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "ctx" not in ctx.context_messages
@@ -219,7 +232,10 @@ class TestRedisContextProviderAfterRun:
         ctx._response = response
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_index.load.assert_called_once()
@@ -238,7 +254,10 @@ class TestRedisContextProviderAfterRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["   "])], session_id="s1")
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_index.load.assert_not_called()
@@ -253,7 +272,10 @@ class TestRedisContextProviderAfterRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         loaded = mock_index.load.call_args[0][0]
@@ -489,7 +511,10 @@ class TestRedisHistoryProviderBeforeAfterRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["new msg"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "mem" in ctx.context_messages
@@ -506,7 +531,10 @@ class TestRedisHistoryProviderBeforeAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hello"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
@@ -524,7 +552,10 @@ class TestRedisHistoryProviderBeforeAfterRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_redis_client.pipeline.assert_not_called()

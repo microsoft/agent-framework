@@ -14,6 +14,7 @@ from agent_framework import (
     DEFAULT_MEMORY_SOURCE_ID,
     Agent,
     AgentSession,
+    ChatOptions,
     ChatResponse,
     Content,
     ExperimentalFeature,
@@ -25,6 +26,10 @@ from agent_framework import (
     MemoryTopicRecord,
     Message,
 )
+
+
+def _no_store_options() -> ChatOptions:
+    return {"store": False}
 
 
 def _tool_by_name(tools: list[object], name: str) -> object:
@@ -120,7 +125,7 @@ def test_memory_topic_record_round_trips_through_dict_and_markdown() -> None:
     record = MemoryTopicRecord.from_dict(raw_record)
     reparsed_record = MemoryTopicRecord.from_markdown(record.to_markdown())
 
-    assert record == MemoryTopicRecord(**raw_record)
+    assert record == MemoryTopicRecord(**raw_record)  # type: ignore[arg-type]
     assert record.to_dict() == raw_record
     assert reparsed_record == record
     assert "MemoryTopicRecord(" in repr(record)
@@ -294,19 +299,19 @@ async def test_memory_context_provider_does_not_rewrite_unchanged_index(tmp_path
     session.state["owner_id"] = "alice"
     store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
     agent = Agent(
-        client=_MemoryHarnessClient(),
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         context_providers=[MemoryContextProvider(store=store)],
-        default_options={"store": False},
+        default_options=_no_store_options(),
     )
 
-    await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Current question"])],
     )
     index_path = next(tmp_path.rglob("MEMORY.md"))
     first_mtime_ns = index_path.stat().st_mtime_ns
 
-    await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Current question"])],
     )
@@ -332,12 +337,12 @@ async def test_memory_context_provider_tools_and_automation(tmp_path) -> None:
         consolidation_interval=timedelta(0),
     )
     agent = Agent(
-        client=_MemoryHarnessClient(),
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         context_providers=[provider],
-        default_options={"store": False},
+        default_options=_no_store_options(),
     )
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Remember this."])],
     )
@@ -349,11 +354,11 @@ async def test_memory_context_provider_tools_and_automation(tmp_path) -> None:
     search_memory_transcripts = _tool_by_name(tools, "search_memory_transcripts")
     consolidate_memories = _tool_by_name(tools, "consolidate_memories")
 
-    write_result = await write_memory.invoke(arguments={"topic": "travel", "memory": "Visit Oslo in June."})
+    write_result = await write_memory.invoke(arguments={"topic": "travel", "memory": "Visit Oslo in June."})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     created_topic = json.loads(write_result[0].text)
     assert created_topic["topic"] == "travel"
 
-    list_result = await list_memory_topics.invoke()
+    list_result = await list_memory_topics.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert [entry["topic"] for entry in json.loads(list_result[0].text)] == ["travel"]
 
     await agent.run("Please remember that I prefer concise answers.", session=session)
@@ -365,12 +370,12 @@ async def test_memory_context_provider_tools_and_automation(tmp_path) -> None:
     assert preferences_topic.summary == "Prefers concise answers."
     assert preferences_topic.memories == ["Prefers concise answers."]
 
-    transcript_search_result = await search_memory_transcripts.invoke(arguments={"query": "concise", "limit": 5})
+    transcript_search_result = await search_memory_transcripts.invoke(arguments={"query": "concise", "limit": 5})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     search_payload = json.loads(transcript_search_result[0].text)
     assert search_payload[0]["role"] == "user"
     assert "concise answers" in search_payload[0]["text"]
 
-    consolidate_result = await consolidate_memories.invoke()
+    consolidate_result = await consolidate_memories.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(consolidate_result[0].text)["consolidated_topics"] >= 1
 
 
@@ -401,12 +406,12 @@ async def test_memory_context_provider_injects_recent_turns(tmp_path) -> None:
         state=provider_state,
     )
     agent = Agent(
-        client=_MemoryHarnessClient(),
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         context_providers=[provider],
-        default_options={"store": False},
+        default_options=_no_store_options(),
     )
 
-    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    session_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Current question"])],
     )
@@ -457,21 +462,21 @@ async def test_memory_context_provider_recent_turns_can_skip_tool_call_groups(tm
         state=provider_state,
     )
     with_tools_agent = Agent(
-        client=_MemoryHarnessClient(),
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         context_providers=[MemoryContextProvider(store=store, recent_turns=2, load_tool_turns=True)],
-        default_options={"store": False},
+        default_options=_no_store_options(),
     )
     without_tools_agent = Agent(
-        client=_MemoryHarnessClient(),
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         context_providers=[MemoryContextProvider(store=store, recent_turns=2, load_tool_turns=False)],
-        default_options={"store": False},
+        default_options=_no_store_options(),
     )
 
-    with_tools_context, _ = await with_tools_agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    with_tools_context, _ = await with_tools_agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Current question"])],
     )
-    without_tools_context, _ = await without_tools_agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    without_tools_context, _ = await without_tools_agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Current question"])],
     )
@@ -521,15 +526,15 @@ async def test_memory_context_provider_uses_explicit_consolidation_client(tmp_pa
     )
     provider = MemoryContextProvider(
         store=store,
-        consolidation_client=consolidation_client,
+        consolidation_client=consolidation_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     )
     agent = Agent(
-        client=main_client,
+        client=main_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         context_providers=[provider],
-        default_options={"store": False},
+        default_options=_no_store_options(),
     )
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Remember this."])],
     )
@@ -539,8 +544,8 @@ async def test_memory_context_provider_uses_explicit_consolidation_client(tmp_pa
     write_memory = _tool_by_name(tools, "write_memory")
     consolidate_memories = _tool_by_name(tools, "consolidate_memories")
 
-    await write_memory.invoke(arguments={"topic": "travel", "memory": "Visit Oslo in June."})
-    await consolidate_memories.invoke()
+    await write_memory.invoke(arguments={"topic": "travel", "memory": "Visit Oslo in June."})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    await consolidate_memories.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     travel_topic = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="travel")
     assert travel_topic.summary == "Consolidated by the cheaper client."
@@ -554,9 +559,9 @@ async def test_memory_context_provider_preserves_concurrent_writes_to_same_topic
     session.state["owner_id"] = "alice"
     store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
     provider = MemoryContextProvider(store=store)
-    agent = Agent(client=_MemoryHarnessClient(), context_providers=[provider], default_options={"store": False})
+    agent = Agent(client=_MemoryHarnessClient(), context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Remember these."])],
     )
@@ -566,7 +571,7 @@ async def test_memory_context_provider_preserves_concurrent_writes_to_same_topic
     memories = [f"Concurrent memory {index}." for index in range(20)]
 
     await asyncio.gather(
-        *(write_memory.invoke(arguments={"topic": "preferences", "memory": memory}) for memory in memories)
+        *(write_memory.invoke(arguments={"topic": "preferences", "memory": memory}) for memory in memories)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     )
 
     topic = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="preferences")
@@ -575,12 +580,12 @@ async def test_memory_context_provider_preserves_concurrent_writes_to_same_topic
 
 def test_memory_harness_classes_are_marked_experimental() -> None:
     """Memory harness public classes should expose HARNESS experimental metadata."""
-    assert MemoryIndexEntry.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert MemoryTopicRecord.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert MemoryStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert MemoryFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert MemoryContextProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert ".. warning:: Experimental" in MemoryContextProvider.__doc__
+    assert MemoryIndexEntry.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert MemoryTopicRecord.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert MemoryStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert MemoryFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert MemoryContextProvider.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert ".. warning:: Experimental" in MemoryContextProvider.__doc__  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_memory_topic_record_round_trips_when_text_contains_section_markers() -> None:
@@ -713,7 +718,7 @@ async def test_memory_consolidation_transient_failure_preserves_state(tmp_path) 
     session.state["owner_id"] = "alice"
     store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
     raising_client = _RaisingMemoryClient()
-    provider = MemoryContextProvider(store=store, consolidation_client=raising_client)
+    provider = MemoryContextProvider(store=store, consolidation_client=raising_client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     pre_state = {
         "last_consolidated_at": "2026-04-20T09:00:00+00:00",
         "sessions_since_consolidation": ["queued-session"],
@@ -731,8 +736,8 @@ async def test_memory_consolidation_transient_failure_preserves_state(tmp_path) 
         source_id=DEFAULT_MEMORY_SOURCE_ID,
     )
 
-    consolidated_count = await provider._run_consolidation(  # type: ignore[reportPrivateUsage]
-        client=raising_client,
+    consolidated_count = await provider._run_consolidation(  # pyright: ignore[reportPrivateUsage]
+        client=raising_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         session=session,
         force=True,
         now=datetime(2026, 4, 22, tzinfo=timezone.utc),
@@ -759,11 +764,11 @@ async def test_memory_extraction_propagates_programmer_errors(tmp_path) -> None:
     context = SessionContext(
         input_messages=[Message(role="user", contents=["q"])],
     )
-    context._response = AgentResponse(messages=[Message(role="assistant", contents=["a"])])  # type: ignore[reportPrivateUsage]
+    context._response = AgentResponse(messages=[Message(role="assistant", contents=["a"])])  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(AttributeError, match="misconfigured client"):
-        await provider._extract_memories(  # type: ignore[reportPrivateUsage]
-            client=bad_client,
+        await provider._extract_memories(  # pyright: ignore[reportPrivateUsage]
+            client=bad_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=context,
             now=datetime(2026, 4, 22, tzinfo=timezone.utc),

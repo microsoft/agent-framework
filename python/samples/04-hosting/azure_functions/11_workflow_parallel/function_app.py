@@ -43,7 +43,7 @@ from agent_framework import (
     handler,
 )
 from agent_framework.azure import AgentFunctionApp
-from agent_framework.openai import OpenAIChatCompletionClient
+from agent_framework.openai import OpenAIChatCompletionClient, OpenAIChatCompletionOptions
 from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
 from pydantic import BaseModel
 from typing_extensions import Never
@@ -375,7 +375,7 @@ def _create_workflow() -> Workflow:
             "Return JSON with fields: sentiment (positive/negative/neutral), "
             "confidence (0.0-1.0), and explanation (brief reasoning)."
         ),
-        default_options={"response_format": SentimentResult},
+        default_options=OpenAIChatCompletionOptions[Any](response_format=SentimentResult),
     )
 
     keyword_agent = Agent(
@@ -386,7 +386,7 @@ def _create_workflow() -> Workflow:
             "from the given text. Return JSON with fields: keywords (list of strings), "
             "and categories (list of topic categories)."
         ),
-        default_options={"response_format": KeywordResult},
+        default_options=OpenAIChatCompletionOptions[Any](response_format=KeywordResult),
     )
 
     # Create summary agent for Pattern 3 (mixed parallel)
@@ -398,7 +398,7 @@ def _create_workflow() -> Workflow:
             "provide a concise summary. Return JSON with fields: summary (brief text), "
             "and key_points (list of main takeaways)."
         ),
-        default_options={"response_format": SummaryResult},
+        default_options=OpenAIChatCompletionOptions[Any](response_format=SummaryResult),
     )
 
     # Create executor instances

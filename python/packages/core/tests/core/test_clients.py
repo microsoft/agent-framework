@@ -53,11 +53,11 @@ def test_base_client(chat_client_base: SupportsChatGetResponse):
 
 def test_base_client_rejects_direct_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
     with pytest.raises(TypeError):
-        type(chat_client_base)(legacy_key="legacy-value")
+        type(chat_client_base)(legacy_key="legacy-value")  # type: ignore[call-arg]  # pyrefly: ignore[bad-instantiation, unexpected-keyword]  # ty: ignore[unknown-argument]
 
 
 def test_base_client_as_agent_uses_explicit_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
-    agent = chat_client_base.as_agent(additional_properties={"team": "core"})
+    agent = chat_client_base.as_agent(additional_properties={"team": "core"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     assert agent.additional_properties == {"team": "core"}
 
@@ -105,10 +105,10 @@ async def test_base_client_get_response_streaming(chat_client_base: SupportsChat
 async def test_base_client_applies_compaction_before_non_streaming_inner_call(
     chat_client_base: SupportsChatGetResponse,
 ):
-    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
-    chat_client_base.compaction_strategy = TruncationStrategy(max_n=1, compact_to=1)  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = TruncationStrategy(max_n=1, compact_to=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     captured_roles: list[list[str]] = []
-    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def _capture(
         *,
@@ -119,7 +119,7 @@ async def test_base_client_applies_compaction_before_non_streaming_inner_call(
         captured_roles.append([message.role for message in messages])
         return await original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
     await chat_client_base.get_response([
         Message(role="user", contents=["Hello"]),
         Message(role="assistant", contents=["Previous response"]),
@@ -130,10 +130,10 @@ async def test_base_client_applies_compaction_before_non_streaming_inner_call(
 async def test_base_client_applies_compaction_before_streaming_inner_call(
     chat_client_base: SupportsChatGetResponse,
 ):
-    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
-    chat_client_base.compaction_strategy = TruncationStrategy(max_n=1, compact_to=1)  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = TruncationStrategy(max_n=1, compact_to=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     captured_roles: list[list[str]] = []
-    original = chat_client_base._get_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def _capture(
         *,
@@ -144,7 +144,7 @@ async def test_base_client_applies_compaction_before_streaming_inner_call(
         captured_roles.append([message.role for message in messages])
         return original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base._get_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
     async for _ in chat_client_base.get_response(
         [
             Message(role="user", contents=["Hello"]),
@@ -159,9 +159,9 @@ async def test_base_client_applies_compaction_before_streaming_inner_call(
 async def test_base_client_per_call_compaction_override_applies_before_inner_call(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     captured_roles: list[list[str]] = []
-    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def _capture(
         *,
@@ -172,7 +172,7 @@ async def test_base_client_per_call_compaction_override_applies_before_inner_cal
         captured_roles.append([message.role for message in messages])
         return await original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
     await chat_client_base.get_response(
         [
             Message(role="user", contents=["Hello"]),
@@ -186,9 +186,9 @@ async def test_base_client_per_call_compaction_override_applies_before_inner_cal
 async def test_base_client_per_call_tokenizer_override_annotates_messages(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     captured_token_counts: list[list[int | None]] = []
-    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def _capture(
         *,
@@ -202,7 +202,7 @@ async def test_base_client_per_call_tokenizer_override_annotates_messages(
         ])
         return await original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
     await chat_client_base.get_response(
         [
             Message(role="user", contents=["Hello"]),
@@ -217,9 +217,9 @@ async def test_base_client_per_call_tokenizer_override_annotates_messages(
 async def test_base_client_per_call_tokenizer_override_without_strategy_annotates_messages(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     captured_token_counts: list[list[int | None]] = []
-    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def _capture(
         *,
@@ -233,7 +233,7 @@ async def test_base_client_per_call_tokenizer_override_without_strategy_annotate
         ])
         return await original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
     await chat_client_base.get_response(
         [
             Message(role="user", contents=["Hello"]),
@@ -247,10 +247,10 @@ async def test_base_client_per_call_tokenizer_override_without_strategy_annotate
 async def test_base_client_default_tokenizer_without_strategy_annotates_messages(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
-    chat_client_base.tokenizer = _FixedTokenizer(19)  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.tokenizer = _FixedTokenizer(19)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     captured_token_counts: list[list[int | None]] = []
-    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def _capture(
         *,
@@ -264,7 +264,7 @@ async def test_base_client_default_tokenizer_without_strategy_annotates_messages
         ])
         return await original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
     await chat_client_base.get_response([
         Message(role="user", contents=["Hello"]),
         Message(role="assistant", contents=["Previous response"]),
@@ -300,22 +300,22 @@ async def test_function_loop_persists_inserted_summaries_across_iterations(
     # originals. Across tool-loop iterations the exclusion flags persisted (shared Message
     # objects) but the inserted summaries were dropped (they only lived on a throwaway copy),
     # so older tool groups were silently lost with no summary representing them.
-    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]
-    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
-    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     @tool(name="lookup_weather", approval_mode="never_require")
     def lookup_weather(location: str) -> str:
         return f"Weather in {location}: sunny"
 
-    chat_client_base.run_responses = [  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         _tool_call_response("call_1", "London"),
         _tool_call_response("call_2", "Paris"),
         _tool_call_response("call_3", "Tokyo"),
     ]
 
     captured_inputs: list[list[Message]] = []
-    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def _capture(
         *,
@@ -326,7 +326,7 @@ async def test_function_loop_persists_inserted_summaries_across_iterations(
         captured_inputs.append(list(messages))
         return await original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
 
     await chat_client_base.get_response(
         [Message(role="user", contents=["What is the weather in London?"])],
@@ -366,22 +366,22 @@ async def test_function_loop_persists_inserted_summaries_across_iterations_strea
 ) -> None:
     # Streaming counterpart of the #4991 regression test: the summary persistence fix in
     # ``_prepare_messages_for_model_call`` must cover the streaming tool loop too.
-    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]
-    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
-    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     @tool(name="lookup_weather", approval_mode="never_require")
     def lookup_weather(location: str) -> str:
         return f"Weather in {location}: sunny"
 
-    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         _tool_call_update("call_1", "London"),
         _tool_call_update("call_2", "Paris"),
         _tool_call_update("call_3", "Tokyo"),
     ]
 
     captured_inputs: list[list[Message]] = []
-    original = chat_client_base._get_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def _capture(
         *,
@@ -392,7 +392,7 @@ async def test_function_loop_persists_inserted_summaries_across_iterations_strea
         captured_inputs.append(list(messages))
         return original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base._get_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
 
     stream = chat_client_base.get_response(
         [Message(role="user", contents=["What is the weather in London?"])],
@@ -417,9 +417,9 @@ async def test_function_loop_compaction_conversation_id_mode_does_not_resend_his
     # In conversation-id mode the server owns prior context, so the tool loop clears
     # ``prepped_messages`` and only sends the latest message. Compaction must not fight that
     # by re-inserting summaries or re-sending earlier turns.
-    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]
-    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
-    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     @tool(name="lookup_weather", approval_mode="never_require")
     def lookup_weather(location: str) -> str:
@@ -430,14 +430,14 @@ async def test_function_loop_compaction_conversation_id_mode_does_not_resend_his
         response.conversation_id = "conv_1"
         return response
 
-    chat_client_base.run_responses = [  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         _conversation_tool_call("call_1", "London"),
         _conversation_tool_call("call_2", "Paris"),
         _conversation_tool_call("call_3", "Tokyo"),
     ]
 
     captured_inputs: list[list[Message]] = []
-    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def _capture(
         *,
@@ -448,7 +448,7 @@ async def test_function_loop_compaction_conversation_id_mode_does_not_resend_his
         captured_inputs.append(list(messages))
         return await original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
 
     await chat_client_base.get_response(
         [Message(role="user", contents=["What is the weather in London?"])],
@@ -467,10 +467,10 @@ def test_base_client_as_agent_does_not_copy_client_compaction_defaults(
 ) -> None:
     strategy = TruncationStrategy(max_n=1, compact_to=1)
     tokenizer = _FixedTokenizer(11)
-    chat_client_base.compaction_strategy = strategy  # type: ignore[attr-defined]
-    chat_client_base.tokenizer = tokenizer  # type: ignore[attr-defined]
+    chat_client_base.compaction_strategy = strategy  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.tokenizer = tokenizer  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
-    agent = chat_client_base.as_agent(name="shared-client-agent")
+    agent = chat_client_base.as_agent(name="shared-client-agent")  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     assert agent.compaction_strategy is None  # type: ignore[attr-defined]
     assert agent.tokenizer is None  # type: ignore[attr-defined]

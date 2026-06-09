@@ -60,10 +60,13 @@ class UserInfoMemory(ContextProvider):
                 # Update user info with extracted data
                 with suppress(Exception):
                     extracted = result.value
-                    if state["user_info"].name is None and extracted.name:
-                        state["user_info"].name = extracted.name
-                    if state["user_info"].age is None and extracted.age:
-                        state["user_info"].age = extracted.age
+                    user_info = state["user_info"]
+                    if not isinstance(extracted, UserInfo) or not isinstance(user_info, UserInfo):
+                        return
+                    if user_info.name is None and extracted.name:
+                        user_info.name = extracted.name
+                    if user_info.age is None and extracted.age:
+                        user_info.age = extracted.age
 
     async def before_run(
         self,

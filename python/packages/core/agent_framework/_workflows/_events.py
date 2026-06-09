@@ -16,9 +16,9 @@ from typing import Any, Generic, Literal, cast
 from ._typing_utils import deserialize_type, serialize_type
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 DataT = TypeVar("DataT", default=Any)
 

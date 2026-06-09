@@ -357,7 +357,7 @@ def _process_agent_response(
             if isinstance(dumped, dict):
                 structured_response = dumped  # type: ignore[assignment]
         elif isinstance(agent_response.value, dict):
-            structured_response = agent_response.value  # type: ignore[assignment]
+            structured_response = agent_response.value
 
     output_message = build_agent_executor_response(
         executor_id=executor_id,
@@ -916,7 +916,7 @@ async def execute_hitl_response_handler(
     response = _deserialize_hitl_response(response_data, response_type_str)
 
     # Find the matching response handler
-    handler = executor._find_response_handler(original_request, response)  # pyright: ignore[reportPrivateUsage]
+    handler = executor._find_response_handler(original_request, response)
 
     if handler is None:
         logger.warning(

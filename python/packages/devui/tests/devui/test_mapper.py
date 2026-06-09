@@ -24,12 +24,12 @@ from agent_framework._workflows._events import (
 )
 
 # Import factory functions from conftest for parameterized test data creation
-from conftest import (
+from conftest import (  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
     create_agent_run_response,
     create_executor_completed_event,
     create_executor_failed_event,
     create_executor_invoked_event,
-)
+)  # pyrefly: ignore[missing-import]
 
 from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui.models._openai_custom import (

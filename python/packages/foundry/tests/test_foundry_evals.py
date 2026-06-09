@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -496,7 +496,7 @@ class TestToEvalItem:
             Message("assistant", ["Rain is expected tomorrow."]),
         ]
         item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=ConversationSplit.FULL)
+        query_msgs, response_msgs = item.split_messages(split=cast(Any, ConversationSplit.FULL))
         # query_messages: just the first user message
         assert len(query_msgs) == 1
         assert query_msgs[0].role == "user"
@@ -515,7 +515,7 @@ class TestToEvalItem:
             Message("assistant", ["It's sunny."]),
         ]
         item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=ConversationSplit.FULL)
+        query_msgs, response_msgs = item.split_messages(split=cast(Any, ConversationSplit.FULL))
         # query includes system + first user
         assert len(query_msgs) == 2
         assert query_msgs[0].role == "system"
@@ -533,7 +533,7 @@ class TestToEvalItem:
             Message("assistant", ["You're welcome!"]),
         ]
         item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=ConversationSplit.FULL)
+        query_msgs, response_msgs = item.split_messages(split=cast(Any, ConversationSplit.FULL))
         assert len(query_msgs) == 1
         assert len(response_msgs) == 5
 
@@ -547,7 +547,7 @@ class TestToEvalItem:
         ]
         item = EvalItem(conversation=conversation)
         q_default, r_default = item.split_messages()
-        q_explicit, r_explicit = item.split_messages(split=ConversationSplit.LAST_TURN)
+        q_explicit, r_explicit = item.split_messages(split=cast(Any, ConversationSplit.LAST_TURN))
         assert [m.role for m in q_default] == [m.role for m in q_explicit]
         assert [m.text for m in q_default] == [m.text for m in q_explicit]
         assert [m.role for m in r_default] == [m.role for m in r_explicit]
@@ -585,7 +585,7 @@ class TestToEvalItem:
             Message("assistant", ["You're welcome!"]),
         ]
         tool_objs = [_make_tool("get_weather")]
-        items = EvalItem.per_turn_items(conversation, tools=tool_objs)
+        items = EvalItem.per_turn_items(conversation, tools=cast(Any, tool_objs))
         assert len(items) == 2
 
         # Turn 1: response includes tool_call, tool_result, and final assistant
@@ -624,13 +624,13 @@ class TestToEvalItem:
             Message("assistant", ["The capital of France is Paris, Alice!"]),
         ]
 
-        def split_before_memory(conv):
+        def split_before_memory(conversation):
             """Split just before the memory retrieval tool call."""
-            for i, msg in enumerate(conv):
+            for i, msg in enumerate(conversation):
                 for c in msg.contents:
                     if c.name == "retrieve_memory":
-                        return conv[:i], conv[i:]
-            return EvalItem._split_last_turn_static(conv)
+                        return conversation[:i], conversation[i:]
+            return EvalItem._split_last_turn_static(conversation)
 
         item = EvalItem(conversation=conversation)
         query_msgs, response_msgs = item.split_messages(split=split_before_memory)
@@ -650,12 +650,12 @@ class TestToEvalItem:
             Message("assistant", ["Hi there!"]),
         ]
 
-        def split_before_memory(conv):
-            for i, msg in enumerate(conv):
+        def split_before_memory(conversation):
+            for i, msg in enumerate(conversation):
                 for c in msg.contents:
                     if c.name == "retrieve_memory":
-                        return conv[:i], conv[i:]
-            return EvalItem._split_last_turn_static(conv)
+                        return conversation[:i], conversation[i:]
+            return EvalItem._split_last_turn_static(conversation)
 
         item = EvalItem(conversation=conversation)
         query_msgs, response_msgs = item.split_messages(split=split_before_memory)
@@ -675,7 +675,7 @@ class TestToEvalItem:
         ]
         # Split at index 2 (arbitrary)
         item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=lambda conv: (conv[:2], conv[2:]))
+        query_msgs, response_msgs = item.split_messages(split=lambda conversation: (conversation[:2], conversation[2:]))
         assert len(query_msgs) == 2
         assert len(response_msgs) == 2
 
@@ -689,7 +689,7 @@ class TestToEvalItem:
         ]
         item = EvalItem(
             conversation=conversation,
-            split_strategy=ConversationSplit.FULL,
+            split_strategy=cast(Any, ConversationSplit.FULL),
         )
         # split_messages() with no split arg should use item.split_strategy
         query_msgs, response_msgs = item.split_messages()
@@ -707,10 +707,10 @@ class TestToEvalItem:
         ]
         item = EvalItem(
             conversation=conversation,
-            split_strategy=ConversationSplit.FULL,
+            split_strategy=cast(Any, ConversationSplit.FULL),
         )
         # Explicit split= should override split_strategy
-        query_msgs, response_msgs = item.split_messages(split=ConversationSplit.LAST_TURN)
+        query_msgs, response_msgs = item.split_messages(split=cast(Any, ConversationSplit.LAST_TURN))
         assert len(query_msgs) == 3  # LAST_TURN: up to last user
         assert query_msgs[-1].text == "Second"
         assert len(response_msgs) == 1
@@ -1809,7 +1809,7 @@ class TestExtractAgentEvalData:
             WorkflowEvent.executor_invoked("planner", "Plan a trip"),
             WorkflowEvent.executor_completed("planner", [aer]),
         ]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
 
         data = _extract_agent_eval_data(result)
         assert len(data) == 1
@@ -1826,7 +1826,7 @@ class TestExtractAgentEvalData:
             WorkflowEvent.executor_invoked("booker", "Book flight"),
             WorkflowEvent.executor_completed("booker", [aer2]),
         ]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
 
         data = _extract_agent_eval_data(result)
         assert len(data) == 2
@@ -1844,7 +1844,7 @@ class TestExtractAgentEvalData:
             WorkflowEvent.executor_invoked("end", []),
             WorkflowEvent.executor_completed("end", None),
         ]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
 
         data = _extract_agent_eval_data(result)
         assert len(data) == 1
@@ -1857,7 +1857,7 @@ class TestExtractAgentEvalData:
             WorkflowEvent.executor_invoked("my-agent", "Do it"),
             WorkflowEvent.executor_completed("my-agent", [aer]),
         ]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
 
         # Build a mock workflow with AgentExecutor
         from agent_framework import AgentExecutor
@@ -1878,13 +1878,13 @@ class TestExtractAgentEvalData:
 class TestExtractOverallQuery:
     def test_extracts_string_query(self) -> None:
         events = [WorkflowEvent.executor_invoked("input", "Plan a trip")]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
         assert _extract_overall_query(result) == "Plan a trip"
 
     def test_extracts_message_query(self) -> None:
         msgs = [Message("user", ["What's the weather?"])]
         events = [WorkflowEvent.executor_invoked("input", msgs)]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
         assert "What's the weather?" in (_extract_overall_query(result) or "")
 
     def test_returns_none_for_empty(self) -> None:
@@ -1932,7 +1932,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("reviewer", [aer2]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -1961,7 +1961,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("agent", [aer]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -1991,7 +1991,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("planner", [aer]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -2028,7 +2028,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_invoked("agent-a", "Do stuff"),
             WorkflowEvent.executor_completed("agent-a", [aer]),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -2057,7 +2057,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("researcher", [aer]),
             WorkflowEvent("output", executor_id="end", data=[Message("assistant", ["Weather is sunny"])]),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -2098,7 +2098,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_invoked("planner", "Plan based on: sunny"),
             WorkflowEvent.executor_completed("planner", [aer2]),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         from agent_framework import AgentExecutor
 
@@ -2166,7 +2166,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("agent", [aer]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -2205,7 +2205,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("agent", [aer]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}

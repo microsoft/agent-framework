@@ -2,7 +2,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -64,7 +64,7 @@ def create_test_anthropic_client(
     client._last_call_id_name = None
     client._tool_name_aliases = {}
     client.additional_properties = {}
-    client.middleware = None
+    cast(Any, client).middleware = None
     client.additional_beta_flags = []
     client.chat_middleware = []
     client.function_middleware = []
@@ -1417,7 +1417,7 @@ async def test_inner_get_response_streaming(mock_anthropic_client: MagicMock) ->
     chat_options = ChatOptions(max_tokens=10)
 
     chunks: list[ChatResponseUpdate] = []
-    async for chunk in client._inner_get_response(  # type: ignore[attr-defined]
+    async for chunk in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
         messages=messages, options=chat_options, stream=True
     ):
         if chunk:
@@ -1443,7 +1443,7 @@ async def test_inner_get_response_ignores_options_stream_streaming(
     messages = [Message(role="user", contents=["Hi"])]
     options: dict[str, Any] = {"max_tokens": 10, "stream": False}
 
-    async for _ in client._inner_get_response(  # type: ignore[attr-defined]
+    async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
         messages=messages,
         options=options,
         stream=True,
@@ -2262,7 +2262,7 @@ def test_prepare_options_missing_model(mock_anthropic_client: MagicMock) -> None
     client.model = ""  # Set empty model
 
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
-    options = {}
+    options: dict[str, Any] = {}
 
     try:
         client._prepare_options(messages, options)
@@ -2743,6 +2743,7 @@ def test_parse_citations_char_location(mock_anthropic_client: MagicMock) -> None
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 
@@ -2766,6 +2767,7 @@ def test_parse_citations_page_location(mock_anthropic_client: MagicMock) -> None
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 
@@ -2791,6 +2793,7 @@ def test_parse_citations_content_block_location(
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 
@@ -2813,6 +2816,7 @@ def test_parse_citations_web_search_location(mock_anthropic_client: MagicMock) -
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 
@@ -2839,6 +2843,7 @@ def test_parse_citations_search_result_location(
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 

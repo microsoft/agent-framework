@@ -42,6 +42,7 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -379,7 +380,7 @@ def _create_workflow() -> Workflow:
         client=chat_client,
         name=CONTENT_ANALYZER_AGENT_NAME,
         instructions=CONTENT_ANALYZER_INSTRUCTIONS,
-        default_options={"response_format": ContentAnalysisResult},
+        default_options=OpenAIChatOptions[Any](response_format=ContentAnalysisResult),
     )
 
     # Create executors
