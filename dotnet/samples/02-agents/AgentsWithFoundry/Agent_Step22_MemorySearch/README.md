@@ -13,7 +13,7 @@ This sample demonstrates how to use the Memory Search tool with a `ChatClientAge
 
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 - A memory store created beforehand via Azure Portal or Python SDK
 
 Set the following environment variables:
@@ -29,3 +29,4 @@ $env:AZURE_AI_MEMORY_STORE_ID="your-memory-store-name"
 ```powershell
 dotnet run
 ```
+

@@ -12,7 +12,7 @@ This sample shows how to use the Bing Custom Search tool with a `ChatClientAgent
 
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 - Bing Custom Search resource configured with a connection ID
 
 Set the following environment variables:
@@ -34,3 +34,4 @@ $env:AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME="your-instance-name"  # The Bing Custo
 ```powershell
 dotnet run
 ```
+

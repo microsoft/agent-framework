@@ -35,7 +35,7 @@ The container ID and file ID are available from the `ContainerFileCitationMessag
 
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 Set the following environment variables:
 
@@ -54,3 +54,4 @@ dotnet run
 
 - [Code Interpreter File Download with OpenAI](../../../02-agents/AgentWithOpenAI/Agent_OpenAI_Step06_CodeInterpreterFileDownload/) — same scenario using Public OpenAI
 - [Code Interpreter](../Agent_Step14_CodeInterpreter/) — Code Interpreter without file download
+

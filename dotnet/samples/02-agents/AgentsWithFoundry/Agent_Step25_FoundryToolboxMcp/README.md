@@ -12,7 +12,7 @@ This sample shows how to use a Foundry Toolbox by pointing an `McpClient` at the
 ## Prerequisites
 
 - A Microsoft Foundry project with a toolbox configured (or let the sample create one for you)
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 Set the following environment variables:
 
@@ -30,3 +30,4 @@ startup, then connects to its MCP endpoint at
 ```powershell
 dotnet run
 ```
+

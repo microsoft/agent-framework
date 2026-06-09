@@ -13,7 +13,7 @@ This sample demonstrates how to use one agent as a function tool for another age
 
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 Set the following environment variables:
 
@@ -28,3 +28,4 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
 cd dotnet/samples/02-agents/AgentsWithFoundry
 dotnet run --project .\Agent_Step11_AsFunctionTool
 ```
+

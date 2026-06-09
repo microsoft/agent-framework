@@ -13,7 +13,7 @@ This sample demonstrates how to add OpenTelemetry observability to an agent usin
 
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 Set the following environment variables:
 
@@ -29,3 +29,4 @@ $env:APPLICATIONINSIGHTS_CONNECTION_STRING="..."  # Optional
 cd dotnet/samples/02-agents/AgentsWithFoundry
 dotnet run --project .\Agent_Step07_Observability
 ```
+

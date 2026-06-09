@@ -15,7 +15,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string JokerName = "JokerAgent";
 
 // Create the AIProjectClient to manage server-side agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a server-side agent version using the native SDK.
 ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(

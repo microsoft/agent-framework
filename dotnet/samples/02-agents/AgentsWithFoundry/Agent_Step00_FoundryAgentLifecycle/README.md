@@ -6,7 +6,7 @@ This sample demonstrates the full lifecycle of a `FoundryAgent` backed by a serv
 
 - A Microsoft Foundry project endpoint
 - A model deployment name (defaults to `gpt-5.4-mini`)
-- Azure CLI installed and authenticated
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 ## Environment Variables
 

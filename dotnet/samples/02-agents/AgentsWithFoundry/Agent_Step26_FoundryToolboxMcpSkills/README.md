@@ -15,7 +15,7 @@ and inject them as `AIContextProviders` so the agent can discover and use them a
 
 - A Microsoft Foundry project with a toolbox already configured
 - The toolbox MCP endpoint must expose `skill://index.json` with `skill-md` entries (SEP-2640). If the resource is absent, the sample runs but the skills provider will be empty.
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 Set the following environment variables:
 
@@ -30,3 +30,4 @@ $env:FOUNDRY_TOOLBOX_MCP_SERVER_URL="https://your-foundry-service.services.ai.az
 ```powershell
 dotnet run
 ```
+
