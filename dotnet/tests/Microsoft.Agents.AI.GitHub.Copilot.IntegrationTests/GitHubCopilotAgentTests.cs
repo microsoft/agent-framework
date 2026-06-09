@@ -10,43 +10,59 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.IntegrationTests;
 
+[Trait("Category", "Integration")]
 public class GitHubCopilotAgentTests
 {
-    private const string SkipReason = "Integration tests require GitHub Copilot CLI installed. For local execution only.";
+    private static void SkipIfCopilotNotConfigured()
+    {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("COPILOT_GITHUB_TOKEN")))
+        {
+            Assert.Skip("COPILOT_GITHUB_TOKEN not set; skipping GitHub Copilot integration tests.");
+        }
+    }
 
     private static Task<PermissionDecision> OnPermissionRequestAsync(PermissionRequest request, PermissionInvocation invocation)
         => Task.FromResult(PermissionDecision.ApproveOnce());
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task RunAsync_WithSimplePrompt_ReturnsResponseAsync()
     {
         // Arrange
+        SkipIfCopilotNotConfigured();
+
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
         await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
+        AgentSession session = await agent.CreateSessionAsync();
 
         // Act
-        AgentResponse response = await agent.RunAsync("What is 2 + 2? Answer with just the number.");
+        AgentResponse response = await agent.RunAsync("What is 2 + 2? Answer with just the number.", session);
 
         // Assert
         Assert.NotNull(response);
         Assert.NotEmpty(response.Messages);
         Assert.Contains("4", response.Text);
+
+        // Cleanup
+        await DeleteSessionAsync(client, session);
     }
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task RunStreamingAsync_WithSimplePrompt_ReturnsUpdatesAsync()
     {
         // Arrange
+        SkipIfCopilotNotConfigured();
+
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
         await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
+        AgentSession session = await agent.CreateSessionAsync();
 
         // Act
         List<AgentResponseUpdate> updates = [];
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("What is 2 + 2? Answer with just the number."))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("What is 2 + 2? Answer with just the number.", session))
         {
             updates.Add(update);
         }
@@ -55,12 +71,17 @@ public class GitHubCopilotAgentTests
         Assert.NotEmpty(updates);
         string fullText = string.Join("", updates.Select(u => u.Text));
         Assert.Contains("4", fullText);
+
+        // Cleanup
+        await DeleteSessionAsync(client, session);
     }
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task RunAsync_WithFunctionTool_InvokesToolAsync()
     {
         // Arrange
+        SkipIfCopilotNotConfigured();
+
         bool toolInvoked = false;
 
         AIFunction weatherTool = AIFunctionFactory.Create((string location) =>
@@ -72,24 +93,38 @@ public class GitHubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GitHubCopilotAgent agent = new(
-            client,
-            tools: [weatherTool],
-            instructions: "You are a helpful weather agent. Use the GetWeather tool to answer weather questions.");
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [weatherTool],
+            OnPermissionRequest = OnPermissionRequestAsync,
+            SystemMessage = new SystemMessageConfig
+            {
+                Mode = SystemMessageMode.Append,
+                Content = "You are a weather assistant. Always use the GetWeather tool to answer weather questions.",
+            },
+        };
+
+        await using GitHubCopilotAgent agent = new(client, sessionConfig);
+        AgentSession session = await agent.CreateSessionAsync();
 
         // Act
-        AgentResponse response = await agent.RunAsync("What's the weather like in Seattle?");
+        AgentResponse response = await agent.RunAsync("What's the weather like in Seattle?", session);
 
         // Assert
         Assert.NotNull(response);
         Assert.NotEmpty(response.Messages);
         Assert.True(toolInvoked);
+
+        // Cleanup
+        await DeleteSessionAsync(client, session);
     }
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task RunAsync_WithSession_MaintainsContextAsync()
     {
         // Arrange
+        SkipIfCopilotNotConfigured();
+
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
@@ -109,12 +144,17 @@ public class GitHubCopilotAgentTests
         // Assert
         Assert.NotNull(response2);
         Assert.Contains("Alice", response2.Text, StringComparison.OrdinalIgnoreCase);
+
+        // Cleanup
+        await DeleteSessionAsync(client, session);
     }
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task RunAsync_WithSessionResume_ContinuesConversationAsync()
     {
         // Arrange - First agent instance starts a conversation
+        SkipIfCopilotNotConfigured();
+
         string? sessionId;
 
         await using CopilotClient client1 = new(new CopilotClientOptions());
@@ -144,12 +184,17 @@ public class GitHubCopilotAgentTests
         // Assert
         Assert.NotNull(response);
         Assert.Contains("42", response.Text);
+
+        // Cleanup
+        await client2.DeleteSessionAsync(sessionId);
     }
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task RunAsync_WithShellPermissions_ExecutesCommandAsync()
     {
         // Arrange
+        SkipIfCopilotNotConfigured();
+
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
@@ -159,20 +204,26 @@ public class GitHubCopilotAgentTests
         };
 
         await using GitHubCopilotAgent agent = new(client, sessionConfig);
+        AgentSession session = await agent.CreateSessionAsync();
 
         // Act
-        AgentResponse response = await agent.RunAsync("Run a shell command to print 'hello world'");
+        AgentResponse response = await agent.RunAsync("Run a shell command to print 'hello world'", session);
 
         // Assert
         Assert.NotNull(response);
         Assert.NotEmpty(response.Messages);
         Assert.Contains("hello", response.Text, StringComparison.OrdinalIgnoreCase);
+
+        // Cleanup
+        await DeleteSessionAsync(client, session);
     }
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task RunAsync_WithUrlPermissions_FetchesContentAsync()
     {
         // Arrange
+        SkipIfCopilotNotConfigured();
+
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
@@ -182,20 +233,26 @@ public class GitHubCopilotAgentTests
         };
 
         await using GitHubCopilotAgent agent = new(client, sessionConfig);
+        AgentSession session = await agent.CreateSessionAsync();
 
         // Act
         AgentResponse response = await agent.RunAsync(
-            "Fetch https://learn.microsoft.com/agent-framework/tutorials/quick-start and summarize its contents in one sentence");
+            "Fetch https://learn.microsoft.com/agent-framework/tutorials/quick-start and summarize its contents in one sentence", session);
 
         // Assert
         Assert.NotNull(response);
         Assert.Contains("Agent Framework", response.Text, StringComparison.OrdinalIgnoreCase);
+
+        // Cleanup
+        await DeleteSessionAsync(client, session);
     }
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task RunAsync_WithLocalMcpServer_UsesServerToolsAsync()
     {
         // Arrange
+        SkipIfCopilotNotConfigured();
+
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
@@ -214,20 +271,27 @@ public class GitHubCopilotAgentTests
         };
 
         await using GitHubCopilotAgent agent = new(client, sessionConfig);
+        AgentSession session = await agent.CreateSessionAsync();
 
         // Act
-        AgentResponse response = await agent.RunAsync("List the files in the current directory");
+        AgentResponse response = await agent.RunAsync("List the files in the current directory", session);
 
         // Assert
         Assert.NotNull(response);
         Assert.NotEmpty(response.Messages);
         Assert.NotEmpty(response.Text);
+
+        // Cleanup
+        await DeleteSessionAsync(client, session);
     }
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
+    [Trait("Category", "IntegrationDisabled")]
     public async Task RunAsync_WithRemoteMcpServer_UsesServerToolsAsync()
     {
         // Arrange
+        SkipIfCopilotNotConfigured();
+
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
@@ -245,12 +309,24 @@ public class GitHubCopilotAgentTests
         };
 
         await using GitHubCopilotAgent agent = new(client, sessionConfig);
+        AgentSession session = await agent.CreateSessionAsync();
 
         // Act
-        AgentResponse response = await agent.RunAsync("Search Microsoft Learn for 'Azure Functions' and summarize the top result");
+        AgentResponse response = await agent.RunAsync("Search Microsoft Learn for 'Azure Functions' and summarize the top result", session);
 
         // Assert
         Assert.NotNull(response);
         Assert.Contains("Azure Functions", response.Text, StringComparison.OrdinalIgnoreCase);
+
+        // Cleanup
+        await DeleteSessionAsync(client, session);
+    }
+
+    private static async Task DeleteSessionAsync(CopilotClient client, AgentSession session)
+    {
+        if (session is GitHubCopilotAgentSession { SessionId: { } sessionId })
+        {
+            await client.DeleteSessionAsync(sessionId);
+        }
     }
 }
