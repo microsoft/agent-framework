@@ -2258,6 +2258,7 @@ async def _process_function_requests(
         has_explicit_approval_response = any(
             content.type == "function_approval_response"
             for message in prepped_messages
+            if isinstance(message, Message)
             for content in message.contents
         )
         if has_explicit_approval_response:
