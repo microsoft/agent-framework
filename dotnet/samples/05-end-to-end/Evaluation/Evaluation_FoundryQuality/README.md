@@ -13,7 +13,7 @@ This sample demonstrates agent evaluation using MEAI quality evaluators (Relevan
 ## Prerequisites
 
 - .NET 10 SDK or later
-- Azure CLI installed and authenticated (`az login`)
+- Azure authentication available to `DefaultAzureCredential` (for local development, run `az login`)
 
 Set the following environment variables:
 

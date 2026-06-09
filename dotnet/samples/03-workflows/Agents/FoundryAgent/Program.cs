@@ -26,7 +26,10 @@ public static class Program
         var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
             ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
-        var aiProjectClient = new AIProjectClient(new Uri(endpoint), new AzureCliCredential());
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+        var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
         // Create agents
         AIAgent frenchAgent = await CreateTranslationAgentAsync("French", aiProjectClient, deploymentName);

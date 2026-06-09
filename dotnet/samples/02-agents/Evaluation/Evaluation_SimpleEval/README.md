@@ -11,7 +11,7 @@ The simplest agent evaluation: create a Foundry agent, run it against test quest
 ## Prerequisites
 
 - .NET 10 SDK or later
-- Azure CLI installed and authenticated (`az login`)
+- Azure authentication available to `DefaultAzureCredential` (for local development, run `az login`)
 - A deployed model in your Azure AI Foundry project
 
 Set the following environment variables:

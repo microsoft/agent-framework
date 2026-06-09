@@ -85,4 +85,4 @@ cd dotnet/samples/02-agents/AgentsWithFoundry
 dotnet run --project .\Agent_Step01_Basics
 ```
 
-If you want to exercise the full create-run-delete lifecycle, run `Agent_Step00_FoundryAgentLifecycle`. 
+If you want to exercise the full create-run-delete lifecycle, run `Agent_Step00_FoundryAgentLifecycle`.

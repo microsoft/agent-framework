@@ -14,7 +14,7 @@ This sample demonstrates mixing local and cloud evaluators in a single evaluatio
 ## Prerequisites
 
 - .NET 10 SDK or later
-- Azure CLI installed and authenticated (`az login`)
+- Azure authentication available to `DefaultAzureCredential` (for local development, run `az login`)
 
 Set the following environment variables:
 
