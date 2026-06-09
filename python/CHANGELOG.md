@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **agent-framework-claude**: Bump `claude-agent-sdk` to 0.2.87 ([#6248](https://github.com/microsoft/agent-framework/pull/6248))
 - **agent-framework-core**: Document checkpoint storage security model and deserialization trust boundaries ([#6295](https://github.com/microsoft/agent-framework/pull/6295))
+- **agent-framework-azurefunctions**: Document checkpoint storage security model and deserialization trust boundaries ([#6295](https://github.com/microsoft/agent-framework/pull/6295))
 
 ### Fixed
 - **agent-framework-core**: Filter MCP tool kwargs to declared params via allowlist ([#6399](https://github.com/microsoft/agent-framework/pull/6399))
@@ -25,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-foundry-hosting**: Refactor workflow-as-agent pending request handling ([#6259](https://github.com/microsoft/agent-framework/pull/6259))
 - **agent-framework-gemini**: Make Gemini honor declarative `outputSchema`, not just JSON mode ([#5893](https://github.com/microsoft/agent-framework/pull/5893))
 - **agent-framework-mem0**: Isolate entity retrieval and correct `app_id` payload ([#6242](https://github.com/microsoft/agent-framework/pull/6242))
+- **agent-framework-ag-ui**: Match AG-UI approval responses to requested arguments ([#6376](https://github.com/microsoft/agent-framework/pull/6376))
 
 ## [1.8.0] - 2026-06-04
 
