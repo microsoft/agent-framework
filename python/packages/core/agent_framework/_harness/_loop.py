@@ -13,7 +13,9 @@ going. It serves two common patterns through a single configurable class:
    can track a **feedback log** across iterations (``record_feedback``): each pass contributes an
    entry that is exposed to every callback via the ``progress`` keyword and (by default) injected
    into the next iteration's input. Set ``fresh_context=True`` to restart each pass from the
-   original task plus the progress log. ``max_iterations`` bounds the loop as a safety cap.
+   original task plus the progress log (with a session attached, the session is also snapshotted
+   before the loop and restored between iterations so no accumulated history leaks back in).
+   ``max_iterations`` bounds the loop as a safety cap.
 2. A chat-client judge (via :meth:`AgentLoopMiddleware.with_judge`) - a second chat client decides
    whether the user's original request has been answered (via a :class:`JudgeVerdict` structured
    output); the loop continues while the answer is "no". This is a convenience wrapper that builds an
@@ -25,7 +27,6 @@ In every case, the input for the next iteration is controlled by the ``next_mess
 from __future__ import annotations
 
 import inspect
-import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -54,8 +55,6 @@ __all__ = [
     "background_tasks_running",
     "todos_remaining",
 ]
-
-logger = logging.getLogger("agent_framework")
 
 DEFAULT_NEXT_MESSAGE = "Continue working on the task. If it is complete, say so."
 
@@ -288,10 +287,12 @@ class AgentLoopMiddleware(AgentMiddleware):
                 ``progress`` loop keyword argument and never injected automatically.
             fresh_context: When ``True``, each iteration starts from a clean context: ``context``
                 messages are reset to the original input messages (plus the injected progress log)
-                instead of accumulating the prior conversation. Memory then lives only in the
-                progress log. Note: this resets the input *messages* only; if a session/thread is attached the
-                provider may still retain history server-side, so for a truly fresh context run
-                without a session (a warning is logged when ``fresh_context`` is set with a session).
+                instead of accumulating the prior conversation. When a session is attached, the
+                session is snapshotted once before the loop and restored to that pre-loop baseline
+                before each subsequent iteration, so the local transcript and any service-side
+                conversation id are reset too and the agent does not re-read the accumulated history.
+                In-loop working-state mutations are discarded; pre-loop state is preserved; continuity
+                is carried only by the progress log.
             return_final_only: Controls what a non-streaming run returns. When ``False`` (default),
                 the returned :class:`~agent_framework.AgentResponse` aggregates every iteration: each
                 iteration's response messages plus the injected ``next_message`` "nudge" messages
@@ -359,7 +360,9 @@ class AgentLoopMiddleware(AgentMiddleware):
                 relays the judge's ``reasoning`` back to the agent.
             fresh_context: When ``True``, each iteration restarts from the original input messages
                 (plus the injected progress log and judge feedback) instead of accumulating the prior
-                conversation. See :meth:`__init__` for the full semantics. Defaults to ``False``.
+                conversation; an attached session is snapshotted before the loop and restored to that
+                baseline between iterations. See :meth:`__init__` for the full semantics. Defaults to
+                ``False``.
         """
         judge_instructions = (instructions or DEFAULT_JUDGE_INSTRUCTIONS).replace(
             CRITERIA_PLACEHOLDER, _render_criteria_block(criteria)
@@ -388,22 +391,38 @@ class AgentLoopMiddleware(AgentMiddleware):
                 *context.messages,
             ]
         original_messages = list(context.messages)
-        if self.fresh_context and context.session is not None:
-            logger.warning(
-                "AgentLoopMiddleware: fresh_context=True only resets the input messages; the "
-                "attached session may still retain conversation history server-side. For a truly "
-                "fresh context per iteration, run the loop without a session."
-            )
+        # For a truly fresh context per iteration the session must also be reset, otherwise the
+        # next run reloads the local transcript or re-threads the service-side conversation and the
+        # model still sees the accumulated history. Snapshot the session once here (the pre-loop
+        # baseline) and restore it before each subsequent iteration so every pass starts clean.
+        snapshot = context.session.to_dict() if self.fresh_context and context.session is not None else None
         if context.stream:
-            self._process_streaming(context, call_next, original_messages)
+            self._process_streaming(context, call_next, original_messages, snapshot)
         else:
-            await self._process_non_streaming(context, call_next, original_messages)
+            await self._process_non_streaming(context, call_next, original_messages, snapshot)
+
+    @staticmethod
+    def _restore_session(session: Any, snapshot: dict[str, Any]) -> None:
+        """Restore a session in place to a previously captured ``to_dict()`` snapshot.
+
+        Re-hydrates the snapshot via :meth:`AgentSession.from_dict` and copies the mutable fields
+        (``service_session_id`` and ``state``) back onto the live ``session`` instance, so any
+        reference held by the agent/context observes the reset. ``session_id`` is preserved (the
+        snapshot carries the same id). A fresh ``from_dict`` is built on every call so repeated
+        restores from one snapshot do not alias the same state dict.
+        """
+        from .._sessions import AgentSession
+
+        restored = AgentSession.from_dict(snapshot)
+        session.service_session_id = restored.service_session_id
+        session.state = restored.state
 
     async def _process_non_streaming(
         self,
         context: AgentContext,
         call_next: Callable[[], Awaitable[None]],
         original_messages: list[Message],
+        snapshot: dict[str, Any] | None,
     ) -> None:
         iteration = 0
         work_iterations = 0
@@ -466,6 +485,10 @@ class AgentLoopMiddleware(AgentMiddleware):
                 )
             if stop:
                 break
+            if snapshot is not None and context.session is not None:
+                # Reset the session to the pre-loop baseline so the next run starts fresh; only the
+                # progress log (injected by _resolve_next_message) carries continuity forward.
+                self._restore_session(context.session, snapshot)
             next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
             context.messages = next_messages
             aggregated.extend(next_messages)
@@ -478,6 +501,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         context: AgentContext,
         call_next: Callable[[], Awaitable[None]],
         original_messages: list[Message],
+        snapshot: dict[str, Any] | None,
     ) -> None:
         # Holds the last iteration's final response so the outer stream's finalizer can return it
         # rather than an aggregate of every iteration.
@@ -546,6 +570,11 @@ class AgentLoopMiddleware(AgentMiddleware):
                     )
                 if stop:
                     return
+                if snapshot is not None and context.session is not None:
+                    # Reset the session to the pre-loop baseline before the next run. The final
+                    # response was already awaited above, so the service-side conversation id has
+                    # been propagated and is safe to discard here.
+                    self._restore_session(context.session, snapshot)
                 next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
                 context.messages = next_messages
                 # Surface the injected "nudge" messages in the stream so consumers see the user

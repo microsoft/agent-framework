@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from agent_framework import (
     Agent,
@@ -36,15 +37,32 @@ from agent_framework._harness._loop import (
 
 
 class RecordingChatClient:
-    """A minimal chat client that records inputs and returns scripted responses."""
+    """A minimal chat client that records inputs and returns scripted responses.
 
-    def __init__(self, *, texts: list[str] | None = None, honor_response_format: bool = False) -> None:
+    When ``service_mode=True`` it emulates a service that stores history: it advertises
+    ``STORES_BY_DEFAULT=True``, records the ``conversation_id`` threaded into each call
+    (``received_conversation_ids``) and stamps every response with a fresh ``conversation_id``
+    (``conv-<n>``) so the agent propagates it onto the session.
+    """
+
+    def __init__(
+        self,
+        *,
+        texts: list[str] | None = None,
+        honor_response_format: bool = False,
+        service_mode: bool = False,
+    ) -> None:
         self.additional_properties: dict[str, Any] = {}
         self.call_count: int = 0
         self.received_messages: list[list[str]] = []
         self.received_response_formats: list[Any] = []
+        self.received_conversation_ids: list[str | None] = []
         self._texts = list(texts) if texts is not None else []
         self._honor_response_format = honor_response_format
+        self.service_mode = service_mode
+        if service_mode:
+            self.STORES_BY_DEFAULT = True
+        self._conv_counter = 0
 
     def _next_text(self, messages: Sequence[Message]) -> str:
         if self._texts:
@@ -64,23 +82,36 @@ class RecordingChatClient:
         self.received_messages.append([m.text for m in normalized if isinstance(m, Message)])
         response_format = options.get("response_format") if options else None
         self.received_response_formats.append(response_format)
+        self.received_conversation_ids.append(options.get("conversation_id") if options else None)
+        conversation_id: str | None = None
+        if self.service_mode:
+            self._conv_counter += 1
+            conversation_id = f"conv-{self._conv_counter}"
         if stream:
-            return self._stream(normalized)
+            return self._stream(normalized, conversation_id)
 
         async def _get() -> ChatResponse:
             self.call_count += 1
             return ChatResponse(
                 messages=Message(role="assistant", contents=[self._next_text(normalized)]),
                 response_format=response_format if self._honor_response_format else None,
+                conversation_id=conversation_id,
             )
 
         return _get()
 
-    def _stream(self, messages: Sequence[Message]) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+    def _stream(
+        self, messages: Sequence[Message], conversation_id: str | None = None
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
         async def _gen() -> AsyncIterable[ChatResponseUpdate]:
             self.call_count += 1
             text = self._next_text(messages)
-            yield ChatResponseUpdate(contents=[Content.from_text(text)], role="assistant", finish_reason="stop")
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text)],
+                role="assistant",
+                finish_reason="stop",
+                conversation_id=conversation_id,
+            )
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             return ChatResponse.from_updates(updates)
@@ -421,6 +452,213 @@ async def test_fresh_context_resets_to_original_task_plus_progress() -> None:
     # Fresh context restarts from the original task and carries the progress log forward.
     assert any("original task" in text for text in client.received_messages[1])
     assert any("note-1" in text for text in client.received_messages[1])
+
+
+def test_restore_session_resets_to_snapshot() -> None:
+    session = AgentSession(service_session_id="svc-baseline")
+    session.state["k"] = "baseline"
+    snapshot = session.to_dict()
+
+    # Mutate as a run would: change the service id and working state.
+    session.service_session_id = "svc-mutated"
+    session.state["k"] = "mutated"
+    session.state["added"] = "in-loop"
+
+    AgentLoopMiddleware._restore_session(session, snapshot)
+
+    assert session.service_session_id == "svc-baseline"
+    assert session.state == {"k": "baseline"}
+    # The same session_id is preserved (restored in place).
+    assert session.session_id == AgentSession.from_dict(snapshot).session_id
+
+
+async def test_fresh_context_with_session_resets_history() -> None:
+    # With a local-history session, a non-fresh loop would re-feed the prior assistant turn into
+    # the next iteration. fresh_context must snapshot the session and restore it between iterations
+    # so the second run does not see iteration 1's response.
+    client = RecordingChatClient(texts=["alpha", "beta"])
+    session = AgentSession()
+    agent = Agent(
+        client=client,
+        middleware=[
+            AgentLoopMiddleware(
+                always_continue,
+                max_iterations=2,
+                fresh_context=True,
+                inject_progress=False,
+            )
+        ],
+    )
+
+    await agent.run("task", session=session)
+
+    # The first iteration's assistant response ("alpha") must not leak into the second run's input.
+    assert not any("alpha" in text for text in client.received_messages[1])
+    assert any("task" in text for text in client.received_messages[1])
+
+
+def _session_history_text(session: AgentSession) -> str:
+    """Join all history messages stored under any provider key in the session state."""
+    parts: list[str] = []
+    for value in session.state.values():
+        if isinstance(value, dict):
+            for msg in value.get("messages", []):
+                if isinstance(msg, Message):
+                    parts.append(msg.text)
+    return " | ".join(parts)
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+@pytest.mark.parametrize("fresh_context", [False, True], ids=["accumulate", "fresh"])
+@pytest.mark.parametrize("inject_progress", [False, True], ids=["no_progress", "progress"])
+@pytest.mark.parametrize("store", [False, True], ids=["local", "service"])
+async def test_fresh_context_session_matrix(
+    stream: bool, fresh_context: bool, inject_progress: bool, store: bool
+) -> None:
+    """Validate session handling across the streaming x fresh_context x inject_progress x store matrix.
+
+    The loop runs two iterations per ``agent.run`` (``max_iterations=2``) and we drive two runs on
+    the same session. ``record_feedback`` emits a distinct ``note-<n>`` marker (not the response
+    text) so the *session* observables (local history / service conversation id) stay decoupled from
+    the in-memory progress log: ``r1i1``/``r1i2`` only ever reach the model through the session,
+    while ``"Progress so far"`` only appears when ``inject_progress`` injects the log.
+
+    Expectations:
+    * Within a run, ``fresh_context`` restores the pre-loop baseline before each later iteration, so
+      iteration 2 does not see iteration 1's output; without it, context accumulates.
+    * After a run the session reflects the *final* iteration's pass (it is not reset to the
+      pre-loop baseline), so the next ``agent.run`` continues from there regardless of
+      ``fresh_context``.
+    * ``inject_progress`` controls whether the progress log is injected into later iterations'
+      input, independently of the session axes.
+    """
+    # Four client calls total: run1[iter1, iter2], run2[iter1, iter2].
+    client = RecordingChatClient(texts=["r1i1", "r1i2", "r2i1", "r2i2"], service_mode=store)
+
+    def make_agent() -> Agent:
+        return Agent(
+            client=client,
+            middleware=[
+                AgentLoopMiddleware(
+                    always_continue,
+                    max_iterations=2,
+                    fresh_context=fresh_context,
+                    inject_progress=inject_progress,
+                    record_feedback=lambda *, iteration, **kwargs: f"note-{iteration}",
+                )
+            ],
+        )
+
+    session = AgentSession()
+
+    async def run(agent: Agent, text: str) -> None:
+        if stream:
+            async for _ in agent.run(text, session=session, stream=True):
+                pass
+        else:
+            await agent.run(text, session=session)
+
+    await run(make_agent(), "task-1")
+    history_after_run1 = _session_history_text(session)
+    svc_after_run1 = session.service_session_id
+    await run(make_agent(), "task-2")
+    history_after_run2 = _session_history_text(session)
+    svc_after_run2 = session.service_session_id
+
+    # Exactly four model calls were made (two iterations per run, no function calling).
+    assert len(client.received_messages) == 4
+    r1i2_in = client.received_messages[1]
+    r2i1_in = client.received_messages[2]
+    r2i2_in = client.received_messages[3]
+
+    # inject_progress controls whether the progress log is injected into later iterations' input,
+    # independently of every other axis.
+    if inject_progress:
+        assert any("Progress so far" in text for text in r1i2_in)
+        assert any("note-1" in text for text in r1i2_in)
+        assert any("Progress so far" in text for text in r2i2_in)
+    else:
+        assert not any("Progress so far" in text for text in r1i2_in)
+        assert not any("Progress so far" in text for text in r2i2_in)
+
+    if store:
+        # Service-side storage: history lives behind a conversation id, not in local state.
+        # conv-1..conv-4 are minted across the four calls; the session holds the latest per run.
+        assert client.received_conversation_ids[0] is None  # run1 iter1: clean baseline
+        assert svc_after_run1 == "conv-2"  # run1 persisted its final (iter2) pass
+        assert client.received_conversation_ids[2] == "conv-2"  # run2 continues from run1's final
+        assert svc_after_run2 == "conv-4"  # run2 persisted its final (iter2) pass
+        if fresh_context:
+            # Each later iteration is restored to that run's pre-loop baseline conversation id.
+            assert client.received_conversation_ids[1] is None  # run1 iter2 reset to baseline
+            assert client.received_conversation_ids[3] == "conv-2"  # run2 iter2 reset to run2 baseline
+        else:
+            # Conversation id threads forward across iterations within a run.
+            assert client.received_conversation_ids[1] == "conv-1"
+            assert client.received_conversation_ids[3] == "conv-3"
+    else:
+        # Local history: prior turns are replayed into later calls via the session state. The
+        # progress log carries note-<n> markers, so r1i1/r1i2 reach the model only via the session.
+        # Cross-run continuity always holds: run2 sees run1's final (iter2) response.
+        assert any("r1i2" in text for text in r2i1_in)
+        assert "r1i2" in history_after_run1
+        assert "r1i2" in history_after_run2
+        if fresh_context:
+            # Within a run, iteration 2 is restored to the baseline and does not see iteration 1.
+            assert not any("r1i1" in text for text in r1i2_in)
+            assert not any("r2i1" in text for text in r2i2_in)
+            # The intermediate (iter1) pass is discarded; only the final pass is persisted.
+            assert "r1i1" not in history_after_run1
+        else:
+            # Without fresh_context, iteration 2 sees iteration 1's accumulated turn.
+            assert any("r1i1" in text for text in r1i2_in)
+            assert any("r2i1" in text for text in r2i2_in)
+            assert "r1i1" in history_after_run1
+
+
+class _Answer(BaseModel):
+    name: str
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+@pytest.mark.parametrize("return_final_only", [False, True], ids=["aggregate", "final_only"])
+@pytest.mark.parametrize("fresh_context", [False, True], ids=["accumulate", "fresh"])
+async def test_response_format_parsed_across_loop(stream: bool, return_final_only: bool, fresh_context: bool) -> None:
+    """A response_format set on the agent is applied every iteration and parsed on the final result.
+
+    Each iteration returns a *different* valid JSON object. The aggregated (``return_final_only=False``)
+    non-streaming response concatenates every iteration's text plus the injected nudges, which is not
+    valid JSON on its own; ``.value`` must still return the final iteration's pre-parsed object rather
+    than attempting (and failing) to re-parse the combined text.
+    """
+    client = RecordingChatClient(
+        texts=['{"name": "first"}', '{"name": "final"}'],
+        honor_response_format=True,
+    )
+    agent = Agent(
+        client=client,
+        middleware=[
+            AgentLoopMiddleware(
+                always_continue,
+                max_iterations=2,
+                fresh_context=fresh_context,
+                return_final_only=return_final_only,
+            )
+        ],
+    )
+
+    if stream:
+        run_stream = agent.run("question", options={"response_format": _Answer}, stream=True)
+        async for _ in run_stream:
+            pass
+        result = await run_stream.get_final_response()
+    else:
+        result = await agent.run("question", options={"response_format": _Answer})
+
+    # The response_format is forwarded to every iteration, so each response is parsed independently.
+    assert client.received_response_formats == [_Answer, _Answer]
+    # The structured value reflects the final iteration and is not re-derived from aggregated text.
+    assert result.value == _Answer(name="final")
 
 
 async def test_should_continue_marker_stops_loop_early() -> None:
