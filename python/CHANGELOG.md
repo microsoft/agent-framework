@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-core**: Fix per-service-call history persistence with server-storing clients ([#6310](https://github.com/microsoft/agent-framework/pull/6310))
 - **agent-framework-openai**: Use `getattr` for non-OpenAI provider response compatibility ([#6270](https://github.com/microsoft/agent-framework/pull/6270))
 - **agent-framework-foundry**: Refactor workflow-as-agent pending request handling ([#6259](https://github.com/microsoft/agent-framework/pull/6259))
+- **agent-framework-foundry-hosting**: Refactor workflow-as-agent pending request handling ([#6259](https://github.com/microsoft/agent-framework/pull/6259))
 - **agent-framework-gemini**: Make Gemini honor declarative `outputSchema`, not just JSON mode ([#5893](https://github.com/microsoft/agent-framework/pull/5893))
 - **agent-framework-mem0**: Isolate entity retrieval and correct `app_id` payload ([#6242](https://github.com/microsoft/agent-framework/pull/6242))
 
