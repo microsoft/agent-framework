@@ -40,8 +40,8 @@ The container ID and file ID are available from the `ContainerFileCitationMessag
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
 ## Run the sample
@@ -54,4 +54,3 @@ dotnet run
 
 - [Code Interpreter File Download with OpenAI](../../../02-agents/AgentWithOpenAI/Agent_OpenAI_Step06_CodeInterpreterFileDownload/) — same scenario using Public OpenAI
 - [Code Interpreter](../Agent_Step14_CodeInterpreter/) — Code Interpreter without file download
-

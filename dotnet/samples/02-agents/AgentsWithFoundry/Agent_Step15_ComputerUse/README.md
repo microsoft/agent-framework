@@ -44,7 +44,7 @@ The model receives a screenshot as input, analyzes it, and responds with a compu
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
 $env:AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME="computer-use-preview"
 ```
 
@@ -53,4 +53,3 @@ $env:AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME="computer-use-preview"
 ```powershell
 dotnet run
 ```
-

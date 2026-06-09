@@ -1,4 +1,4 @@
-# Hosted-Files
+﻿# Hosted-Files
 
 A hosted agent that demonstrates **two distinct file knowledge sources** through scoped, security-hardened tools:
 
@@ -57,10 +57,10 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 ```
 
 > `.env` is gitignored. The `.env.example` template is checked in as a reference.

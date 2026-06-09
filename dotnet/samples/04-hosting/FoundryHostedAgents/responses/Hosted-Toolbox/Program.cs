@@ -6,8 +6,8 @@
 // call tools provided by the Foundry platform's managed MCP proxy.
 //
 // Required environment variables:
-//   AZURE_AI_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME    - Model deployment name (default: gpt-4o)
+//   FOUNDRY_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
+//   FOUNDRY_MODEL    - Model deployment name (default: gpt-4o)
 //   FOUNDRY_AGENT_TOOLSET_ENDPOINT    - Foundry Toolsets proxy base URL
 //                                       (injected automatically by Foundry platform at runtime)
 //
@@ -28,9 +28,9 @@ using Microsoft.Agents.AI.Foundry.Hosting;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
 string toolboxName = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_NAME") ?? "my-toolset";
 
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),

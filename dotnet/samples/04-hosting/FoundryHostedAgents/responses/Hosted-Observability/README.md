@@ -1,4 +1,4 @@
-# Hosted-Observability
+﻿# Hosted-Observability
 
 A hosted [Agent Framework](https://github.com/microsoft/agent-framework) agent that demonstrates how the Foundry hosting pipeline emits OpenTelemetry traces, metrics and logs with no extra wiring.
 
@@ -39,10 +39,10 @@ cp .env.example .env
 Edit `.env` and set your Azure AI Foundry project endpoint:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
 ```
 

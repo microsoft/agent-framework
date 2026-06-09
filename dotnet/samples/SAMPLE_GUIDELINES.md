@@ -56,8 +56,8 @@ For `01-get-started`, use Azure OpenAI with:
 
 Use environment variables that match the provider or service being demonstrated. For example, Foundry samples use:
 
-- `AZURE_AI_PROJECT_ENDPOINT`
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME`
+- `FOUNDRY_PROJECT_ENDPOINT`
+- `FOUNDRY_MODEL`
 
 If a sample needs additional variables, document them in its README.
 
@@ -83,4 +83,3 @@ AIAgent agent = new AzureOpenAIClient(...)
 ## Cross-language alignment
 
 Align concepts and progression with the Python samples where it improves discoverability, but preserve current .NET-specific repo conventions and folder names.
-

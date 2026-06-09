@@ -19,8 +19,8 @@ This sample demonstrates multiple middleware layers working together: PII filter
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-5.4-mini"
 ```
 
 ## Run the sample
@@ -29,4 +29,3 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
 cd dotnet/samples/02-agents/AgentsWithFoundry
 dotnet run --project .\Agent_Step12_Middleware
 ```
-

@@ -33,9 +33,9 @@ public static class Program
     private static async Task Main()
     {
         // Set up the Azure AI Project client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-            ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+        var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+            ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
         var chatClient = new AIProjectClient(new Uri(endpoint), new AzureCliCredential())
                             .ProjectOpenAIClient.GetChatClient(deploymentName).AsIChatClient();
 

@@ -1,4 +1,4 @@
-# Evaluation - Conversation Splits
+﻿# Evaluation - Conversation Splits
 
 This sample demonstrates multi-turn conversation evaluation with different split strategies.
 
@@ -19,8 +19,8 @@ This sample demonstrates multi-turn conversation evaluation with different split
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-4o-mini"
 ```
 
 ## Run the sample

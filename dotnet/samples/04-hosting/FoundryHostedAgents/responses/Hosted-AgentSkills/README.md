@@ -1,4 +1,4 @@
-# What this sample demonstrates
+﻿# What this sample demonstrates
 
 An [Agent Framework](https://github.com/microsoft/agent-framework) agent that loads its behavioral guidelines from [**Foundry Skills**](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/skills) at startup, hosted using the **Responses protocol**. Skills are authored once as `SKILL.md` files, uploaded to your Foundry project through the Skills REST API, and downloaded by the agent on boot so updates ship without code changes.
 
@@ -54,8 +54,8 @@ Your identity (or the Managed Identity running the container in production) need
 Set the required environment variables and run the sample with `dotnet run`:
 
 ```bash
-export AZURE_AI_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"
+export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
+export FOUNDRY_MODEL="gpt-4o"
 export SKILL_NAMES="support-style,escalation-policy"
 export PROVISION_SAMPLE_SKILLS="true"   # First run only — provisions skills to Foundry
 ```

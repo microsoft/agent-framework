@@ -1,4 +1,4 @@
-# Evaluation - Simple Eval
+﻿# Evaluation - Simple Eval
 
 The simplest agent evaluation: create a Foundry agent, run it against test questions, and use Foundry quality evaluators (Relevance, Coherence) to score the responses.
 
@@ -17,8 +17,8 @@ The simplest agent evaluation: create a Foundry agent, run it against test quest
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-4o-mini"
 ```
 
 ## Run the sample

@@ -18,8 +18,8 @@ This sample shows how to use the Microsoft Fabric tool with a `ChatClientAgent` 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-5.4-mini"
 $env:FABRIC_PROJECT_CONNECTION_ID="your-fabric-connection-id"  # The full ARM resource URI, e.g., "/subscriptions/.../connections/FabricTestTool"
 ```
 
@@ -28,4 +28,3 @@ $env:FABRIC_PROJECT_CONNECTION_ID="your-fabric-connection-id"  # The full ARM re
 ```powershell
 dotnet run
 ```
-
