@@ -19,6 +19,8 @@ can see the violation reason and choose to approve or reject the action.
 To run this example:
     1. Ensure you have Azure CLI credentials configured: `az login`
     2. Set the FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL environment variables
+       (either as real environment variables or in a `.env` file in the
+       working directory or any parent directory)
     3. Run: `uv run samples/02-agents/security/email_security_example.py --cli`
        or `uv run samples/02-agents/security/email_security_example.py --devui`
     4. Add `--debug` to enable verbose tool and security middleware logging
@@ -42,7 +44,12 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIContentFilterException
 from agent_framework.security import SecureAgentConfig
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load variables from a `.env` file (if present) so configuration can come from
+# either real environment variables or a local `.env` file.
+load_dotenv()
 
 
 def configure_logging(*, debug: bool) -> None:
@@ -262,20 +269,39 @@ def _redact_token(token: str) -> str:
     return f"{token[:4]}...{token[-4:]}"
 
 
+def _require_env(name: str) -> str:
+    """Return a required configuration value from the environment or `.env` file.
+
+    `load_dotenv()` (called at import time) merges any `.env` values into
+    `os.environ`, so a single lookup here covers both sources.
+    """
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(
+            f"Missing required configuration '{name}'.\n"
+            f"Set it as an environment variable or add it to a `.env` file in the "
+            f"working directory (or any parent directory) before running this sample."
+        )
+    return value
+
+
 def setup_agent():
     """Create and return the secure email agent with all configuration."""
     credential = AzureCliCredential()
 
+    project_endpoint = _require_env("FOUNDRY_PROJECT_ENDPOINT")
+    model = _require_env("FOUNDRY_MODEL")
+
     # Create the main agent's Foundry chat client using the configured deployment.
     main_client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
+        project_endpoint=project_endpoint,
+        model=model,
         credential=credential,
     )
 
     # Create a separate Foundry client for quarantine operations.
     quarantine_client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        project_endpoint=project_endpoint,
         model="gpt-4o-mini",
         credential=credential,
     )

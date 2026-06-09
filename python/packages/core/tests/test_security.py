@@ -1003,6 +1003,123 @@ class TestAutomaticHiding:
         assert middleware_auto_hide.get_context_label().integrity == IntegrityLabel.UNTRUSTED
 
     @pytest.mark.asyncio
+    async def test_inspect_variable_id_not_expanded(self, middleware_no_auto_hide):
+        """inspect_variable's variable_id must not be expanded to stored content.
+
+        The middleware expands ``var_xxx`` references in tool arguments by default
+        (an anti-leak measure). For ``inspect_variable`` this would replace the ID
+        with the content and break the lookup, so the tool is exempt.
+        """
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        var_id = middleware_no_auto_hide.get_variable_store().store(
+            "raw untrusted payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PRIVATE),
+        )
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": var_id, "reason": "no expansion"},
+        )
+
+        async def next_fn():
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware_no_auto_hide.process(context, next_fn)
+
+        # The literal ID must survive (not expanded to "raw untrusted payload").
+        assert context.arguments["variable_id"] == var_id
+
+        payload = json.loads(context.result[0].text)
+        assert payload["inspected"] is True
+        assert payload["content"] == "raw untrusted payload"
+
+    @pytest.mark.asyncio
+    async def test_inspect_variable_propagates_user_identity(self, middleware_no_auto_hide):
+        """inspect_variable must propagate a USER_IDENTITY label, not downgrade it.
+
+        The tool returns a dict whose ``security_label`` carries the inspected
+        content's confidentiality. A custom result parser stamps that label onto
+        the produced Content so the middleware propagates it faithfully.
+        """
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        var_id = middleware_no_auto_hide.get_variable_store().store(
+            "secret",
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata={"user_id": "user-123"},
+            ),
+        )
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": var_id, "reason": "propagate user identity"},
+        )
+
+        async def next_fn():
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware_no_auto_hide.process(context, next_fn)
+
+        result_label = context.metadata["result_label"]
+        assert result_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert middleware_no_auto_hide.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
+
+    @pytest.mark.asyncio
+    async def test_inspect_variable_propagates_private(self, middleware_no_auto_hide):
+        """Regression: inspect_variable preserves a PRIVATE label."""
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        var_id = middleware_no_auto_hide.get_variable_store().store(
+            "secret",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PRIVATE),
+        )
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": var_id, "reason": "propagate private"},
+        )
+
+        async def next_fn():
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware_no_auto_hide.process(context, next_fn)
+
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert middleware_no_auto_hide.get_context_label().confidentiality == ConfidentialityLabel.PRIVATE
+
+    @pytest.mark.asyncio
+    async def test_inspect_variable_missing_var_does_not_crash(self, middleware_no_auto_hide):
+        """A missing variable id returns an error result and falls back safely."""
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": "var_doesnotexist1", "reason": "missing"},
+        )
+
+        async def next_fn():
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware_no_auto_hide.process(context, next_fn)
+
+        payload = json.loads(context.result[0].text)
+        assert payload["security_label"] is None
+        assert "error" in payload
+        # No embedded label -> falls back to the tool's default confidentiality.
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+
+    @pytest.mark.asyncio
     async def test_multiple_calls_accumulate_variables(self, middleware_auto_hide, mock_function):
         """Test that multiple tool calls accumulate variables in the store."""
         for i in range(5):

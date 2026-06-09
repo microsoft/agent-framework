@@ -68,6 +68,13 @@ logger = logging.getLogger(__name__)
 
 _BRACKETED_VAR_REF_RE = re.compile(r"^\[\s*(var_[0-9a-fA-F]+)\s*\]$")
 
+# Tools that consume variable IDs literally (as opaque references) and therefore
+# must NOT have ``var_xxx`` arguments expanded to stored content before execution.
+# ``inspect_variable`` looks the ID up itself; ``quarantined_llm`` resolves the
+# ``variable_ids`` list internally. Expanding their arguments would replace the ID
+# with the content and break the lookup.
+_VARIABLE_ID_CONSUMERS = frozenset({"inspect_variable", "quarantined_llm"})
+
 
 def _get_additional_properties(obj: Any) -> dict[str, Any]:
     """Return a typed additional_properties mapping."""
@@ -677,124 +684,6 @@ class LabeledMessage(Message):
 _current_middleware = threading.local()
 
 
-def _parse_github_mcp_labels(labels_data: dict[str, Any]) -> ContentLabel | None:
-    """Parse security labels from GitHub MCP server format.
-
-    The GitHub MCP server returns per-field labels in the format:
-    {
-        "labels": {
-            "title": {"integrity": "low", "confidentiality": ["public"]},
-            "body": {"integrity": "low", "confidentiality": ["public"]},
-            "user": {"integrity": "high", "confidentiality": ["public"]},
-            ...
-        }
-    }
-
-    Confidentiality uses a "readers lattice":
-    - ["public"] → PUBLIC (anyone can read)
-    - ["user_id_1", "user_id_2", ...] → PRIVATE (only specific collaborators can read)
-
-    This function extracts the most restrictive (lowest integrity, highest confidentiality)
-    label across all fields, focusing on user-controlled content like "body" and "title".
-
-    Args:
-        labels_data: The "labels" dict from additional_properties containing per-field labels.
-
-    Returns:
-        A ContentLabel with the most restrictive integrity/confidentiality found,
-        or None if parsing fails.
-    """
-    if not isinstance(labels_data, dict):
-        return None
-
-    # Priority fields to check (user-controlled content that may be untrusted)
-    priority_fields = ["body", "title", "content", "message", "text", "description"]
-
-    # GitHub MCP uses "low" for untrusted user content and "high" for system-controlled
-    # Map GitHub MCP integrity values to our IntegrityLabel enum
-    integrity_map = {
-        "low": IntegrityLabel.UNTRUSTED,
-        "medium": IntegrityLabel.UNTRUSTED,  # Treat medium as untrusted for safety
-        "high": IntegrityLabel.TRUSTED,
-    }
-
-    # Initialize with most permissive labels; we'll tighten them based on field values
-    most_restrictive_integrity = IntegrityLabel.TRUSTED
-    most_restrictive_confidentiality = ConfidentialityLabel.PUBLIC
-
-    def parse_confidentiality_from_readers(conf_value: Any) -> ConfidentialityLabel:
-        """Parse confidentiality from GitHub's readers lattice format.
-
-        GitHub MCP uses a readers lattice:
-        - ["public"] means anyone can read → PUBLIC
-        - ["user_id_1", "user_id_2", ...] means only those users → PRIVATE
-        """
-        if isinstance(conf_value, list):
-            conf_candidates = cast(list[Any], conf_value)  # type: ignore[redundant-cast]
-            conf_list: list[str] = [item for item in conf_candidates if isinstance(item, str)]
-            if len(conf_list) == 1 and conf_list[0].lower() == "public":
-                return ConfidentialityLabel.PUBLIC
-            if conf_list:
-                # Non-empty list of user IDs = private/restricted access
-                return ConfidentialityLabel.PRIVATE
-            # Empty list - treat as public
-            return ConfidentialityLabel.PUBLIC
-        if isinstance(conf_value, str):
-            if conf_value.lower() == "public":
-                return ConfidentialityLabel.PUBLIC
-            if conf_value.lower() in ("private", "internal", "confidential"):
-                return ConfidentialityLabel.PRIVATE
-            if conf_value.lower() == "user_identity":
-                return ConfidentialityLabel.USER_IDENTITY
-        # Default to public
-        return ConfidentialityLabel.PUBLIC
-
-    # First check priority fields (user-controlled content)
-    for field in priority_fields:
-        if field in labels_data:
-            field_label = labels_data[field]
-            if isinstance(field_label, dict):
-                field_label_dict = cast(dict[str, Any], field_label)
-                # Parse integrity
-                integrity_str = str(field_label_dict.get("integrity", "")).lower()
-                if integrity_str in integrity_map:
-                    field_integrity = integrity_map[integrity_str]
-                    # UNTRUSTED is more restrictive than TRUSTED
-                    if field_integrity == IntegrityLabel.UNTRUSTED:
-                        most_restrictive_integrity = IntegrityLabel.UNTRUSTED
-
-                # Parse confidentiality using readers lattice
-                conf_value = field_label_dict.get("confidentiality")
-                field_conf = parse_confidentiality_from_readers(conf_value)
-                # Higher confidentiality is more restrictive
-                if field_conf.value > most_restrictive_confidentiality.value:
-                    most_restrictive_confidentiality = field_conf
-
-    # Also check all other fields for completeness
-    for field, field_label in labels_data.items():
-        if field not in priority_fields and isinstance(field_label, dict):
-            field_label_dict = cast(dict[str, Any], field_label)
-            # Parse integrity
-            integrity_str = str(field_label_dict.get("integrity", "")).lower()
-            if integrity_str in integrity_map:
-                field_integrity = integrity_map[integrity_str]
-                if field_integrity == IntegrityLabel.UNTRUSTED:
-                    most_restrictive_integrity = IntegrityLabel.UNTRUSTED
-
-            # Parse confidentiality using readers lattice
-            conf_value = field_label_dict.get("confidentiality")
-            if conf_value is not None:
-                field_conf = parse_confidentiality_from_readers(conf_value)
-                if field_conf.value > most_restrictive_confidentiality.value:
-                    most_restrictive_confidentiality = field_conf
-
-    return ContentLabel(
-        integrity=most_restrictive_integrity,
-        confidentiality=most_restrictive_confidentiality,
-        metadata={"source": "github_mcp_labels"},
-    )
-
-
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     """Middleware that tracks and propagates security labels through tool invocations.
@@ -1099,7 +988,15 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         Expands [var_xxx] placeholders to their stored content before tool execution.
         Original unexpanded arguments are preserved in metadata for message reconstruction,
         ensuring that function_call Content messages keep placeholders hidden from the LLM.
+
+        Tools in ``_VARIABLE_ID_CONSUMERS`` (e.g. ``inspect_variable``) take variable
+        IDs as literal references and resolve them internally, so their arguments are
+        left untouched — expanding them would replace the ID with content and break
+        the lookup.
         """
+        if context.function.name in _VARIABLE_ID_CONSUMERS:
+            return
+
         if context.arguments is not None:
             args_before = str(context.arguments)[:200] if context.arguments else ""
             context.arguments = self._expand_variable_reference(context.arguments)
@@ -1546,8 +1443,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
 
         Checks (in order):
         1. ``additional_properties.security_label`` (explicit label)
-        2. ``additional_properties.labels`` (GitHub MCP format)
-        3. Falls back to ``fallback_label``
+        2. Falls back to ``fallback_label``
 
         Args:
             item: The Content item to inspect.
@@ -1565,23 +1461,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 return ContentLabel.from_dict(cast(dict[str, Any], label_data))
             except Exception as e:
                 logger.warning(f"Failed to parse security_label from Content: {e}")
-
-        # Check for GitHub MCP server labels format
-        github_labels = additional_props.get("labels")
-        if github_labels and isinstance(github_labels, (dict, list)):
-            try:
-                if isinstance(github_labels, list) and github_labels:
-                    github_labels = cast(dict[str, Any], github_labels[0]) if isinstance(github_labels[0], dict) else {}
-                item_label = _parse_github_mcp_labels(cast(dict[str, Any], github_labels))
-                if item_label:
-                    logger.info(
-                        f"Parsed GitHub MCP labels for Content item: "
-                        f"integrity={item_label.integrity.value}, "
-                        f"confidentiality={item_label.confidentiality.value}"
-                    )
-                    return item_label
-            except Exception as e:
-                logger.warning(f"Failed to parse GitHub MCP labels from Content: {e}")
 
         # No embedded label — use fallback
         return fallback_label
@@ -2730,6 +2609,32 @@ class InspectVariableInput(BaseModel):
     reason: str | None = Field(default=None, description="Reason for inspecting this variable (for audit purposes)")
 
 
+def _inspect_variable_result_parser(result: Any) -> list[Content]:
+    """Parse ``inspect_variable``'s dict result while preserving its security label.
+
+    ``inspect_variable`` returns a dict whose ``security_label`` field carries the
+    label of the inspected content (which may be ``USER_IDENTITY`` or any other
+    confidentiality level). The default :meth:`FunctionTool.parse_result`
+    serializes that dict to plain text, dropping the label from
+    ``Content.additional_properties``. The middleware's Tier 1 label extraction
+    then misses it and falls back to the tool's default confidentiality,
+    downgrading the real label.
+
+    This parser stamps the inspected label back onto the produced Content so
+    ``LabelTrackingFunctionMiddleware`` propagates it faithfully. The error path
+    (``security_label`` is ``None``) is left unstamped so it safely falls back to
+    the tool's default label.
+    """
+    contents = FunctionTool.parse_result(result)
+    label = result.get("security_label") if isinstance(result, dict) else None
+    if label and contents:
+        first = contents[0]
+        props = first.additional_properties or {}
+        props["security_label"] = label
+        first.additional_properties = props
+    return contents
+
+
 @tool(
     description=(
         "Inspect the content of a variable stored in the ContentVariableStore. "
@@ -2738,6 +2643,7 @@ class InspectVariableInput(BaseModel):
         "The context label will be marked as UNTRUSTED after inspection."
     ),
     approval_mode="never_require",
+    result_parser=_inspect_variable_result_parser,
     additional_properties={
         "confidentiality": "private",
         # No source_integrity declared: output inherits the label of the
