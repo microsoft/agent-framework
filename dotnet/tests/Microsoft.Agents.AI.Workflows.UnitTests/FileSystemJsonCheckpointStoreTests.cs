@@ -265,4 +265,64 @@ public sealed class FileSystemJsonCheckpointStoreTests
             childIndex.Should().NotContain(unrelatedCheckpoint);
         }
     }
+
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldKeepLegacyEntriesDiscoverableWithParentFilterAsync()
+    {
+        // Arrange
+        using TempDirectory tempDirectory = new();
+        string sessionId = Guid.NewGuid().ToString("N");
+        CheckpointInfo parentCheckpoint;
+        CheckpointInfo childCheckpoint;
+        string childFileName;
+
+        using (FileSystemJsonCheckpointStore store = new(tempDirectory))
+        {
+            parentCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+            childCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData, parentCheckpoint);
+            childFileName = store.GetFileNameForCheckpoint(sessionId, childCheckpoint);
+        }
+
+        string indexPath = Path.Combine(tempDirectory.FullName, "index.jsonl");
+        string legacyEntry = JsonSerializer.Serialize(new CheckpointFileIndexEntry(childCheckpoint, childFileName));
+        File.WriteAllText(indexPath, legacyEntry + Environment.NewLine);
+
+        // Act
+        using FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory);
+        CheckpointInfo[] childIndex = (await reopenedStore.RetrieveIndexAsync(sessionId, parentCheckpoint)).ToArray();
+
+        // Assert
+        childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
+    }
+
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldKeepLegacyChildDiscoverableWithUnrelatedParentFilterAsync()
+    {
+        // Arrange
+        using TempDirectory tempDirectory = new();
+        string sessionId = Guid.NewGuid().ToString("N");
+        CheckpointInfo parentCheckpoint;
+        CheckpointInfo childCheckpoint;
+        CheckpointInfo unrelatedCheckpoint;
+        string childFileName;
+
+        using (FileSystemJsonCheckpointStore store = new(tempDirectory))
+        {
+            parentCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+            childCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData, parentCheckpoint);
+            unrelatedCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+            childFileName = store.GetFileNameForCheckpoint(sessionId, childCheckpoint);
+        }
+
+        string indexPath = Path.Combine(tempDirectory.FullName, "index.jsonl");
+        string legacyEntry = JsonSerializer.Serialize(new CheckpointFileIndexEntry(childCheckpoint, childFileName));
+        File.WriteAllText(indexPath, legacyEntry + Environment.NewLine);
+
+        // Act
+        using FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory);
+        CheckpointInfo[] childIndex = (await reopenedStore.RetrieveIndexAsync(sessionId, unrelatedCheckpoint)).ToArray();
+
+        // Assert
+        childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
+    }
 }

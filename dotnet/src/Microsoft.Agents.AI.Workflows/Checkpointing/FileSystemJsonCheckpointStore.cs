@@ -12,7 +12,11 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 
-internal record CheckpointFileIndexEntry(CheckpointInfo CheckpointInfo, string FileName, string? ParentCheckpointId = null);
+internal record CheckpointFileIndexEntry(
+    CheckpointInfo CheckpointInfo,
+    string FileName,
+    string? ParentCheckpointId = null,
+    bool HasParentMetadata = false);
 
 /// <summary>
 /// Provides a file system-based implementation of a JSON checkpoint store that persists checkpoint data and index
@@ -32,6 +36,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     internal DirectoryInfo Directory { get; }
     internal HashSet<CheckpointInfo> CheckpointIndex { get; }
     private Dictionary<CheckpointInfo, string?> CheckpointParents { get; } = [];
+    private HashSet<CheckpointInfo> CheckpointsWithKnownParent { get; } = [];
 
     private static JsonTypeInfo<CheckpointFileIndexEntry> EntryTypeInfo => WorkflowsJsonUtilities.JsonContext.Default.CheckpointFileIndexEntry;
 
@@ -77,6 +82,10 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
                     // have the UrlEncoded file names in the index file for human readability
                     this.CheckpointIndex.Add(entry.CheckpointInfo);
                     this.CheckpointParents[entry.CheckpointInfo] = entry.ParentCheckpointId;
+                    if (entry.HasParentMetadata)
+                    {
+                        this.CheckpointsWithKnownParent.Add(entry.CheckpointInfo);
+                    }
                 }
             }
         }
@@ -142,8 +151,9 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
 
             string? parentCheckpointId = parent?.CheckpointId;
             this.CheckpointParents[key] = parentCheckpointId;
+            this.CheckpointsWithKnownParent.Add(key);
 
-            CheckpointFileIndexEntry entry = new(key, fileName, parentCheckpointId);
+            CheckpointFileIndexEntry entry = new(key, fileName, parentCheckpointId, HasParentMetadata: true);
             JsonSerializer.Serialize(this._indexFile!, entry, EntryTypeInfo);
             byte[] bytes = Encoding.UTF8.GetBytes(Environment.NewLine);
             await this._indexFile!.WriteAsync(bytes, 0, bytes.Length, CancellationToken.None).ConfigureAwait(false);
@@ -155,6 +165,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         {
             this.CheckpointIndex.Remove(key);
             this.CheckpointParents.Remove(key);
+            this.CheckpointsWithKnownParent.Remove(key);
 
             try
             {
@@ -194,6 +205,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         return new(this.CheckpointIndex
             .Where(checkpoint => checkpoint.SessionId == sessionId &&
                 (withParent is null ||
+                    !this.CheckpointsWithKnownParent.Contains(checkpoint) ||
                     (this.CheckpointParents.TryGetValue(checkpoint, out string? parentCheckpointId) &&
                         parentCheckpointId == withParent.CheckpointId)))
             .ToArray());
