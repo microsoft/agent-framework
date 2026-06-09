@@ -24,7 +24,6 @@
     <File Path="samples/02-agents/AgentProviders/README.md" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_Anthropic/Agent_With_Anthropic.csproj" />
-    <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureAIAgentsPersistent/Agent_With_AzureAIAgentsPersistent.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureAIProject/Agent_With_AzureAIProject.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureFoundryModel/Agent_With_AzureFoundryModel.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
