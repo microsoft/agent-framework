@@ -102,6 +102,29 @@ public sealed class HarnessAgentOptions
     public bool DisableToolApproval { get; set; }
 
     /// <summary>
+    /// Gets or sets the options for the <see cref="ToolApprovalAgent"/> middleware.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, the <see cref="ToolApprovalAgent"/> uses default settings.
+    /// This property has no effect when <see cref="DisableToolApproval"/> is <see langword="true"/>.
+    /// </remarks>
+    public ToolApprovalAgentOptions? ToolApprovalAgentOptions { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether bypassing of approval requests for tools that do not
+    /// require approval is disabled.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), the underlying chat client pipeline includes the decorator
+    /// added by <see cref="ChatClientBuilderExtensions.UseNonApprovalRequiredFunctionBypassing"/> above the
+    /// function invocation middleware.
+    /// This stores automatically approved function calls for tools that do not require approval in the session
+    /// state when they are returned alongside tools that do, so that only tools that truly require human
+    /// approval are surfaced to the caller.
+    /// </remarks>
+    public bool DisableNonApprovalRequiredFunctionBypassing { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether the <see cref="FileMemoryProvider"/> is disabled.
     /// </summary>
     /// <remarks>

@@ -4,6 +4,7 @@
     <VersionSuffix>preview</VersionSuffix>
     <!-- GitHub.Copilot.SDK only supports .NET 8.0+ -->
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <NoWarn>$(NoWarn);GHCP001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
