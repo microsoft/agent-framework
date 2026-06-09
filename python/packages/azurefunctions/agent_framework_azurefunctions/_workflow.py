@@ -26,7 +26,7 @@ from agent_framework_durabletask._workflow_orchestrator import (
     PendingHITLRequest,
     TaskMetadata,
     TaskType,
-    _extract_message_content,
+    _extract_message_content,  # pyright: ignore[reportPrivateUsage]
     build_agent_executor_response,
     execute_hitl_response_handler,
     route_message_through_edge_groups,
@@ -36,9 +36,6 @@ from agent_framework_durabletask._workflow_orchestrator import (
 )
 from azure.durable_functions import DurableOrchestrationContext
 
-# Re-export serialization helpers so existing AF code (e.g. _app.py) keeps working
-# via ``from ._workflow import ...`` or ``from ._serialization import ...``.
-from ._serialization import deserialize_value, serialize_value  # noqa: F401
 from ._workflow_af_context import AzureFunctionsWorkflowContext
 
 logger = logging.getLogger(__name__)

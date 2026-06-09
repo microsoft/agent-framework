@@ -10,9 +10,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from durabletask.task import OrchestrationContext, Task, when_all, when_any
+from durabletask.task import (
+    OrchestrationContext,
+    Task,
+    when_all,
+    when_any,  # pyright: ignore[reportUnknownVariableType]
+)
 
 from ._executors import OrchestrationAgentExecutor
 from ._models import AgentSessionId, DurableAgentSession
@@ -48,7 +53,7 @@ class DurableTaskWorkflowContext:
         return agent.run(message, session=session)
 
     def prepare_activity_task(self, activity_name: str, input_json: str) -> Any:
-        return self._context.call_activity(activity_name, input=input_json)
+        return cast(Any, self._context.call_activity(activity_name, input=input_json))
 
     # -- Composite tasks ------------------------------------------------------
 
@@ -61,10 +66,10 @@ class DurableTaskWorkflowContext:
     # -- External events / timers ---------------------------------------------
 
     def wait_for_external_event(self, name: str) -> Any:
-        return self._context.wait_for_external_event(name)
+        return cast(Any, self._context).wait_for_external_event(name)
 
     def create_timer(self, fire_at: datetime) -> Any:
-        return self._context.create_timer(fire_at)
+        return cast(Any, self._context).create_timer(fire_at)
 
     # -- Status / utility -----------------------------------------------------
 
@@ -82,7 +87,7 @@ class DurableTaskWorkflowContext:
 
     def get_task_result(self, task: Any) -> Any:
         if isinstance(task, Task):
-            return task.get_result()
+            return cast(Any, task.get_result())
         return getattr(task, "result", None)
 
 

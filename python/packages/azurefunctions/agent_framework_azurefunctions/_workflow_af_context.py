@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 from agent_framework_durabletask import AgentSessionId, DurableAgentSession, DurableAIAgent
 from azure.durable_functions import DurableOrchestrationContext
@@ -30,11 +30,15 @@ class AzureFunctionsWorkflowContext:
 
     @property
     def instance_id(self) -> str:
-        return cast(str, self._context.instance_id)
+        # Typed local (not cast): mypy sees the untyped context as Any, while
+        # pyright sees a concrete str - the annotation satisfies both.
+        instance_id: str = self._context.instance_id
+        return instance_id
 
     @property
     def current_utc_datetime(self) -> datetime:
-        return cast(datetime, self._context.current_utc_datetime)
+        current: datetime = self._context.current_utc_datetime
+        return current
 
     # -- Agent / Activity dispatch --------------------------------------------
 
@@ -71,7 +75,8 @@ class AzureFunctionsWorkflowContext:
         self._context.set_custom_status(status)
 
     def new_uuid(self) -> str:
-        return cast(str, self._context.new_uuid())
+        new_uuid: str = self._context.new_uuid()
+        return new_uuid
 
     def cancel_task(self, task: Any) -> None:
         cancel_fn = getattr(task, "cancel", None)

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from durabletask.client import TaskHubGrpcClient
 
@@ -135,21 +135,24 @@ class DurableWorkflowClient:
 
         if not isinstance(custom_status, dict):
             return []
+        status_dict = cast(dict[str, Any], custom_status)
 
-        pending = custom_status.get("pending_requests")
+        pending = status_dict.get("pending_requests")
         if not isinstance(pending, dict):
             return []
+        pending_dict = cast(dict[str, Any], pending)
 
         requests: list[dict[str, Any]] = []
-        for request_id, req_data in pending.items():
+        for request_id, req_data in pending_dict.items():
             if not isinstance(req_data, dict):
                 continue
+            req = cast(dict[str, Any], req_data)
             requests.append({
-                "request_id": req_data.get("request_id", request_id),
-                "source_executor_id": req_data.get("source_executor_id"),
-                "data": req_data.get("data"),
-                "request_type": req_data.get("request_type"),
-                "response_type": req_data.get("response_type"),
+                "request_id": req.get("request_id", request_id),
+                "source_executor_id": req.get("source_executor_id"),
+                "data": req.get("data"),
+                "request_type": req.get("request_type"),
+                "response_type": req.get("response_type"),
             })
         return requests
 

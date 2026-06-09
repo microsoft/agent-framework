@@ -65,7 +65,7 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
     message_data = data.get("message")
     # The orchestrator may pass null for these when shared state / sources are
     # omitted, so coerce None to the appropriate empty default.
-    shared_state_snapshot = data.get("shared_state_snapshot") or {}
+    shared_state_snapshot: dict[str, Any] = data.get("shared_state_snapshot") or {}
     source_executor_ids = cast(list[str], data.get("source_executor_ids") or [SOURCE_ORCHESTRATOR])
 
     # Reconstruct the message - deserialize_value restores the original typed
