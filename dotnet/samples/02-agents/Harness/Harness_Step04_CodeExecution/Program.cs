@@ -78,6 +78,9 @@ var instructions =
     - If applicable, save final results to file memory.
     """;
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Create the agent with ALL HarnessAgent features enabled plus Hyperlight CodeAct.
 // No Disable* flags are set — TodoProvider, AgentModeProvider, FileMemory, FileAccess,
 // ToolApproval, WebSearch, and AgentSkillsProvider are all active.

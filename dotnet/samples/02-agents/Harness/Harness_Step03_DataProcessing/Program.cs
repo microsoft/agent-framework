@@ -57,6 +57,9 @@ var instructions =
     - Always explain what you learned and what you are going to do next between tool calls, so the user can follow along with your thought process.
     """;
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Create the agent using AsHarnessAgent. The FileAccessStore is explicitly set to the
 // sample's working/ folder (copied to the output directory) so it works regardless of cwd.
 // Unused features are disabled.

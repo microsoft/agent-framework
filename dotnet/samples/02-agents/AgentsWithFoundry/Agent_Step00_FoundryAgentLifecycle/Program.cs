@@ -15,6 +15,9 @@ string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "
 const string JokerName = "JokerAgent";
 
 // Create the AIProjectClient to manage server-side agents.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a server-side agent version using the native SDK.

@@ -30,6 +30,9 @@ const string TracingSourceName = "Harness.SubAgents";
 // Set up OpenTelemetry tracing that writes spans to a text file.
 using var tracerProvider = HarnessTracing.CreateFileTracerProvider(TracingSourceName);
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Create the AIProjectClient for communicating with the Foundry responses service.
 var projectClient = new AIProjectClient(
     new Uri(endpoint),

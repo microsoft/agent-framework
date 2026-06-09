@@ -32,6 +32,9 @@ string searchEndpoint = Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOIN
 string searchIndexName = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX_NAME")
     ?? throw new InvalidOperationException("AZURE_SEARCH_INDEX_NAME is not set.");
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential. Try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in
 // production). The dev credential is scope aware so a single instance serves both Foundry and
