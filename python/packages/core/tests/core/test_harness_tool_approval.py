@@ -129,6 +129,57 @@ async def test_mixed_batch_accepts_restored_tool_approval_state(
     assert risky_calls == 1
 
 
+async def test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Stored hidden approvals should only replay when an approval response resumes the flow."""
+    safe_calls = 0
+    risky_calls = 0
+
+    @tool(name="safe_lookup", approval_mode="never_require")
+    def safe_lookup() -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return "safe"
+
+    @tool(name="risky_update", approval_mode="always_require")
+    def risky_update() -> str:
+        nonlocal risky_calls
+        risky_calls += 1
+        return "risky"
+
+    agent = Agent(client=chat_client_base, tools=[safe_lookup, risky_update])
+    session = AgentSession(session_id="stale-hidden-session")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_safe", name="safe_lookup", arguments="{}"),
+                    Content.from_function_call(call_id="call_risky", name="risky_update", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("lookup and update", session=session)
+    request = _approval_requests(first_response.messages)[0]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["unrelated"]))]
+    unrelated_response = await agent.run("never mind, answer something else", session=session)
+
+    assert unrelated_response.text == "unrelated"
+    assert safe_calls == 0
+    assert risky_calls == 0
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
+    final_response = await agent.run(request.to_function_approval_response(approved=True), session=session)
+
+    assert final_response.text == "done"
+    assert safe_calls == 1
+    assert risky_calls == 1
+
+
 async def test_tool_approval_middleware_queues_multiple_approval_requests(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:

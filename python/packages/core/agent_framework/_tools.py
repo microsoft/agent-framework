@@ -2255,9 +2255,15 @@ async def _process_function_requests(
     from ._types import Message
 
     if prepped_messages is not None:
-        pending_auto_approval_responses = _pop_auto_approvable_approval_responses(invocation_session)
-        if pending_auto_approval_responses:
-            prepped_messages.append(Message(role="user", contents=pending_auto_approval_responses))
+        has_explicit_approval_response = any(
+            content.type == "function_approval_response"
+            for message in prepped_messages
+            for content in message.contents
+        )
+        if has_explicit_approval_response:
+            pending_auto_approval_responses = _pop_auto_approvable_approval_responses(invocation_session)
+            if pending_auto_approval_responses:
+                prepped_messages.append(Message(role="user", contents=pending_auto_approval_responses))
         fcc_todo = _collect_approval_responses(prepped_messages)
         if not fcc_todo:
             fcc_todo = {}
