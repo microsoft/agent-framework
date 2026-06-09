@@ -1855,6 +1855,7 @@ async def test_mcp_tool_sampling_callback_denies_by_default():
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INVALID_REQUEST
     assert "denied" in result.message
+    assert "sampling_approval_callback" in result.message
     mock_chat_client.get_response.assert_not_called()
 
 
@@ -1872,6 +1873,7 @@ async def test_mcp_tool_sampling_callback_denied_by_callback():
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INVALID_REQUEST
+    assert "denied by the 'sampling_approval_callback'" in result.message
     mock_chat_client.get_response.assert_not_called()
 
 

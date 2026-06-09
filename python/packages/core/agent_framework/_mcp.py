@@ -1139,14 +1139,15 @@ class MCPTool:
             self._sampling_request_count += 1
 
         if not await self._sampling_request_approved(params):
-            return types.ErrorData(
-                code=types.INVALID_REQUEST,
-                message=(
+            if self.sampling_approval_callback is None:
+                message = (
                     "Sampling request denied. MCP sampling is disabled by default for untrusted "
                     "servers; provide a 'sampling_approval_callback' that approves the request to "
                     "enable it."
-                ),
-            )
+                )
+            else:
+                message = "Sampling request denied by the 'sampling_approval_callback'."
+            return types.ErrorData(code=types.INVALID_REQUEST, message=message)
 
         messages: list[Message] = []
         for msg in params.messages:
