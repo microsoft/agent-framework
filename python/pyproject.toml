@@ -46,7 +46,7 @@ dev = [
     "poethepoet==0.46.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
-    "prek==0.4.3",
+    "prek==0.4.4",
 ]
 
 [tool.uv]
