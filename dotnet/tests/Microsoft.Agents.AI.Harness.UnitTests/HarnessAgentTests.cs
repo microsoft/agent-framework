@@ -21,9 +21,12 @@ public class HarnessAgentTests
 
     /// <summary>
     /// Creates a HarnessAgent with all default features disabled to isolate tests for specific behaviors.
+    /// Compaction is enabled by default for backward compatibility with existing tests.
     /// </summary>
     private static HarnessAgentOptions CreateAllDisabledOptions() => new()
     {
+        MaxContextWindowTokens = TestMaxContextWindowTokens,
+        MaxOutputTokens = TestMaxOutputTokens,
         DisableToolApproval = true,
         DisableOpenTelemetry = true,
         DisableFileMemory = true,
@@ -43,7 +46,7 @@ public class HarnessAgentTests
     public void Constructor_ThrowsWhenChatClientIsNull()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new HarnessAgent(null!, TestMaxContextWindowTokens, TestMaxOutputTokens));
+        Assert.Throws<ArgumentNullException>(() => new HarnessAgent(null!));
     }
 
     /// <summary>
@@ -54,9 +57,10 @@ public class HarnessAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
+        var options = new HarnessAgentOptions { MaxContextWindowTokens = 0, MaxOutputTokens = TestMaxOutputTokens };
 
         // Act & Assert
-        Assert.Throws<ArgumentOutOfRangeException>(() => new HarnessAgent(chatClient, 0, TestMaxOutputTokens));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new HarnessAgent(chatClient, options));
     }
 
     /// <summary>
@@ -67,9 +71,10 @@ public class HarnessAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
+        var options = new HarnessAgentOptions { MaxContextWindowTokens = 100_000, MaxOutputTokens = 100_000 };
 
         // Act & Assert
-        Assert.Throws<ArgumentOutOfRangeException>(() => new HarnessAgent(chatClient, 100_000, 100_000));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new HarnessAgent(chatClient, options));
     }
 
     /// <summary>
@@ -82,7 +87,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens);
+        var agent = new HarnessAgent(chatClient);
 
         // Assert
         Assert.NotNull(agent);
@@ -105,7 +110,7 @@ public class HarnessAgentTests
         options.Description = "A test agent";
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
 
         // Assert
         Assert.Equal("TestAgent", agent.Name);
@@ -124,7 +129,7 @@ public class HarnessAgentTests
         options.Id = "my-agent-id";
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
 
         // Assert
         Assert.Equal("my-agent-id", agent.Id);
@@ -144,7 +149,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -164,7 +169,7 @@ public class HarnessAgentTests
         options.ChatOptions = new ChatOptions { Temperature = 0.5f };
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -184,7 +189,7 @@ public class HarnessAgentTests
         options.ChatOptions = new ChatOptions { Instructions = "You are a custom assistant." };
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -205,7 +210,7 @@ public class HarnessAgentTests
         options.HarnessInstructions = "Custom harness rules.";
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -226,7 +231,7 @@ public class HarnessAgentTests
         options.ChatOptions = new ChatOptions { Instructions = "You are a research agent." };
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -247,7 +252,7 @@ public class HarnessAgentTests
         options.ChatOptions = new ChatOptions { Instructions = "Agent only instructions." };
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -267,7 +272,7 @@ public class HarnessAgentTests
         options.HarnessInstructions = string.Empty;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -289,7 +294,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -310,7 +315,7 @@ public class HarnessAgentTests
         options.ChatHistoryProvider = customProvider;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -332,7 +337,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -353,7 +358,7 @@ public class HarnessAgentTests
         var rawClient = mockClient.Object;
 
         // Act
-        var agent = new HarnessAgent(rawClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(rawClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert — the pipeline wraps the raw client, so the outer client is not the same object.
@@ -378,7 +383,7 @@ public class HarnessAgentTests
         options.AIContextProviders = [customProvider];
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert — the custom provider should appear in the inner agent's AIContextProviders.
@@ -398,7 +403,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -432,7 +437,7 @@ public class HarnessAgentTests
         var options = CreateAllDisabledOptions();
         options.ChatOptions = new ChatOptions { Tools = [tool] };
 
-        var agent = new HarnessAgent(mockClient.Object, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(mockClient.Object, options);
         var session = await agent.CreateSessionAsync();
 
         // Act
@@ -459,8 +464,10 @@ public class HarnessAgentTests
         };
 
         // Act
-        _ = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, new HarnessAgentOptions
+        _ = new HarnessAgent(chatClient, new HarnessAgentOptions
         {
+            MaxContextWindowTokens = TestMaxContextWindowTokens,
+            MaxOutputTokens = TestMaxOutputTokens,
             ChatOptions = sourceChatOptions,
         });
 
@@ -483,7 +490,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
 
         // Assert
         Assert.Same(agent, agent.GetService<HarnessAgent>());
@@ -499,7 +506,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
 
         // Assert
         Assert.NotNull(agent.GetService<ChatClientAgent>());
@@ -524,7 +531,7 @@ public class HarnessAgentTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Hello!")));
 
-        var agent = new HarnessAgent(mockClient.Object, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(mockClient.Object, CreateAllDisabledOptions());
         var session = await agent.CreateSessionAsync();
 
         // Act
@@ -565,7 +572,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = chatClient.AsHarnessAgent(TestMaxContextWindowTokens, TestMaxOutputTokens);
+        var agent = chatClient.AsHarnessAgent();
 
         // Assert
         Assert.NotNull(agent);
@@ -586,7 +593,7 @@ public class HarnessAgentTests
         options.ChatOptions = new ChatOptions { Instructions = "Custom instructions" };
 
         // Act
-        var agent = chatClient.AsHarnessAgent(TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = chatClient.AsHarnessAgent(options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -603,7 +610,7 @@ public class HarnessAgentTests
     public void AsHarnessAgent_ThrowsWhenChatClientIsNull()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => ((IChatClient)null!).AsHarnessAgent(TestMaxContextWindowTokens, TestMaxOutputTokens));
+        Assert.Throws<ArgumentNullException>(() => ((IChatClient)null!).AsHarnessAgent());
     }
 
     #endregion
@@ -622,7 +629,7 @@ public class HarnessAgentTests
         options.DisableToolApproval = false;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
 
         // Assert
         Assert.NotNull(agent.GetService<ToolApprovalAgent>());
@@ -638,7 +645,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
 
         // Assert
         Assert.Null(agent.GetService<ToolApprovalAgent>());
@@ -678,7 +685,7 @@ public class HarnessAgentTests
             AutoApprovalRules = [fcc => new ValueTask<bool>(fcc.Name == "ReadTool")]
         };
 
-        var agent = new HarnessAgent(mockClient.Object, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(mockClient.Object, options);
         var session = await agent.CreateSessionAsync();
 
         // Act
@@ -687,6 +694,97 @@ public class HarnessAgentTests
         // Assert — the auto-approval rule approved the request, so we get "Done" (not an approval request)
         Assert.Equal(2, callCount);
         Assert.Equal("Done", response.Text);
+    }
+
+    #endregion
+
+    #region Feature: NonApprovalRequiredFunctionBypassing
+
+    /// <summary>
+    /// Verify that by default, when a response contains a mix of tools that require approval and tools that do not,
+    /// only the approval-required tool is surfaced to the caller. The non-approval-required tool is bypassed
+    /// (stored as auto-approved) by the <c>NonApprovalRequiredFunctionBypassingChatClient</c> decorator.
+    /// </summary>
+    [Fact]
+    public async Task NonApprovalRequiredFunctionBypassing_BypassesNonApprovalToolsByDefaultAsync()
+    {
+        // Arrange — the model requests both a normal tool and an approval-required tool in the same turn.
+        var normalTool = AIFunctionFactory.Create(() => "result", "NormalTool");
+        var approvalTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "result", "ApprovalTool"));
+
+        var mockClient = new Mock<IChatClient>();
+        mockClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new ChatResponse(new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("call1", "NormalTool"),
+                new FunctionCallContent("call2", "ApprovalTool"),
+            ])));
+
+        // Disable ToolApproval so the approval requests surface in the response instead of being handled.
+        var options = CreateAllDisabledOptions();
+        options.ChatOptions = new ChatOptions { Tools = [normalTool, approvalTool] };
+
+        var agent = new HarnessAgent(mockClient.Object, options);
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — only the approval-required tool surfaces as an approval request; the normal tool is bypassed.
+        var approvalRequests = response.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .ToList();
+        var approvalRequest = Assert.Single(approvalRequests);
+        Assert.Equal("ApprovalTool", Assert.IsType<FunctionCallContent>(approvalRequest.ToolCall).Name);
+    }
+
+    /// <summary>
+    /// Verify that when bypassing is disabled, all tools (including those that do not require approval) are surfaced
+    /// as approval requests, reflecting the all-or-nothing behavior of <see cref="FunctionInvokingChatClient"/>.
+    /// </summary>
+    [Fact]
+    public async Task NonApprovalRequiredFunctionBypassing_SurfacesAllApprovalsWhenDisabledAsync()
+    {
+        // Arrange — the model requests both a normal tool and an approval-required tool in the same turn.
+        var normalTool = AIFunctionFactory.Create(() => "result", "NormalTool");
+        var approvalTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "result", "ApprovalTool"));
+
+        var mockClient = new Mock<IChatClient>();
+        mockClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new ChatResponse(new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("call1", "NormalTool"),
+                new FunctionCallContent("call2", "ApprovalTool"),
+            ])));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableNonApprovalRequiredFunctionBypassing = true;
+        options.ChatOptions = new ChatOptions { Tools = [normalTool, approvalTool] };
+
+        var agent = new HarnessAgent(mockClient.Object, options);
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — both tools surface as approval requests because bypassing is disabled.
+        var approvalRequests = response.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Select(r => ((FunctionCallContent)r.ToolCall).Name)
+            .ToList();
+        Assert.Equal(2, approvalRequests.Count);
+        Assert.Contains("NormalTool", approvalRequests);
+        Assert.Contains("ApprovalTool", approvalRequests);
     }
 
     #endregion
@@ -705,7 +803,7 @@ public class HarnessAgentTests
         options.DisableOpenTelemetry = false;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
 
         // Assert
         Assert.NotNull(agent.GetService<OpenTelemetryAgent>());
@@ -721,7 +819,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
 
         // Assert
         Assert.Null(agent.GetService<OpenTelemetryAgent>());
@@ -740,7 +838,7 @@ public class HarnessAgentTests
         options.OpenTelemetrySourceName = "MyApp.AgentTracing";
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
 
         // Assert
         Assert.NotNull(agent.GetService<OpenTelemetryAgent>());
@@ -767,7 +865,7 @@ public class HarnessAgentTests
         var options = CreateAllDisabledOptions();
         options.DisableWebSearch = false;
 
-        var agent = new HarnessAgent(mockClient.Object, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(mockClient.Object, options);
         var session = await agent.CreateSessionAsync();
 
         // Act
@@ -792,7 +890,7 @@ public class HarnessAgentTests
             .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
             .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done")));
 
-        var agent = new HarnessAgent(mockClient.Object, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(mockClient.Object, CreateAllDisabledOptions());
         var session = await agent.CreateSessionAsync();
 
         // Act
@@ -825,7 +923,7 @@ public class HarnessAgentTests
         options.DisableWebSearch = false;
         options.ChatOptions = new ChatOptions { Tools = [userTool] };
 
-        var agent = new HarnessAgent(mockClient.Object, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(mockClient.Object, options);
         var session = await agent.CreateSessionAsync();
 
         // Act
@@ -853,7 +951,7 @@ public class HarnessAgentTests
         options.DisableTodoProvider = false;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -871,7 +969,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -898,7 +996,7 @@ public class HarnessAgentTests
         options.DisableAgentModeProvider = false;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -916,7 +1014,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -947,7 +1045,7 @@ public class HarnessAgentTests
         };
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert — AgentModeProvider should be present (we can't easily inspect its internal options,
@@ -972,7 +1070,7 @@ public class HarnessAgentTests
         options.DisableFileMemory = false;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -990,7 +1088,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1015,7 +1113,7 @@ public class HarnessAgentTests
         options.FileMemoryStore = customStore;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert — FileMemoryProvider should be present with the custom store.
@@ -1039,7 +1137,7 @@ public class HarnessAgentTests
         options.DisableFileAccess = false;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1057,7 +1155,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1082,7 +1180,7 @@ public class HarnessAgentTests
         options.FileAccessStore = customStore;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert — FileAccessProvider should be present with the custom store.
@@ -1106,7 +1204,7 @@ public class HarnessAgentTests
         options.DisableAgentSkillsProvider = false;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1124,7 +1222,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1149,7 +1247,7 @@ public class HarnessAgentTests
         options.AgentSkillsSource = customSource;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert — AgentSkillsProvider should be present.
@@ -1173,7 +1271,7 @@ public class HarnessAgentTests
         options.MaximumIterationsPerRequest = 42;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
         var ficc = innerAgent!.ChatClient.GetService<FunctionInvokingChatClient>();
 
@@ -1192,7 +1290,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions());
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
         var innerAgent = agent.GetService<ChatClientAgent>();
         var ficc = innerAgent!.ChatClient.GetService<FunctionInvokingChatClient>();
 
@@ -1220,7 +1318,7 @@ public class HarnessAgentTests
             .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done")));
 
         // Act
-        var agent = new HarnessAgent(mockClient.Object, TestMaxContextWindowTokens, TestMaxOutputTokens);
+        var agent = new HarnessAgent(mockClient.Object);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert — agent wrappers
@@ -1263,7 +1361,7 @@ public class HarnessAgentTests
         options.BackgroundAgents = [bgAgentMock.Object];
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1283,7 +1381,7 @@ public class HarnessAgentTests
         options.BackgroundAgents = null;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1306,7 +1404,7 @@ public class HarnessAgentTests
         options.BackgroundAgents = Array.Empty<AIAgent>();
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1337,7 +1435,7 @@ public class HarnessAgentTests
         options.BackgroundAgentsProviderOptions = providerOptions;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
         var bgProvider = innerAgent!.AIContextProviders!.OfType<BackgroundAgentsProvider>().Single();
 
@@ -1374,7 +1472,7 @@ public class HarnessAgentTests
         options.BackgroundAgents = [agent1Mock.Object, agent2Mock.Object];
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
         var bgProvider = innerAgent!.AIContextProviders!.OfType<BackgroundAgentsProvider>().Single();
 
@@ -1415,7 +1513,7 @@ public class HarnessAgentTests
         options.ShellExecutor = executorMock.Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1435,7 +1533,7 @@ public class HarnessAgentTests
         options.ShellExecutor = null;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert
@@ -1467,7 +1565,7 @@ public class HarnessAgentTests
         options.ShellExecutor = executorMock.Object;
 
         // Act
-        var agent = new HarnessAgent(chatClientMock.Object, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClientMock.Object, options);
         var session = await agent.CreateSessionAsync();
         await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
 
@@ -1496,7 +1594,7 @@ public class HarnessAgentTests
         options.ShellEnvironmentProviderOptions = envOptions;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+        var agent = new HarnessAgent(chatClient, options);
         var innerAgent = agent.GetService<ChatClientAgent>();
 
         // Assert — provider should exist (options wiring is validated by the provider's behavior)
@@ -1520,7 +1618,7 @@ public class HarnessAgentTests
         var loggerFactory = new Mock<ILoggerFactory>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), loggerFactory);
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions(), loggerFactory);
 
         // Assert
         Assert.NotNull(agent);
@@ -1537,7 +1635,7 @@ public class HarnessAgentTests
         var services = new Mock<IServiceProvider>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), services: services);
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions(), services: services);
 
         // Assert
         Assert.NotNull(agent);
@@ -1555,7 +1653,7 @@ public class HarnessAgentTests
         var services = new Mock<IServiceProvider>().Object;
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), loggerFactory, services);
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions(), loggerFactory, services);
 
         // Assert
         Assert.NotNull(agent);
@@ -1573,7 +1671,7 @@ public class HarnessAgentTests
         var services = new Mock<IServiceProvider>().Object;
 
         // Act
-        var agent = chatClient.AsHarnessAgent(TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), loggerFactory, services);
+        var agent = chatClient.AsHarnessAgent(CreateAllDisabledOptions(), loggerFactory, services);
 
         // Assert
         Assert.NotNull(agent);
@@ -1595,6 +1693,8 @@ public class HarnessAgentTests
         // Act — use options that leave CompactionProvider and AgentSkillsProvider enabled
         var options = new HarnessAgentOptions
         {
+            MaxContextWindowTokens = TestMaxContextWindowTokens,
+            MaxOutputTokens = TestMaxOutputTokens,
             DisableToolApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
@@ -1603,7 +1703,7 @@ public class HarnessAgentTests
             DisableTodoProvider = true,
             DisableAgentModeProvider = true,
         };
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options, mockLoggerFactory.Object);
+        var agent = new HarnessAgent(chatClient, options, mockLoggerFactory.Object);
 
         // Assert — CreateLogger should have been called by one or more downstream components
         Assert.NotNull(agent);
@@ -1625,11 +1725,98 @@ public class HarnessAgentTests
             .Returns(null!);
 
         // Act
-        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, CreateAllDisabledOptions(), services: mockServices.Object);
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions(), services: mockServices.Object);
 
         // Assert — the service provider should have been queried during pipeline construction
         Assert.NotNull(agent);
         mockServices.Verify(sp => sp.GetService(It.IsAny<Type>()), Times.AtLeastOnce());
+    }
+
+    #endregion
+
+    #region Compaction Opt-in
+
+    /// <summary>
+    /// Verify that constructing without token values succeeds (compaction disabled).
+    /// </summary>
+    [Fact]
+    public void Constructor_SucceedsWithoutTokenValues()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = new HarnessAgentOptions
+        {
+            DisableToolApproval = true,
+            DisableOpenTelemetry = true,
+            DisableFileMemory = true,
+            DisableFileAccess = true,
+            DisableWebSearch = true,
+            DisableTodoProvider = true,
+            DisableAgentModeProvider = true,
+            DisableAgentSkillsProvider = true,
+        };
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+
+        // Assert — compaction should be disabled (no chat reducer)
+        var innerAgent = agent.GetService<ChatClientAgent>();
+        Assert.NotNull(innerAgent);
+        var historyProvider = innerAgent!.ChatHistoryProvider as InMemoryChatHistoryProvider;
+        Assert.NotNull(historyProvider);
+        Assert.Null(historyProvider!.ChatReducer);
+    }
+
+    /// <summary>
+    /// Verify that when only MaxContextWindowTokens is provided (no MaxOutputTokens), compaction is disabled.
+    /// </summary>
+    [Fact]
+    public void Constructor_SucceedsWithOnlyMaxContextWindowTokens()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = new HarnessAgentOptions
+        {
+            MaxContextWindowTokens = TestMaxContextWindowTokens,
+            DisableToolApproval = true,
+            DisableOpenTelemetry = true,
+            DisableFileMemory = true,
+            DisableFileAccess = true,
+            DisableWebSearch = true,
+            DisableTodoProvider = true,
+            DisableAgentModeProvider = true,
+            DisableAgentSkillsProvider = true,
+        };
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+
+        // Assert — compaction should be disabled (only one token value provided)
+        var innerAgent = agent.GetService<ChatClientAgent>();
+        Assert.NotNull(innerAgent);
+        var historyProvider = innerAgent!.ChatHistoryProvider as InMemoryChatHistoryProvider;
+        Assert.NotNull(historyProvider);
+        Assert.Null(historyProvider!.ChatReducer);
+    }
+
+    /// <summary>
+    /// Verify that when both token values are provided, the agent is constructed successfully with compaction.
+    /// </summary>
+    [Fact]
+    public void Constructor_SucceedsWithBothTokenValues()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
+
+        // Assert — compaction should be enabled (chat reducer configured)
+        var innerAgent = agent.GetService<ChatClientAgent>();
+        Assert.NotNull(innerAgent);
+        var historyProvider = innerAgent!.ChatHistoryProvider as InMemoryChatHistoryProvider;
+        Assert.NotNull(historyProvider);
+        Assert.NotNull(historyProvider!.ChatReducer);
     }
 
     #endregion
