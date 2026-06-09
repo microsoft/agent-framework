@@ -138,7 +138,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
 
         if (options?.DisableToolApproval is not true)
         {
-            builder.UseToolApproval();
+            builder.UseToolApproval(options?.ToolApprovalAgentOptions);
         }
 
         if (options?.DisableOpenTelemetry is not true)
@@ -178,8 +178,14 @@ public sealed class HarnessAgent : DelegatingAIAgent
 
         IEnumerable<AIContextProvider> contextProviders = BuildContextProviders(options, loggerFactory);
 
-        return chatClient
-            .AsBuilder()
+        ChatClientBuilder chatClientBuilder = chatClient.AsBuilder();
+
+        if (options?.DisableNonApprovalRequiredFunctionBypassing is not true)
+        {
+            chatClientBuilder.UseNonApprovalRequiredFunctionBypassing();
+        }
+
+        return chatClientBuilder
             .UseFunctionInvocation(loggerFactory, configure: options?.MaximumIterationsPerRequest is int maxIterations
                 ? ficc => ficc.MaximumIterationsPerRequest = maxIterations
                 : null)

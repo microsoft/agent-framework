@@ -43,7 +43,7 @@ public class HostedFoundryMemoryProviderScopesTests
     }
 
     [Fact]
-    public void PerUserAndChat_ComposesUserAndChatWithColon()
+    public void PerUserAndChat_ComposesUserAndChatWithEscapedSeparator()
     {
         // Arrange
         var session = CreateTaggedSession(TestUserId, TestChatId);
@@ -54,7 +54,51 @@ public class HostedFoundryMemoryProviderScopesTests
 
         // Assert
         Assert.NotNull(state);
-        Assert.Equal($"{TestUserId}:{TestChatId}", state.Scope.Scope);
+        Assert.Equal($"{TestUserId}::{TestChatId}", state.Scope.Scope);
+    }
+
+    [Fact]
+    public void PerUserAndChat_EscapesColonsInUserAndChat()
+    {
+        // Arrange
+        var session = CreateTaggedSession("alice:finance", "q2:final");
+        var initializer = HostedFoundryMemoryProviderScopes.PerUserAndChat();
+
+        // Act
+        var state = initializer(session);
+
+        // Assert - colons inside each part are escaped as \: , parts joined with ::
+        Assert.Equal(@"alice\:finance::q2\:final", state.Scope.Scope);
+    }
+
+    [Fact]
+    public void PerUserAndChat_EscapesBackslashesInUserAndChat()
+    {
+        // Arrange
+        var session = CreateTaggedSession(@"alice\corp", @"chat\1");
+        var initializer = HostedFoundryMemoryProviderScopes.PerUserAndChat();
+
+        // Act
+        var state = initializer(session);
+
+        // Assert - backslashes escaped first as \\ , parts joined with ::
+        Assert.Equal(@"alice\\corp::chat\\1", state.Scope.Scope);
+    }
+
+    [Fact]
+    public void PerUserAndChat_DistinctContextsDoNotCollide()
+    {
+        // Arrange - two distinct (UserId, ChatId) pairs that collide under raw-colon composition.
+        var sessionA = CreateTaggedSession("alice:finance", "q2");
+        var sessionB = CreateTaggedSession("alice", "finance:q2");
+        var initializer = HostedFoundryMemoryProviderScopes.PerUserAndChat();
+
+        // Act
+        var scopeA = initializer(sessionA).Scope.Scope;
+        var scopeB = initializer(sessionB).Scope.Scope;
+
+        // Assert
+        Assert.NotEqual(scopeA, scopeB);
     }
 
     [Fact]

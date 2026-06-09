@@ -567,7 +567,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         by the hosting infrastructure or files will be preserved upon deactivation.
         """
         input_items = await context.get_input_items()
-        input_messages = await _items_to_messages(input_items)
+        input_messages = await _items_to_messages(input_items, approval_storage=self._approval_storage)
         is_streaming_request = request.stream is not None and request.stream is True
 
         _, are_options_set = _to_chat_options(request)
@@ -664,7 +664,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 checkpoint_storage=write_storage,
             )
 
-            async for item in _to_outputs_for_messages(response_event_stream, response.messages):
+            async for item in _to_outputs_for_messages(
+                response_event_stream,
+                response.messages,
+                approval_storage=self._approval_storage,
+            ):
                 yield item
 
             await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
@@ -685,7 +689,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 for event in tracker.handle(content):
                     yield event
                 if tracker.needs_async:
-                    async for item in _to_outputs(response_event_stream, content):
+                    async for item in _to_outputs(
+                        response_event_stream, content, approval_storage=self._approval_storage
+                    ):
                         yield item
                     tracker.needs_async = False
 

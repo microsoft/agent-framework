@@ -6,7 +6,7 @@ using Microsoft.Agents.AI.GitHub.Copilot;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
-namespace GitHub.Copilot.SDK;
+namespace GitHub.Copilot;
 
 /// <summary>
 /// Provides extension methods for <see cref="CopilotClient"/>

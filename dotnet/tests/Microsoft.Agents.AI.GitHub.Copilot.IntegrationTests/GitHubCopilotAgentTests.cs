@@ -4,7 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.IntegrationTests;
@@ -13,8 +14,8 @@ public class GitHubCopilotAgentTests
 {
     private const string SkipReason = "Integration tests require GitHub Copilot CLI installed. For local execution only.";
 
-    private static Task<PermissionRequestResult> OnPermissionRequestAsync(PermissionRequest request, PermissionInvocation invocation)
-        => Task.FromResult(new PermissionRequestResult { Kind = PermissionRequestResultKind.Approved });
+    private static Task<PermissionDecision> OnPermissionRequestAsync(PermissionRequest request, PermissionInvocation invocation)
+        => Task.FromResult(PermissionDecision.ApproveOnce());
 
     [Fact(Skip = SkipReason)]
     public async Task RunAsync_WithSimplePrompt_ReturnsResponseAsync()

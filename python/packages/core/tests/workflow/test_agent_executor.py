@@ -699,3 +699,171 @@ async def test_resolve_executor_kwargs_empty_per_executor_does_not_fallback_to_g
     resolved = {"exec_a": {}, GLOBAL_KWARGS_KEY: {"global_key": "global_val"}}
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
     assert result == {}
+
+
+# region Tool approval emission
+
+
+class _ApprovalEmittingAgent(BaseAgent):
+    """Agent that returns a single ``function_approval_request`` Content.
+
+    Used to verify that ``AgentExecutor`` does *not* surface the approval
+    payload via both an ``output`` event and a ``request_info`` event in the
+    same superstep — only the ``request_info`` event must carry it.
+    """
+
+    def __init__(
+        self,
+        *,
+        approval_request_id: str = "apr_1",
+        tool_name: str = "delete_file",
+        tool_arguments: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        super().__init__(**kwargs)
+        self._approval_request_id = approval_request_id
+        self._tool_name = tool_name
+        self._tool_arguments: dict[str, Any] = tool_arguments or {"path": "/tmp/secret.txt"}
+        self.run_count = 0
+
+    def _build_approval_content(self) -> Content:
+        function_call = Content.from_function_call(
+            call_id=self._approval_request_id,
+            name=self._tool_name,
+            arguments=self._tool_arguments,
+        )
+        return Content.from_function_approval_request(id=self._approval_request_id, function_call=function_call)
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        self.run_count += 1
+        approval = self._build_approval_content()
+
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[approval], role="assistant")
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[Message("assistant", [approval])])
+
+        return _run()
+
+
+def _has_approval_payload(event: WorkflowEvent[Any]) -> bool:
+    """Return True if the event's data carries a ``function_approval_request`` content."""
+    data: Any = event.data
+
+    def _contents_of(value: Any) -> list[Content]:
+        if isinstance(value, AgentResponseUpdate):
+            return list(value.contents)
+        if isinstance(value, AgentResponse):
+            return [c for m in value.messages for c in m.contents]
+        if isinstance(value, AgentExecutorResponse):
+            return [c for m in value.agent_response.messages for c in m.contents]
+        if isinstance(value, Message):
+            return list(value.contents)
+        if isinstance(value, Content):
+            return [value]
+        return []
+
+    return any(c.type == "function_approval_request" for c in _contents_of(data))
+
+
+async def test_agent_executor_does_not_double_emit_approval_non_streaming() -> None:
+    """Non-streaming: approval payload must only appear in the ``request_info`` event.
+
+    Regression test for the bug where ``AgentExecutor._run_agent`` first
+    ``yield_output``-ed the response (carrying the approval Content) and then
+    additionally emitted a ``request_info`` event for the same payload.
+    """
+    agent = _ApprovalEmittingAgent(id="approve_agent", name="ApproveAgent", approval_request_id="apr_ns_1")
+    executor = AgentExecutor(agent, id="approve_exec")
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    request_info_events: list[WorkflowEvent[Any]] = []
+    output_events: list[WorkflowEvent[Any]] = []
+
+    for event in await workflow.run("please delete it"):
+        if event.type == "request_info":
+            request_info_events.append(event)
+        elif event.type == "output":
+            output_events.append(event)
+
+    assert len(request_info_events) == 1
+    assert _has_approval_payload(request_info_events[0])
+    # The approval payload must not also be surfaced as a workflow output.
+    assert not any(_has_approval_payload(e) for e in output_events)
+    assert agent.run_count == 1
+
+
+async def test_agent_executor_does_not_double_emit_approval_streaming() -> None:
+    """Streaming: per-update approval payload must not be ``yield_output``-ed."""
+    agent = _ApprovalEmittingAgent(id="approve_agent_s", name="ApproveAgentS", approval_request_id="apr_st_1")
+    executor = AgentExecutor(agent, id="approve_exec_s")
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    request_info_events: list[WorkflowEvent[Any]] = []
+    output_events: list[WorkflowEvent[Any]] = []
+
+    async for event in workflow.run("please delete it", stream=True):
+        if event.type == "request_info":
+            request_info_events.append(event)
+        elif event.type == "output":
+            output_events.append(event)
+
+    assert len(request_info_events) == 1
+    assert _has_approval_payload(request_info_events[0])
+    assert not any(_has_approval_payload(e) for e in output_events)
+    assert agent.run_count == 1
+
+
+async def test_agent_executor_request_info_uses_user_input_request_id() -> None:
+    """``ctx.request_info`` must register the request under the agent's approval id.
+
+    This makes the workflow's pending-request id round-trip with the
+    ``function_approval_response.id`` the caller echoes back, so
+    ``Workflow._send_responses_internal`` can look it up directly.
+    """
+    agent = _ApprovalEmittingAgent(id="approve_agent_id", name="ApproveAgentId", approval_request_id="apr_match")
+    executor = AgentExecutor(agent, id="approve_exec_id")
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    request_info_events: list[WorkflowEvent[Any]] = []
+    async for event in workflow.run("please delete it", stream=True):
+        if event.type == "request_info":
+            request_info_events.append(event)
+
+    assert len(request_info_events) == 1
+    assert request_info_events[0].request_id == "apr_match"
+
+
+# endregion Tool approval emission

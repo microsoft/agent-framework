@@ -36,7 +36,7 @@ dotnet run
 You can customize the agent by providing additional configuration:
 
 ```csharp
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
 using Microsoft.Agents.AI;
 
 // Create and start a Copilot client
