@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent_framework import (
+    DEFAULT_TOOL_APPROVAL_SOURCE_ID,
     Agent,
     AgentSession,
     ChatResponse,
@@ -11,6 +12,7 @@ from agent_framework import (
     Message,
     SupportsChatGetResponse,
     ToolApprovalMiddleware,
+    ToolApprovalState,
     create_always_approve_tool_response,
     tool,
 )
@@ -76,6 +78,55 @@ async def test_mixed_batch_hides_auto_approvable_request_until_approval_replay(
     assert second_response.text == "complete"
     assert no_approval_calls == 1
     assert approval_calls == 1
+
+
+async def test_mixed_batch_accepts_restored_tool_approval_state(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Mixed-batch bypass should work when session state contains ToolApprovalState."""
+    safe_calls = 0
+    risky_calls = 0
+
+    @tool(name="safe_read", approval_mode="never_require")
+    def safe_read() -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return "safe"
+
+    @tool(name="risky_write", approval_mode="always_require")
+    def risky_write() -> str:
+        nonlocal risky_calls
+        risky_calls += 1
+        return "risky"
+
+    agent = Agent(client=chat_client_base, tools=[safe_read, risky_write])
+    session = AgentSession(session_id="restored-state-session")
+    session.state[DEFAULT_TOOL_APPROVAL_SOURCE_ID] = ToolApprovalState()
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_safe", name="safe_read", arguments="{}"),
+                    Content.from_function_call(call_id="call_risky", name="risky_write", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("read and write", session=session)
+    requests = _approval_requests(first_response.messages)
+
+    assert [request.function_call.name for request in requests] == ["risky_write"]
+    assert safe_calls == 0
+    assert risky_calls == 0
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
+    final_response = await agent.run(requests[0].to_function_approval_response(approved=True), session=session)
+
+    assert final_response.text == "done"
+    assert safe_calls == 1
+    assert risky_calls == 1
 
 
 async def test_tool_approval_middleware_queues_multiple_approval_requests(

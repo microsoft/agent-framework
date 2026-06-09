@@ -6,7 +6,7 @@ import copy
 import inspect
 import json
 from asyncio import sleep
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, MutableMapping, Sequence
 from typing import Any, Literal, cast
 
 from .._feature_stage import ExperimentalFeature, experimental
@@ -65,7 +65,8 @@ def _content_from_state(value: Any) -> Content:
 def _contents_from_state(values: Any) -> list[Content]:
     if not isinstance(values, list):
         return []
-    return [_content_from_state(value) for value in cast(list[Any], values)]
+    state_items = list(cast(Iterable[Any], values))
+    return [_content_from_state(value) for value in state_items]
 
 
 def _content_to_state(content: Content) -> dict[str, Any]:
@@ -296,8 +297,10 @@ def _get_always_approve_scope(response: Content) -> ToolApprovalScope | None:
         return None
     metadata_mapping = cast(Mapping[str, Any], metadata)
     scope = metadata_mapping.get(ALWAYS_APPROVE_SCOPE_PROPERTY)
-    if scope in (ALWAYS_APPROVE_TOOL, ALWAYS_APPROVE_TOOL_WITH_ARGUMENTS):
-        return scope
+    if scope == ALWAYS_APPROVE_TOOL:
+        return ALWAYS_APPROVE_TOOL
+    if scope == ALWAYS_APPROVE_TOOL_WITH_ARGUMENTS:
+        return ALWAYS_APPROVE_TOOL_WITH_ARGUMENTS
     return None
 
 
@@ -418,6 +421,12 @@ class ToolApprovalMiddleware(AgentMiddleware):
                         content for content in update.contents if content.type != "function_approval_request"
                     ]
                     if remaining_contents:
+                        raw_finish_reason = update.finish_reason
+                        finish_reason: FinishReasonLiteral | FinishReason | None
+                        if isinstance(raw_finish_reason, str):
+                            finish_reason = FinishReason(raw_finish_reason)
+                        else:
+                            finish_reason = cast(FinishReasonLiteral | FinishReason | None, raw_finish_reason)
                         yield AgentResponseUpdate(
                             contents=remaining_contents,
                             role=update.role,
@@ -426,7 +435,7 @@ class ToolApprovalMiddleware(AgentMiddleware):
                             response_id=update.response_id,
                             message_id=update.message_id,
                             created_at=update.created_at,
-                            finish_reason=cast(FinishReasonLiteral | FinishReason | None, update.finish_reason),
+                            finish_reason=finish_reason,
                             continuation_token=update.continuation_token,
                             additional_properties=update.additional_properties,
                             raw_representation=update.raw_representation,

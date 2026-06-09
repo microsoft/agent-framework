@@ -1941,13 +1941,20 @@ def _get_tool_approval_state(invocation_session: AgentSession | None) -> dict[st
     raw_state = invocation_session.state.get(_TOOL_APPROVAL_STATE_KEY)
     if isinstance(raw_state, dict):
         return cast(dict[str, Any], raw_state)
+    from ._harness._tool_approval import ToolApprovalState
+
+    if isinstance(raw_state, ToolApprovalState):
+        serialized_state = raw_state.to_dict(exclude={"type"})
+        invocation_session.state[_TOOL_APPROVAL_STATE_KEY] = serialized_state
+        return serialized_state
     if raw_state is not None:
         raise TypeError(
-            f"Session state for {_TOOL_APPROVAL_STATE_KEY!r} must be a dict, got {type(raw_state).__name__}."
+            f"Session state for {_TOOL_APPROVAL_STATE_KEY!r} must be a dict or ToolApprovalState, "
+            f"got {type(raw_state).__name__}."
         )
-    state: dict[str, Any] = {}
-    invocation_session.state[_TOOL_APPROVAL_STATE_KEY] = state
-    return state
+    new_state: dict[str, Any] = {}
+    invocation_session.state[_TOOL_APPROVAL_STATE_KEY] = new_state
+    return new_state
 
 
 def _content_from_state(value: Any) -> Content | None:
@@ -1972,7 +1979,7 @@ def _store_auto_approvable_approval_requests(
     if state is None:
         return
     existing = state.get(_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY)
-    pending: list[Any] = list(cast(list[Any], existing)) if isinstance(existing, list) else []
+    pending: list[Any] = list(cast(Iterable[Any], existing)) if isinstance(existing, list) else []
     pending.extend(request.to_dict() for request in approval_requests)
     state[_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY] = pending
 
@@ -1987,7 +1994,8 @@ def _pop_auto_approvable_approval_responses(invocation_session: AgentSession | N
         return []
 
     responses: list[Content] = []
-    for raw_request in cast(list[Any], raw_requests):
+    raw_request_items = list(cast(Iterable[Any], raw_requests))
+    for raw_request in raw_request_items:
         request = _content_from_state(raw_request)
         if request is None or request.type != "function_approval_request":
             continue
