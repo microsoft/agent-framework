@@ -238,6 +238,7 @@ async def test_chat_response_value_populated_streaming() -> None:
 
 async def test_unsupported_model_validation_exception() -> None:
     """When a model doesn't support outputConfig, a clear error should be raised."""
+
     class _FailingStubBedrockRuntime:
         def converse(self, **kwargs: Any) -> dict[str, Any]:
             # Simulate botocore ClientError for ValidationException

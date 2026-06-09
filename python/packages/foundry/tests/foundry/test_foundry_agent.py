@@ -109,7 +109,65 @@ def test_raw_foundry_agent_chat_client_init_uses_explicit_parameters() -> None:
     assert "compaction_strategy" in signature.parameters
     assert "tokenizer" in signature.parameters
     assert "additional_properties" in signature.parameters
+    assert "timeout" in signature.parameters
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_raw_foundry_agent_chat_client_init_applies_timeout_to_openai_client() -> None:
+    """Test that timeout is applied via with_options without mutating the shared OpenAI client."""
+
+    mock_project = MagicMock()
+    openai_client_mock = MagicMock()
+    openai_client_mock.timeout = 5.0
+    mock_project.get_openai_client.return_value = openai_client_mock
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        timeout=60.0,
+    )
+
+    openai_client_mock.with_options.assert_called_once_with(timeout=60.0)
+    assert openai_client_mock.timeout == 5.0, "Original shared client must not be mutated"
+    assert client.client is openai_client_mock.with_options.return_value
+
+
+def test_raw_foundry_agent_chat_client_init_timeout_none_leaves_client_unchanged() -> None:
+    """Test that timeout=None does not call with_options and leaves the shared client intact."""
+
+    mock_project = MagicMock()
+    openai_client_mock = MagicMock()
+    openai_client_mock.timeout = 5.0
+    mock_project.get_openai_client.return_value = openai_client_mock
+
+    RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        timeout=None,
+    )
+
+    openai_client_mock.with_options.assert_not_called()
+    assert openai_client_mock.timeout == 5.0
+
+
+def test_raw_foundry_agent_chat_client_init_applies_timeout_with_preview_enabled() -> None:
+    """Test that timeout uses with_options even when allow_preview=True (hosted agent path)."""
+
+    mock_project = MagicMock()
+    openai_client_mock = MagicMock()
+    openai_client_mock.timeout = 5.0
+    mock_project.get_openai_client.return_value = openai_client_mock
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+        timeout=120.0,
+    )
+
+    openai_client_mock.with_options.assert_called_once_with(timeout=120.0)
+    assert openai_client_mock.timeout == 5.0, "Original shared client must not be mutated"
+    assert client.client is openai_client_mock.with_options.return_value
 
 
 def test_raw_foundry_agent_chat_client_as_agent_preserves_client_type() -> None:
@@ -552,7 +610,27 @@ def test_foundry_agent_chat_client_init_uses_explicit_parameters() -> None:
     assert "compaction_strategy" in signature.parameters
     assert "tokenizer" in signature.parameters
     assert "additional_properties" in signature.parameters
+    assert "timeout" in signature.parameters
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_foundry_agent_chat_client_init_propagates_timeout() -> None:
+    """Test that _FoundryAgentChatClient calls with_options instead of mutating the shared client."""
+
+    mock_project = MagicMock()
+    openai_client_mock = MagicMock()
+    openai_client_mock.timeout = 5.0
+    mock_project.get_openai_client.return_value = openai_client_mock
+
+    client = _FoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        timeout=45.0,
+    )
+
+    openai_client_mock.with_options.assert_called_once_with(timeout=45.0)
+    assert openai_client_mock.timeout == 5.0, "Original shared client must not be mutated"
+    assert client.client is openai_client_mock.with_options.return_value
 
 
 def test_raw_foundry_agent_init_creates_client() -> None:
@@ -629,6 +707,7 @@ def test_raw_foundry_agent_init_uses_explicit_parameters() -> None:
     assert "compaction_strategy" in signature.parameters
     assert "tokenizer" in signature.parameters
     assert "additional_properties" in signature.parameters
+    assert "timeout" in signature.parameters
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
@@ -641,7 +720,45 @@ def test_foundry_agent_init_uses_explicit_parameters() -> None:
     assert "compaction_strategy" in signature.parameters
     assert "tokenizer" in signature.parameters
     assert "additional_properties" in signature.parameters
+    assert "timeout" in signature.parameters
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_foundry_agent_init_propagates_timeout_to_openai_client() -> None:
+    """Test that FoundryAgent uses with_options instead of mutating the shared OpenAI client."""
+
+    mock_project = MagicMock()
+    openai_client_mock = MagicMock()
+    openai_client_mock.timeout = 5.0
+    mock_project.get_openai_client.return_value = openai_client_mock
+
+    agent = FoundryAgent(
+        project_client=mock_project,
+        agent_name="test-agent",
+        timeout=90.0,
+    )
+
+    openai_client_mock.with_options.assert_called_once_with(timeout=90.0)
+    assert openai_client_mock.timeout == 5.0, "Original shared client must not be mutated"
+    assert agent.client.client is openai_client_mock.with_options.return_value
+
+
+def test_foundry_agent_init_timeout_none_leaves_client_default() -> None:
+    """Test that FoundryAgent with timeout=None does not call with_options or mutate the client."""
+
+    mock_project = MagicMock()
+    openai_client_mock = MagicMock()
+    openai_client_mock.timeout = 5.0
+    mock_project.get_openai_client.return_value = openai_client_mock
+
+    FoundryAgent(
+        project_client=mock_project,
+        agent_name="test-agent",
+        timeout=None,
+    )
+
+    openai_client_mock.with_options.assert_not_called()
+    assert openai_client_mock.timeout == 5.0
 
 
 def test_raw_foundry_agent_init_rejects_invalid_client_type() -> None:

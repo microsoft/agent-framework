@@ -115,7 +115,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.7.0"
+version = "1.8.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -170,7 +170,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-a2a"
-version = "1.0.0b260528"
+version = "1.0.0b260604"
 source = { editable = "packages/a2a" }
 dependencies = [
     { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -213,7 +213,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "agent-framework-anthropic"
-version = "1.0.0b260521"
+version = "1.0.0b260604"
 source = { editable = "packages/anthropic" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -279,7 +279,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azurefunctions"
-version = "1.0.0b260521"
+version = "1.0.0b260604"
 source = { editable = "packages/azurefunctions" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -301,7 +301,7 @@ dev = []
 
 [[package]]
 name = "agent-framework-bedrock"
-version = "1.0.0b260521"
+version = "1.0.0b260604"
 source = { editable = "packages/bedrock" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -343,7 +343,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "claude-agent-sdk", specifier = ">=0.1.36,<0.1.49" },
+    { name = "claude-agent-sdk", specifier = ">=0.1.36,<0.3" },
 ]
 
 [[package]]
@@ -363,7 +363,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.7.0"
+version = "1.8.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -529,7 +529,7 @@ dev = [{ name = "types-python-dateutil", specifier = "==2.9.0.20260518" }]
 
 [[package]]
 name = "agent-framework-foundry"
-version = "1.7.0"
+version = "1.8.0"
 source = { editable = "packages/foundry" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -543,12 +543,12 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-openai", editable = "packages/openai" },
     { name = "azure-ai-inference", specifier = ">=1.0.0b9,<1.0.0b10" },
-    { name = "azure-ai-projects", specifier = ">=2.1.0,<3.0" },
+    { name = "azure-ai-projects", specifier = ">=2.2.0,<3.0" },
 ]
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0a260528"
+version = "1.0.0a260604"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -599,7 +599,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-github-copilot"
-version = "1.0.0b260521"
+version = "1.0.0rc1"
 source = { editable = "packages/github_copilot" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -609,7 +609,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "github-copilot-sdk", marker = "python_full_version >= '3.11'", specifier = "<=1.0.0b2,>=1.0.0b2" },
+    { name = "github-copilot-sdk", marker = "python_full_version >= '3.11'", specifier = ">=1.0.0,<2" },
 ]
 
 [[package]]
@@ -729,7 +729,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-mistral"
-version = "1.0.0a260505"
+version = "1.0.0a260604"
 source = { editable = "packages/mistral" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -774,7 +774,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-openai"
-version = "1.7.0"
+version = "1.8.0"
 source = { editable = "packages/openai" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -789,7 +789,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-orchestrations"
-version = "1.0.0rc2"
+version = "1.0.0rc3"
 source = { editable = "packages/orchestrations" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1242,7 +1242,7 @@ wheels = [
 
 [[package]]
 name = "azure-ai-projects"
-version = "2.1.0"
+version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1252,9 +1252,9 @@ dependencies = [
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/72/76/3fdede8eddfe5927a571898a15f0288ba30fee78e5ba099f88df3ded70af/azure_ai_projects-2.1.0.tar.gz", hash = "sha256:f0749fa9a174255aa1a5550fb6078208521518472907a4c6dd552767d9b39caa", size = 543343, upload-time = "2026-04-20T17:06:48.751Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/d8/24342aea74fe75b0a8378b6eff665b9c1cb63f855c1a96f70a0095e474a2/azure_ai_projects-2.2.0.tar.gz", hash = "sha256:58ee31bb031cfb004051145c545294bb0d32de679c670c312ef384845bd72cef", size = 668496, upload-time = "2026-05-30T00:20:59.099Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f7/f6/4984e7772a97c7a9e6505a3de8e55a5070fa2b02cd7e980da91e0d9b9b97/azure_ai_projects-2.1.0-py3-none-any.whl", hash = "sha256:6f259d8eb9167d2dfd372006d0221a8118faeaeb05829fa898b595bc6f19c699", size = 274309, upload-time = "2026-04-20T17:06:50.542Z" },
+    { url = "https://files.pythonhosted.org/packages/40/cf/90f27a2b48c9b748f84194b07e565f900e7f0ce0500da9b9f067dca599d3/azure_ai_projects-2.2.0-py3-none-any.whl", hash = "sha256:8f89bdaca4df1bd479d3bd2bd0f19a0905d60be6d17b84a69e8fabd82eac5906", size = 344307, upload-time = "2026-05-30T00:21:00.672Z" },
 ]
 
 [[package]]
@@ -1675,19 +1675,21 @@ wheels = [
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.1.48"
+version = "0.2.87"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sniffio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/dd/2818538efd18ed4ef72d4775efa75bb36cbea0fa418eda51df85ee9c2424/claude_agent_sdk-0.1.48.tar.gz", hash = "sha256:ee294d3f02936c0b826119ffbefcf88c67731cf8c2d2cb7111ccc97f76344272", size = 87375, upload-time = "2026-03-07T00:21:37.087Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/dc/e2afd59a1dd6484b6500245fa2331a0d8c0b68e6c180bc29d8ce9540f38a/claude_agent_sdk-0.2.87.tar.gz", hash = "sha256:56f02a49a97f7be37e0cd7323494d1c09e52fb0db7ab94f53bba8a230bb4bd0e", size = 252063, upload-time = "2026-05-23T04:19:25Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/cf/bbbdee52ee0c63c8709b0ac03ce3c1da5bdc37def5da0eca63363448744f/claude_agent_sdk-0.1.48-py3-none-macosx_11_0_arm64.whl", hash = "sha256:5761ff1d362e0f17c2b1bfd890d1c897f0aa81091e37bbd15b7d06f05ced552d", size = 57559306, upload-time = "2026-03-07T00:21:20.011Z" },
-    { url = "https://files.pythonhosted.org/packages/57/d1/2179154b88d4cf6ba1cf6a15066ee8e96257aaeb1330e625e809ba2f28eb/claude_agent_sdk-0.1.48-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:39c1307daa17e42fa8a71180bb20af8a789d72d3891fc93519ff15540badcb83", size = 73980309, upload-time = "2026-03-07T00:21:24.592Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/99/55b0cd3bf54a7449e744d23cf50be104e9445cf623e1ed75722112aa6264/claude_agent_sdk-0.1.48-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:543d70acba468eccfff836965a14b8ac88cf90809aeeb88431dfcea3ee9a2fa9", size = 74583686, upload-time = "2026-03-07T00:21:28.969Z" },
-    { url = "https://files.pythonhosted.org/packages/c8/f6/4851bd9a238b7aadba7639eb906aca7da32a51f01563fa4488469c608b3a/claude_agent_sdk-0.1.48-py3-none-win_amd64.whl", hash = "sha256:0d37e60bd2b17efc3f927dccef080f14897ab62cd1d0d67a4abc8a0e2d4f1006", size = 74956045, upload-time = "2026-03-07T00:21:33.475Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/4e/b83c4c6ec1e0b63e9d4d58ba9a5abfd9936c55b8ee4c06b88f5e93bdfd70/claude_agent_sdk-0.2.87-py3-none-macosx_11_0_arm64.whl", hash = "sha256:52204a9609dec3aa96032afd48c07d72e05d13311faf614978f17b61326e6e31", size = 63037960, upload-time = "2026-05-23T04:19:29.056Z" },
+    { url = "https://files.pythonhosted.org/packages/13/d7/5fb02260c5b95c66e108c35e046d4d66011921251f7896274b6b21594f14/claude_agent_sdk-0.2.87-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:1713e34e50b830ecac54386d39af14e3a2775f833f1ef715eb53566eaa1b6325", size = 65095745, upload-time = "2026-05-23T04:19:32.533Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/84/1061f6580bbbc78de629467abf051cdbbabe71b982297b401e3fde65c7e0/claude_agent_sdk-0.2.87-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:e9e23119d2a02ad1ea1a2707214db98f5baf2c8809577186629843ddfcb8ec18", size = 72725120, upload-time = "2026-05-23T04:19:36.539Z" },
+    { url = "https://files.pythonhosted.org/packages/04/50/449f5044d76d9de18cf6a9f4b1c9386a74f41b4e2da5312df245d9dd23ef/claude_agent_sdk-0.2.87-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:5ac525d9ae3481296df5639d005e12ce2b6b0427426991f35da64db30be25c6e", size = 72875504, upload-time = "2026-05-23T04:19:40.839Z" },
+    { url = "https://files.pythonhosted.org/packages/80/dd/3f9d7c491d5a98138d293192b31cc9ed792d3552b3a7e276163d7fe2d43a/claude_agent_sdk-0.2.87-py3-none-win_amd64.whl", hash = "sha256:f34973669a1efaeb1543e7b22d7b22feefd8af2fae3adfd39181635077dae432", size = 73514880, upload-time = "2026-05-23T04:19:44.65Z" },
 ]
 
 [[package]]
@@ -2608,19 +2610,19 @@ wheels = [
 
 [[package]]
 name = "github-copilot-sdk"
-version = "1.0.0b2"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
     { name = "python-dateutil", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/82/fe/2cb98d4b9f57f8062ea72775bde72aed1958305016753f7296398e0ceb45/github_copilot_sdk-1.0.0b2-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:1b5941d8b6e3d94d42a5bec6607a26f562e6535d5c981089d23d3d224b94601c", size = 67061619, upload-time = "2026-05-06T20:02:08.636Z" },
-    { url = "https://files.pythonhosted.org/packages/57/45/76567821b2d36f81e6bca78c98d265e2762733f765fa51d69602b7f81867/github_copilot_sdk-1.0.0b2-py3-none-macosx_11_0_arm64.whl", hash = "sha256:c5b8f6a087a0cf02bb0d33976e8f8c009578d84d701a0b28d52051304791ac70", size = 63790955, upload-time = "2026-05-06T20:02:12.354Z" },
-    { url = "https://files.pythonhosted.org/packages/15/67/684b0da0b1207a2bdf025c22ee075d34a1736d61a4973651035d4fd4d8dc/github_copilot_sdk-1.0.0b2-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:f403638c11b82bddb81c94675fc4e8014a1bb2e86a679a39fa167dcc3ad5416a", size = 69538664, upload-time = "2026-05-06T20:02:16.363Z" },
-    { url = "https://files.pythonhosted.org/packages/57/1d/80d88ecf83683535d1a16d4817f1683db3b125f52a924ebdfe9764f5e4c3/github_copilot_sdk-1.0.0b2-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:433d16bb31171fee8d3a5b70259c527f63b297e83a8f8761ae1f16f14d641f32", size = 68163648, upload-time = "2026-05-06T20:02:21.139Z" },
-    { url = "https://files.pythonhosted.org/packages/32/d3/b72aa2fbb3194b50b53e8cb1484f5606a1f8eedcdb0bfb5747da52079553/github_copilot_sdk-1.0.0b2-py3-none-win_amd64.whl", hash = "sha256:a6e9782dae4c3c2ab3527b45bb5de0f61998104c10e9ff64698280eaf37ab5dd", size = 62649144, upload-time = "2026-05-06T20:02:24.953Z" },
-    { url = "https://files.pythonhosted.org/packages/b6/e2/be95b8ea0ac11d1ca474e28a59284f4e395c2710734eadfb657f5de8ace2/github_copilot_sdk-1.0.0b2-py3-none-win_arm64.whl", hash = "sha256:2e97d0ce4bad67dc5929091cb429e7bbae7d4643e4908a6af256a41439000740", size = 60374365, upload-time = "2026-05-06T20:02:29.02Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/d2/e74fdf476d0dde5c3802b3ba360f1b1e250e55d6d39c03f578c28ac9864e/github_copilot_sdk-1.0.0-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:3cae245fb825e26a74395b74f10d9fd90bc464aa77005848ae0809c9a46c96df", size = 94986104, upload-time = "2026-06-02T14:59:55.022Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/81/e4d9dd01b0a563e488427aa879166287c88de3fccf7b8a95e22a6c652fc3/github_copilot_sdk-1.0.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b344a00a877c86ef717244e42bd01acb3694b7377644661c82fc278ccc990e37", size = 91435649, upload-time = "2026-06-02T15:00:02.567Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/ec/e94b8f5a299850e600ffe1fe14bd21b48e01172b9e8b490a0ebd0d0c8d27/github_copilot_sdk-1.0.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:dd3a6b7637a3b12476854aeb599c6bed030f6a166fbd942d872c9a11a695517c", size = 97301959, upload-time = "2026-06-02T15:00:11.019Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/bf/dfba743a11d9745b0664ec5e1ae6e05055a5cbef0ccc6d593222319184eb/github_copilot_sdk-1.0.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:bbd2c64fe37016c74620a02d778eaacbd526b4c3b668a3cdff019f831c752eee", size = 96071193, upload-time = "2026-06-02T15:00:22.634Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/9b/d953dcbb898f4d44efc0cb592e9a703ad43a4b673aafb5bbd763962ab2fd/github_copilot_sdk-1.0.0-py3-none-win_amd64.whl", hash = "sha256:2d46fff634eece978532b1329c0d9e1d784b08ad521e71e6af06c5c28ae2e7c5", size = 90374124, upload-time = "2026-06-02T15:00:31.376Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/f7/0f9943b1439e3dcc52854140676b65d8f63405c471a77c58291a8f4bfb52/github_copilot_sdk-1.0.0-py3-none-win_arm64.whl", hash = "sha256:ebfb80395caa834df8ab16ab4aab3e5d8db883ed3b024f723c394b1514e47221", size = 87874846, upload-time = "2026-06-02T15:00:38.737Z" },
 ]
 
 [[package]]
