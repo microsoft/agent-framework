@@ -338,6 +338,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
     {
         bool wasStalled = taskContext.IsStalled;
         taskContext.Reset();
+        this._currentSpeakerExecutorId = null;
         await context.SendMessageAsync(new ResetChatSignal(), cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await this.UpdatePlanAndDelegateAsync(taskContext, context, cancellationToken, replanAfterStall: wasStalled).ConfigureAwait(false);
@@ -348,9 +349,8 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         List<ChatMessage> messages = [await this._manager.PrepareFinalAnswerAsync(taskContext, context, cancellationToken).ConfigureAwait(false)];
         await context.YieldOutputAsync(messages, cancellationToken).ConfigureAwait(false);
         taskContext.IsTerminated = true;
+        this._currentSpeakerExecutorId = null;
     }
-
-    private const string CurrentSpeakerStateKey = "CurrentSpeakerStateKey";
 
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -361,7 +361,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
                                                               cancellationToken: cancellationToken)
                                        .AsTask();
 
-        Task currentSpeakerTask = context.QueueStateUpdateAsync(CurrentSpeakerStateKey,
+        Task currentSpeakerTask = context.QueueStateUpdateAsync(MagenticConstants.CurrentSpeakerStateKey,
                                                             this._currentSpeakerExecutorId,
                                                             cancellationToken: cancellationToken)
                                         .AsTask();
@@ -390,7 +390,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
         async Task LoadCurrentSpeakerAsync()
         {
-            this._currentSpeakerExecutorId = await context.ReadStateAsync<string?>(CurrentSpeakerStateKey, cancellationToken: cancellationToken)
+            this._currentSpeakerExecutorId = await context.ReadStateAsync<string?>(MagenticConstants.CurrentSpeakerStateKey, cancellationToken: cancellationToken)
                                                         .ConfigureAwait(false);
         }
     }
