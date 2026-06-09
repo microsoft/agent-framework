@@ -388,7 +388,6 @@ def test_parse_tool_result_from_mcp_structured_content_none():
     assert result[0].text == "Hello"
 
 
-
 def test_parse_tool_result_from_mcp_structured_content_non_serializable():
     """Test that non-JSON-serializable values in structuredContent degrade gracefully."""
     mcp_result = types.CallToolResult(
@@ -404,6 +403,7 @@ def test_parse_tool_result_from_mcp_structured_content_non_serializable():
     assert parsed["count"] == 42
     # bytes should be converted to string representation via default=str
     assert "raw bytes" in parsed["data"]
+
 
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
