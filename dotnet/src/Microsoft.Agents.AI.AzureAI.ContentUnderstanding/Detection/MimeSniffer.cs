@@ -122,8 +122,8 @@ internal static class MimeSniffer
             // Compare via subtraction (head.Length is already >= 10 here, see the
             // "ID3" check above) so we never form tagSize + N and risk integer
             // overflow if the tag-size bound ever grows.
-            const int afterTagInspectBytes = 4; // max(fLaC/OggS = 4, MP3 sync = 2)
-            if (head.Length - afterTagInspectBytes < tagSize)
+            const int AfterTagInspectBytes = 4; // max(fLaC/OggS = 4, MP3 sync = 2)
+            if (head.Length - AfterTagInspectBytes < tagSize)
             {
                 return null;
             }
