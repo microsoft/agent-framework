@@ -14,6 +14,7 @@ from agent_framework import (
     ToolApprovalMiddleware,
     ToolApprovalState,
     create_always_approve_tool_response,
+    create_always_approve_tool_with_arguments_response,
     tool,
 )
 
@@ -476,4 +477,88 @@ async def test_tool_approval_middleware_always_approve_tool_rule(
     second_response = await agent.run("call again", session=session)
 
     assert second_response.text == "second done"
+    assert calls == 2
+
+
+async def test_tool_approval_middleware_always_approve_tool_with_arguments_rule(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Argument-scoped always-approve rules should require exact argument matches."""
+    calls = 0
+
+    @tool(name="argument_scoped_tool", approval_mode="always_require")
+    def argument_scoped_tool(value: str) -> str:
+        nonlocal calls
+        calls += 1
+        return value
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[argument_scoped_tool],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="argument-rule-session")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_initial",
+                        name="argument_scoped_tool",
+                        arguments='{"value": "same"}',
+                    )
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("call with same", session=session)
+    first_request = _approval_requests(first_response.messages)[0]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["first done"]))]
+    await agent.run(create_always_approve_tool_with_arguments_response(first_request), session=session)
+
+    assert calls == 1
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_same",
+                        name="argument_scoped_tool",
+                        arguments='{"value": "same"}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["same done"])),
+    ]
+
+    second_response = await agent.run("call with same again", session=session)
+
+    assert second_response.text == "same done"
+    assert calls == 2
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_different",
+                        name="argument_scoped_tool",
+                        arguments='{"value": "different"}',
+                    )
+                ],
+            )
+        )
+    ]
+
+    third_response = await agent.run("call with different args", session=session)
+
+    requests = _approval_requests(third_response.messages)
+    assert [request.function_call.arguments for request in requests] == ['{"value": "different"}']
     assert calls == 2
