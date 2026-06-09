@@ -56,6 +56,22 @@ def safe_json_parse(value: Any) -> dict[str, Any] | None:
     return None
 
 
+def canonical_function_arguments(function_call: Any) -> str | None:
+    """Return a stable representation of function-call arguments."""
+    if function_call is None:
+        return None
+
+    try:
+        parsed_arguments = function_call.parse_arguments()
+    except Exception:
+        parsed_arguments = getattr(function_call, "arguments", None)
+
+    if parsed_arguments is None:
+        parsed_arguments = {}
+
+    return json.dumps(make_json_safe(parsed_arguments), sort_keys=True, separators=(",", ":"))
+
+
 def get_role_value(message: Any) -> str:
     """Extract role string from a message object.
 

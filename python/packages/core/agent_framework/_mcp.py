@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import contextvars
 import json
 import logging
@@ -12,12 +13,15 @@ import sys
 from abc import abstractmethod
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
+from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from opentelemetry import propagate
+from opentelemetry import trace as otel_trace
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._tools import FunctionTool
 from ._types import (
     ChatOptions,
@@ -25,6 +29,11 @@ from ._types import (
     Message,
 )
 from .exceptions import ToolException, ToolExecutionException
+from .observability import (
+    OtelAttr,
+    create_mcp_client_span,
+    set_mcp_span_error,
+)
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -61,6 +70,31 @@ class MCPSpecificApproval(TypedDict, total=False):
 
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
+# Reserved key in an ``additional_tool_argument_names`` mapping that applies its
+# values to every tool on the server rather than a single named tool.
+_MCP_GLOBAL_EXTRA_ARGS_KEY = "*"
+# Framework kwargs that flow through the function-invocation pipeline (via
+# ``FunctionInvocationContext.kwargs``) but must never be forwarded to an MCP
+# server: they are internal objects that the MCP SDK cannot serialize. They are
+# dropped as a safety net when a tool declares one of them in its schema, unless
+# the user explicitly opts the name back in via ``additional_tool_argument_names``
+# (explicit extras always win over the denylist).
+# - chat_options/tools/tool_choice/session/thread: framework runtime objects.
+# - conversation_id: internal tracking ID used by services like Azure AI.
+# - options: metadata/store used by AG-UI for Azure AI client requirements.
+# - response_format: a Pydantic model class for structured output (not serializable).
+# - _meta: reserved key extracted separately as MCP request metadata.
+_MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
+    "chat_options",
+    "tools",
+    "tool_choice",
+    "session",
+    "thread",
+    "conversation_id",
+    "options",
+    "response_format",
+    "_meta",
+})
 _mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
 MCP_DEFAULT_TIMEOUT = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
@@ -126,6 +160,34 @@ def _build_prefixed_mcp_name(
     return f"{normalized_prefix}_{trimmed_name}" if trimmed_name else normalized_prefix
 
 
+def _normalize_additional_tool_argument_names(
+    additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None,
+) -> tuple[set[str], dict[str, set[str]]]:
+    """Split user-supplied extra argument names into global and per-tool sets.
+
+    Accepts either a sequence (applied to every tool) or a mapping keyed by remote
+    tool name, where the reserved key ``"*"`` is treated as global. Mapping values
+    may be a sequence or a single string. Returns a
+    ``(global_extras, per_tool_extras)`` tuple.
+    """
+    if additional_tool_argument_names is None:
+        return set(), {}
+    if isinstance(additional_tool_argument_names, str):
+        return {additional_tool_argument_names}, {}
+    if isinstance(additional_tool_argument_names, Mapping):
+        global_extras: set[str] = set()
+        per_tool_extras: dict[str, set[str]] = {}
+        for tool_name, names in additional_tool_argument_names.items():
+            # Treat a bare string value as a single name rather than iterating its characters.
+            names_set = {names} if isinstance(names, str) else set(names)
+            if tool_name == _MCP_GLOBAL_EXTRA_ARGS_KEY:
+                global_extras.update(names_set)
+            else:
+                per_tool_extras[tool_name] = names_set
+        return global_extras, per_tool_extras
+    return set(additional_tool_argument_names), {}
+
+
 def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Inject OpenTelemetry trace context into MCP request _meta via the global propagator(s)."""
     carrier: dict[str, str] = {}
@@ -147,6 +209,73 @@ def _url_origin(url: Any) -> tuple[str, str, int | None]:
     if port is None:
         port = 443 if url.scheme == "https" else 80 if url.scheme == "http" else None
     return (url.scheme, url.host or "", port)
+
+
+# Internal polling bounds for MCP long-running tasks. Not user-tunable today;
+# promote to MCPTaskOptions if a concrete need arises.
+_MCP_TASK_MIN_POLL_INTERVAL = timedelta(milliseconds=500)
+_MCP_TASK_MAX_POLL_INTERVAL = timedelta(seconds=5)
+_MCP_TASK_CANCEL_TIMEOUT = timedelta(seconds=5)
+_MCP_TASK_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "cancelled", "input_required"})
+
+# Total send attempts for a Phase 2 request (initial try + one reconnect-and-retry).
+# A single transient disconnect should not abort a long-running task; sustained outages
+# surface as ``_MCPTaskAbandoned`` after the second failure.
+_MCP_RECONNECT_ATTEMPTS = 2
+
+
+class _MCPTaskAbandoned(ToolExecutionException):
+    """Raised when the remote MCP task may still be running and must be cancelled.
+
+    Subclass of ToolExecutionException so callers see a normal tool failure.
+    """
+
+
+class _MCPDeadlineExpired(Exception):
+    """Internal marker for ``max_task_wait`` expiry; distinct from inner TimeoutError."""
+
+
+@experimental(feature_id=ExperimentalFeature.MCP_LONG_RUNNING_TASKS)
+@dataclass(frozen=True)
+class MCPTaskOptions:
+    """Options controlling how MCPTool drives the MCP long-running task lifecycle.
+
+    When an MCP server advertises a tool with ``execution.taskSupport == "required"``,
+    the framework transparently drives the SEP-2663 ``tools/call`` → ``tasks/get``
+    (polled) → ``tasks/result`` lifecycle so the agent sees a normal tool result.
+
+    Instances are immutable; replace the whole object via
+    ``MCPTool.task_options = MCPTaskOptions(...)`` to change behavior.
+
+    Attributes:
+        default_ttl: Optional task-record retention time forwarded to the server as
+            ``params.task.ttl`` (milliseconds, integer). The server keeps the task
+            record around this long after the task reaches a terminal status so the
+            client can still call ``tasks/get`` / ``tasks/result``; it does not
+            cancel a running task. When ``None``, the server applies its own default.
+            Must be positive if set (zero would expire the record before any client
+            could read it).
+        cancel_remote_task_on_local_cancellation: If True (default), a local
+            cancellation of the awaiting coroutine triggers a best-effort
+            ``tasks/cancel`` on the server before re-raising ``CancelledError``.
+            Only gates ``CancelledError``; abandonment paths (max-wait,
+            unrecoverable poll errors, lost connection after task_id is known)
+            always cancel regardless of this flag.
+        max_task_wait: Optional client-side deadline for the whole post-create
+            lifecycle (poll + result fetch). When exceeded, raises
+            ``ToolExecutionException`` and fires a best-effort ``tasks/cancel``.
+            ``None`` (default) means no client-side bound. Must be positive if set.
+    """
+
+    default_ttl: timedelta | None = None
+    cancel_remote_task_on_local_cancellation: bool = True
+    max_task_wait: timedelta | None = None
+
+    def __post_init__(self) -> None:
+        if self.default_ttl is not None and self.default_ttl.total_seconds() <= 0:
+            raise ValueError("MCPTaskOptions.default_ttl must be positive.")
+        if self.max_task_wait is not None and self.max_task_wait.total_seconds() <= 0:
+            raise ValueError("MCPTaskOptions.max_task_wait must be positive.")
 
 
 def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextManager[Any, None]:
@@ -217,6 +346,8 @@ class MCPTool:
         request_timeout: int | None = None,
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
+        task_options: MCPTaskOptions | None = None,
+        additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
     ) -> None:
         """Initialize the MCP Tool base.
 
@@ -248,6 +379,13 @@ class MCPTool:
             request_timeout: Timeout in seconds for MCP requests.
             client: A chat client for sampling callbacks.
             additional_properties: Additional properties for the tool.
+            task_options: Options controlling how long-running MCP tasks are driven for
+                tools that advertise ``execution.taskSupport == "required"``. When ``None``,
+                the defaults from :class:`MCPTaskOptions` are used.
+            additional_tool_argument_names: Extra argument names to forward to the MCP server
+                in addition to each tool's declared parameters. A ``Sequence[str]`` applies to
+                every tool; a ``Mapping[str, Sequence[str]]`` is keyed by remote tool name with
+                ``"*"`` as a global key. See the transport subclasses for full details.
         """
         self.name = name
         self.description = description or ""
@@ -259,6 +397,10 @@ class MCPTool:
         self.parse_tool_results = parse_tool_results
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
+        # Defer constructing the default MCPTaskOptions so the experimental warning
+        # only fires when LRO is actually engaged (lazy-resolved by _effective_task_options).
+        self._task_options_explicit: MCPTaskOptions | None = task_options
+        self._task_options_default: MCPTaskOptions | None = None
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
@@ -270,6 +412,11 @@ class MCPTool:
         self.client = client
         self._functions: list[FunctionTool] = []
         self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
+        self._tool_task_support_by_name: dict[str, str] = {}
+        self._tool_param_names_by_name: dict[str, set[str]] = {}
+        self._global_extra_arg_names, self._tool_extra_arg_names = _normalize_additional_tool_argument_names(
+            additional_tool_argument_names
+        )
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
@@ -282,6 +429,13 @@ class MCPTool:
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        """Return base MCP span attributes shared across all operations.
+
+        Subclasses override to add transport-specific attributes (server address, port, etc.).
+        """
+        return {}
 
     def _parse_prompt_result_from_mcp(
         self,
@@ -793,8 +947,10 @@ class MCPTool:
                     inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
             try:
-                initialize_result = await session.initialize()
-                self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+                with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
+                    initialize_result = await session.initialize()
+                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
+                    self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
             except (Exception, asyncio.CancelledError) as ex:
                 if await self._close_and_check_cancelled(ex):
                     raise
@@ -812,8 +968,10 @@ class MCPTool:
             self.session = session
         elif self.session._request_id == 0:  # type: ignore[attr-defined]
             # If the session is not initialized, we need to reinitialize it
-            initialize_result = await self.session.initialize()
-            self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+            with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
+                initialize_result = await self.session.initialize()
+                init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
+                self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
         elif self._server_capabilities is None:
             self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
         logger.debug("Connected to MCP server: %s", self.session)
@@ -1057,7 +1215,8 @@ class MCPTool:
                             "Skipping MCP prompt loading because the server did not advertise prompts support."
                         )
                         return
-                    prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                    with create_mcp_client_span("prompts/list", attributes=self._mcp_base_span_attributes()):
+                        prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -1131,6 +1290,8 @@ class MCPTool:
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
         tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
+        tool_task_support_by_name: dict[str, str] = {}
+        tool_param_names_by_name: dict[str, set[str]] = {}
 
         params: types.PaginatedRequestParams | None = None
         while True:
@@ -1142,7 +1303,8 @@ class MCPTool:
                     if not self._supports_tools:
                         logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
                         return
-                    tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                    with create_mcp_client_span("tools/list", attributes=self._mcp_base_span_attributes()):
+                        tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -1168,14 +1330,10 @@ class MCPTool:
                 if tool.meta is not None:
                     tool_call_meta_by_name[tool.name] = dict(tool.meta)
 
-                normalized_name = _normalize_mcp_name(tool.name)
-                local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
+                task_support = getattr(getattr(tool, "execution", None), "taskSupport", None)
+                if task_support is not None:
+                    tool_task_support_by_name[tool.name] = task_support
 
-                # Skip if already loaded
-                if local_name in existing_names:
-                    continue
-
-                approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
                 # Normalize inputSchema: ensure "properties" exists for object schemas.
                 # Some MCP servers (e.g. zero-argument tools) omit "properties",
                 # which causes OpenAI API to reject the schema with a 400 error.
@@ -1184,6 +1342,24 @@ class MCPTool:
                 input_schema = dict(tool.inputSchema or {})
                 if input_schema.get("type") == "object" and "properties" not in input_schema:
                     input_schema["properties"] = {}
+
+                # Register declared param names before the existing-tool skip below so that
+                # reloads (e.g. notifications/tools/list_changed) preserve the allowlist for
+                # tools that are already loaded, consistent with tool_call_meta_by_name and
+                # tool_task_support_by_name above.
+                schema_properties = input_schema.get("properties")
+                tool_param_names_by_name[tool.name] = (
+                    set(cast(dict[str, Any], schema_properties)) if isinstance(schema_properties, dict) else set()
+                )
+
+                normalized_name = _normalize_mcp_name(tool.name)
+                local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
+
+                # Skip if already loaded
+                if local_name in existing_names:
+                    continue
+
+                approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
 
                 async def _call_tool_with_runtime_kwargs(
                     ctx: FunctionInvocationContext,
@@ -1216,6 +1392,8 @@ class MCPTool:
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
         self._tool_call_meta_by_name = tool_call_meta_by_name
+        self._tool_task_support_by_name = tool_task_support_by_name
+        self._tool_param_names_by_name = tool_param_names_by_name
 
     async def _close_on_owner(self) -> None:
         # Cancel any pending reload tasks before tearing down the session.
@@ -1292,6 +1470,29 @@ class MCPTool:
                     inner_exception=ex,
                 ) from ex
 
+    def _effective_task_options(self) -> MCPTaskOptions:
+        """Return the effective MCPTaskOptions, lazily constructing defaults on first use.
+
+        Defers the implicit ``MCPTaskOptions()`` so the experimental warning only
+        fires when LRO is actually engaged (server advertises ``taskSupport=required``).
+        """
+        explicit = self._task_options_explicit
+        if explicit is not None:
+            return explicit
+        if self._task_options_default is None:
+            self._task_options_default = MCPTaskOptions()
+        return self._task_options_default
+
+    @property
+    def task_options(self) -> MCPTaskOptions:
+        """The effective MCPTaskOptions for this tool (lazy defaults)."""
+        return self._effective_task_options()
+
+    @task_options.setter
+    def task_options(self, value: MCPTaskOptions | None) -> None:
+        self._task_options_explicit = value
+        self._task_options_default = None
+
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
 
@@ -1314,58 +1515,41 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
                 or the tool call fails.
         """
-        from anyio import ClosedResourceError
-        from mcp.shared.exceptions import McpError
-
         if not self.load_tools_flag:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
 
-        raw_user_meta: object | None = kwargs.get("_meta")
-        user_meta: dict[str, Any] | None = None
-        if raw_user_meta is not None and not isinstance(raw_user_meta, dict):
-            raise ToolExecutionException("MCP tool metadata provided via _meta must be a dict.")
-        if isinstance(raw_user_meta, dict):
-            raw_user_meta_dict = cast(Mapping[object, object], raw_user_meta)
-            user_meta = {}
-            for key, value in raw_user_meta_dict.items():
-                if not isinstance(key, str):
-                    raise ToolExecutionException("MCP tool metadata provided via _meta must use string keys.")
-                user_meta[key] = value
+        # Tools advertising taskSupport == "required" cannot complete via plain tools/call;
+        # route through the long-running task lifecycle transparently.
+        if self._tool_task_support_by_name.get(tool_name) == "required":
+            return await self.call_tool_as_task(tool_name, **kwargs)
 
-        # Filter out framework kwargs that cannot be serialized by the MCP SDK.
-        # These are internal objects passed through the function invocation pipeline
-        # that should not be forwarded to external MCP servers.
-        # conversation_id is an internal tracking ID used by services like Azure AI.
-        # options contains metadata/store used by AG-UI for Azure AI client requirements.
-        # response_format is a Pydantic model class used for structured output (not serializable).
-        filtered_kwargs = {
-            k: v
-            for k, v in kwargs.items()
-            if k
-            not in {
-                "chat_options",
-                "tools",
-                "tool_choice",
-                "session",
-                "thread",
-                "conversation_id",
-                "options",
-                "response_format",
-                "_meta",
-            }
-        }
-
-        # Some MCP proxies require their tools/list metadata to be echoed on tools/call.
-        tool_meta = self._tool_call_meta_by_name.get(tool_name)
-        request_meta = dict(tool_meta) if tool_meta is not None else None
-        if user_meta is not None:
-            request_meta = {**(request_meta or {}), **user_meta}
-        meta = _inject_otel_into_mcp_meta(request_meta)
+        filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
 
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
-        # Try the operation, reconnecting once if the connection is closed
+
+        # Build MCP span attributes for tools/call
+        mcp_span_attrs = self._mcp_base_span_attributes()
+        mcp_span_attrs.update({
+            OtelAttr.TOOL_NAME: tool_name,
+            OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        })
+        with create_mcp_client_span("tools/call", target=tool_name, attributes=mcp_span_attrs) as span:  # type: ignore
+            return await self._call_tool_with_retries(tool_name, filtered_kwargs, meta, parser, span)
+
+    async def _call_tool_with_retries(
+        self,
+        tool_name: str,
+        filtered_kwargs: dict[str, Any],
+        meta: dict[str, Any] | None,
+        parser: Callable[..., str | list[Content]],
+        span: otel_trace.Span,
+    ) -> str | list[Content]:
+        """Execute the MCP tools/call RPC with retry logic."""
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
         for attempt in range(2):
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
@@ -1376,6 +1560,9 @@ class MCPTool:
                         if isinstance(parsed, list)
                         else str(parsed)
                     )
+                    # Per OTel MCP semconv: set error.type="tool_error" for isError results
+                    if span.is_recording():
+                        set_mcp_span_error(span, "tool_error", text or str(parsed))
                     raise ToolExecutionException(text or str(parsed))
                 return parser(result)
             except ToolExecutionException:
@@ -1387,6 +1574,8 @@ class MCPTool:
                 is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
                 if not is_connection_lost:
                     error_message = call_ex.error.message if isinstance(call_ex, McpError) else str(call_ex)
+                    if span.is_recording():
+                        set_mcp_span_error(span, type(call_ex).__name__, error_message)
                     raise ToolExecutionException(error_message, inner_exception=call_ex) from call_ex
 
                 if attempt == 0:
@@ -1403,13 +1592,484 @@ class MCPTool:
 
                 # Second attempt also failed, give up.
                 logger.error("MCP connection closed unexpectedly after reconnection: %s", call_ex)
+                if span.is_recording():
+                    set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
                 raise ToolExecutionException(
                     f"Failed to call tool '{tool_name}' - connection lost.",
                     inner_exception=call_ex,
                 ) from call_ex
             except Exception as ex:
+                if span.is_recording():
+                    set_mcp_span_error(span, type(ex).__name__, str(ex))
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
+
+    def _resolved_extra_args(self, tool_name: str) -> set[str]:
+        """Return the user-configured extra argument names allowed for a tool."""
+        return self._global_extra_arg_names | self._tool_extra_arg_names.get(tool_name, set())
+
+    def _prepare_call_kwargs(
+        self, tool_name: str, kwargs: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Filter kwargs down to the tool's arguments and build the merged MCP request metadata."""
+        raw_user_meta: object | None = kwargs.get("_meta")
+        user_meta: dict[str, Any] | None = None
+        if raw_user_meta is not None and not isinstance(raw_user_meta, dict):
+            raise ToolExecutionException("MCP tool metadata provided via _meta must be a dict.")
+        if isinstance(raw_user_meta, dict):
+            raw_user_meta_dict = cast(Mapping[object, object], raw_user_meta)
+            user_meta = {}
+            for key, value in raw_user_meta_dict.items():
+                if not isinstance(key, str):
+                    raise ToolExecutionException("MCP tool metadata provided via _meta must use string keys.")
+                user_meta[key] = value
+
+        # Allowlist: forward only the tool's declared parameters (from inputSchema.properties)
+        # plus any user-configured extra argument names. Everything else - notably the
+        # framework runtime kwargs injected through the function-invocation pipeline - is
+        # stripped so it is never forwarded to the MCP server. Tools that declare no usable
+        # properties forward only the user-configured extras.
+        #
+        # The extra names come exclusively from additional_tool_argument_names, which is set in
+        # user code at construction time; there is no per-call override, so a model-issued tool
+        # call cannot change which names are allowed through.
+        #
+        # The framework denylist acts as a safety net for keys a server *declares* in its
+        # schema that collide with internal, non-serializable framework objects (e.g. a tool
+        # that declares a parameter literally named "thread"): such declared-but-denylisted
+        # keys are dropped. Names the user explicitly opts in via additional_tool_argument_names
+        # always win. The reserved _meta key is handled separately above and never forwarded as
+        # an argument.
+        declared = self._tool_param_names_by_name.get(tool_name, set())
+        extras = self._resolved_extra_args(tool_name)
+        filtered_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k != "_meta" and (k in extras or (k in declared and k not in _MCP_FRAMEWORK_DENYLIST))
+        }
+
+        # Some MCP proxies require their tools/list metadata to be echoed on tools/call.
+        tool_meta = self._tool_call_meta_by_name.get(tool_name)
+        request_meta = dict(tool_meta) if tool_meta is not None else None
+        if user_meta is not None:
+            request_meta = {**(request_meta or {}), **user_meta}
+        meta = _inject_otel_into_mcp_meta(request_meta)
+        return filtered_kwargs, meta
+
+    async def call_tool_as_task(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
+        """Call an MCP tool via the long-running task lifecycle (SEP-2663).
+
+        Issues an augmented ``tools/call`` with ``params.task`` set from
+        ``self.task_options``, then polls ``tasks/get`` until the server reports a
+        terminal status. On ``completed`` the payload is fetched via ``tasks/result``,
+        validated as a ``CallToolResult`` and parsed identically to :meth:`call_tool`.
+
+        Local cancellation triggers a best-effort ``tasks/cancel`` (controlled by
+        :attr:`MCPTaskOptions.cancel_remote_task_on_local_cancellation`) before
+        ``asyncio.CancelledError`` is re-raised.
+
+        Args:
+            tool_name: The remote MCP tool name.
+
+        Keyword Args:
+            kwargs: Arguments forwarded to the tool. See :meth:`call_tool` for the
+                framework kwargs that are filtered out.
+
+        Returns:
+            A list of Content items (or a string when a custom ``parse_tool_results``
+            callback is configured).
+        """
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
+        if not self.load_tools_flag:
+            raise ToolExecutionException(
+                "Tools are not loaded for this server, please set load_tools=True in the constructor."
+            )
+
+        filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
+        parser = self.parse_tool_results or self._parse_tool_result_from_mcp
+
+        # Submit the task: issue augmented tools/call. Do NOT retry on connection loss here:
+        # the server may have accepted the request and created a task before the
+        # response was lost, so retrying could start the long-running operation twice.
+        # Reconnect-and-retry is only safe after the task_id is known.
+        try:
+            task_id, fallback_result = await self._call_tool_as_task_create(tool_name, filtered_kwargs, meta)
+        except (ClosedResourceError, McpError) as ex:
+            if not self._is_connection_lost(ex):
+                error_message = ex.error.message if isinstance(ex, McpError) else str(ex)
+                raise ToolExecutionException(error_message, inner_exception=ex) from ex
+            raise ToolExecutionException(
+                f"Failed to call tool '{tool_name}' - connection lost; task state unknown.",
+                inner_exception=ex,
+            ) from ex
+        except ToolExecutionException:
+            raise
+        except Exception as ex:
+            raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
+
+        # Server returned a CallToolResult (no task created) or fell back to plain tools/call.
+        if fallback_result is not None:
+            if fallback_result.isError:
+                parsed = parser(fallback_result)
+                text = (
+                    "\n".join(c.text for c in parsed if c.type == "text" and c.text)
+                    if isinstance(parsed, list)
+                    else str(parsed)
+                )
+                raise ToolExecutionException(text or str(parsed))
+            return parser(fallback_result)
+
+        if task_id is None:
+            raise ToolExecutionException(f"MCP server did not return a task_id or fallback result for '{tool_name}'.")
+
+        # Track to completion: poll until terminal, then fetch payload. Never re-issue
+        # tools/call past this point; reconnect-and-retry only against the same task_id.
+        opts = self._effective_task_options()
+        max_wait_s = opts.max_task_wait.total_seconds() if opts.max_task_wait is not None else None
+
+        async def _await_task_completion() -> str | list[Content]:
+            terminal = await self._poll_task_until_terminal(task_id)
+            return await self._handle_terminal_task(tool_name, task_id, terminal, parser)
+
+        try:
+            if max_wait_s is not None:
+                try:
+                    result = await self._await_with_deadline(_await_task_completion(), max_wait_s)
+                    return cast("str | list[Content]", result)
+                except _MCPDeadlineExpired as ex:
+                    self._spawn_best_effort_cancel(task_id)
+                    raise ToolExecutionException(
+                        f"MCP task '{task_id}' exceeded max_task_wait of {max_wait_s}s.",
+                        inner_exception=ex,
+                    ) from ex
+            else:
+                return await _await_task_completion()
+        except asyncio.CancelledError:
+            if opts.cancel_remote_task_on_local_cancellation:
+                self._spawn_best_effort_cancel(task_id)
+            raise
+        except _MCPTaskAbandoned:
+            # Pre-terminal abandonment (hard poll error, malformed get, second
+            # disconnect, reconnect failure): cancel + re-raise as plain
+            # ToolExecutionException to the function-calling loop.
+            self._spawn_best_effort_cancel(task_id)
+            raise
+        # Plain ToolExecutionException from terminal failures (failed/cancelled/
+        # input_required, completed+isError, malformed result post-completion)
+        # propagates without cancel — server is already done.
+
+    async def _call_tool_as_task_create(
+        self, tool_name: str, arguments: dict[str, Any], meta: dict[str, Any] | None
+    ) -> tuple[str | None, types.CallToolResult | None]:
+        """Send the augmented tools/call.
+
+        Returns ``(task_id, None)`` when the server created a task,
+        ``(None, CallToolResult)`` when it returned a non-task result, falling back
+        to plain ``tools/call`` if the server rejects the ``task`` field outright.
+        """
+        from mcp import types
+        from mcp.shared.exceptions import McpError
+        from pydantic import ValidationError
+
+        opts = self._effective_task_options()
+        ttl_ms: int | None = None
+        if opts.default_ttl is not None:
+            ttl_ms = int(opts.default_ttl.total_seconds() * 1000)
+        # Always send TaskMetadata to mark the call as task-augmented; ttl may be omitted.
+        task_metadata = types.TaskMetadata(ttl=ttl_ms)
+
+        request_meta = types.RequestParams.Meta(**meta) if meta else None
+        params = types.CallToolRequestParams(
+            name=tool_name,
+            arguments=arguments,
+            task=task_metadata,
+            _meta=request_meta,  # type: ignore[call-arg]
+        )
+        request = types.ClientRequest(types.CallToolRequest(params=params))
+
+        # Use the lenient Result type so we can extract the task_id even when
+        # the strict CreateTaskResult schema rejects the payload (the MCP Python
+        # SDK requires Task.ttl, but servers may legitimately omit it).
+        try:
+            lenient = await self.session.send_request(  # type: ignore[union-attr]
+                request,
+                types.Result,
+            )
+        except McpError as ex:
+            if ex.error.code not in (types.METHOD_NOT_FOUND, types.INVALID_PARAMS):
+                raise
+            logger.debug(
+                "Server rejected augmented tools/call for '%s' (code=%s); falling back.",
+                tool_name,
+                ex.error.code,
+            )
+            fallback = await self.session.call_tool(tool_name, arguments=arguments, meta=meta)  # type: ignore[union-attr]
+            return None, fallback
+
+        # Inspect the raw payload: a CreateTaskResult carries `task.taskId`;
+        # a legacy CallToolResult carries `content` and/or `isError`.
+        raw: dict[str, Any] = lenient.model_dump(by_alias=True, exclude_none=True)
+        raw.pop("_meta", None)
+
+        task_field = raw.get("task")
+        if isinstance(task_field, dict):
+            task_id_val = cast(dict[str, Any], task_field).get("taskId")
+            if isinstance(task_id_val, str):
+                return task_id_val, None
+
+        try:
+            legacy = types.CallToolResult.model_validate(raw)
+        except ValidationError as ex:
+            # Augmented call succeeded server-side; re-issuing a plain tools/call
+            # could double-execute a side-effecting tool.
+            raise ToolExecutionException(
+                f"MCP server returned an unparseable response to augmented tools/call "
+                f"for '{tool_name}'; cannot safely retry (server may have started the operation).",
+                inner_exception=ex,
+            ) from ex
+
+        return None, legacy
+
+    async def _poll_task_until_terminal(self, task_id: str) -> types.GetTaskResult:
+        """Poll ``tasks/get`` until the task reaches a terminal status."""
+        import httpx
+        from mcp import types
+        from mcp.shared.exceptions import McpError
+
+        # SDK raises McpError(code=httpx.REQUEST_TIMEOUT=408) on session read timeout.
+        transient_codes: frozenset[int] = frozenset({int(httpx.codes.REQUEST_TIMEOUT)})
+
+        while True:
+            request = types.ClientRequest(types.GetTaskRequest(params=types.GetTaskRequestParams(taskId=task_id)))
+            try:
+                # GetTaskResult.ttl is required-but-Optional in the SDK; coerce below.
+                lenient = await self._send_with_one_reconnect(
+                    request, types.Result, operation="tasks/get", task_id=task_id
+                )
+            except McpError as ex:
+                if ex.error.code in transient_codes:
+                    logger.debug("Transient %s on tasks/get for '%s'; will retry.", ex.error.code, task_id)
+                    await asyncio.sleep(_MCP_TASK_MIN_POLL_INTERVAL.total_seconds())
+                    continue
+                # Hard server error mid-poll: task may still be running.
+                raise _MCPTaskAbandoned(ex.error.message, inner_exception=ex) from ex
+
+            try:
+                snapshot = self._coerce_get_task_result(lenient, task_id)
+            except ToolExecutionException as ex:
+                # Malformed tasks/get response; task may still be running.
+                raise _MCPTaskAbandoned(str(ex), inner_exception=ex) from ex
+
+            if snapshot.status in _MCP_TASK_TERMINAL_STATUSES:
+                return snapshot
+
+            await asyncio.sleep(self._compute_poll_delay(snapshot.pollInterval).total_seconds())
+
+    @staticmethod
+    def _coerce_get_task_result(lenient: types.Result, task_id: str) -> types.GetTaskResult:
+        """Coerce a lenient Result into GetTaskResult, defaulting ``ttl`` when absent."""
+        from mcp import types
+
+        raw = lenient.model_dump(by_alias=True, exclude_none=True)
+        raw.pop("_meta", None)
+        raw.setdefault("ttl", None)
+        try:
+            return types.GetTaskResult.model_validate(raw)
+        except Exception as ex:
+            raise ToolExecutionException(
+                f"MCP server returned a malformed tasks/get response for task '{task_id}'.",
+                inner_exception=ex,
+            ) from ex
+
+    @staticmethod
+    def _compute_poll_delay(server_interval_ms: int | None) -> timedelta:
+        """Clamp the server-suggested poll interval to ``[min, max]``."""
+        if server_interval_ms is None or server_interval_ms <= 0:
+            return _MCP_TASK_MIN_POLL_INTERVAL
+        suggested = timedelta(milliseconds=server_interval_ms)
+        if suggested < _MCP_TASK_MIN_POLL_INTERVAL:
+            return _MCP_TASK_MIN_POLL_INTERVAL
+        if suggested > _MCP_TASK_MAX_POLL_INTERVAL:
+            return _MCP_TASK_MAX_POLL_INTERVAL
+        return suggested
+
+    async def _handle_terminal_task(
+        self,
+        tool_name: str,
+        task_id: str,
+        snapshot: types.GetTaskResult,
+        parser: Callable[[types.CallToolResult], str | list[Content]],
+    ) -> str | list[Content]:
+        """Map a terminal task snapshot to either a parsed result or an exception."""
+        status = snapshot.status
+        if status == "completed":
+            payload = await self._fetch_task_result(task_id)
+            if payload.isError:
+                parsed = parser(payload)
+                text = (
+                    "\n".join(c.text for c in parsed if c.type == "text" and c.text)
+                    if isinstance(parsed, list)
+                    else str(parsed)
+                )
+                raise ToolExecutionException(text or str(parsed))
+            return parser(payload)
+
+        # Non-completed terminal statuses surface as ToolExecutionException so the
+        # function-calling loop sees a normal failure for tool_name.
+        message = snapshot.statusMessage or f"MCP task ended with status '{status}'."
+        if status == "input_required":
+            # Spec-non-terminal; treated as terminal here because the framework does
+            # not implement the interactive input flow.
+            message = snapshot.statusMessage or "MCP task requires additional input and cannot continue."
+        raise ToolExecutionException(f"Tool '{tool_name}' task {status}: {message}")
+
+    async def _fetch_task_result(self, task_id: str) -> types.CallToolResult:
+        """Send ``tasks/result`` and reinterpret the open-typed payload as a CallToolResult."""
+        from mcp import types
+        from mcp.shared.exceptions import McpError
+        from pydantic import ValidationError
+
+        request = types.ClientRequest(
+            types.GetTaskPayloadRequest(params=types.GetTaskPayloadRequestParams(taskId=task_id))
+        )
+        # Connection-loss retry only via the helper; no transient-code retry — server
+        # has already completed the task, so a slow payload fetch is anomalous.
+        try:
+            payload = await self._send_with_one_reconnect(
+                request, types.GetTaskPayloadResult, operation="tasks/result", task_id=task_id
+            )
+        except McpError as ex:
+            # Server reported completed; a hard fetch error is a plain failure (no cancel).
+            raise ToolExecutionException(ex.error.message, inner_exception=ex) from ex
+
+        # GetTaskPayloadResult carries the tool result via extra fields; reinterpret as CallToolResult.
+        payload_dict = payload.model_dump(by_alias=True, exclude_none=True)
+        payload_dict.pop("_meta", None)
+        try:
+            return types.CallToolResult.model_validate(payload_dict)
+        except ValidationError as ex:
+            # Server reported completed; malformed payload is a plain failure (no cancel needed).
+            raise ToolExecutionException(
+                f"MCP task '{task_id}' result payload could not be parsed as a CallToolResult.",
+                inner_exception=ex,
+            ) from ex
+
+    async def _send_with_one_reconnect(
+        self,
+        request: types.ClientRequest,
+        result_type: type[Any],
+        *,
+        operation: str,
+        task_id: str,
+    ) -> Any:
+        """Send ``request`` with one reconnect-and-retry on connection loss.
+
+        After a second loss (or reconnect failure), raise ``_MCPTaskAbandoned``.
+        Non-connection errors propagate unchanged.
+        """
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
+        for attempt in range(_MCP_RECONNECT_ATTEMPTS):
+            try:
+                return await self.session.send_request(request, result_type)  # type: ignore[union-attr]
+            except (ClosedResourceError, McpError) as ex:
+                if not self._is_connection_lost(ex):
+                    raise
+                if attempt < _MCP_RECONNECT_ATTEMPTS - 1:
+                    logger.info("MCP connection lost during %s; reconnecting (task_id=%s).", operation, task_id)
+                    try:
+                        await self.connect(reset=True)
+                    except Exception as reconn_ex:
+                        # Reconnect failure: task may still be running.
+                        raise _MCPTaskAbandoned(
+                            "Failed to reconnect to MCP server.", inner_exception=reconn_ex
+                        ) from reconn_ex
+                    continue
+                # Final attempt also lost the connection: task may still be running.
+                raise _MCPTaskAbandoned(
+                    f"MCP connection lost; task state unknown (task_id={task_id}).",
+                    inner_exception=ex,
+                ) from ex
+        raise AssertionError(f"unreachable: {operation} for {task_id}")  # pragma: no cover
+
+    @staticmethod
+    async def _await_with_deadline(coro: Coroutine[Any, Any, Any], timeout_s: float) -> Any:
+        """Await ``coro`` with a deadline; raise ``_MCPDeadlineExpired`` only on deadline.
+
+        Unlike ``asyncio.wait_for``, an ``asyncio.TimeoutError`` raised by ``coro``
+        itself propagates unchanged so callers can distinguish their own deadline
+        from a stray inner timeout.
+        """
+        inner = asyncio.ensure_future(coro)
+        try:
+            done, _pending = await asyncio.wait({inner}, timeout=timeout_s)
+        except BaseException:
+            # Outer caller cancelled (or another exception): cancel inner + drain.
+            inner.cancel()
+            with contextlib.suppress(BaseException):
+                await inner
+            raise
+        if inner in done:
+            return inner.result()
+        # Deadline fired before inner finished.
+        inner.cancel()
+        with contextlib.suppress(BaseException):
+            await inner
+        raise _MCPDeadlineExpired
+
+    def _spawn_best_effort_cancel(self, task_id: str) -> None:
+        """Fire-and-forget ``tasks/cancel`` so local cancellation propagates server-side."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        cancel_task = loop.create_task(self._try_cancel_task(task_id))
+        # Reuse pending-reload bookkeeping so close-on-owner waits/cancels these too.
+        self._pending_reload_tasks.add(cancel_task)
+        cancel_task.add_done_callback(self._pending_reload_tasks.discard)
+
+    async def _try_cancel_task(self, task_id: str) -> None:
+        """Send ``tasks/cancel``; bounded by ``_MCP_TASK_CANCEL_TIMEOUT``.
+
+        Failures log at warning so unattributed orphan tasks are debuggable.
+        """
+        from mcp import types
+
+        request = types.ClientRequest(types.CancelTaskRequest(params=types.CancelTaskRequestParams(taskId=task_id)))
+        try:
+            await asyncio.wait_for(
+                self.session.send_request(request, types.CancelTaskResult),  # type: ignore[union-attr]
+                timeout=_MCP_TASK_CANCEL_TIMEOUT.total_seconds(),
+            )
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Best-effort tasks/cancel for '%s' timed out after %.1fs; remote task may still be running.",
+                task_id,
+                _MCP_TASK_CANCEL_TIMEOUT.total_seconds(),
+            )
+        except Exception:
+            logger.warning(
+                "Best-effort tasks/cancel for '%s' failed; remote task may still be running.",
+                task_id,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _is_connection_lost(ex: BaseException) -> bool:
+        """Return True if *ex* indicates the MCP transport was torn down."""
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
+        if isinstance(ex, ClosedResourceError):
+            return True
+        if isinstance(ex, McpError):
+            return "session terminated" in ex.error.message.lower()
+        return False
 
     async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
         """Call a prompt with the given arguments.
@@ -1436,36 +2096,42 @@ class MCPTool:
             )
 
         parser = self.parse_prompt_results or self._parse_prompt_result_from_mcp
-        # Try the operation, reconnecting once if the connection is closed
-        for attempt in range(2):
-            try:
-                prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
-                return parser(prompt_result)
-            except ClosedResourceError as cl_ex:
-                if attempt == 0:
-                    # First attempt failed, try reconnecting
-                    logger.info("MCP connection closed unexpectedly. Reconnecting...")
-                    try:
-                        await self.connect(reset=True)
-                        continue  # Retry the operation
-                    except Exception as reconn_ex:
+        mcp_span_attrs = self._mcp_base_span_attributes()
+        mcp_span_attrs.update({OtelAttr.PROMPT_NAME: prompt_name})
+
+        with create_mcp_client_span("prompts/get", target=prompt_name, attributes=mcp_span_attrs) as span:
+            for attempt in range(2):
+                try:
+                    prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
+                    return parser(prompt_result)
+                except ClosedResourceError as cl_ex:
+                    if attempt == 0:
+                        # First attempt failed, try reconnecting
+                        logger.info("MCP connection closed unexpectedly. Reconnecting...")
+                        try:
+                            await self.connect(reset=True)
+                            continue  # Retry the operation
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                    else:
+                        # Second attempt also failed, give up
+                        logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
+                        set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
                         raise ToolExecutionException(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
-                        ) from reconn_ex
-                else:
-                    # Second attempt also failed, give up
-                    logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
-                    raise ToolExecutionException(
-                        f"Failed to call prompt '{prompt_name}' - connection lost.",
-                        inner_exception=cl_ex,
-                    ) from cl_ex
-            except McpError as mcp_exc:
-                error_message = mcp_exc.error.message
-                raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
-            except Exception as ex:
-                raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
-        raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
+                            f"Failed to call prompt '{prompt_name}' - connection lost.",
+                            inner_exception=cl_ex,
+                        ) from cl_ex
+                except McpError as mcp_exc:
+                    error_message = mcp_exc.error.message
+                    set_mcp_span_error(span, type(mcp_exc).__name__, error_message)
+                    raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
+                except Exception as ex:
+                    set_mcp_span_error(span, type(ex).__name__, str(ex))
+                    raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
+            raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager.
@@ -1554,6 +2220,8 @@ class MCPStdioTool(MCPTool):
         encoding: str | None = None,
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
+        task_options: MCPTaskOptions | None = None,
+        additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio tool.
@@ -1598,6 +2266,22 @@ class MCPStdioTool(MCPTool):
             env: The environment variables to set for the command.
             encoding: The encoding to use for the command output.
             client: The chat client to use for sampling.
+            task_options: Options for tools that advertise
+                ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
+            additional_tool_argument_names: Extra argument names to forward to the MCP server in
+                addition to each tool's declared parameters (from its ``inputSchema.properties``).
+                By default only declared parameters are sent; framework runtime kwargs injected
+                through the function-invocation pipeline are stripped. Use this to opt specific
+                keys back in. Accepts either a ``Sequence[str]`` applied to every tool, or a
+                ``Mapping[str, Sequence[str]]`` keyed by remote tool name where the reserved key
+                ``"*"`` applies to every tool. This is configured only here in user code; there is
+                no per-call override, so a model-issued tool call cannot change which names pass
+                through. To use a server that accepts ``additionalProperties: true``, list the
+                extra names here and then either (1) manually extend that tool's ``inputSchema``
+                (via the ``.functions`` list after connecting) so the model is prompted to supply
+                them, or (2) supply the values yourself through ``function_invocation_kwargs``. If
+                a name is supplied via both the model and ``function_invocation_kwargs``, the
+                model-supplied value wins.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -1614,12 +2298,19 @@ class MCPStdioTool(MCPTool):
             load_prompts=load_prompts,
             parse_prompt_results=parse_prompt_results,
             request_timeout=request_timeout,
+            task_options=task_options,
+            additional_tool_argument_names=additional_tool_argument_names,
         )
         self.command = command
         self.args = args or []
         self.env = env
         self.encoding = encoding
         self._client_kwargs = kwargs
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        attrs = super()._mcp_base_span_attributes()
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "pipe"
+        return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP stdio client.
@@ -1687,6 +2378,8 @@ class MCPStreamableHTTPTool(MCPTool):
         additional_properties: dict[str, Any] | None = None,
         http_client: AsyncClient | None = None,
         header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
+        task_options: MCPTaskOptions | None = None,
+        additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -1739,6 +2432,22 @@ class MCPStreamableHTTPTool(MCPTool):
                 of HTTP headers to inject into every outbound request to the MCP server.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
+            task_options: Options for tools that advertise
+                ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
+            additional_tool_argument_names: Extra argument names to forward to the MCP server in
+                addition to each tool's declared parameters (from its ``inputSchema.properties``).
+                By default only declared parameters are sent; framework runtime kwargs injected
+                through the function-invocation pipeline are stripped. Use this to opt specific
+                keys back in. Accepts either a ``Sequence[str]`` applied to every tool, or a
+                ``Mapping[str, Sequence[str]]`` keyed by remote tool name where the reserved key
+                ``"*"`` applies to every tool. This is configured only here in user code; there is
+                no per-call override, so a model-issued tool call cannot change which names pass
+                through. To use a server that accepts ``additionalProperties: true``, list the
+                extra names here and then either (1) manually extend that tool's ``inputSchema``
+                (via the ``.functions`` list after connecting) so the model is prompted to supply
+                them, or (2) supply the values yourself through ``function_invocation_kwargs``. If
+                a name is supplied via both the model and ``function_invocation_kwargs``, the
+                model-supplied value wins.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -1755,11 +2464,31 @@ class MCPStreamableHTTPTool(MCPTool):
             load_prompts=load_prompts,
             parse_prompt_results=parse_prompt_results,
             request_timeout=request_timeout,
+            task_options=task_options,
+            additional_tool_argument_names=additional_tool_argument_names,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
         self._httpx_client: AsyncClient | None = http_client
         self._header_provider = header_provider
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        attrs = super()._mcp_base_span_attributes()
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
+        attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "http"
+        try:
+            from httpx import URL
+
+            parsed = URL(self.url)
+            if parsed.host:
+                attrs[OtelAttr.ADDRESS] = parsed.host
+            port = parsed.port
+            if port is None:
+                port = 443 if parsed.scheme == "https" else 80
+            attrs[OtelAttr.PORT] = port
+        except Exception:
+            logger.debug("Failed to parse URL for MCP span transport attributes", exc_info=True)
+        return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -1862,6 +2591,8 @@ class MCPWebsocketTool(MCPTool):
         allowed_tools: Collection[str] | None = None,
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
+        task_options: MCPTaskOptions | None = None,
+        additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP WebSocket tool.
@@ -1904,6 +2635,22 @@ class MCPWebsocketTool(MCPTool):
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
             client: The chat client to use for sampling.
+            task_options: Options for tools that advertise
+                ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
+            additional_tool_argument_names: Extra argument names to forward to the MCP server in
+                addition to each tool's declared parameters (from its ``inputSchema.properties``).
+                By default only declared parameters are sent; framework runtime kwargs injected
+                through the function-invocation pipeline are stripped. Use this to opt specific
+                keys back in. Accepts either a ``Sequence[str]`` applied to every tool, or a
+                ``Mapping[str, Sequence[str]]`` keyed by remote tool name where the reserved key
+                ``"*"`` applies to every tool. This is configured only here in user code; there is
+                no per-call override, so a model-issued tool call cannot change which names pass
+                through. To use a server that accepts ``additionalProperties: true``, list the
+                extra names here and then either (1) manually extend that tool's ``inputSchema``
+                (via the ``.functions`` list after connecting) so the model is prompted to supply
+                them, or (2) supply the values yourself through ``function_invocation_kwargs``. If
+                a name is supplied via both the model and ``function_invocation_kwargs``, the
+                model-supplied value wins.
             kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(
@@ -1920,9 +2667,29 @@ class MCPWebsocketTool(MCPTool):
             load_prompts=load_prompts,
             parse_prompt_results=parse_prompt_results,
             request_timeout=request_timeout,
+            task_options=task_options,
+            additional_tool_argument_names=additional_tool_argument_names,
         )
         self.url = url
         self._client_kwargs = kwargs
+
+    def _mcp_base_span_attributes(self) -> dict[str, Any]:
+        attrs = super()._mcp_base_span_attributes()
+        attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
+        attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "websocket"
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.url)
+            if parsed.hostname:
+                attrs[OtelAttr.ADDRESS] = parsed.hostname
+            port = parsed.port
+            if port is None:
+                port = 443 if parsed.scheme == "wss" else 80
+            attrs[OtelAttr.PORT] = port
+        except Exception:
+            logger.debug("Failed to parse URL for MCP span transport attributes", exc_info=True)
+        return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP WebSocket client.

@@ -80,6 +80,7 @@ __all__ = [
     "EmbeddingTelemetryLayer",
     "OtelAttr",
     "configure_otel_providers",
+    "create_mcp_client_span",
     "create_metric_views",
     "create_resource",
     "disable_instrumentation",
@@ -87,6 +88,7 @@ __all__ = [
     "enable_sensitive_telemetry",
     "get_meter",
     "get_tracer",
+    "set_mcp_span_error",
 ]
 
 
@@ -109,7 +111,6 @@ INNER_USAGE_CAPTURED_FIELD: Final[str] = "usage"
 INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = contextvars.ContextVar(
     "inner_accumulated_usage", default=None
 )
-
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
 TOKEN_USAGE_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
@@ -291,6 +292,14 @@ class OtelAttr(str, Enum):
     # Describes GenAI agent creation and is usually applicable when working with remote agent services.
     AGENT_CREATE_OPERATION = "create_agent"
     AGENT_INVOKE_OPERATION = "invoke_agent"
+
+    # MCP attributes (https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/)
+    MCP_METHOD_NAME = "mcp.method.name"
+    MCP_PROTOCOL_VERSION = "mcp.protocol.version"
+    MCP_SESSION_ID = "mcp.session.id"
+    PROMPT_NAME = "gen_ai.prompt.name"
+    NETWORK_TRANSPORT = "network.transport"
+    NETWORK_PROTOCOL_NAME = "network.protocol.name"
 
     # Agent Framework specific attributes
     MEASUREMENT_FUNCTION_TAG_NAME = "agent_framework.function.name"
@@ -2011,6 +2020,61 @@ def get_function_span(
         end_on_exit=True,
         record_exception=False,
     )
+
+
+# region MCP span helpers
+
+
+@contextlib.contextmanager
+def create_mcp_client_span(
+    method_name: str,
+    target: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> Generator[trace.Span, Any, Any]:
+    """Create an MCP client span per OTel MCP semantic conventions.
+
+    Span name follows the format ``{mcp.method.name} {target}`` when a target
+    is available, otherwise just ``{mcp.method.name}``.
+
+    See: https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#client
+
+    Args:
+        method_name: The MCP method name (e.g. ``initialize``, ``tools/call``).
+        target: Optional low-cardinality target (tool name, prompt name).
+        attributes: Additional span attributes.
+    """
+    span_name = f"{method_name} {target}" if target else method_name
+    attrs: dict[str, Any] = {OtelAttr.MCP_METHOD_NAME: method_name}
+    if attributes:
+        attrs.update(attributes)
+    tracer = get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
+    span = tracer.start_span(span_name, kind=trace.SpanKind.CLIENT, attributes=attrs)
+    with trace.use_span(
+        span=span,
+        end_on_exit=True,
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as current_span:
+        yield current_span
+
+
+def set_mcp_span_error(
+    span: trace.Span,
+    error_type: str,
+    description: str | None = None,
+) -> None:
+    """Set error status and ``error.type`` on an MCP span.
+
+    Args:
+        span: The span to mark as errored.
+        error_type: The error type string (e.g. ``tool_error``, exception class name).
+        description: Optional description (e.g. JSON-RPC error message).
+    """
+    span.set_attribute(OtelAttr.ERROR_TYPE, error_type)
+    span.set_status(trace.StatusCode.ERROR, description=description)
+
+
+# endregion
 
 
 @contextlib.contextmanager

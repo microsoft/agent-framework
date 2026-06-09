@@ -35,7 +35,7 @@ from ._run_common import (
     _extract_resume_payload,
     _normalize_resume_interrupts,
 )
-from ._utils import generate_event_id, make_json_safe
+from ._utils import canonical_function_arguments, generate_event_id, make_json_safe
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +324,29 @@ def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     return candidate
 
 
+def _approval_response_matches_request(request_id: str, request_event: Any, response: Any) -> bool:
+    """Check whether an approval response matches the pending approval request."""
+    request_data = getattr(request_event, "data", None)
+    if not isinstance(request_data, Content) or request_data.type != "function_approval_request":
+        return True
+
+    if not isinstance(response, Content) or response.type != "function_approval_response":
+        return False
+
+    if str(getattr(response, "id", "")) != request_id:
+        return False
+
+    request_call = getattr(request_data, "function_call", None)
+    response_call = getattr(response, "function_call", None)
+    if request_call is None or response_call is None:
+        return False
+
+    if getattr(response_call, "name", None) != getattr(request_call, "name", None):
+        return False
+
+    return canonical_function_arguments(response_call) == canonical_function_arguments(request_call)
+
+
 def _single_pending_response_from_value(pending_events: dict[str, Any], value: Any) -> dict[str, Any]:
     """Map a scalar resume payload to the single pending request (if unambiguous)."""
     if value is None or len(pending_events) != 1:
@@ -340,6 +363,13 @@ def _single_pending_response_from_value(pending_events: dict[str, Any], value: A
             "Ignoring pending request response for request_id=%s: expected %s",
             request_id,
             _response_type_name(request_event),
+        )
+        return {}
+
+    if not _approval_response_matches_request(str(request_id), request_event, coerced_value):
+        logger.info(
+            "Ignoring pending request response for request_id=%s: approval response does not match pending request",
+            request_id,
         )
         return {}
 
@@ -370,6 +400,12 @@ def _coerce_responses_for_pending_requests(
                 "Ignoring resume response for request_id=%s: expected %s",
                 request_key,
                 _response_type_name(request_event),
+            )
+            continue
+        if not _approval_response_matches_request(request_key, request_event, coerced_value):
+            logger.info(
+                "Ignoring resume response for request_id=%s: approval response does not match pending request",
+                request_key,
             )
             continue
         normalized[request_key] = coerced_value

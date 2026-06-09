@@ -124,7 +124,7 @@ from ._harness._todo import (
     TodoSessionStore,
     TodoStore,
 )
-from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
+from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool
 from ._middleware import (
     AgentContext,
     AgentMiddleware,
@@ -444,12 +444,13 @@ __all__ = [
     "InlineSkillResource",
     "InlineSkillScript",
     "LocalEvaluator",
-    "MCPStdioTool",
-    "MCPStreamableHTTPTool",
-    "MCPWebsocketTool",
     "MCPSkill",
     "MCPSkillResource",
     "MCPSkillsSource",
+    "MCPStdioTool",
+    "MCPStreamableHTTPTool",
+    "MCPTaskOptions",
+    "MCPWebsocketTool",
     "MemoryContextProvider",
     "MemoryFileStore",
     "MemoryIndexEntry",

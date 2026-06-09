@@ -795,10 +795,7 @@ class BedrockChatClient(
             schema = copy.deepcopy(schema_src)
         else:
             if not isinstance(response_format, type) or not issubclass(response_format, BaseModel):
-                raise TypeError(
-                    "response_format must be None, a dict JSON schema, "
-                    "or a Pydantic BaseModel subclass."
-                )
+                raise TypeError("response_format must be None, a dict JSON schema, or a Pydantic BaseModel subclass.")
             # response_format is a Pydantic model class
             schema = response_format.model_json_schema()
             name = response_format.__name__
@@ -817,9 +814,7 @@ class BedrockChatClient(
         return {
             "textFormat": {
                 "type": "json_schema",
-                "structure": {
-                    "jsonSchema": json_schema
-                },
+                "structure": {"jsonSchema": json_schema},
             }
         }
 
@@ -840,9 +835,7 @@ class BedrockChatClient(
                 if node_id in visited:
                     return
                 visited.add(node_id)
-                if node.get("type") == "object" or (
-                    "properties" in node and "type" not in node
-                ):
+                if node.get("type") == "object" or ("properties" in node and "type" not in node):
                     existing = node.get("additionalProperties")
                     if existing is None or existing is True:
                         node["additionalProperties"] = False

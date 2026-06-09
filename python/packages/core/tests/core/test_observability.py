@@ -25,6 +25,7 @@ from agent_framework import (
     prepend_agent_framework_to_user_agent,
     tool,
 )
+from agent_framework._serialization import make_json_safe
 from agent_framework.observability import (
     ROLE_EVENT_MAP,
     AgentTelemetryLayer,
@@ -3195,17 +3196,15 @@ def test_capture_messages_with_prepared_request_info_function_call_arguments(spa
 
     from opentelemetry import trace
 
-    from agent_framework import WorkflowAgent
-
     @dataclasses.dataclass
     class HandoffRequest:
         target_agent: str
         reason: str
 
-    arguments = WorkflowAgent.RequestInfoFunctionArgs(
-        request_id="call_dc",
-        data=HandoffRequest(target_agent="helper", reason="overflow"),
-    ).to_dict()
+    arguments = {
+        "request_id": "call_dc",
+        "data": make_json_safe(HandoffRequest(target_agent="helper", reason="overflow")),
+    }
     msg = Message(
         role="assistant",
         contents=[

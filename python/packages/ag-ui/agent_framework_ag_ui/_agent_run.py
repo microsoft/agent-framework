@@ -8,7 +8,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterable, Awaitable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from ag_ui.core import (
     BaseEvent,
@@ -56,6 +56,7 @@ from ._run_common import (
     _stringify_tool_result,  # type: ignore
 )
 from ._utils import (
+    canonical_function_arguments,
     convert_agui_tools_to_agent_framework,
     generate_event_id,
     get_conversation_id_from_update,
@@ -407,7 +408,33 @@ def _make_approval_tool_result_events(resolved_approval_results: list[Content]) 
     return events
 
 
-def _evict_oldest_approvals(registry: dict[str, str], max_size: int = 10_000) -> None:
+class _PendingApproval(TypedDict):
+    """Pending approval details for a requested function call."""
+
+    name: str
+    arguments: str | None
+
+
+PendingApprovalEntry = _PendingApproval | str
+
+
+def _make_pending_approval_entry(name: str, arguments: str | None) -> _PendingApproval:
+    return {"name": name, "arguments": arguments}
+
+
+def _pending_approval_name(entry: PendingApprovalEntry) -> str | None:
+    if isinstance(entry, str):
+        return entry
+    return entry["name"]
+
+
+def _pending_approval_arguments(entry: PendingApprovalEntry) -> str | None:
+    if isinstance(entry, str):
+        return None
+    return entry["arguments"]
+
+
+def _evict_oldest_approvals(registry: dict[str, PendingApprovalEntry], max_size: int = 10_000) -> None:
     """Evict the oldest entries from the pending-approvals registry (LRU).
 
     Only effective when *registry* is an ``OrderedDict``;  plain dicts are
@@ -427,7 +454,7 @@ async def _resolve_approval_responses(
     tools: list[Any],
     agent: SupportsAgentRun,
     run_kwargs: dict[str, Any],
-    pending_approvals: dict[str, str] | None = None,
+    pending_approvals: dict[str, PendingApprovalEntry] | None = None,
     thread_id: str = "",
 ) -> list[Content]:
     """Execute approved function calls and replace approval content with results.
@@ -480,13 +507,24 @@ async def _resolve_approval_responses(
                 invalid_ids.add(resp_id)
                 continue
 
-            pending_name = pending_approvals[registry_key]
+            pending_entry = pending_approvals[registry_key]
+            pending_name = _pending_approval_name(pending_entry)
             if resp_name != pending_name:
                 logger.warning(
                     "Rejected approval response id=%s: function name mismatch (response=%s, pending=%s)",
                     resp_id,
                     resp_name,
                     pending_name,
+                )
+                invalid_ids.add(resp_id)
+                continue
+
+            pending_arguments = _pending_approval_arguments(pending_entry)
+            response_arguments = canonical_function_arguments(resp.function_call)
+            if pending_arguments is not None and response_arguments != pending_arguments:
+                logger.warning(
+                    "Rejected approval response id=%s: function arguments mismatch",
+                    resp_id,
                 )
                 invalid_ids.add(resp_id)
                 continue
@@ -714,7 +752,7 @@ async def run_agent_stream(
     input_data: dict[str, Any],
     agent: SupportsAgentRun,
     config: AgentConfig,
-    pending_approvals: dict[str, str] | None = None,
+    pending_approvals: dict[str, PendingApprovalEntry] | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run agent and yield AG-UI events.
 
@@ -917,7 +955,10 @@ async def run_agent_stream(
             # Register pending approval requests so we can validate responses later
             if content_type == "function_approval_request" and pending_approvals is not None:
                 if content.id and content.function_call and content.function_call.name:
-                    pending_approvals[f"{thread_id}:{content.id}"] = content.function_call.name
+                    pending_approvals[f"{thread_id}:{content.id}"] = _make_pending_approval_entry(
+                        content.function_call.name,
+                        canonical_function_arguments(content.function_call),
+                    )
                     # Evict oldest entries if the registry exceeds a safe bound (LRU)
                     _evict_oldest_approvals(pending_approvals, max_size=10_000)
                 else:

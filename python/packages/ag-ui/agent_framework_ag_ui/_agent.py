@@ -9,7 +9,7 @@ from typing import Any, cast
 from ag_ui.core import BaseEvent
 from agent_framework import SupportsAgentRun
 
-from ._agent_run import run_agent_stream
+from ._agent_run import PendingApprovalEntry, run_agent_stream
 
 
 class AgentConfig:
@@ -107,7 +107,7 @@ class AgentFrameworkAgent:
         # Populated when approval requests are emitted; consumed when responses arrive.
         # Prevents bypass, function name spoofing, and replay attacks.
         # Bounded to prevent unbounded growth from abandoned approval requests.
-        self._pending_approvals: OrderedDict[str, str] = OrderedDict()
+        self._pending_approvals: OrderedDict[str, PendingApprovalEntry] = OrderedDict()
         self._pending_approvals_max_size: int = 10_000
 
     async def run(

@@ -191,6 +191,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw Foundry Agent client.
 
@@ -211,6 +212,8 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         settings = load_settings(
             FoundryAgentSettings,
@@ -260,8 +263,11 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             openai_client_kwargs["default_headers"] = dict(default_headers)
         if allow_preview:
             openai_client_kwargs["agent_name"] = self.agent_name
+        openai_client = self.project_client.get_openai_client(**openai_client_kwargs)
+        if timeout is not None:
+            openai_client = openai_client.with_options(timeout=timeout)
         super().__init__(
-            async_client=self.project_client.get_openai_client(**openai_client_kwargs),
+            async_client=openai_client,
             default_headers=default_headers,
             instruction_role=instruction_role,
             compaction_strategy=compaction_strategy,
@@ -537,6 +543,7 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
         additional_properties: dict[str, Any] | None = None,
         middleware: (Sequence[ChatAndFunctionMiddlewareTypes] | None) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a Foundry Agent client with full middleware support.
 
@@ -556,6 +563,8 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middleware.
             function_invocation_configuration: Optional function invocation configuration.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -573,6 +582,7 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
+            timeout=timeout,
         )
 
 
@@ -625,6 +635,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: Mapping[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a Foundry Agent.
 
@@ -657,6 +668,8 @@ class RawFoundryAgent(  # type: ignore[misc]
             compaction_strategy: Optional agent-level in-run compaction override.
             tokenizer: Optional agent-level tokenizer override.
             additional_properties: Additional properties stored on the local agent wrapper.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         # Create the client
         actual_client_type = client_type or _FoundryAgentChatClient
@@ -675,6 +688,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             "default_headers": default_headers,
             "env_file_path": env_file_path,
             "env_file_encoding": env_file_encoding,
+            "timeout": timeout,
         }
         if function_invocation_configuration is not None:
             if not issubclass(actual_client_type, FunctionInvocationLayer):
@@ -912,6 +926,7 @@ class FoundryAgent(  # type: ignore[misc]
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: Mapping[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a Foundry Agent with full middleware and telemetry.
 
@@ -958,6 +973,8 @@ class FoundryAgent(  # type: ignore[misc]
             compaction_strategy: Optional agent-level in-run compaction override.
             tokenizer: Optional agent-level tokenizer override.
             additional_properties: Additional properties stored on the local agent wrapper.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -983,4 +1000,5 @@ class FoundryAgent(  # type: ignore[misc]
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
             additional_properties=additional_properties,
+            timeout=timeout,
         )
