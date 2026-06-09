@@ -2,7 +2,6 @@
 
 using System;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Azure.Identity;
@@ -34,7 +33,7 @@ public sealed class ContentUnderstandingLiveTests
         "samples", "02-agents", "AgentWithContentUnderstanding", "SampleAssets");
 
     [Fact]
-    public async Task PdfQa_InvoiceDocument_ReturnsVendorAndTotal()
+    public async Task PdfQa_InvoiceDocument_ReturnsVendorAndTotalAsync()
     {
         (string projectEndpoint, string modelDeployment, string cuEndpoint) = RequireLiveEnvironmentOrSkip();
         string invoicePath = Path.Combine(SampleAssetsRoot, "invoice.pdf");
@@ -79,7 +78,7 @@ public sealed class ContentUnderstandingLiveTests
     }
 
     [Fact]
-    public async Task InvoiceFieldExtraction_PrebuiltInvoiceAnalyzer_FieldsFlowIntoContext()
+    public async Task InvoiceFieldExtraction_PrebuiltInvoiceAnalyzer_FieldsFlowIntoContextAsync()
     {
         (string projectEndpoint, string modelDeployment, string cuEndpoint) = RequireLiveEnvironmentOrSkip();
         string invoicePath = Path.Combine(SampleAssetsRoot, "invoice.pdf");
@@ -122,7 +121,7 @@ public sealed class ContentUnderstandingLiveTests
     }
 
     [Fact]
-    public async Task MultiTurnSession_SecondTurn_ReusesPreviousAnalysisWithoutReanalyzing()
+    public async Task MultiTurnSession_SecondTurn_ReusesPreviousAnalysisWithoutReanalyzingAsync()
     {
         (string projectEndpoint, string modelDeployment, string cuEndpoint) = RequireLiveEnvironmentOrSkip();
         string invoicePath = Path.Combine(SampleAssetsRoot, "invoice.pdf");
@@ -165,7 +164,7 @@ public sealed class ContentUnderstandingLiveTests
     }
 
     [Fact]
-    public async Task Dispose_CompletesWithoutHangingBackgroundTasks()
+    public async Task Dispose_CompletesWithoutHangingBackgroundTasksAsync()
     {
         (_, _, string cuEndpoint) = RequireLiveEnvironmentOrSkip();
 
