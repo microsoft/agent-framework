@@ -193,7 +193,7 @@ public sealed class OpenAIResponsesSerializationTests : ConformanceTestBase
     }
 
     [Fact]
-    public void Deserialize_CreateRequestWithLogprobs_RoundTripsFields()
+    public void Deserialize_CreateResponseWithLogprobs_RoundTripsFields()
     {
         const string Json = """
         {
@@ -204,14 +204,15 @@ public sealed class OpenAIResponsesSerializationTests : ConformanceTestBase
         }
         """;
 
-        CreateResponse? request = JsonSerializer.Deserialize(Json, OpenAIHostingJsonContext.Default.CreateResponse);
-        string reserializedJson = JsonSerializer.Serialize(request, OpenAIHostingJsonContext.Default.CreateResponse);
+        CreateResponse? createResponse = JsonSerializer.Deserialize(Json, OpenAIHostingJsonContext.Default.CreateResponse);
+        string reserializedJson = JsonSerializer.Serialize(createResponse, OpenAIHostingJsonContext.Default.CreateResponse);
         using var doc = JsonDocument.Parse(reserializedJson);
         var root = doc.RootElement;
 
-        Assert.NotNull(request);
-        Assert.True(request.Logprobs);
-        Assert.Equal(3, request.TopLogprobs);
+        Assert.NotNull(createResponse);
+        Assert.True(createResponse.Logprobs.HasValue);
+        Assert.True(createResponse.Logprobs.Value);
+        Assert.Equal(3, createResponse.TopLogprobs);
         Assert.True(root.GetProperty("logprobs").GetBoolean());
         Assert.Equal(3, root.GetProperty("top_logprobs").GetInt32());
     }
@@ -589,7 +590,8 @@ public sealed class OpenAIResponsesSerializationTests : ConformanceTestBase
         var root = doc.RootElement;
 
         Assert.NotNull(response);
-        Assert.True(response.Logprobs);
+        Assert.True(response.Logprobs.HasValue);
+        Assert.True(response.Logprobs.Value);
         Assert.Equal(3, response.TopLogprobs);
         Assert.True(root.GetProperty("logprobs").GetBoolean());
         Assert.Equal(3, root.GetProperty("top_logprobs").GetInt32());
