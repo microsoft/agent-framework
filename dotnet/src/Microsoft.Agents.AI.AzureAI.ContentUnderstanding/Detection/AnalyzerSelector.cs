@@ -23,7 +23,7 @@ internal static class AnalyzerSelector
     {
         if (!string.IsNullOrWhiteSpace(explicitOverride))
         {
-            return explicitOverride!;
+            return explicitOverride!.Trim();
         }
 
         if (string.IsNullOrEmpty(mediaType))

@@ -286,8 +286,9 @@ internal static class MimeSniffer
         }
         else
         {
-            // Layer 3 with MPEG2/2.5 uses 72 samples-per-frame factor, else 144.
-            int samplesFactor = (layer == 3 && !isMpeg1) ? 72 : 144;
+            // MPEG2/2.5 (low-sampling-rate extension) uses 72 samples-per-frame for
+            // both Layer 2 and Layer 3 (576 samples); everything else uses 144.
+            int samplesFactor = (!isMpeg1 && layer != 1) ? 72 : 144;
             // No int overflow possible: samplesFactor <= 144 and bitrate <= 448000,
             // so the product (<= 64,512,000) stays well within int range. Revisit if
             // the bitrate tables are ever extended beyond the current MPEG spec.

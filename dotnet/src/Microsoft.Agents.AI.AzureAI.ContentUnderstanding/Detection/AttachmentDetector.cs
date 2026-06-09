@@ -239,7 +239,11 @@ internal static class AttachmentDetector
         // only valid for absolute URIs (throws InvalidOperationException otherwise), so guard on
         // IsAbsoluteUri; relative URIs skip this and fall through to the synthesized name below.
         string? last = uc.Uri.IsAbsoluteUri && uc.Uri.Segments.Length > 0 ? uc.Uri.Segments[uc.Uri.Segments.Length - 1] : null;
-        last = last?.Trim('/');
+        // Uri.Segments returns percent-ENCODED segments (unlike Uri.LocalPath/AbsolutePath), so an
+        // attacker can hide path separators / control chars (e.g. "a%2F..%2Fevil.txt", "%0A", "%60")
+        // that SanitizeFilename would otherwise miss. Decode first, then Trim('/') to drop any slashes
+        // the decode exposed, so SanitizeFilename sees the real characters and can strip them.
+        last = last is null ? null : Uri.UnescapeDataString(last).Trim('/');
         if (!string.IsNullOrEmpty(last) && last!.Contains('.'))
         {
             string cleaned = SanitizeFilename(last);
@@ -385,7 +389,14 @@ internal static class AttachmentDetector
         }
 
         // Append totalLength as the final block to disambiguate same-prefix / different-length payloads.
-        byte[] lengthBytes = BitConverter.GetBytes(totalLength);
+        // Write the 8 bytes in a fixed little-endian order (not BitConverter, whose byte order follows
+        // the platform's endianness) so the dedup prefix stays stable across architectures.
+        ulong len = (ulong)totalLength;
+        byte[] lengthBytes = new byte[8];
+        for (int i = 0; i < 8; i++)
+        {
+            lengthBytes[i] = (byte)(len >> (i * 8));
+        }
         sha.TransformFinalBlock(lengthBytes, 0, lengthBytes.Length);
         byte[] hash = sha.Hash!;
 
