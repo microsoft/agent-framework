@@ -3,7 +3,7 @@
 """Client that starts the standalone workflow orchestration and prints the result.
 
 The worker (``worker.py``) must be running first. The workflow is started via
-``DurableAIAgentClient.start_workflow`` - which schedules the orchestrator that
+``DurableWorkflowClient.start_workflow`` - which schedules the orchestrator that
 ``DurableAIAgentWorker.configure_workflow`` auto-registers, so the caller never
 needs to know its internal name.
 

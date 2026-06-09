@@ -35,6 +35,7 @@ from agent_framework import (
     AgentResponse,
     Message,
     Workflow,
+    WorkflowConvergenceException,
 )
 from agent_framework._workflows._edge import (
     Edge,
@@ -338,7 +339,9 @@ def _route_result_messages(
         for msg_data in result.activity_result["sent_messages"]:
             sent_msg = msg_data.get("message")
             target_id = msg_data.get("target_id")
-            if sent_msg:
+            # Use an explicit None check so legitimately falsy payloads
+            # (empty string, 0, False) are still routed.
+            if sent_msg is not None:
                 sent_msg = deserialize_value(sent_msg)
                 messages_to_route.append((sent_msg, target_id))
 
@@ -767,6 +770,11 @@ def run_workflow_orchestrator(
 
                     del pending_hitl_requests[request_id]
 
+                    # Sanitize against pickle-marker injection in case a caller
+                    # bypassed DurableWorkflowClient.send_hitl_response and raised
+                    # the external event directly (e.g. via the raw DTS client).
+                    raw_response = strip_pickle_markers(raw_response)
+
                     _route_hitl_response(
                         hitl_request,
                         raw_response,
@@ -782,5 +790,12 @@ def run_workflow_orchestrator(
             ctx.set_custom_status({"state": "running"})
 
         iteration += 1
+
+    # Match the core WorkflowRunner: if the loop stopped because max_iterations
+    # was reached while messages are still pending, the workflow did not converge.
+    if pending_messages:
+        raise WorkflowConvergenceException(
+            f"Workflow did not converge after {workflow.max_iterations} iterations."
+        )
 
     return workflow_outputs  # noqa: B901

@@ -4,7 +4,7 @@
 
 The worker (``worker.py``) must be running first. This client:
 
-1. Starts the workflow with ``DurableAIAgentClient.start_workflow``.
+1. Starts the workflow with ``DurableWorkflowClient.start_workflow``.
 2. Polls ``get_pending_hitl_requests`` until the workflow pauses for human input.
 3. Sends a decision with ``send_hitl_response`` (the request_id correlates the
    response back to the paused executor).

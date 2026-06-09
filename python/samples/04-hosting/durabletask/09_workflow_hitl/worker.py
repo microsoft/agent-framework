@@ -15,8 +15,8 @@ pattern, hosted on a standalone Durable Task worker (no Azure Functions).
 
 When the workflow calls ``ctx.request_info``, the orchestrator pauses and records
 the open request in its custom status. An external client discovers the request
-(``DurableAIAgentClient.get_pending_hitl_requests``) and resumes the workflow by
-sending a response (``DurableAIAgentClient.send_hitl_response``).
+(``DurableWorkflowClient.get_pending_hitl_requests``) and resumes the workflow by
+sending a response (``DurableWorkflowClient.send_hitl_response``).
 
 The workflow is a content-moderation pipeline:
 ``input_router`` -> ``ContentAnalyzerAgent`` -> ``content_analyzer_executor``

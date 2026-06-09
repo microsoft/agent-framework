@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from agent_framework_durabletask import AgentSessionId, DurableAgentSession, DurableAIAgent
 from azure.durable_functions import DurableOrchestrationContext
@@ -30,11 +30,11 @@ class AzureFunctionsWorkflowContext:
 
     @property
     def instance_id(self) -> str:
-        return self._context.instance_id
+        return cast(str, self._context.instance_id)
 
     @property
     def current_utc_datetime(self) -> datetime:
-        return self._context.current_utc_datetime
+        return cast(datetime, self._context.current_utc_datetime)
 
     # -- Agent / Activity dispatch --------------------------------------------
 
@@ -71,7 +71,7 @@ class AzureFunctionsWorkflowContext:
         self._context.set_custom_status(status)
 
     def new_uuid(self) -> str:
-        return self._context.new_uuid()
+        return cast(str, self._context.new_uuid())
 
     def cancel_task(self, task: Any) -> None:
         cancel_fn = getattr(task, "cancel", None)
