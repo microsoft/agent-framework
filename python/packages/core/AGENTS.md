@@ -100,6 +100,20 @@ agent_framework/
 - **`FileSearchResult`** / **`FileSearchMatch`** - `SerializationMixin` DTOs returned by `search_files`, carrying the matching file name, a context snippet, and the matching lines with 1-based line numbers.
 - **`FileAccessProvider`** - `ContextProvider` that adds shared file-access tools (`file_access_save_file`, `file_access_read_file`, `file_access_delete_file`, `file_access_list_files`, `file_access_search_files`) plus default usage instructions to each invocation. Unlike `MemoryContextProvider`, the store is intentionally shared across sessions and agents.
 
+### Tool Approval Harness (`_harness/_tool_approval.py`)
+
+- **`ToolApprovalMiddleware`** - Experimental opt-in agent middleware that coordinates session-backed approval
+  rules, heuristic `auto_approval_rules`, queued approval requests, collected approval responses, and
+  streaming/non-streaming approval prompts. Heuristic callbacks receive the underlying `function_call` content.
+- **`ToolApprovalRule`** / **`ToolApprovalState`** - Serializable state models for standing approvals and queued
+  approval flow.
+- **`create_always_approve_tool_response`** / **`create_always_approve_tool_with_arguments_response`** - Helpers
+  that return normal `function_approval_response` content with `additional_properties` metadata consumed by
+  `ToolApprovalMiddleware`.
+- Mixed tool-call batches use a default .NET-style bypass in the function invocation loop: when a session is
+  available, approval requests for known non-approval-required tools are hidden, stored in session state, and
+  reinjected as approved responses when the visible approval flow resumes.
+
 ### Workflows (`_workflows/`)
 
 - **`Workflow`** - Graph-based workflow definition

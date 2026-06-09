@@ -90,6 +90,8 @@ logger = logging.getLogger("agent_framework")
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
+_TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
+_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY: Final[str] = "auto_approvable_approval_requests"
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -1685,15 +1687,15 @@ async def _try_execute_function_calls(
     # The live tools list (when tools is the run-local list) is exposed on the
     # FunctionInvocationContext so tools can add/remove tools during the run.
     live_tools: list[ToolTypes] | None = cast("list[ToolTypes]", tools) if isinstance(tools, list) else None
-    approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
+    approval_tools = {tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"}
     logger.debug(
         "_try_execute_function_calls: tool_map keys=%s, approval_tools=%s",
         list(tool_map.keys()),
         approval_tools,
     )
-    declaration_only = [tool_name for tool_name, tool in tool_map.items() if tool.declaration_only]
+    declaration_only = {tool_name for tool_name, tool in tool_map.items() if tool.declaration_only}
     configured_additional_tools = config.get("additional_tools") or []
-    additional_tool_names = [tool.name for tool in configured_additional_tools]
+    additional_tool_names = {tool.name for tool in configured_additional_tools}
     # check if any are calling functions that need approval
     # if so, we return approval request for all
     approval_needed = False
@@ -1719,15 +1721,35 @@ async def _try_execute_function_calls(
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
     if approval_needed:
         # approval can only be needed for Function Call Content, not Approval Responses.
-        logger.debug("Returning function_approval_request contents")
-        return (
-            [
-                Content.from_function_approval_request(id=fcc.call_id, function_call=fcc)  # type: ignore[attr-defined, arg-type]
-                for fcc in function_calls
-                if fcc.type == "function_call"
-            ],
-            False,
-        )
+        logger.debug("Returning visible function_approval_request contents and storing auto-approvable requests")
+        visible_requests: list[Content] = []
+        auto_approvable_requests: list[Content] = []
+        for fcc in function_calls:
+            if fcc.type != "function_call":
+                continue
+            approval_request = Content.from_function_approval_request(
+                id=fcc.call_id,  # type: ignore[arg-type]
+                function_call=fcc,
+            )
+            tool_name = fcc.name  # type: ignore[attr-defined]
+            if tool_name is None:
+                visible_requests.append(approval_request)
+                continue
+            tool = tool_map.get(tool_name)
+            if (
+                tool_name in approval_tools
+                or tool is None
+                or tool_name in declaration_only
+                or tool_name in additional_tool_names
+            ):
+                visible_requests.append(approval_request)
+                continue
+            if invocation_session is None:
+                visible_requests.append(approval_request)
+                continue
+            auto_approvable_requests.append(approval_request)
+        _store_auto_approvable_approval_requests(invocation_session, auto_approvable_requests)
+        return (visible_requests, False)
     if declaration_only_flag:
         # return the declaration only tools to the user, since we cannot execute them.
         # Mark as user_input_request so AgentExecutor emits request_info events and pauses the workflow.
@@ -1910,6 +1932,69 @@ def _is_hosted_tool_approval(content: Any) -> bool:
         return False
     ap = getattr(fc, "additional_properties", None)
     return bool(ap and ap.get("server_label"))
+
+
+def _get_tool_approval_state(invocation_session: AgentSession | None) -> dict[str, Any] | None:
+    """Return the shared tool-approval state bag for the invocation session."""
+    if invocation_session is None:
+        return None
+    raw_state = invocation_session.state.get(_TOOL_APPROVAL_STATE_KEY)
+    if isinstance(raw_state, dict):
+        return cast(dict[str, Any], raw_state)
+    if raw_state is not None:
+        raise TypeError(
+            f"Session state for {_TOOL_APPROVAL_STATE_KEY!r} must be a dict, got {type(raw_state).__name__}."
+        )
+    state: dict[str, Any] = {}
+    invocation_session.state[_TOOL_APPROVAL_STATE_KEY] = state
+    return state
+
+
+def _content_from_state(value: Any) -> Content | None:
+    """Restore a Content item stored in session state."""
+    from ._types import Content
+
+    if isinstance(value, Content):
+        return value
+    if isinstance(value, Mapping):
+        return Content.from_dict(cast(Mapping[str, Any], value))
+    return None
+
+
+def _store_auto_approvable_approval_requests(
+    invocation_session: AgentSession | None,
+    approval_requests: Sequence[Content],
+) -> None:
+    """Store hidden approval requests that should be auto-approved on the next inbound turn."""
+    if not approval_requests:
+        return
+    state = _get_tool_approval_state(invocation_session)
+    if state is None:
+        return
+    existing = state.get(_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY)
+    pending: list[Any] = list(cast(list[Any], existing)) if isinstance(existing, list) else []
+    pending.extend(request.to_dict() for request in approval_requests)
+    state[_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY] = pending
+
+
+def _pop_auto_approvable_approval_responses(invocation_session: AgentSession | None) -> list[Content]:
+    """Pop stored auto-approvable requests and convert them to approved responses."""
+    state = _get_tool_approval_state(invocation_session)
+    if state is None:
+        return []
+    raw_requests = state.pop(_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY, [])
+    if not isinstance(raw_requests, list):
+        return []
+
+    responses: list[Content] = []
+    for raw_request in cast(list[Any], raw_requests):
+        request = _content_from_state(raw_request)
+        if request is None or request.type != "function_approval_request":
+            continue
+        responses.append(
+            request.to_function_approval_response(approved=True),
+        )
+    return responses
 
 
 def _collect_approval_responses(
@@ -2157,8 +2242,14 @@ async def _process_function_requests(
     errors_in_a_row: int,
     max_errors: int,
     execute_function_calls: Callable[..., Awaitable[tuple[list[Content], bool, bool]]],
+    invocation_session: AgentSession | None = None,
 ) -> FunctionRequestResult:
+    from ._types import Message
+
     if prepped_messages is not None:
+        pending_auto_approval_responses = _pop_auto_approvable_approval_responses(invocation_session)
+        if pending_auto_approval_responses:
+            prepped_messages.append(Message(role="user", contents=pending_auto_approval_responses))
         fcc_todo = _collect_approval_responses(prepped_messages)
         if not fcc_todo:
             fcc_todo = {}
@@ -2430,6 +2521,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         errors_in_a_row=errors_in_a_row,
                         max_errors=max_errors,
                         execute_function_calls=execute_function_calls,
+                        invocation_session=invocation_session,
                     )
                     if approval_result.get("action") == "stop":
                         response = ChatResponse(messages=prepped_messages)
@@ -2468,6 +2560,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         errors_in_a_row=errors_in_a_row,
                         max_errors=max_errors,
                         execute_function_calls=execute_function_calls,
+                        invocation_session=invocation_session,
                     )
                     if result.get("action") == "return":
                         response.usage_details = aggregated_usage
@@ -2567,6 +2660,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     errors_in_a_row=errors_in_a_row,
                     max_errors=max_errors,
                     execute_function_calls=execute_function_calls,
+                    invocation_session=invocation_session,
                 )
                 errors_in_a_row = approval_result.get("errors_in_a_row", errors_in_a_row)
                 total_function_calls += approval_result.get("function_call_count", 0)
@@ -2622,6 +2716,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     errors_in_a_row=errors_in_a_row,
                     max_errors=max_errors,
                     execute_function_calls=execute_function_calls,
+                    invocation_session=invocation_session,
                 )
                 errors_in_a_row = result.get("errors_in_a_row", errors_in_a_row)
                 total_function_calls += result.get("function_call_count", 0)
