@@ -1066,6 +1066,24 @@ async def test_runner_context_reset_resets_streaming_flag():
     assert ctx.is_streaming() is False
 
 
+async def test_runner_context_reset_clears_pending_request_info_events():
+    """reset_for_new_run clears any pending request_info events tracked for correlation."""
+    ctx = InProcRunnerContext()
+    request_info_event = WorkflowEvent.request_info(
+        request_id="request-123",
+        source_executor_id="source",
+        request_data=MockMessage(data=0),
+        response_type=bool,
+    )
+    await ctx.add_request_info_event(request_info_event)
+
+    assert "request-123" in await ctx.get_pending_request_info_events()
+
+    ctx.reset_for_new_run()
+
+    assert await ctx.get_pending_request_info_events() == {}
+
+
 # endregion: Tests for InProcRunnerContext.reset_for_new_run()
 
 

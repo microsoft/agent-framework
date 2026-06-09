@@ -409,6 +409,7 @@ class InProcRunnerContext:
         self._messages.clear()
         # Clear any pending events (best-effort) by recreating the queue
         self._event_queue = asyncio.Queue()
+        self._pending_request_info_events.clear()
         self._streaming = False  # Reset streaming flag
 
     async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
