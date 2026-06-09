@@ -342,6 +342,53 @@ def test_parse_tool_result_from_mcp_resource_link_text_resource_and_unknown():
     assert result[1].text == "Embedded result"
 
 
+
+def test_parse_tool_result_from_mcp_structured_content_only():
+    """Test that structuredContent is parsed when content list is empty."""
+    mcp_result = types.CallToolResult(
+        content=[],
+        structuredContent={"Tables": [{"Name": "Sales", "Columns": ["Amount", "Date"]}]},
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    parsed = json.loads(result[0].text)
+    assert parsed == {"Tables": [{"Name": "Sales", "Columns": ["Amount", "Date"]}]}
+
+
+def test_parse_tool_result_from_mcp_structured_content_with_text():
+    """Test that structuredContent is appended alongside regular content items."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Summary")],
+        structuredContent={"data": [1, 2, 3]},
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].type == "text"
+    assert result[0].text == "Summary"
+    assert result[1].type == "text"
+    parsed = json.loads(result[1].text)
+    assert parsed == {"data": [1, 2, 3]}
+
+
+def test_parse_tool_result_from_mcp_structured_content_none():
+    """Test that None structuredContent does not affect results."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Hello")],
+        structuredContent=None,
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "Hello"
+
+
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
     mcp_content = types.TextContent(type="text", text="Sample text")

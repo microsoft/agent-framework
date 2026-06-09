@@ -76,6 +76,7 @@ def _make_call_tool_result(text: str = "result", is_error: bool = False) -> Mock
     result = Mock()
     result.isError = is_error
     result.content = [types.TextContent(type="text", text=text)]
+    result.structuredContent = None
     return result
 
 
