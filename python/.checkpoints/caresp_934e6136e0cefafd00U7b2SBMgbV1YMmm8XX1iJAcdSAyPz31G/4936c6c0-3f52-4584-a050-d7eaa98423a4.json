@@ -1,0 +1,50 @@
+{
+  "workflow_name": "WorkflowBuilder-1d1c2aa6-14c6-43d1-8b51-ddb7ba8198bc",
+  "graph_signature_hash": "3d1f01451a34436937e968c01f7c6fe3f294e537cebfa5e409a3f446938eb38b",
+  "checkpoint_id": "4936c6c0-3f52-4584-a050-d7eaa98423a4",
+  "previous_checkpoint_id": "c7ca5e96-d8f7-46a2-ba2e-1ea5ee573a25",
+  "timestamp": "2026-06-09T18:01:30.372896+00:00",
+  "messages": {},
+  "state": {
+    "_workflow_run_kwargs": {},
+    "_executor_state": {
+      "start": {},
+      "approval-agent": {
+        "cache": [
+          {
+            "__pickled__": "gAWVCQMAAAAAAACMFmFnZW50X2ZyYW1ld29yay5fdHlwZXOUjAdNZXNzYWdllJOUKYGUfZQojARyb2xllIwIYnVpbHRpbnOUjAdnZXRhdHRylJOUjElhenVyZS5haS5hZ2VudHNlcnZlci5yZXNwb25zZXMubW9kZWxzLl9nZW5lcmF0ZWQuc2RrLm1vZGVscy5tb2RlbHMuX2VudW1zlIwLTWVzc2FnZVJvbGWUk5SMBFVTRVKUhpRSlIwIY29udGVudHOUXZRoAIwHQ29udGVudJSTlCmBlH2UKIwEdHlwZZSMBHRleHSUjAthbm5vdGF0aW9uc5ROjBVhZGRpdGlvbmFsX3Byb3BlcnRpZXOUfZSMEnJhd19yZXByZXNlbnRhdGlvbpROaBaMBUhlbGxvlIwOcHJvdGVjdGVkX2RhdGGUTowDdXJplE6MCm1lZGlhX3R5cGWUTowHbWVzc2FnZZROjAplcnJvcl9jb2RllE6MDWVycm9yX2RldGFpbHOUTowNdXNhZ2VfZGV0YWlsc5ROjAdjYWxsX2lklE6MBG5hbWWUTowJYXJndW1lbnRzlE6MCWV4Y2VwdGlvbpROjAZyZXN1bHSUTowFaXRlbXOUTowHZmlsZV9pZJROjA92ZWN0b3Jfc3RvcmVfaWSUTowGaW5wdXRzlE6MB291dHB1dHOUTowIaW1hZ2VfaWSUTowIY29tbWFuZHOUTowKdGltZW91dF9tc5ROjBFtYXhfb3V0cHV0X2xlbmd0aJROjAZzdGF0dXOUTowGc3Rkb3V0lE6MBnN0ZGVycpROjAlleGl0X2NvZGWUTowJdGltZWRfb3V0lE6MCXRvb2xfbmFtZZROjAtzZXJ2ZXJfbmFtZZROjAZvdXRwdXSUTowCaWSUTowNZnVuY3Rpb25fY2FsbJROjBJ1c2VyX2lucHV0X3JlcXVlc3SUTowIYXBwcm92ZWSUTowMY29uc2VudF9saW5rlE51YmGMC2F1dGhvcl9uYW1llE6MCm1lc3NhZ2VfaWSUTmgYfZRoGk51Yi4=",
+            "__type__": "agent_framework._types:Message"
+          }
+        ],
+        "full_conversation": [
+          {
+            "__pickled__": "gAWVCQMAAAAAAACMFmFnZW50X2ZyYW1ld29yay5fdHlwZXOUjAdNZXNzYWdllJOUKYGUfZQojARyb2xllIwIYnVpbHRpbnOUjAdnZXRhdHRylJOUjElhenVyZS5haS5hZ2VudHNlcnZlci5yZXNwb25zZXMubW9kZWxzLl9nZW5lcmF0ZWQuc2RrLm1vZGVscy5tb2RlbHMuX2VudW1zlIwLTWVzc2FnZVJvbGWUk5SMBFVTRVKUhpRSlIwIY29udGVudHOUXZRoAIwHQ29udGVudJSTlCmBlH2UKIwEdHlwZZSMBHRleHSUjAthbm5vdGF0aW9uc5ROjBVhZGRpdGlvbmFsX3Byb3BlcnRpZXOUfZSMEnJhd19yZXByZXNlbnRhdGlvbpROaBaMBUhlbGxvlIwOcHJvdGVjdGVkX2RhdGGUTowDdXJplE6MCm1lZGlhX3R5cGWUTowHbWVzc2FnZZROjAplcnJvcl9jb2RllE6MDWVycm9yX2RldGFpbHOUTowNdXNhZ2VfZGV0YWlsc5ROjAdjYWxsX2lklE6MBG5hbWWUTowJYXJndW1lbnRzlE6MCWV4Y2VwdGlvbpROjAZyZXN1bHSUTowFaXRlbXOUTowHZmlsZV9pZJROjA92ZWN0b3Jfc3RvcmVfaWSUTowGaW5wdXRzlE6MB291dHB1dHOUTowIaW1hZ2VfaWSUTowIY29tbWFuZHOUTowKdGltZW91dF9tc5ROjBFtYXhfb3V0cHV0X2xlbmd0aJROjAZzdGF0dXOUTowGc3Rkb3V0lE6MBnN0ZGVycpROjAlleGl0X2NvZGWUTowJdGltZWRfb3V0lE6MCXRvb2xfbmFtZZROjAtzZXJ2ZXJfbmFtZZROjAZvdXRwdXSUTowCaWSUTowNZnVuY3Rpb25fY2FsbJROjBJ1c2VyX2lucHV0X3JlcXVlc3SUTowIYXBwcm92ZWSUTowMY29uc2VudF9saW5rlE51YmGMC2F1dGhvcl9uYW1llE6MCm1lc3NhZ2VfaWSUTmgYfZRoGk51Yi4=",
+            "__type__": "agent_framework._types:Message"
+          }
+        ],
+        "agent_session": {
+          "type": "session",
+          "session_id": "de61e7d1-0cb8-4766-bcc2-eaa25731a8ac",
+          "service_session_id": null,
+          "state": {}
+        },
+        "pending_agent_requests": {
+          "apr_wf_reject": {
+            "__pickled__": "gAWVJQMAAAAAAACMFmFnZW50X2ZyYW1ld29yay5fdHlwZXOUjAdDb250ZW50lJOUKYGUfZQojAR0eXBllIwZZnVuY3Rpb25fYXBwcm92YWxfcmVxdWVzdJSMC2Fubm90YXRpb25zlE6MFWFkZGl0aW9uYWxfcHJvcGVydGllc5R9lIwScmF3X3JlcHJlc2VudGF0aW9ulE6MBHRleHSUTowOcHJvdGVjdGVkX2RhdGGUTowDdXJplE6MCm1lZGlhX3R5cGWUTowHbWVzc2FnZZROjAplcnJvcl9jb2RllE6MDWVycm9yX2RldGFpbHOUTowNdXNhZ2VfZGV0YWlsc5ROjAdjYWxsX2lklE6MBG5hbWWUTowJYXJndW1lbnRzlE6MCWV4Y2VwdGlvbpROjAZyZXN1bHSUTowFaXRlbXOUTowHZmlsZV9pZJROjA92ZWN0b3Jfc3RvcmVfaWSUTowGaW5wdXRzlE6MB291dHB1dHOUTowIaW1hZ2VfaWSUTowIY29tbWFuZHOUTowKdGltZW91dF9tc5ROjBFtYXhfb3V0cHV0X2xlbmd0aJROjAZzdGF0dXOUTowGc3Rkb3V0lE6MBnN0ZGVycpROjAlleGl0X2NvZGWUTowJdGltZWRfb3V0lE6MCXRvb2xfbmFtZZROjAtzZXJ2ZXJfbmFtZZROjAZvdXRwdXSUTowCaWSUjA1hcHJfd2ZfcmVqZWN0lIwNZnVuY3Rpb25fY2FsbJRoAimBlH2UKGgFaCtoB05oCH2UjAxzZXJ2ZXJfbGFiZWyUjAt0ZXN0X3NlcnZlcpRzaApOaAtOaAxOaA1OaA5OaA9OaBBOaBFOaBJOaBNoKmgUjAtkZWxldGVfZmlsZZRoFX2UjARwYXRolIwPL3RtcC9zZWNyZXQudHh0lHNoFk5oF05oGE5oGU5oGk5oG05oHE5oHU5oHk5oH05oIE5oIU5oIk5oI05oJE5oJU5oJk5oJ05oKE5oKU5oK06MEnVzZXJfaW5wdXRfcmVxdWVzdJROjAhhcHByb3ZlZJROjAxjb25zZW50X2xpbmuUTnViaDWIaDZOaDdOdWIu",
+            "__type__": "agent_framework._types:Content"
+          }
+        },
+        "pending_responses_to_agent": []
+      }
+    }
+  },
+  "pending_request_info_events": {
+    "apr_wf_reject": {
+      "__pickled__": "gAWVUQQAAAAAAACMImFnZW50X2ZyYW1ld29yay5fd29ya2Zsb3dzLl9ldmVudHOUjA1Xb3JrZmxvd0V2ZW50lJOUKYGUfZQojAR0eXBllIwMcmVxdWVzdF9pbmZvlIwEZGF0YZSMFmFnZW50X2ZyYW1ld29yay5fdHlwZXOUjAdDb250ZW50lJOUKYGUfZQoaAWMGWZ1bmN0aW9uX2FwcHJvdmFsX3JlcXVlc3SUjAthbm5vdGF0aW9uc5ROjBVhZGRpdGlvbmFsX3Byb3BlcnRpZXOUfZSMEnJhd19yZXByZXNlbnRhdGlvbpROjAR0ZXh0lE6MDnByb3RlY3RlZF9kYXRhlE6MA3VyaZROjAptZWRpYV90eXBllE6MB21lc3NhZ2WUTowKZXJyb3JfY29kZZROjA1lcnJvcl9kZXRhaWxzlE6MDXVzYWdlX2RldGFpbHOUTowHY2FsbF9pZJROjARuYW1llE6MCWFyZ3VtZW50c5ROjAlleGNlcHRpb26UTowGcmVzdWx0lE6MBWl0ZW1zlE6MB2ZpbGVfaWSUTowPdmVjdG9yX3N0b3JlX2lklE6MBmlucHV0c5ROjAdvdXRwdXRzlE6MCGltYWdlX2lklE6MCGNvbW1hbmRzlE6MCnRpbWVvdXRfbXOUTowRbWF4X291dHB1dF9sZW5ndGiUTowGc3RhdHVzlE6MBnN0ZG91dJROjAZzdGRlcnKUTowJZXhpdF9jb2RllE6MCXRpbWVkX291dJROjAl0b29sX25hbWWUTowLc2VydmVyX25hbWWUTowGb3V0cHV0lE6MAmlklIwNYXByX3dmX3JlamVjdJSMDWZ1bmN0aW9uX2NhbGyUaAopgZR9lChoBWgyaA5OaA99lIwMc2VydmVyX2xhYmVslIwLdGVzdF9zZXJ2ZXKUc2gRTmgSTmgTTmgUTmgVTmgWTmgXTmgYTmgZTmgaaDFoG4wLZGVsZXRlX2ZpbGWUaBx9lIwEcGF0aJSMDy90bXAvc2VjcmV0LnR4dJRzaB1OaB5OaB9OaCBOaCFOaCJOaCNOaCROaCVOaCZOaCdOaChOaClOaCpOaCtOaCxOaC1OaC5OaC9OaDBOaDJOjBJ1c2VyX2lucHV0X3JlcXVlc3SUTowIYXBwcm92ZWSUTowMY29uc2VudF9saW5rlE51Ymg8iGg9Tmg+TnVijAZvcmlnaW6UjAhidWlsdGluc5SMB2dldGF0dHKUk5RoAIwTV29ya2Zsb3dFdmVudFNvdXJjZZSTlIwIRVhFQ1VUT1KUhpRSlIwFc3RhdGWUTowHZGV0YWlsc5ROjAtleGVjdXRvcl9pZJROjAtfcmVxdWVzdF9pZJRoMYwTX3NvdXJjZV9leGVjdXRvcl9pZJSMDmFwcHJvdmFsLWFnZW50lIwNX3JlcXVlc3RfdHlwZZRoCowOX3Jlc3BvbnNlX3R5cGWUaAqMCWl0ZXJhdGlvbpROdWIu",
+      "__type__": "agent_framework._workflows._events:WorkflowEvent"
+    }
+  },
+  "iteration_count": 1,
+  "metadata": {},
+  "version": "1.0"
+}

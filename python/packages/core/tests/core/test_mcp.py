@@ -342,7 +342,6 @@ def test_parse_tool_result_from_mcp_resource_link_text_resource_and_unknown():
     assert result[1].text == "Embedded result"
 
 
-
 def test_parse_tool_result_from_mcp_structured_content_only():
     """Test that structuredContent is parsed when content list is empty."""
     mcp_result = types.CallToolResult(
