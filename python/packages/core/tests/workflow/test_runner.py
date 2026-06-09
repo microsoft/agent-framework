@@ -17,7 +17,6 @@ from agent_framework import (
     WorkflowContext,
     WorkflowConvergenceException,
     WorkflowEvent,
-    WorkflowRunnerException,
     WorkflowRunState,
     handler,
 )
@@ -106,7 +105,6 @@ async def test_runner_run_until_convergence():
         state,  # state
         ctx,  # runner_context
     )
-    runner.reserve()
     async for event in runner.run_until_convergence():
         assert isinstance(event, WorkflowEvent)
         if event.type == "output":
@@ -148,7 +146,6 @@ async def test_runner_run_until_convergence_not_completed():
         WorkflowConvergenceException,
         match="Runner did not converge after 5 iterations.",
     ):
-        runner.reserve()
         async for event in runner.run_until_convergence():
             assert event.type != "status" or event.state != WorkflowRunState.IDLE
 
@@ -307,16 +304,22 @@ async def test_fanout_edge_runner_delivers_to_multiple_targets_concurrently() ->
     assert probe_target.call_count == 1
 
 
-async def test_runner_run_until_convergence_requires_reservation():
-    """run_until_convergence refuses to start without a prior reserve()."""
+async def test_runner_run_until_convergence_runs_sequentially():
+    """run_until_convergence can be invoked back-to-back on the same Runner.
+
+    The Runner itself does not enforce concurrency; that responsibility lives on
+    :class:`Workflow`. This test simply confirms the Runner is reusable across
+    sequential runs.
+    """
     runner = _make_runner()
-    with pytest.raises(WorkflowRunnerException, match="Runner must be reserved"):
-        async for _ in runner.run_until_convergence():
-            pass
+    async for _ in runner.run_until_convergence():
+        pass
+    async for _ in runner.run_until_convergence():
+        pass
 
 
 def _make_runner() -> Runner:
-    """Build a minimal runner for lifecycle tests."""
+    """Build a minimal runner for runner-level tests."""
     return Runner(
         [],
         {},
@@ -327,57 +330,11 @@ def _make_runner() -> Runner:
     )
 
 
-def test_runner_reserve_twice_raises():
-    """Calling reserve() while already reserved rejects the second caller.
-
-    This is what guards Workflow.run against a concurrent caller slipping in
-    between the first call's synchronous reserve() and its first await.
-    """
-    runner = _make_runner()
-    runner.reserve()
-    with pytest.raises(WorkflowRunnerException, match="Runner is already reserved or running."):
-        runner.reserve()
-
-
-def test_runner_reserve_after_release_is_accepted():
-    """Sequential runs are permitted; only concurrent ones are blocked."""
-    runner = _make_runner()
-    runner.reserve()
-    runner.release()
-    runner.reserve()  # should not raise
-
-
-def test_runner_release_when_idle_is_noop():
-    """release() on an idle runner does not affect a subsequent reserve().
-
-    Workflow._run_core's finally always calls release(), even when
-    run_until_convergence already cleared the lock in its own finally;
-    that double-release must not lock out the next run.
-    """
-    runner = _make_runner()
-    runner.release()  # already idle - must not raise or wedge state
-    runner.reserve()  # next run still allowed
-
-
-async def test_runner_run_until_convergence_consumes_reservation():
-    """run_until_convergence accepts a prior reservation and runs to completion."""
-    runner = _make_runner()
-    runner.reserve()
-    async for _ in runner.run_until_convergence():
-        pass
-    # A second run after the first completes must be accepted.
-    runner.reserve()
-    async for _ in runner.run_until_convergence():
-        pass
-
-
 async def test_runner_accepts_new_run_after_previous_failure():
-    """A failed run must not leave the runner locked out of future runs.
+    """A failed run must not leave the Runner unable to start a new run.
 
-    After the first run raises, a fresh ``reserve()`` and
-    ``run_until_convergence()`` must succeed (or fail for a different reason -
-    e.g. residual messages still don't converge - but never with the
-    lock-rejection ``"Runner is already running."``).
+    After the first run raises, ``run_until_convergence()`` must be callable
+    again and not surface any lifecycle-related rejection.
     """
     executor_a = MockExecutor(id="executor_a")
     executor_b = MockExecutor(id="executor_b")
@@ -392,52 +349,17 @@ async def test_runner_accepts_new_run_after_previous_failure():
 
     await executor_a.execute(MockMessage(data=0), ["START"], state, ctx)
 
-    runner.reserve()
     with pytest.raises(WorkflowConvergenceException):
         async for _ in runner.run_until_convergence():
             pass
 
-    # The runner should accept a fresh reservation and run again.
-    runner.reserve()  # must not raise
+    # A second run on the same Runner must not be blocked by stale lifecycle
+    # state from the failed run.
     try:
         async for _ in runner.run_until_convergence():
             pass
     except Exception as exc:
         assert "Runner is already running" not in str(exc), "Runner stayed locked after a failed run"
-
-
-async def test_runner_rejects_concurrent_run_until_convergence():
-    """While a run is in progress, a second ``reserve()`` is rejected.
-
-    Confirms the run lock is held for the full duration of the run, not just
-    synchronously between ``reserve()`` and the first ``__anext__`` call.
-    """
-    runner = _make_runner()
-
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _slow_run():
-        runner.reserve()
-        async for _ in runner.run_until_convergence():
-            if not started.is_set():
-                started.set()
-                await release.wait()
-
-    task = asyncio.create_task(_slow_run())
-    await started.wait()  # first run is now executing
-
-    try:
-        with pytest.raises(WorkflowRunnerException, match="Runner is already reserved or running."):
-            runner.reserve()
-    finally:
-        release.set()
-        await task
-
-    # And after the first run finishes, a new reservation + run must be accepted.
-    runner.reserve()
-    async for _ in runner.run_until_convergence():
-        pass
 
 
 async def test_runner_emits_runner_completion_for_agent_response_without_targets():
@@ -451,7 +373,6 @@ async def test_runner_emits_runner_completion_for_agent_response_without_targets
         )
     )
 
-    runner.reserve()
     events: list[WorkflowEvent] = [event async for event in runner.run_until_convergence()]
     # The runner should complete without errors when handling AgentExecutorResponse without targets
     # No specific events are expected since there are no executors to process the message
@@ -508,7 +429,6 @@ async def test_runner_cancellation_stops_active_executor():
         async for _ in runner.run_until_convergence():
             pass
 
-    runner.reserve()
     task = asyncio.create_task(run_workflow())
 
     # Wait for executor_a to complete (0.3s) and executor_b to start but not finish
@@ -570,7 +490,6 @@ async def test_runner_iteration_exception_drains_events():
     )
 
     events: list[WorkflowEvent] = []
-    runner.reserve()
     with pytest.raises(RuntimeError, match="Simulated executor failure"):
         async for event in runner.run_until_convergence():
             events.append(event)
@@ -681,7 +600,6 @@ async def test_runner_checkpoint_creation_failure():
 
     # Should complete without raising, even though checkpointing fails
     result: int | None = None
-    runner.reserve()
     async for event in runner.run_until_convergence():
         if event.type == "output":
             result = event.data
@@ -878,7 +796,6 @@ async def test_runner_with_pre_loop_events():
     await ctx.add_event(WorkflowEvent("output", executor_id="test_executor", data="pre-loop-output"))
 
     events: list[WorkflowEvent] = []
-    runner.reserve()
     async for event in runner.run_until_convergence():
         events.append(event)
 
@@ -926,7 +843,6 @@ async def test_runner_drains_straggler_events():
     )
 
     events: list[WorkflowEvent] = []
-    runner.reserve()
     async for event in runner.run_until_convergence():
         events.append(event)
 
@@ -980,7 +896,6 @@ async def test_runner_checkpoint_with_resumed_flag():
     )
 
     # Run until convergence
-    runner.reserve()
     async for _ in runner.run_until_convergence():
         pass
 
@@ -1047,7 +962,6 @@ async def test_runner_drains_events_on_iteration_exception():
     )
 
     events: list[WorkflowEvent] = []
-    runner.reserve()
     with pytest.raises(RuntimeError, match="Executor failed with pending events"):
         async for event in runner.run_until_convergence():
             events.append(event)
@@ -1104,7 +1018,6 @@ async def test_runner_drains_straggler_events_at_iteration_end():
     )
 
     events: list[WorkflowEvent] = []
-    runner.reserve()
     async for event in runner.run_until_convergence():
         events.append(event)
 
@@ -1271,7 +1184,6 @@ async def test_runner_can_run_again_after_reset_for_new_run():
 
     # First run: drives MockExecutor's loop until it yields the terminal value.
     await executor_a.execute(MockMessage(data=0), ["START"], state, ctx)
-    runner.reserve()
     async for _ in runner.run_until_convergence():
         pass
     assert runner._iteration == 10  # pyright: ignore[reportPrivateUsage]
@@ -1280,7 +1192,6 @@ async def test_runner_can_run_again_after_reset_for_new_run():
 
     # Second run: must succeed cleanly using the same runner instance.
     await executor_a.execute(MockMessage(data=0), ["START"], state, ctx)
-    runner.reserve()
     second_run_outputs: list[int] = []
     async for event in runner.run_until_convergence():
         if event.type == "output":
@@ -1288,79 +1199,6 @@ async def test_runner_can_run_again_after_reset_for_new_run():
 
     assert second_run_outputs == [10]
     assert runner._iteration == 10  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_runner_reset_for_new_run_rejected_when_reserved():
-    """reset_for_new_run refuses to run when the runner is reserved but not yet running."""
-    runner = _make_runner()
-    runner.reserve()
-
-    with pytest.raises(WorkflowRunnerException, match="Cannot reset the runner while a run is in progress"):
-        await runner.reset_for_new_run()
-
-
-async def test_runner_reset_for_new_run_rejected_while_running():
-    """reset_for_new_run refuses to run while a run is mid-execution."""
-    runner = _make_runner()
-
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _slow_run() -> None:
-        runner.reserve()
-        async for _ in runner.run_until_convergence():
-            if not started.is_set():
-                started.set()
-                await release.wait()
-
-    task = asyncio.create_task(_slow_run())
-    await started.wait()  # first run is now executing inside run_until_convergence
-
-    try:
-        with pytest.raises(WorkflowRunnerException, match="Cannot reset the runner while a run is in progress"):
-            await runner.reset_for_new_run()
-    finally:
-        release.set()
-        await task
-
-    # Once the run drained, reset must succeed again.
-    await runner.reset_for_new_run()
-
-
-async def test_runner_reset_for_new_run_does_not_mutate_when_rejected():
-    """When reset is rejected, the runner's iteration counter and state are untouched."""
-
-    class TrackingExecutor(MockExecutor):
-        def __init__(self, id: str) -> None:
-            super().__init__(id=id)
-            self.reset_calls = 0
-
-        async def reset(self) -> None:
-            self.reset_calls += 1
-
-    executor = TrackingExecutor(id="executor")
-    state = State()
-    state.set("preserved", 42)
-    state.commit()
-
-    runner = Runner(
-        [],
-        {executor.id: executor},
-        state,
-        InProcRunnerContext(),
-        "test_name",
-        graph_signature_hash="test_hash",
-    )
-    runner._iteration = 7  # pyright: ignore[reportPrivateUsage]
-    runner.reserve()
-
-    with pytest.raises(WorkflowRunnerException):
-        await runner.reset_for_new_run()
-
-    # Nothing was mutated by the failed reset.
-    assert runner._iteration == 7  # pyright: ignore[reportPrivateUsage]
-    assert state.get("preserved") == 42
-    assert executor.reset_calls == 0
 
 
 # endregion: Tests for Runner.reset_for_new_run()

@@ -5,13 +5,11 @@ import contextlib
 import logging
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
-from enum import Enum
 from typing import Any
 
 from ..exceptions import (
     WorkflowCheckpointException,
     WorkflowConvergenceException,
-    WorkflowRunnerException,
 )
 from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
 from ._const import EXECUTOR_STATE_KEY
@@ -26,25 +24,6 @@ from ._runner_context import (
 from ._state import State
 
 logger = logging.getLogger(__name__)
-
-
-class _RunnerLifecycle(Enum):
-    """Lifecycle of a single :class:`Runner` invocation.
-
-    Three states keep concurrent-run protection in one place while still letting
-    :meth:`Workflow.run` reserve the runner synchronously (before any await):
-
-    * ``IDLE``     - no run in progress.
-    * ``RESERVED`` - :meth:`Runner.reserve` was called by an external caller but
-      :meth:`Runner.run_until_convergence` has not yet entered its body. This is the
-      window during which ``Workflow.run`` has handed back a ``ResponseStream`` that
-      hasn't been iterated yet. ``run_until_convergence`` requires this state.
-    * ``RUNNING``  - the body of :meth:`Runner.run_until_convergence` is executing.
-    """
-
-    IDLE = "idle"
-    RESERVED = "reserved"
-    RUNNING = "running"
 
 
 class Runner:
@@ -83,7 +62,6 @@ class Runner:
         self._iteration = 0
         self._max_iterations = max_iterations
         self._state = state
-        self._lifecycle: _RunnerLifecycle = _RunnerLifecycle.IDLE
         self._resumed_from_checkpoint = False  # Track whether we resumed
 
     @property
@@ -95,31 +73,6 @@ class Runner:
     def state(self) -> State:
         """Get the shared state for the workflow."""
         return self._state
-
-    def reserve(self) -> None:
-        """Synchronously reserve the runner for an upcoming run.
-
-        This is the **only** way to acquire the run lock. :meth:`run_until_convergence`
-        requires the runner to be in :attr:`_RunnerLifecycle.RESERVED` and will refuse
-        to start otherwise. Reserving synchronously lets callers (notably
-        :meth:`Workflow.run`) reject concurrent runs *before* any ``await`` or
-        async-generator suspension - otherwise a second caller could slip past a
-        flag-based guard while the first is still suspended above
-        :meth:`run_until_convergence`. The lock is released by
-        :meth:`run_until_convergence` in its ``finally`` clause once it begins, or by
-        :meth:`release` when the run never starts (for example, if early validation
-        raises before ``run_until_convergence`` is reached).
-
-        Raises:
-            WorkflowRunnerException: If the runner is already reserved or running.
-        """
-        if self._lifecycle is not _RunnerLifecycle.IDLE:
-            raise WorkflowRunnerException("Runner is already reserved or running.")
-        self._lifecycle = _RunnerLifecycle.RESERVED
-
-    def release(self) -> None:
-        """Release the runner's run lock. Idempotent; safe to call when already idle."""
-        self._lifecycle = _RunnerLifecycle.IDLE
 
     def reset_iteration_count(self) -> None:
         """Reset the iteration count to zero.
@@ -138,15 +91,10 @@ class Runner:
         This is useful when reusing the same workflow instance for a different run
         that is independent from prior runs.
 
-        Raises:
-            WorkflowRunnerException: If the runner is reserved or running. Reset is only
-                allowed when the runner is idle to avoid clobbering in-flight run state.
+        Concurrent-run rejection lives at the :class:`Workflow` level via the
+        active-run weak reference, so this method does not re-validate that
+        no run is in progress; callers are expected to have already done so.
         """
-        if self._lifecycle is not _RunnerLifecycle.IDLE:
-            raise WorkflowRunnerException(
-                "Cannot reset the runner while a run is in progress. "
-                "Wait for the current run to complete before calling reset_for_new_run()."
-            )
         self.reset_iteration_count()
         self._ctx.reset_for_new_run()
         self._state.clear()
@@ -156,92 +104,79 @@ class Runner:
 
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
-        # Mandatory reservation: callers must reserve() the runner first. This makes
-        # ``reserve`` the single entry point that takes the run lock, so all
-        # concurrent-run rejection happens there. Any non-RESERVED state here is a
-        # contract violation - either the caller forgot to reserve, or another run
-        # is already in progress.
-        if self._lifecycle is not _RunnerLifecycle.RESERVED:
-            raise WorkflowRunnerException(
-                "Runner must be reserved via Runner.reserve() before calling run_until_convergence()."
-            )
-        self._lifecycle = _RunnerLifecycle.RUNNING
-
         previous_checkpoint_id: CheckpointID | None = None
-        try:
-            # Emit any events already produced prior to entering loop
-            if await self._ctx.has_events():
-                logger.info("Yielding pre-loop events")
-                for event in await self._ctx.drain_events():
-                    yield event
 
-            # Create the first checkpoint. Checkpoints are usually considered to be created at the end of an iteration,
-            # we can think of the first checkpoint as being created at the end of a "superstep 0" which captures the
-            # states after which the start executor has run.  Note that we execute the start executor outside of the
-            # main iteration loop.
-            if await self._ctx.has_messages() and not self._resumed_from_checkpoint:
-                previous_checkpoint_id = await self._create_checkpoint_if_enabled(previous_checkpoint_id)
+        # Emit any events already produced prior to entering loop
+        if await self._ctx.has_events():
+            logger.info("Yielding pre-loop events")
+            for event in await self._ctx.drain_events():
+                yield event
 
-            while self._iteration < self._max_iterations:
-                logger.info(f"Starting superstep {self._iteration + 1}")
-                yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
+        # Create the first checkpoint. Checkpoints are usually considered to be created at the end of an iteration,
+        # we can think of the first checkpoint as being created at the end of a "superstep 0" which captures the
+        # states after which the start executor has run.  Note that we execute the start executor outside of the
+        # main iteration loop.
+        if await self._ctx.has_messages() and not self._resumed_from_checkpoint:
+            previous_checkpoint_id = await self._create_checkpoint_if_enabled(previous_checkpoint_id)
 
-                # Run iteration concurrently with live event streaming: we poll
-                # for new events while the iteration coroutine progresses.
-                iteration_task = asyncio.create_task(self._run_iteration())
-                try:
-                    while not iteration_task.done():
-                        try:
-                            # Wait briefly for any new event; timeout allows progress checks
-                            event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
-                            yield event
-                        except asyncio.TimeoutError:
-                            # Periodically continue to let iteration advance
-                            continue
-                except asyncio.CancelledError:
-                    # Propagate cancellation to the iteration task to avoid orphaned work
-                    iteration_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await iteration_task
-                    raise
+        while self._iteration < self._max_iterations:
+            logger.info(f"Starting superstep {self._iteration + 1}")
+            yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
 
-                # Propagate errors from iteration, but first surface any pending events
-                try:
+            # Run iteration concurrently with live event streaming: we poll
+            # for new events while the iteration coroutine progresses.
+            iteration_task = asyncio.create_task(self._run_iteration())
+            try:
+                while not iteration_task.done():
+                    try:
+                        # Wait briefly for any new event; timeout allows progress checks
+                        event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
+                        yield event
+                    except asyncio.TimeoutError:
+                        # Periodically continue to let iteration advance
+                        continue
+            except asyncio.CancelledError:
+                # Propagate cancellation to the iteration task to avoid orphaned work
+                iteration_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
                     await iteration_task
-                except Exception:
-                    # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
-                    if await self._ctx.has_events():
-                        for event in await self._ctx.drain_events():
-                            yield event
-                    raise
-                self._iteration += 1
+                raise
 
-                # Drain any straggler events emitted at tail end
+            # Propagate errors from iteration, but first surface any pending events
+            try:
+                await iteration_task
+            except Exception:
+                # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
                 if await self._ctx.has_events():
                     for event in await self._ctx.drain_events():
                         yield event
+                raise
+            self._iteration += 1
 
-                logger.info(f"Completed superstep {self._iteration}")
+            # Drain any straggler events emitted at tail end
+            if await self._ctx.has_events():
+                for event in await self._ctx.drain_events():
+                    yield event
 
-                # Commit pending state changes at superstep boundary
-                self._state.commit()
+            logger.info(f"Completed superstep {self._iteration}")
 
-                # Create checkpoint after each superstep iteration
-                previous_checkpoint_id = await self._create_checkpoint_if_enabled(previous_checkpoint_id)
+            # Commit pending state changes at superstep boundary
+            self._state.commit()
 
-                yield WorkflowEvent.superstep_completed(iteration=self._iteration)
+            # Create checkpoint after each superstep iteration
+            previous_checkpoint_id = await self._create_checkpoint_if_enabled(previous_checkpoint_id)
 
-                # Check for convergence: no more messages to process
-                if not await self._ctx.has_messages():
-                    break
+            yield WorkflowEvent.superstep_completed(iteration=self._iteration)
 
-            if self._iteration >= self._max_iterations and await self._ctx.has_messages():
-                raise WorkflowConvergenceException(f"Runner did not converge after {self._max_iterations} iterations.")
+            # Check for convergence: no more messages to process
+            if not await self._ctx.has_messages():
+                break
 
-            logger.info(f"Workflow completed after {self._iteration} supersteps")
-            self._resumed_from_checkpoint = False  # Reset resume flag for next run
-        finally:
-            self._lifecycle = _RunnerLifecycle.IDLE
+        if self._iteration >= self._max_iterations and await self._ctx.has_messages():
+            raise WorkflowConvergenceException(f"Runner did not converge after {self._max_iterations} iterations.")
+
+        logger.info(f"Workflow completed after {self._iteration} supersteps")
+        self._resumed_from_checkpoint = False  # Reset resume flag for next run
 
     async def _run_iteration(self) -> None:
         """Run a single iteration of the workflow.

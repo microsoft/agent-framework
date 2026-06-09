@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import gc
 import tempfile
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass, field
@@ -846,6 +847,92 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     assert result.get_final_state() == WorkflowRunState.IDLE
 
 
+async def test_workflow_sequential_runs_after_completion() -> None:
+    """A completed run must release the runner so the next ``run`` succeeds.
+
+    This is the happy-path counterpart to the concurrent-run guard tests:
+    those tests verify that a *concurrent* run is rejected, but they do not
+    verify that the lock is actually released afterwards. This test
+    exercises that release path explicitly across the three call shapes
+    (non-streaming, streaming-iterated, streaming-via-get_final_response)
+    and across multiple consecutive turns to catch lock leaks.
+    """
+    executor = IncrementExecutor(id="seq_executor", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Non-streaming -> non-streaming
+    r1 = await workflow.run(NumberMessage(data=0))
+    assert r1.get_final_state() == WorkflowRunState.IDLE
+
+    r2 = await workflow.run(NumberMessage(data=0))
+    assert r2.get_final_state() == WorkflowRunState.IDLE
+
+    # Non-streaming -> streaming-iterated
+    stream_events: list[WorkflowEvent] = []
+    async for event in workflow.run(NumberMessage(data=0), stream=True):
+        stream_events.append(event)
+    assert any(e.type == "status" and e.state == WorkflowRunState.IDLE for e in stream_events)
+
+    # Streaming -> streaming via get_final_response (no manual iteration)
+    r3 = await workflow.run(NumberMessage(data=0), stream=True).get_final_response()
+    assert r3.get_final_state() == WorkflowRunState.IDLE
+
+    # Streaming -> non-streaming (back to the start)
+    r4 = await workflow.run(NumberMessage(data=0))
+    assert r4.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_unconsumed_stream_releases_run_lock() -> None:
+    """An unconsumed stream must not leak the run lock.
+
+    ``Workflow.run`` reserves the runner *synchronously* so that concurrent
+    callers are rejected immediately. The reservation is normally released
+    by ``_run_core``'s ``finally`` once the stream is iterated. If the
+    caller never iterates the stream, a GC-time finalizer must release the
+    reservation instead - otherwise every subsequent ``Workflow.run`` call
+    on this instance would fail with the concurrent-run error.
+    """
+    executor = IncrementExecutor(id="unconsumed_stream_exec", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Build a stream and immediately drop it without iterating.
+    stream = workflow.run(NumberMessage(data=0), stream=True)
+    assert stream is not None  # silence unused-variable warnings; stream is GC'd below
+    del stream
+    gc.collect()
+    # Yield to the event loop so any scheduled finalizer work can run.
+    await asyncio.sleep(0)
+
+    # The runner should be back to IDLE; a fresh run must succeed.
+    result = await workflow.run(NumberMessage(data=0))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_unawaited_run_coroutine_releases_run_lock() -> None:
+    """An un-awaited non-streaming ``run()`` coroutine must also not leak the lock.
+
+    ``Workflow.run`` (non-streaming) returns a coroutine produced by
+    ``ResponseStream.get_final_response``. The underlying ResponseStream is
+    held alive by that coroutine, so dropping the coroutine without
+    awaiting it must still release the reservation via the same GC-time
+    fallback used for unconsumed streams.
+    """
+    executor = IncrementExecutor(id="unawaited_run_exec", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    coro = workflow.run(NumberMessage(data=0))
+    # Closing suppresses the "coroutine was never awaited" warning. We cast to
+    # ``Any`` because the typed return is ``Awaitable[...]``; in practice it is
+    # a coroutine that exposes ``close``.
+    cast(Any, coro).close()
+    del coro
+    gc.collect()
+    await asyncio.sleep(0)
+
+    result = await workflow.run(NumberMessage(data=0))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+
 class _StreamingTestAgent(BaseAgent):
     """Test agent that supports both streaming and non-streaming modes."""
 
@@ -1397,7 +1484,7 @@ async def test_workflow_reset_for_new_run_rejected_during_streaming_run() -> Non
     await asyncio.sleep(0.02)
 
     try:
-        with pytest.raises(WorkflowRunnerException, match="Cannot reset the runner while a run is in progress"):
+        with pytest.raises(WorkflowRunnerException, match="Cannot reset the workflow while a run is in progress"):
             await workflow.reset_for_new_run()
     finally:
         await task

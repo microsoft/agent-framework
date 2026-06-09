@@ -11,6 +11,7 @@ import logging
 import types
 import uuid
 import warnings
+import weakref
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, overload
@@ -361,6 +362,14 @@ class Workflow(DictConvertible):
         # the status events emitted from `_run_workflow_with_tracing`. Defaults to IDLE
         # for a freshly built workflow that has not yet been run.
         self._status: WorkflowRunState = WorkflowRunState.IDLE
+
+        # Weak reference to the in-flight run's ``ResponseStream``. Used as the single
+        # concurrency lock: if the previous stream is still alive, ``run()`` rejects a
+        # new run synchronously (before any await). When the stream is fully consumed
+        # ``_run_core``'s finally clears this; if the caller drops the stream without
+        # ever iterating, the weakref dereferences to ``None`` once Python collects it,
+        # so a subsequent ``run()`` is allowed.
+        self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
 
     @property
     def status(self) -> WorkflowRunState:
@@ -734,16 +743,20 @@ class Workflow(DictConvertible):
         # Validate parameters first so misuse fails before we touch any run state.
         self._validate_run_params(message, responses, checkpoint_id)
 
-        # Acquire the run lock synchronously - before constructing the ResponseStream
-        # or yielding control to the event loop - so a second concurrent ``run`` call
-        # is rejected immediately rather than slipping past the guard while the first
-        # call is suspended inside its async generator.
-        try:
-            self._runner.reserve()
-        except WorkflowRunnerException as exc:
+        # Concurrency check: reject a second run synchronously - before constructing
+        # the ResponseStream or yielding control to the event loop - so a concurrent
+        # ``run`` call can't slip past the guard while the first call is suspended
+        # inside its async generator. The ``ResponseStream`` returned below is the
+        # lock: as long as the caller holds a reference to it, ``self._active_run()``
+        # resolves to a live object and a new ``run`` is rejected. When the stream is
+        # fully consumed, ``_run_core``'s finally clears the attribute. When the
+        # caller drops the stream without iterating, garbage collection invalidates
+        # the weakref, so a subsequent ``run`` is permitted.
+        existing_stream = self._active_run() if self._active_run is not None else None
+        if existing_stream is not None:
             raise WorkflowException(
                 "Workflow is already running; concurrent runs are not allowed on the same instance."
-            ) from exc
+            )
 
         response_stream = ResponseStream[WorkflowEvent, WorkflowRunResult](
             self._run_core(
@@ -757,6 +770,7 @@ class Workflow(DictConvertible):
             ),
             finalizer=functools.partial(self._finalize_events, include_status_events=include_status_events),
         )
+        self._active_run = weakref.ref(response_stream)
 
         if stream:
             return response_stream
@@ -823,12 +837,14 @@ class Workflow(DictConvertible):
                     continue
                 yield event
         finally:
-            # Release the run lock acquired synchronously by ``run()`` via ``reserve``.
-            # ``run_until_convergence`` also clears it in its own ``finally`` once its
-            # body runs; this clause additionally covers the case where this generator
-            # raises (or is closed) before that body is reached - e.g. the in-flight
-            # messages check above. ``release`` is idempotent.
-            self._runner.release()
+            # Clear the active-run weakref so a subsequent ``run()`` is allowed.
+            # ``run()`` set this synchronously after constructing the ResponseStream;
+            # we clear it here once the run has finished (success, error, early
+            # close, or partial iteration). This is in-band, so by the time the
+            # caller's stream is later garbage collected, ``_active_run`` is already
+            # ``None`` (or has been replaced by a newer run's weakref) - no GC-time
+            # finalizer is needed.
+            self._active_run = None
             if checkpoint_storage is not None:
                 self._runner.context.clear_runtime_checkpoint_storage()
 
@@ -1161,4 +1177,11 @@ class Workflow(DictConvertible):
                 allowed when the workflow is idle to avoid clobbering in-flight run state.
 
         """
+        existing_stream = self._active_run() if self._active_run is not None else None
+        if existing_stream is not None:
+            raise WorkflowRunnerException(
+                "Cannot reset the workflow while a run is in progress. "
+                "Wait for the current run to complete before calling reset_for_new_run()."
+            )
+        self._active_run = None
         await self._runner.reset_for_new_run()
