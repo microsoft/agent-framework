@@ -14,15 +14,13 @@ import logging
 import re
 import uuid
 from collections.abc import Callable, Mapping
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework import AgentExecutor, SupportsAgentRun, Workflow, WorkflowEvent
-from agent_framework._workflows._runner_context import YieldOutputEventType
+from agent_framework import SupportsAgentRun, Workflow
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -34,35 +32,27 @@ from agent_framework_durabletask import (
     THREAD_ID_HEADER,
     WAIT_FOR_RESPONSE_FIELD,
     WAIT_FOR_RESPONSE_HEADER,
+    WORKFLOW_ORCHESTRATOR_NAME,
     AgentResponseCallbackProtocol,
     AgentSessionId,
     ApiResponseFields,
     DurableAgentState,
     DurableAIAgent,
     RunRequest,
+    execute_workflow_activity,
+    plan_workflow_registration,
 )
 
-from ._context import CapturingRunnerContext
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
-from ._serialization import deserialize_value, serialize_value, strip_pickle_markers
-from ._workflow import (
-    SOURCE_HITL_RESPONSE,
-    SOURCE_ORCHESTRATOR,
-    execute_hitl_response_handler,
-    run_workflow_orchestrator,
-)
+from ._serialization import strip_pickle_markers
+from ._workflow import run_workflow_orchestrator
 
 logger = logging.getLogger("agent_framework.azurefunctions")
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
-
-
-def _create_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
-    """Create a deep copy of the deserialized state for later diffing."""
-    return deepcopy(state)
 
 
 @dataclass
@@ -234,17 +224,18 @@ class AgentFunctionApp(DFAppBase):
             interval = DEFAULT_POLL_INTERVAL_SECONDS
         self.poll_interval_seconds = interval if interval > 0 else DEFAULT_POLL_INTERVAL_SECONDS
 
-        # If workflow is provided, extract agents and set up orchestration
+        # If workflow is provided, extract agents and set up orchestration.
+        # The "what to register" decision (agent -> entity, non-agent -> activity)
+        # is shared with the standalone durabletask host via plan_workflow_registration.
         if workflow:
             if agents is None:
                 agents = []
             logger.debug("[AgentFunctionApp] Extracting agents from workflow")
-            for executor in workflow.executors.values():
-                if isinstance(executor, AgentExecutor):
-                    agents.append(executor.agent)
-                else:
-                    # Setup individual activity for each non-agent executor
-                    self._setup_executor_activity(executor.id)
+            plan = plan_workflow_registration(workflow)
+            agents.extend(plan.agents)
+            for executor in plan.activity_executors:
+                # Set up a Functions activity trigger for each non-agent executor.
+                self._setup_executor_activity(executor.id)
 
             self._setup_workflow_orchestration()
 
@@ -279,18 +270,9 @@ class AgentFunctionApp(DFAppBase):
 
             Note: We use str type annotations instead of dict to work around
             Azure Functions worker type validation issues with dict[str, Any].
+            The execution body is shared with the standalone durabletask host via
+            ``execute_workflow_activity``.
             """
-            from agent_framework._workflows._state import State
-
-            data_obj = json.loads(inputData)
-            if not isinstance(data_obj, dict):
-                raise ValueError("Activity inputData must decode to a JSON object")
-            data = cast(dict[str, Any], data_obj)
-
-            message_data = data.get("message")
-            shared_state_snapshot = data.get("shared_state_snapshot", {})
-            source_executor_ids = cast(list[str], data.get("source_executor_ids", [SOURCE_ORCHESTRATOR]))
-
             if not self.workflow:
                 raise RuntimeError("Workflow not initialized in AgentFunctionApp")
 
@@ -298,120 +280,7 @@ class AgentFunctionApp(DFAppBase):
             if not executor:
                 raise ValueError(f"Unknown executor: {captured_executor_id}")
 
-            # Reconstruct message - deserialize_value restores the original typed objects
-            # from the encoded data (with type markers)
-            message = deserialize_value(message_data)
-
-            # Check if this is a HITL response message by examining source_executor_ids
-            is_hitl_response = any(s.startswith(SOURCE_HITL_RESPONSE) for s in source_executor_ids)
-
-            async def run() -> dict[str, Any]:
-                # Create runner context and shared state
-                runner_context = CapturingRunnerContext()
-                workflow = self.workflow
-
-                def classify_yielded_output(executor_id: str) -> YieldOutputEventType | None:
-                    if workflow is None:
-                        return "output"
-                    if workflow.is_terminal_executor(executor_id):
-                        return "output"
-                    if workflow.is_intermediate_executor(executor_id):
-                        return "intermediate"
-                    return None
-
-                runner_context.set_yield_output_classifier(classify_yielded_output)
-                shared_state = State()
-
-                # Deserialize shared state values to reconstruct dataclasses/Pydantic models
-                deserialized_state: dict[str, Any] = {
-                    str(k): deserialize_value(v) for k, v in shared_state_snapshot.items()
-                }
-                original_snapshot = _create_state_snapshot(deserialized_state)
-                shared_state.import_state(deserialized_state)
-
-                if is_hitl_response:
-                    # Handle HITL response by calling the executor's @response_handler
-                    if not isinstance(message_data, dict):
-                        raise ValueError("HITL message payload must be a JSON object")
-
-                    await execute_hitl_response_handler(
-                        executor=executor,
-                        hitl_message=cast(dict[str, Any], message_data),
-                        shared_state=shared_state,
-                        runner_context=runner_context,
-                    )
-                else:
-                    # Execute using the public execute() method
-                    await executor.execute(
-                        message=message,
-                        source_executor_ids=source_executor_ids,
-                        state=shared_state,
-                        runner_context=runner_context,
-                    )
-
-                # Commit pending state changes and export
-                shared_state.commit()
-                current_state = shared_state.export_state()
-                original_keys: set[str] = set(original_snapshot.keys())
-                current_keys: set[str] = set(current_state.keys())
-
-                # Deleted = was in original, not in current
-                deletes: set[str] = original_keys - current_keys
-
-                # Updates = keys in current that are new or have different values
-                updates: dict[str, Any] = {}
-                for key in current_keys:
-                    if key not in original_keys or current_state[key] != original_snapshot.get(key):
-                        updates[key] = current_state[key]
-
-                # Drain messages and events from runner context
-                sent_messages = await runner_context.drain_messages()
-                events = await runner_context.drain_events()
-
-                # Extract outputs from WorkflowEvent instances with type='output'
-                outputs: list[Any] = []
-                for event in events:
-                    if isinstance(event, WorkflowEvent) and event.type == "output":
-                        outputs.append(serialize_value(event.data))
-
-                # Get pending request info events for HITL
-                pending_request_info_events = await runner_context.get_pending_request_info_events()
-
-                # Serialize pending request info events for orchestrator
-                serialized_pending_requests: list[dict[str, Any]] = []
-                for _request_id, event in pending_request_info_events.items():
-                    serialized_pending_requests.append({
-                        "request_id": event.request_id,
-                        "source_executor_id": event.source_executor_id,
-                        "data": serialize_value(event.data),
-                        "request_type": f"{type(event.data).__module__}:{type(event.data).__name__}",
-                        "response_type": f"{event.response_type.__module__}:{event.response_type.__name__}"
-                        if event.response_type
-                        else None,
-                    })
-
-                # Serialize messages for JSON compatibility
-                serialized_sent_messages: list[dict[str, Any]] = []
-                for _source_id, msg_list in sent_messages.items():
-                    for msg in msg_list:
-                        serialized_sent_messages.append({
-                            "message": serialize_value(msg.data),
-                            "target_id": msg.target_id,
-                            "source_id": msg.source_id,
-                        })
-
-                serialized_updates = {k: serialize_value(v) for k, v in updates.items()}
-
-                return {
-                    "sent_messages": serialized_sent_messages,
-                    "outputs": outputs,
-                    "shared_state_updates": serialized_updates,
-                    "shared_state_deletes": list(deletes),
-                    "pending_request_info_events": serialized_pending_requests,
-                }
-
-            result = asyncio.run(run())
-            return json.dumps(result)
+            return execute_workflow_activity(executor, inputData, self.workflow)
 
         # Ensure the function is registered (prevents garbage collection)
         _ = executor_activity
@@ -444,16 +313,11 @@ class AgentFunctionApp(DFAppBase):
         ) -> func.HttpResponse:
             """HTTP endpoint to start the workflow."""
             try:
-                client_input: Any = req.get_json()
+                req_body = req.get_json()
             except ValueError:
-                # The orchestrator accepts plain strings as well as JSON objects, so fall
-                # back to the raw request body (e.g. text/plain) instead of rejecting it.
-                raw_body = req.get_body()
-                if not raw_body:
-                    return self._build_error_response("Request body is required")
-                client_input = raw_body.decode("utf-8")
+                return self._build_error_response("Invalid JSON body")
 
-            instance_id = await client.start_new("workflow_orchestrator", client_input=client_input)
+            instance_id = await client.start_new(WORKFLOW_ORCHESTRATOR_NAME, client_input=req_body)
 
             base_url = self._build_base_url(req.url)
             status_url = f"{base_url}/api/workflow/status/{instance_id}"
@@ -1097,8 +961,6 @@ class AgentFunctionApp(DFAppBase):
         thread_id: str,
     ) -> dict[str, Any]:
         """Poll the entity state until a response is available or timeout occurs."""
-        import asyncio
-
         max_retries = self.max_poll_retries
         interval = self.poll_interval_seconds
         retry_count = 0
