@@ -1189,7 +1189,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.8.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.8.1...HEAD
+[1.8.1]: https://github.com/microsoft/agent-framework/compare/python-1.8.0...python-1.8.1
 [1.8.0]: https://github.com/microsoft/agent-framework/compare/python-1.7.0...python-1.8.0
 [1.7.0]: https://github.com/microsoft/agent-framework/compare/python-1.6.0...python-1.7.0
 [1.6.0]: https://github.com/microsoft/agent-framework/compare/python-1.5.0...python-1.6.0
