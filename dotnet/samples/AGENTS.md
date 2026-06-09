@@ -3,8 +3,6 @@
 > This file documents the structure and conventions of the .NET samples so that
 > agents (AI or human) can maintain them without rediscovering decisions.
 
-See also [SAMPLE_GUIDELINES.md](./SAMPLE_GUIDELINES.md) for per-sample authoring guidance.
-
 ## Directory layout
 
 ```
