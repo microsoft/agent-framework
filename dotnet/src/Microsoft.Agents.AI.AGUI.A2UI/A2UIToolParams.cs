@@ -70,7 +70,7 @@ public static class A2UIToolDefinitions
     /// <summary>
     /// Gets the planner-facing description of the <c>generate_a2ui</c> tool.
     /// </summary>
-    public static string GenerateA2UIToolDescription =>
+    public const string GenerateA2UIToolDescription =
         "Generate or update a dynamic A2UI surface based on the conversation. " +
         "A secondary LLM designs the UI components and data. " +
         "Use intent='create' (default) when the user requests new visual content " +
@@ -82,7 +82,7 @@ public static class A2UIToolDefinitions
     /// <summary>
     /// Gets the planner-facing description of the <c>generate_a2ui</c> tool's <c>intent</c> argument.
     /// </summary>
-    public static string IntentArgumentDescription =>
+    public const string IntentArgumentDescription =
         "'create' to render a new surface; 'update' to modify a surface " +
         "previously rendered in this conversation. Defaults to 'create'.";
 
@@ -90,13 +90,13 @@ public static class A2UIToolDefinitions
     /// Gets the planner-facing description of the <c>generate_a2ui</c> tool's
     /// <c>target_surface_id</c> argument.
     /// </summary>
-    public static string TargetSurfaceIdArgumentDescription =>
+    public const string TargetSurfaceIdArgumentDescription =
         "Required when intent='update'. The surface id of the prior render to modify.";
 
     /// <summary>
     /// Gets the planner-facing description of the <c>generate_a2ui</c> tool's <c>changes</c> argument.
     /// </summary>
-    public static string ChangesArgumentDescription =>
+    public const string ChangesArgumentDescription =
         "Optional natural-language description of the changes to apply when intent='update'.";
 
     /// <summary>

@@ -53,4 +53,13 @@ public static class A2UIConstants
     /// The activity type identifier for A2UI recovery lifecycle records.
     /// </summary>
     public const string A2UIRecoveryActivityType = "a2ui_recovery";
+
+    /// <summary>
+    /// The description the AG-UI A2UI middleware uses for the context entry that carries
+    /// the component catalog schema. Adapters match this description to route the catalog
+    /// into the subagent prompt's "Available Components" section.
+    /// </summary>
+    public const string A2UISchemaContextDescription =
+        "A2UI Component Schema — available components for generating UI surfaces. " +
+        "Use these component names and properties when creating A2UI operations.";
 }
