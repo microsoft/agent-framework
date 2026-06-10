@@ -145,11 +145,12 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         // Ensure the client is started
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
-        // Create or resume a session with streaming enabled
+        // Create or resume a session with streaming enabled by default
         SessionConfig sessionConfig = this._sessionConfig != null
             ? CopySessionConfig(this._sessionConfig)
             : new SessionConfig { Streaming = true };
 
+        bool isStreaming = sessionConfig.Streaming ?? true;
         CopilotSession copilotSession;
         if (typedSession.SessionId is not null)
         {
@@ -178,7 +179,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                         break;
 
                     case AssistantMessageEvent assistantMessage:
-                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage, isStreaming));
                         break;
 
                     case AssistantUsageEvent usageEvent:
@@ -326,12 +327,18 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    internal AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageEvent assistantMessage)
+    /// <summary>
+    /// Converts an <see cref="AssistantMessageEvent"/> to an <see cref="AgentResponseUpdate"/>.
+    /// When streaming is enabled, text was already delivered via delta events, so only raw metadata is emitted.
+    /// When streaming is disabled, the full message text is emitted as <see cref="TextContent"/>.
+    /// </summary>
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageEvent assistantMessage, bool isStreaming)
     {
-        AIContent content = new()
-        {
-            RawRepresentation = assistantMessage
-        };
+        // When streaming, text was already delivered via AssistantMessageDeltaEvent.
+        // When not streaming, this is the only opportunity to emit the response text.
+        AIContent content = isStreaming
+            ? new AIContent { RawRepresentation = assistantMessage }
+            : new TextContent(assistantMessage.Data?.Content ?? string.Empty) { RawRepresentation = assistantMessage };
 
         return new AgentResponseUpdate(ChatRole.Assistant, [content])
         {

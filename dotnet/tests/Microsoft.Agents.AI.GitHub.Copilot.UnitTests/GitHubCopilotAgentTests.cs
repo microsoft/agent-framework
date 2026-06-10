@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using GitHub.Copilot;
 using GitHub.Copilot.Rpc;
@@ -288,7 +289,7 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public void ConvertToAgentResponseUpdate_AssistantMessageEvent_DoesNotEmitTextContent()
+    public void ConvertToAgentResponseUpdate_AssistantMessageEventWhenStreaming_DoesNotEmitTextContent()
     {
         var assistantMessage = new AssistantMessageEvent
         {
@@ -301,11 +302,62 @@ public sealed class GitHubCopilotAgentTests
         CopilotClient copilotClient = new(new CopilotClientOptions());
         const string TestId = "agent-id";
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
-        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage);
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage, isStreaming: true);
 
-        // result.Text need to be empty because the content was already delivered via delta events, and we want to avoid emitting duplicate content in the response update.
-        // The content should be delivered through TextContent in the Contents collection instead.
+        // result.Text should be empty because content was already delivered via delta events.
         Assert.Empty(result.Text);
         Assert.DoesNotContain(result.Contents, c => c is TextContent);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_AssistantMessageEventWhenNotStreaming_EmitsTextContent()
+    {
+        // Arrange
+        const string ExpectedContent = "Full response text from non-streaming session";
+        var assistantMessage = new AssistantMessageEvent
+        {
+            Data = new AssistantMessageData
+            {
+                MessageId = "msg-789",
+                Content = ExpectedContent
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        const string TestId = "agent-id";
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage, isStreaming: false);
+
+        // Assert - text must be emitted since no delta events precede it in non-streaming mode.
+        Assert.Equal(ExpectedContent, result.Text);
+        Assert.Contains(result.Contents, c => c is TextContent);
+        TextContent textContent = (TextContent)result.Contents.Single(c => c is TextContent);
+        Assert.Equal(ExpectedContent, textContent.Text);
+        Assert.Same(assistantMessage, textContent.RawRepresentation);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_AssistantMessageEventWhenNotStreaming_HandlesEmptyContent()
+    {
+        // Arrange
+        var assistantMessage = new AssistantMessageEvent
+        {
+            Data = new AssistantMessageData
+            {
+                MessageId = "msg-000",
+                Content = string.Empty
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        const string TestId = "agent-id";
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage, isStreaming: false);
+
+        // Assert - should emit empty TextContent rather than throwing.
+        Assert.Empty(result.Text);
+        Assert.Contains(result.Contents, c => c is TextContent);
     }
 }
