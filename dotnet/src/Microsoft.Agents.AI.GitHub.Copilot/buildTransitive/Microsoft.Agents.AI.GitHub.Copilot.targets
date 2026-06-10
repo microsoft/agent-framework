@@ -1,0 +1,31 @@
+<Project>
+  <!--
+    Bridge GitHub.Copilot.SDK's build/ targets to transitive consumers.
+
+    GitHub.Copilot.SDK ships its CLI download / binary-copy MSBuild targets under
+    build/, which means they only auto-import for projects with a DIRECT
+    PackageReference to GitHub.Copilot.SDK. Consumers of this package
+    (Microsoft.Agents.AI.GitHub.Copilot) would otherwise get only the managed
+    adapter .dll, no copilot CLI binary in their output, and the SDK would fail
+    at runtime with:
+
+        Copilot CLI not found at 'bin/{config}/{tfm}/runtimes/{rid}/native/copilot.exe'
+
+    This file ships under buildTransitive/ so NuGet auto-imports it for every
+    transitive consumer, locates the SDK in the NuGet package cache, and imports
+    the SDK's build/ targets so the CLI binary gets downloaded and copied to the
+    consumer's output as expected.
+
+    The companion .props file is generated at this package's pack time and sets
+    $(_MicrosoftAgentsAICopilotSdkVersion) to the SDK version this package was
+    built against. Consumers may opt out via $(CopilotSkipCliDownload)=true (also
+    honored by the SDK's own targets) or override the SDK version path by
+    setting $(_MicrosoftAgentsAICopilotSdkVersion) before this file is imported.
+  -->
+  <PropertyGroup>
+    <_MicrosoftAgentsAICopilotSdkBuildDir Condition="'$(_MicrosoftAgentsAICopilotSdkVersion)' != ''">$([System.IO.Path]::Combine('$(NuGetPackageRoot)', 'github.copilot.sdk', '$(_MicrosoftAgentsAICopilotSdkVersion)', 'build'))</_MicrosoftAgentsAICopilotSdkBuildDir>
+  </PropertyGroup>
+
+  <Import Project="$(_MicrosoftAgentsAICopilotSdkBuildDir)/GitHub.Copilot.SDK.targets"
+          Condition="'$(_MicrosoftAgentsAICopilotSdkBuildDir)' != '' And Exists('$(_MicrosoftAgentsAICopilotSdkBuildDir)/GitHub.Copilot.SDK.targets')" />
+</Project>
