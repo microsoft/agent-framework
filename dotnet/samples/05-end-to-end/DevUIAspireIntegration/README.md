@@ -9,7 +9,7 @@ The solution contains two agent services:
 
 ## Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
+- [.NET 10 SDK](https://learn.microsoft.com/dotnet/core/install/)
 - [Aspire CLI](https://learn.microsoft.com/dotnet/aspire/fundamentals/setup-tooling)
 - An Azure subscription with access to [Azure AI Foundry](https://learn.microsoft.com/azure/ai-studio/)
 - Azure CLI authenticated (`az login`)
