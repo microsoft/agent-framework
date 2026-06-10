@@ -435,6 +435,26 @@ async def test_prepare_run_context_handles_function_kwargs(
     assert ctx["client_kwargs"]["session"] is session
 
 
+async def test_prepare_run_context_keeps_explicit_conversation_id_with_session(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    agent = Agent(client=chat_client_base)
+    session = agent.create_session()
+
+    ctx = await agent._prepare_run_context(  # type: ignore[reportPrivateUsage]
+        messages="Hello",
+        session=session,
+        tools=None,
+        options={"conversation_id": "resp_manual_123", "store": True},
+        compaction_strategy=None,
+        tokenizer=None,
+        function_invocation_kwargs=None,
+        client_kwargs=None,
+    )
+
+    assert ctx["chat_options"]["conversation_id"] == "resp_manual_123"
+
+
 async def test_chat_agent_persists_history_per_service_call(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:

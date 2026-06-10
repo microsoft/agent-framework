@@ -1288,10 +1288,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         model = opts.pop("model", None)
 
         # Build options dict from run() options merged with provided options
+        session_conversation_id = active_session.service_session_id if active_session else None
         run_opts: dict[str, Any] = {
-            "conversation_id": active_session.service_session_id
-            if active_session
-            else opts.pop("conversation_id", None),
+            "conversation_id": session_conversation_id or opts.pop("conversation_id", None),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
             "frequency_penalty": opts.pop("frequency_penalty", None),
             "logit_bias": opts.pop("logit_bias", None),
