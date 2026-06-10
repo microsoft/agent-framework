@@ -3136,7 +3136,7 @@ async def test_capture_messages_preserves_non_ascii_characters(mock_chat_client,
     """Test that non-ASCII characters (e.g., Japanese) are preserved in span attributes."""
     import json
 
-    japanese_text = "銇撱倱銇仭銇笘鐣?  # "Hello World" in Japanese
+    japanese_text = "\u3053\u3093\u306b\u3061\u306f\u4e16\u754c"  # "Hello World" in Japanese
 
     class ClientWithJapanese(mock_chat_client):
         async def _inner_get_response(self, *, messages, options, **kwargs):
@@ -3329,7 +3329,7 @@ async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMe
     """Test that non-ASCII characters are preserved in tool arguments span attribute."""
     import json
 
-    korean_text = "鞎堧厱頃橃劯鞖?  # "Hello" in Korean
+    korean_text = "\uc548\ub155\ud558\uc138\uc694"  # "Hello" in Korean
 
     @tool
     def greet(message: str) -> str:
@@ -3386,7 +3386,7 @@ async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
 
     from pydantic import BaseModel
 
-    japanese_text = "銇撱倱銇仭銇?  # "Hello" in Japanese
+    japanese_text = "\u3053\u3093\u306b\u3061\u306f"  # "Hello" in Japanese
 
     class Greeting(BaseModel):
         message: str
