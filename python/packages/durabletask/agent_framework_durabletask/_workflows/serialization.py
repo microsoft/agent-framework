@@ -47,7 +47,10 @@ def resolve_type(type_key: str) -> type | None:
     try:
         module_name, class_name = type_key.split(":", 1)
         module = importlib.import_module(module_name)
-        return getattr(module, class_name, None)
+        resolved = getattr(module, class_name, None)
+        # Only return actual classes. A non-type attribute (function, module member,
+        # etc.) would raise TypeError in issubclass() inside reconstruct_to_type().
+        return resolved if isinstance(resolved, type) else None
     except Exception:
         logger.debug("Could not resolve type %s", type_key)
         return None
@@ -67,7 +70,7 @@ def strip_pickle_markers(data: Any) -> Any:
     ``pickle.loads()`` and enable **arbitrary code execution**.
 
     This function walks the incoming data structure and replaces any ``dict``
-    that contains either marker key with ``None``, neutralising the attack
+    that contains either marker key with ``None``, neutralizing the attack
     vector while leaving all other data untouched.
 
     It **must** be called on every value that originates from an untrusted

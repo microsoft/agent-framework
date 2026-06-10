@@ -792,14 +792,25 @@ def run_workflow_orchestrator(
             })
 
             for request_id, hitl_request in list(pending_hitl_requests.items()):
-                logger.debug("Waiting for HITL response for request: %s", request_id)
+                # Re-wait until a valid response arrives (or the request times out). A
+                # payload rejected by sanitization (pickle/type markers) does not consume
+                # the request, so the caller can resubmit a corrected response instead of
+                # losing the entire workflow run.
+                while True:
+                    logger.debug("Waiting for HITL response for request: %s", request_id)
 
-                approval_task = ctx.wait_for_external_event(request_id)
-                timeout_task = ctx.create_timer(ctx.current_utc_datetime + timedelta(hours=hitl_timeout_hours))
+                    approval_task = ctx.wait_for_external_event(request_id)
+                    timeout_task = ctx.create_timer(ctx.current_utc_datetime + timedelta(hours=hitl_timeout_hours))
 
-                winner = yield ctx.task_any([approval_task, timeout_task])
+                    winner = yield ctx.task_any([approval_task, timeout_task])
 
-                if winner == approval_task:
+                    if winner != approval_task:
+                        ctx.cancel_task(approval_task)
+                        logger.warning("HITL request %s timed out after %s hours", request_id, hitl_timeout_hours)
+                        raise TimeoutError(
+                            f"Human-in-the-loop request '{request_id}' timed out after {hitl_timeout_hours} hours."
+                        )
+
                     ctx.cancel_task(timeout_task)
 
                     raw_response = ctx.get_task_result(approval_task)
@@ -817,24 +828,26 @@ def run_workflow_orchestrator(
                         except (json.JSONDecodeError, TypeError):
                             logger.debug("Response is not JSON, keeping as string")
 
+                    # Sanitize against pickle-marker injection in case a caller bypassed
+                    # DurableWorkflowClient.send_hitl_response and raised the external
+                    # event directly (e.g. via the raw DTS client). Sanitize *before*
+                    # consuming the request so a rejected payload can be resubmitted.
+                    sanitized_response = strip_pickle_markers(raw_response)
+                    if sanitized_response is None and raw_response is not None:
+                        logger.warning(
+                            "Rejected HITL response for request %s: payload contained "
+                            "disallowed pickle/type markers. Awaiting a new response.",
+                            request_id,
+                        )
+                        continue
+
                     del pending_hitl_requests[request_id]
-
-                    # Sanitize against pickle-marker injection in case a caller
-                    # bypassed DurableWorkflowClient.send_hitl_response and raised
-                    # the external event directly (e.g. via the raw DTS client).
-                    raw_response = strip_pickle_markers(raw_response)
-
                     _route_hitl_response(
                         hitl_request,
-                        raw_response,
+                        sanitized_response,
                         pending_messages,
                     )
-                else:
-                    ctx.cancel_task(approval_task)
-                    logger.warning("HITL request %s timed out after %s hours", request_id, hitl_timeout_hours)
-                    raise TimeoutError(
-                        f"Human-in-the-loop request '{request_id}' timed out after {hitl_timeout_hours} hours."
-                    )
+                    break
 
             ctx.set_custom_status({"state": "running"})
 
