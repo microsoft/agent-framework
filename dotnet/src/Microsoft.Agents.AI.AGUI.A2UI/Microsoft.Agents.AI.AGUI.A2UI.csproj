@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Internal building block consumed by AG-UI hosting samples and adapters; not shipped as a package. -->
+    <Title>Microsoft Agent Framework AG-UI A2UI Toolkit</Title>
+    <Description>Framework-agnostic helpers for building A2UI (Agent-to-UI) generation tools on top of the AG-UI protocol.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.AGUI.A2UI.UnitTests" />
+  </ItemGroup>
+
+</Project>

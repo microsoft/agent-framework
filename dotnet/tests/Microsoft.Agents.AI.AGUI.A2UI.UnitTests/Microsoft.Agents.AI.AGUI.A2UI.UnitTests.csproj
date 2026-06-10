@@ -1,0 +1,11 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="FluentAssertions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.AGUI.A2UI\Microsoft.Agents.AI.AGUI.A2UI.csproj" />
+  </ItemGroup>
+
+</Project>
