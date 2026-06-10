@@ -883,7 +883,13 @@ async def test_runner_checkpoint_with_resumed_flag():
     state = State()
 
     runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
-    runner._mark_resumed(5)  # pyright: ignore[reportPrivateUsage]
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="resumed-cp",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=5,
+    )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
 
     # Add a message to trigger the checkpoint creation path
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id="START"))
@@ -901,6 +907,86 @@ async def test_runner_checkpoint_with_resumed_flag():
 
     # After completing, resumed flag should be reset
     assert runner._resumed_from_checkpoint is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_mark_resumed_sets_previous_checkpoint_id():
+    """_mark_resumed must populate _previous_checkpoint_id so future checkpoints chain back to the resume point."""
+    runner = Runner(
+        [],
+        {},
+        State(),
+        InProcRunnerContext(),
+        "test_name",
+        graph_signature_hash="test_hash",
+    )
+
+    # Pre-condition: nothing to chain back to
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="resumed-cp-id",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=3,
+    )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
+
+    assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
+    assert runner._iteration == 3  # pyright: ignore[reportPrivateUsage]
+    assert runner._previous_checkpoint_id == "resumed-cp-id"  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_post_resume_checkpoint_chains_to_resumed_checkpoint():
+    """After resuming, the next checkpoint created must reference the resumed checkpoint as its parent."""
+    storage = InMemoryCheckpointStorage()
+    ctx = CheckpointingContext(storage)
+    executor_a = MockExecutor(id="executor_a")
+    executor_b = MockExecutor(id="executor_b")
+
+    edges = [
+        SingleEdgeGroup(executor_a.id, executor_b.id),
+        SingleEdgeGroup(executor_b.id, executor_a.id),
+    ]
+
+    executors: dict[str, Executor] = {
+        executor_a.id: executor_a,
+        executor_b.id: executor_b,
+    }
+    state = State()
+
+    runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Simulate having resumed from a prior checkpoint
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="parent-checkpoint-id",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=1,
+    )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
+
+    # Seed a message so the runner has work to do (and creates checkpoints at superstep boundaries)
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id=executor_a.id))
+
+    async for _ in runner.run_until_convergence():
+        pass
+
+    # Find the first checkpoint created after the resume point (across all workflows tracked by storage)
+    new_checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name="test_name"),
+        key=lambda c: c.timestamp,
+    )
+    assert new_checkpoints, "Resuming and running should produce at least one new checkpoint"
+
+    # The first new checkpoint must chain to the resumed-from checkpoint, not to None
+    assert new_checkpoints[0].previous_checkpoint_id == "parent-checkpoint-id", (
+        "First post-resume checkpoint must chain to the resumed checkpoint id; "
+        f"got {new_checkpoints[0].previous_checkpoint_id!r}"
+    )
+
+    # Subsequent post-resume checkpoints continue the chain
+    for i in range(1, len(new_checkpoints)):
+        assert new_checkpoints[i].previous_checkpoint_id == new_checkpoints[i - 1].checkpoint_id
 
 
 class ExecutorThatFailsWithEvents(Executor):
@@ -1127,7 +1213,13 @@ async def test_runner_reset_for_new_run_clears_shared_state():
 async def test_runner_reset_for_new_run_clears_resumed_from_checkpoint_flag():
     """reset_for_new_run clears the flag set by restore_from_checkpoint."""
     runner = _make_runner()
-    runner._mark_resumed(iteration=5)  # pyright: ignore[reportPrivateUsage]
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="resumed-cp",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=5,
+    )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
     assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
 
     await runner.reset_for_new_run()
