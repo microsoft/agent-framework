@@ -215,6 +215,8 @@ public sealed class GitHubCopilotAgentTests
         // Assert
         Assert.Null(result.Model);
         Assert.Null(result.ReasoningEffort);
+        Assert.Null(result.ReasoningSummary);
+        Assert.Null(result.ContextTier);
         Assert.Null(result.Tools);
         Assert.Null(result.SystemMessage);
         Assert.Null(result.OnPermissionRequest);
