@@ -89,8 +89,10 @@ AIAgent agent =
     .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
-    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    .AsHarnessAgent(new HarnessAgentOptions
     {
+        MaxContextWindowTokens = MaxContextWindowTokens,
+        MaxOutputTokens = MaxOutputTokens,
         Name = "CodeExecutionAgent",
         Description = "A technical assistant with sandboxed code execution and skill-based workflows.",
         OpenTelemetrySourceName = TracingSourceName,

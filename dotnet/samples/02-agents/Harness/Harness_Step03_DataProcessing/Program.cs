@@ -68,8 +68,10 @@ AIAgent agent =
     .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
-    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    .AsHarnessAgent(new HarnessAgentOptions
     {
+        MaxContextWindowTokens = MaxContextWindowTokens,
+        MaxOutputTokens = MaxOutputTokens,
         Name = "DataAnalyst",
         Description = "A data analyst assistant that reads, analyzes, and processes data files.",
         OpenTelemetrySourceName = TracingSourceName,
