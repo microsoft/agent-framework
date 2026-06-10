@@ -321,6 +321,189 @@ public sealed class DefaultMcpToolHandlerTests
 
     #endregion
 
+    #region ComputeHeadersHash Tests
+
+    [Fact]
+    public void ComputeHeadersHash_WithNullHeaders_ReturnsEmptyString()
+    {
+        // Act
+        string result = DefaultMcpToolHandler.ComputeHeadersHash(null);
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_WithEmptyHeaders_ReturnsEmptyString()
+    {
+        // Act
+        string result = DefaultMcpToolHandler.ComputeHeadersHash(new Dictionary<string, string>());
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_SameHeadersDifferentOrder_ReturnsSameHash()
+    {
+        // Arrange
+        Dictionary<string, string> headers1 = new()
+        {
+            ["Authorization"] = "Bearer token123",
+            ["X-Custom"] = "value1"
+        };
+        Dictionary<string, string> headers2 = new()
+        {
+            ["X-Custom"] = "value1",
+            ["Authorization"] = "Bearer token123"
+        };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().Be(hash2);
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_SameKeysDifferentCaseKeys_ReturnsSameHash()
+    {
+        // Arrange — RFC 7230: header names are case-insensitive
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer token" };
+        Dictionary<string, string> headers2 = new() { ["authorization"] = "Bearer token" };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().Be(hash2);
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_SameKeysDifferentCaseValues_ReturnsDifferentHash()
+    {
+        // Arrange — RFC 7235: credentials are case-sensitive
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer ABC" };
+        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer abc" };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().NotBe(hash2);
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_DifferentHeaders_ReturnsDifferentHash()
+    {
+        // Arrange
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer token1" };
+        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer token2" };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().NotBe(hash2);
+    }
+
+    #endregion
+
+    #region Cache Key Discrimination Tests
+
+    // These tests exercise BuildCacheKey directly because the integration path
+    // (InvokeToolAsync against a fake server) doesn't surface cache-hit behavior
+    // without standing up a real MCP server — McpClient.CreateAsync fails before
+    // _clients[key] = newClient runs, so nothing ever gets cached.
+    // Tuple equality on the returned 4-tuple verifies that the dimensions
+    // collectively discriminate cache entries.
+
+    [Fact]
+    public void BuildCacheKey_SameInputs_ReturnsEqualKeys()
+    {
+        // Arrange
+        Dictionary<string, string> headers = new() { ["Authorization"] = "Bearer token" };
+
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
+
+        // Assert
+        key1.Should().Be(key2);
+    }
+
+    [Fact]
+    public void BuildCacheKey_DifferentConnectionName_ReturnsDifferentKeys()
+    {
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-a", null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-b", null);
+
+        // Assert
+        key1.Should().NotBe(key2);
+        key1.Connection.Should().Be("connection-a");
+        key2.Connection.Should().Be("connection-b");
+    }
+
+    [Fact]
+    public void BuildCacheKey_DifferentServerLabel_ReturnsDifferentKeys()
+    {
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-a", null, null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-b", null, null);
+
+        // Assert
+        key1.Should().NotBe(key2);
+        key1.Label.Should().Be("label-a");
+        key2.Label.Should().Be("label-b");
+    }
+
+    [Fact]
+    public void BuildCacheKey_CaseSensitiveUrlPath_ReturnsDifferentKeys()
+    {
+        // Arrange — RFC 3986: URL path is case-sensitive
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/Tools", null, null, null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/tools", null, null, null);
+
+        // Assert
+        key1.Should().NotBe(key2);
+    }
+
+    [Fact]
+    public void BuildCacheKey_HeaderValuesCaseSensitive_ReturnsDifferentKeys()
+    {
+        // Arrange — RFC 7235: credentials are case-sensitive
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer ABC" };
+        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer abc" };
+
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers1);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers2);
+
+        // Assert — header value case must propagate into the cache key
+        key1.Should().NotBe(key2);
+        key1.HeadersHash.Should().NotBe(key2.HeadersHash);
+    }
+
+    [Fact]
+    public void BuildCacheKey_NullLabelAndConnection_NormalizesToEmptyString()
+    {
+        // Act
+        var key = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, null);
+
+        // Assert — verifies null-safety contract callers rely on
+        key.Label.Should().BeEmpty();
+        key.Connection.Should().BeEmpty();
+        key.HeadersHash.Should().BeEmpty();
+    }
+
+    #endregion
+
     #region Reserved Tools/List Tests
 
     [Fact]
