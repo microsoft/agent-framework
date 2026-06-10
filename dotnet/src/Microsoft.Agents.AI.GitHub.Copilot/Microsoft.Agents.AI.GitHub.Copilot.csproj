@@ -42,12 +42,21 @@
     adapter .dll, no copilot.exe in their output, and a runtime failure at the
     first RunAsync call.
 
-    The targets file in buildTransitive/ is static; the .props file is generated
-    here at pack time so the SDK version we were built against is baked in and
-    consumers don't have to discover it from the nuspec. See the targets file
-    for the full design rationale.
+    The targets file in buildTransitive/ is static and contains all of the
+    Condition / Import logic. The .props file generated here just bakes the
+    SDK version this package was built against into a dedicated property
+    ($(_MicrosoftAgentsAICopilotSdkPackagedVersion)) — no Condition or
+    inner $(...) reference in the generated file, so we avoid any MSBuild
+    escape gymnastics during string construction. The static targets file
+    then defaults $(_MicrosoftAgentsAICopilotSdkVersion) to the packaged
+    version unless the consumer overrides it.
   -->
-  <Target Name="_GenerateBuildTransitiveProps" BeforeTargets="_GetPackageFiles">
+  <ItemGroup>
+    <None Include="buildTransitive\Microsoft.Agents.AI.GitHub.Copilot.targets" Pack="true" PackagePath="buildTransitive\" />
+    <None Include="buildTransitive\Microsoft.Agents.AI.GitHub.Copilot.props" Pack="true" PackagePath="buildTransitive\" />
+  </ItemGroup>
+
+  <Target Name="_GenerateBuildTransitiveProps" BeforeTargets="Build;Pack;_GetPackageFiles">
     <ItemGroup>
       <_CopilotSdkPackageVersion Include="@(PackageVersion)" Condition="'%(Identity)' == 'GitHub.Copilot.SDK'" />
     </ItemGroup>
@@ -58,24 +67,17 @@
            Text="Could not resolve GitHub.Copilot.SDK version from PackageVersion items. Ensure the central package version is declared in Directory.Packages.props." />
     <PropertyGroup>
       <_BuildTransitivePropsContent>
-&lt;Project&gt;
-  &lt;PropertyGroup&gt;
-    &lt;_MicrosoftAgentsAICopilotSdkVersion Condition=&quot;'%24(_MicrosoftAgentsAICopilotSdkVersion)' == ''&quot;&gt;$(_CopilotSdkResolvedVersion)&lt;/_MicrosoftAgentsAICopilotSdkVersion&gt;
-  &lt;/PropertyGroup&gt;
-&lt;/Project&gt;
+<![CDATA[<Project>
+  <PropertyGroup>
+    <_MicrosoftAgentsAICopilotSdkPackagedVersion>$(_CopilotSdkResolvedVersion)</_MicrosoftAgentsAICopilotSdkPackagedVersion>
+  </PropertyGroup>
+</Project>]]>
       </_BuildTransitivePropsContent>
     </PropertyGroup>
     <WriteLinesToFile File="$(MSBuildThisFileDirectory)buildTransitive\Microsoft.Agents.AI.GitHub.Copilot.props"
                       Lines="$(_BuildTransitivePropsContent)"
                       Overwrite="true"
                       WriteOnlyWhenDifferent="true" />
-    <ItemGroup>
-      <None Include="buildTransitive\Microsoft.Agents.AI.GitHub.Copilot.props" Pack="true" PackagePath="buildTransitive\" />
-    </ItemGroup>
   </Target>
-
-  <ItemGroup>
-    <None Include="buildTransitive\Microsoft.Agents.AI.GitHub.Copilot.targets" Pack="true" PackagePath="buildTransitive\" />
-  </ItemGroup>
 
 </Project>
