@@ -158,7 +158,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
                 return existingClient;
             }
 
-            McpClient newClient = await this.CreateClientAsync(serverUrl, serverLabel, headers, trimmedUrl, cancellationToken).ConfigureAwait(false);
+            McpClient newClient = await this.CreateClientAsync(trimmedUrl, serverLabel, headers, trimmedUrl, cancellationToken).ConfigureAwait(false);
             this._clients[clientCacheKey] = newClient;
             return newClient;
         }
