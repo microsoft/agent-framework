@@ -8,12 +8,22 @@ sanitizing HITL responses before delivery.
 """
 
 import json
+from dataclasses import dataclass
 from unittest.mock import Mock
 
 import pytest
 
 from agent_framework_durabletask import DurableWorkflowClient
 from agent_framework_durabletask._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME
+from agent_framework_durabletask._workflows.serialization import serialize_value
+
+
+@dataclass
+class _Receipt:
+    """Module-level dataclass so it is picklable by serialize_value."""
+
+    order_id: int
+    total: float
 
 
 @pytest.fixture
@@ -92,6 +102,21 @@ class TestAwaitWorkflowOutput:
         mock_client.wait_for_orchestration_completion.return_value = metadata
 
         assert workflow_client.await_workflow_output("instance-1") is None
+
+    def test_reconstructs_typed_outputs(self, workflow_client: DurableWorkflowClient, mock_client: Mock) -> None:
+        """Typed outputs encoded by the activity come back as objects, not marker dicts."""
+        receipt = _Receipt(order_id=7, total=19.99)
+        # The shared activity stores each yielded output via serialize_value(), so a
+        # typed object is persisted as a checkpoint-marker dict.
+        metadata = Mock()
+        metadata.runtime_status.name = "COMPLETED"
+        metadata.serialized_output = json.dumps([serialize_value(receipt)])
+        mock_client.wait_for_orchestration_completion.return_value = metadata
+
+        output = workflow_client.await_workflow_output("instance-1")
+
+        assert output == [receipt]
+        assert isinstance(output[0], _Receipt)
 
     def test_raises_timeout_when_not_completed(self, workflow_client: DurableWorkflowClient, mock_client: Mock) -> None:
         """A None metadata (no completion) raises TimeoutError."""

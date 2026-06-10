@@ -14,7 +14,7 @@ import logging
 import re
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -39,6 +39,7 @@ from agent_framework_durabletask import (
     DurableAgentState,
     DurableAIAgent,
     RunRequest,
+    deserialize_workflow_output,
     execute_workflow_activity,
     plan_workflow_registration,
 )
@@ -53,6 +54,32 @@ logger = logging.getLogger("agent_framework.azurefunctions")
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
+
+
+def _json_default(obj: Any) -> Any:
+    """JSON fallback encoder for reconstructed workflow outputs.
+
+    A workflow's yielded outputs are reconstructed (see ``deserialize_workflow_output``)
+    before they reach the HTTP response, so they may be framework models
+    (e.g. ``AgentResponse``), dataclasses, or other non-JSON-native objects.
+    Prefer the type's own serialization so the response carries clean domain
+    JSON, falling back to ``str`` for anything without one.
+    """
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        try:
+            return to_dict()
+        except Exception:
+            logger.debug("to_dict() failed while encoding %s for HTTP output", type(obj).__name__)
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return model_dump(mode="json")
+        except Exception:
+            logger.debug("model_dump() failed while encoding %s for HTTP output", type(obj).__name__)
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    return str(obj)
 
 
 @dataclass
@@ -351,12 +378,19 @@ class AgentFunctionApp(DFAppBase):
             if not status:
                 return self._build_error_response("Instance not found", status_code=404)
 
+            # The workflow's yielded outputs are checkpoint-encoded by the shared
+            # activity (typed objects become pickle/type-marker dicts). Reconstruct
+            # the originals so the HTTP response carries clean domain JSON, matching
+            # what DurableWorkflowClient.await_workflow_output returns in-process.
+            # status.output is the workflow's own (trusted) orchestration result.
+            decoded_output = deserialize_workflow_output(status.output) if status.output is not None else None
+
             response = {
                 "instanceId": status.instance_id,
                 "runtimeStatus": status.runtime_status.name if status.runtime_status else None,
                 "customStatus": status.custom_status,
-                "output": status.output,
-                "error": status.output if status.runtime_status == df.OrchestrationRuntimeStatus.Failed else None,
+                "output": decoded_output,
+                "error": decoded_output if status.runtime_status == df.OrchestrationRuntimeStatus.Failed else None,
                 "createdTime": status.created_time.isoformat() if status.created_time else None,
                 "lastUpdatedTime": status.last_updated_time.isoformat() if status.last_updated_time else None,
             }
@@ -384,7 +418,7 @@ class AgentFunctionApp(DFAppBase):
                 response["pendingHumanInputRequests"] = pending_requests
 
             return func.HttpResponse(
-                json.dumps(response, default=str),
+                json.dumps(response, default=_json_default),
                 status_code=200,
                 mimetype="application/json",
             )

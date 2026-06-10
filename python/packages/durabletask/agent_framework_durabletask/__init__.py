@@ -58,6 +58,7 @@ from ._workflows.dt_context import DurableTaskWorkflowContext
 from ._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
 from ._workflows.registration import WorkflowRegistrationPlan, plan_workflow_registration
 from ._workflows.runner_context import CapturingRunnerContext
+from ._workflows.serialization import deserialize_workflow_output
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -117,6 +118,7 @@ __all__ = [
     "WorkflowOrchestrationContext",
     "WorkflowRegistrationPlan",
     "__version__",
+    "deserialize_workflow_output",
     "ensure_response_format",
     "execute_workflow_activity",
     "load_agent_response",

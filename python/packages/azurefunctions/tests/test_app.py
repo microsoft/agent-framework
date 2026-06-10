@@ -1462,5 +1462,49 @@ class TestAgentFunctionAppWorkflow:
 # See packages/durabletask/tests/test_workflow_activity.py.
 
 
+class TestWorkflowStatusOutputEncoding:
+    """The workflow status endpoint emits clean domain JSON for reconstructed outputs.
+
+    Reconstructed outputs (see ``deserialize_workflow_output``) may be framework
+    models or dataclasses; ``_json_default`` converts them via their own
+    serialization so the HTTP body is clean domain JSON rather than opaque
+    checkpoint-marker dicts or repr strings.
+    """
+
+    def test_encodes_framework_model_via_to_dict(self) -> None:
+        from agent_framework_azurefunctions._app import _json_default
+
+        response = AgentResponse(messages=[Message(role="assistant", contents=["hello"])])
+
+        encoded = _json_default(response)
+
+        assert encoded == response.to_dict()
+        # The result must be JSON-serializable (no marker dicts, no objects).
+        assert "hello" in json.dumps(encoded)
+
+    def test_encodes_dataclass_via_asdict(self) -> None:
+        from dataclasses import dataclass
+
+        from agent_framework_azurefunctions._app import _json_default
+
+        @dataclass
+        class Decision:
+            approved: bool
+            note: str
+
+        encoded = _json_default(Decision(approved=True, note="ok"))
+
+        assert encoded == {"approved": True, "note": "ok"}
+
+    def test_falls_back_to_str_for_plain_objects(self) -> None:
+        from agent_framework_azurefunctions._app import _json_default
+
+        class Opaque:
+            def __str__(self) -> str:
+                return "opaque-value"
+
+        assert _json_default(Opaque()) == "opaque-value"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

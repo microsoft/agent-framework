@@ -126,6 +126,33 @@ def deserialize_value(value: Any) -> Any:
     return decode_checkpoint_value(value)
 
 
+def deserialize_workflow_output(output: Any) -> Any:
+    """Reconstruct the workflow outputs produced by the shared activity.
+
+    Each value an executor yields is encoded with :func:`serialize_value` before
+    it reaches the orchestrator, so typed objects (dataclasses, Pydantic models,
+    ``AgentResponse``, ...) are stored as checkpoint-marker dicts. This reverses
+    that encoding so callers receive the original objects.
+
+    This is the single decode path shared by every host (the in-process
+    :class:`DurableWorkflowClient` and the Azure Functions status endpoint) so
+    they never diverge in how a completed workflow's output is reconstructed.
+
+    ``output`` must originate from the workflow's own orchestration result
+    (trusted durable storage), never from untrusted external input. Markers in
+    untrusted input must be neutralized with :func:`strip_pickle_markers` first.
+
+    Args:
+        output: The workflow's orchestration result, already JSON-decoded (a list
+            of yielded outputs or a single value).
+
+    Returns:
+        The output with every checkpoint-encoded value reconstructed; primitives
+        and plain JSON structures pass through unchanged.
+    """
+    return deserialize_value(output)
+
+
 # ============================================================================
 # HITL Type Reconstruction
 # ============================================================================

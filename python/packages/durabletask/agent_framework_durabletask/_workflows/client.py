@@ -16,7 +16,7 @@ from typing import Any, cast
 from durabletask.client import TaskHubGrpcClient
 
 from .orchestrator import WORKFLOW_ORCHESTRATOR_NAME
-from .serialization import strip_pickle_markers
+from .serialization import deserialize_workflow_output, strip_pickle_markers
 
 logger = logging.getLogger("agent_framework.durabletask")
 
@@ -107,7 +107,10 @@ class DurableWorkflowClient:
 
         if metadata.serialized_output is None:
             return None
-        return json.loads(metadata.serialized_output)
+        # The shared activity encodes each yielded output with serialize_value()
+        # before it reaches the orchestrator, so typed objects come back as
+        # checkpoint-marker dicts. Reconstruct the originals before returning.
+        return deserialize_workflow_output(json.loads(metadata.serialized_output))
 
     def get_pending_hitl_requests(self, instance_id: str) -> list[dict[str, Any]]:
         """Return the workflow's pending human-in-the-loop (HITL) requests, if any.
