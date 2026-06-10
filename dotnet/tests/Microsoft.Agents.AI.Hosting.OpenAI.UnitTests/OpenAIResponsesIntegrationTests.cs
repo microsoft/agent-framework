@@ -1144,6 +1144,62 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         Assert.Null(mockChatClient.LastChatOptions.ConversationId);
     }
 
+    [Fact]
+    public async Task CreateResponse_WithRequestTool_ForwardsToolOptionsToChatClientAsync()
+    {
+        // Arrange
+        const string AgentName = "request-tool-agent";
+        const string Instructions = "You are a helpful assistant.";
+
+        this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions);
+        var mockChatClient = this.ResolveMockChatClient();
+
+        using StringContent content = new(
+            """
+            {
+              "input": "What is the weather in Valencia?",
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "get_weather",
+                  "description": "Retrieves current weather.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "location": { "type": "string" }
+                    },
+                    "required": [ "location" ],
+                    "additionalProperties": false
+                  },
+                  "strict": true
+                }
+              ],
+              "tool_choice": "required",
+              "parallel_tool_calls": false,
+              "stream": false
+            }
+            """,
+            Encoding.UTF8,
+            "application/json");
+
+        // Act
+        using HttpResponseMessage httpResponse = await this._httpClient!.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert
+        Assert.True(httpResponse.IsSuccessStatusCode, $"Response status: {httpResponse.StatusCode}");
+        await httpResponse.Content.ReadAsStringAsync();
+
+        Assert.NotNull(mockChatClient.LastChatOptions);
+        Assert.Equal(ChatToolMode.RequireAny, mockChatClient.LastChatOptions.ToolMode);
+        Assert.False(mockChatClient.LastChatOptions.AllowMultipleToolCalls);
+
+        AITool tool = Assert.Single(mockChatClient.LastChatOptions.Tools!);
+        Assert.Equal("get_weather", tool.Name);
+        Assert.Equal("Retrieves current weather.", tool.Description);
+    }
+
     /// <summary>
     /// Verifies that when a client provides a conversation ID in streaming mode, the underlying
     /// IChatClient does NOT receive that conversation ID via ChatOptions.ConversationId.

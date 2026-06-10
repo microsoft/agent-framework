@@ -113,6 +113,61 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
         Assert.Equal(ExpectedResponse, actualResponse);
     }
 
+    [Fact]
+    public async Task CreateResponse_WithRequestTool_ForwardsToolOptionsToResolvedAgentAsync()
+    {
+        // Arrange
+        const string AgentName = "tool-agent";
+
+        this._httpClient = await this.CreateTestServerWithAgentResolutionAsync(
+            (AgentName, "You are a helpful assistant.", "Tool options captured"));
+        var mockChatClient = this.ResolveMockChatClient(AgentName);
+
+        using StringContent requestContent = new(
+            $$"""
+            {
+              "agent": { "name": "{{AgentName}}" },
+              "input": "What is the weather in Valencia?",
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "get_weather",
+                  "description": "Retrieves current weather.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "location": { "type": "string" }
+                    },
+                    "required": [ "location" ],
+                    "additionalProperties": false
+                  }
+                }
+              ],
+              "tool_choice": "required",
+              "parallel_tool_calls": false
+            }
+            """,
+            Encoding.UTF8,
+            "application/json");
+
+        // Act
+        using HttpResponseMessage httpResponse = await this._httpClient!.PostAsync(
+            new Uri("/v1/responses", UriKind.Relative),
+            requestContent);
+
+        // Assert
+        Assert.True(httpResponse.IsSuccessStatusCode, $"Request failed with status {httpResponse.StatusCode}");
+        await httpResponse.Content.ReadAsStringAsync();
+
+        Assert.NotNull(mockChatClient.LastChatOptions);
+        Assert.Equal(ChatToolMode.RequireAny, mockChatClient.LastChatOptions.ToolMode);
+        Assert.False(mockChatClient.LastChatOptions.AllowMultipleToolCalls);
+
+        AITool tool = Assert.Single(mockChatClient.LastChatOptions.Tools!);
+        Assert.Equal("get_weather", tool.Name);
+        Assert.Equal("Retrieves current weather.", tool.Description);
+    }
+
     /// <summary>
     /// Verifies that agent resolution can distinguish between multiple agents.
     /// </summary>
@@ -470,5 +525,18 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
             ?? throw new InvalidOperationException("TestServer not found");
 
         return testServer.CreateClient();
+    }
+
+    private TestHelpers.SimpleMockChatClient ResolveMockChatClient(string agentName)
+    {
+        ArgumentNullException.ThrowIfNull(this._app, nameof(this._app));
+
+        var chatClient = this._app.Services.GetRequiredKeyedService<IChatClient>($"chat-client-{agentName}");
+        if (chatClient is not TestHelpers.SimpleMockChatClient mockChatClient)
+        {
+            throw new InvalidOperationException("Mock chat client not found or of incorrect type.");
+        }
+
+        return mockChatClient;
     }
 }

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -88,22 +89,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         string agentName = GetAgentName(request)!;
         AIAgent agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
 
-        var chatOptions = new ChatOptions
-        {
-            // Note: We intentionally do NOT set ConversationId on ChatOptions here.
-            // The conversation ID from the client request is used by the hosting layer
-            // to manage conversation storage, but should not be forwarded to the underlying
-            // IChatClient as it has its own concept of conversations (or none at all).
-            // ---
-            // ConversationId = request.Conversation?.Id,
-
-            Temperature = (float?)request.Temperature,
-            TopP = (float?)request.TopP,
-            MaxOutputTokens = request.MaxOutputTokens,
-            Instructions = request.Instructions,
-            ModelId = request.Model,
-        };
-        var options = new ChatClientAgentRunOptions(chatOptions);
+        var options = request.BuildOptions();
         var messages = new List<ChatMessage>();
 
         if (conversationHistory is not null)
