@@ -360,4 +360,26 @@ public sealed class GitHubCopilotAgentTests
         Assert.Empty(result.Text);
         Assert.Contains(result.Contents, c => c is TextContent);
     }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_AssistantMessageEventWhenNotStreaming_HandlesNullData()
+    {
+        // Arrange
+        var assistantMessage = new AssistantMessageEvent
+        {
+            Data = null!
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        const string TestId = "agent-id";
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage, isStreaming: false);
+
+        // Assert - null Data should produce empty TextContent via null-propagation fallback.
+        Assert.Empty(result.Text);
+        Assert.Contains(result.Contents, c => c is TextContent);
+        Assert.Null(result.MessageId);
+        Assert.Null(result.ResponseId);
+    }
 }
