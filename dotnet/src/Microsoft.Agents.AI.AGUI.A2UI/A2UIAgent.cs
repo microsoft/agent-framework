@@ -114,7 +114,10 @@ public sealed class A2UIAgent : DelegatingAIAgent
     {
         List<A2UIHistoryMessage> history = messages.Select(ToHistoryMessage).ToList();
 
-        async Task<string> GenerateA2UIAsync(
+        // The tool returns the parsed envelope (not the JSON string): a string result
+        // would be JSON-serialized a second time on its way into the AG-UI tool-result
+        // event, and the A2UI middleware would have to undo the double encoding.
+        async Task<JsonElement> GenerateA2UIAsync(
             [Description(A2UIToolDefinitions.IntentArgumentDescription)] string? intent = null,
             [Description(A2UIToolDefinitions.TargetSurfaceIdArgumentDescription)] string? target_surface_id = null,
             [Description(A2UIToolDefinitions.ChangesArgumentDescription)] string? changes = null,
@@ -124,7 +127,7 @@ public sealed class A2UIAgent : DelegatingAIAgent
                 intent, target_surface_id, changes, history, state, this._parameters.Guidelines);
             if (prep.Error is not null)
             {
-                return A2UIToolkit.WrapErrorEnvelope(prep.Error);
+                return ParseEnvelope(A2UIToolkit.WrapErrorEnvelope(prep.Error));
             }
 
             A2UIRecoveryResult result = await A2UIGenerationRecovery.RunAsync(
@@ -142,7 +145,7 @@ public sealed class A2UIAgent : DelegatingAIAgent
                 this._parameters.OnAttempt,
                 cancellationToken).ConfigureAwait(false);
 
-            return result.Envelope;
+            return ParseEnvelope(result.Envelope);
         }
 
         return AIFunctionFactory.Create(
@@ -231,6 +234,12 @@ public sealed class A2UIAgent : DelegatingAIAgent
         }
 
         return new A2UIHistoryMessage(message.Role.Value, content);
+    }
+
+    private static JsonElement ParseEnvelope(string envelope)
+    {
+        using var document = JsonDocument.Parse(envelope);
+        return document.RootElement.Clone();
     }
 
     private static JsonObject ToJsonObject(IDictionary<string, object?> arguments)
