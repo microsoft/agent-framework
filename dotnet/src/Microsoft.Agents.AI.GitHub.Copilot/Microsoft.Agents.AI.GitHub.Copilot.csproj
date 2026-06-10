@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <VersionSuffix>preview</VersionSuffix>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
     <!-- GitHub.Copilot.SDK only supports .NET 8.0+ -->
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <NoWarn>$(NoWarn);GHCP001</NoWarn>

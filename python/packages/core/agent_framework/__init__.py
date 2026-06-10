@@ -124,7 +124,7 @@ from ._harness._todo import (
     TodoSessionStore,
     TodoStore,
 )
-from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool
+from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool, SamplingApprovalCallback
 from ._middleware import (
     AgentContext,
     AgentMiddleware,
@@ -472,6 +472,7 @@ __all__ = [
     "RunContext",
     "Runner",
     "RunnerContext",
+    "SamplingApprovalCallback",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
     "SessionContext",
