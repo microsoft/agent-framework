@@ -2761,7 +2761,7 @@ class TestLongMessageTextHandling:
         assert result == "HELLO WORLD"
 
         # No temp variable should be created for short strings
-        temp_var = state.get("Local._TempMessageText0")
+        temp_var = state.get("Local.TempMessageText0")
         assert temp_var is None
 
     async def test_long_message_text_stored_in_temp_variable(self, mock_state):
@@ -2778,7 +2778,7 @@ class TestLongMessageTextHandling:
         assert result == "A" * 600  # Upper on 'A' is still 'A'
 
         # A temp variable should have been created
-        temp_var = state.get("Local._TempMessageText0")
+        temp_var = state.get("Local.TempMessageText0")
         assert temp_var == long_text
 
     async def test_find_with_long_message_text(self, mock_state):

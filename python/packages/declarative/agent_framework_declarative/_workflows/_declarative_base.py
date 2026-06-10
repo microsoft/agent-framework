@@ -63,6 +63,9 @@ logger = logging.getLogger(__name__)
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
 
+# Allowed identifier shape for object-attribute steps in declarative state paths
+# (matches PowerFx / Copilot Studio identifier rules).
+_SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 @dataclass(frozen=True)
 class DeclarativeEnvConfig:
@@ -331,16 +334,21 @@ class DeclarativeWorkflowState:
     def get(self, path: str, default: Any = None) -> Any:
         """Get a value from the state using a dot-notated path.
 
+        Dict-keyed segments may use arbitrary string keys (e.g. UUIDs in
+        ``System.conversations.<id>.messages``). Segments that would resolve
+        via object-attribute access must be valid declarative identifiers
+        (``[A-Za-z][A-Za-z0-9_]*``); other shapes return ``default``.
+
         Args:
             path: Dot-notated path like 'Local.results' or 'Workflow.Inputs.query'
             default: Default value if path doesn't exist
 
         Returns:
-            The value at the path, or default if not found
+            The value at the path, or default if not found or unreachable.
         """
         state_data = self.get_state_data()
         parts = path.split(".")
-        if not parts:
+        if not parts or any(not p for p in parts):
             return default
 
         namespace = parts[0]
@@ -377,10 +385,19 @@ class DeclarativeWorkflowState:
                 obj = obj.get(part, default)  # type: ignore[union-attr]
                 if obj is default:
                     return default
-            elif hasattr(obj, part):  # type: ignore[arg-type]
-                obj = getattr(obj, part)  # type: ignore[arg-type]
             else:
-                return default
+                # Attribute access is only allowed for safe declarative identifiers.
+                if not _SAFE_PATH_SEGMENT_RE.match(part):
+                    logger.warning(
+                        "DeclarativeWorkflowState.get: rejecting attribute segment %r in path %r",
+                        part,
+                        path,
+                    )
+                    return default
+                if hasattr(obj, part):  # type: ignore[arg-type]
+                    obj = getattr(obj, part)  # type: ignore[arg-type]
+                else:
+                    return default
 
         return obj  # type: ignore[return-value]
 
@@ -392,7 +409,7 @@ class DeclarativeWorkflowState:
             value: The value to set
 
         Raises:
-            ValueError: If attempting to set Workflow.Inputs (which is read-only)
+            ValueError: If attempting to set Workflow.Inputs (which is read-only).
         """
         state_data = self.get_state_data()
         parts = path.split(".")
@@ -692,7 +709,7 @@ class DeclarativeWorkflowState:
                 if isinstance(replacement, str):
                     if len(replacement) > MAX_INLINE_LENGTH:
                         # Store long strings in a temp variable to avoid PowerFx expression limit
-                        temp_var_name = f"_TempMessageText{temp_var_counter}"
+                        temp_var_name = f"TempMessageText{temp_var_counter}"
                         temp_var_counter += 1
                         self.set(f"Local.{temp_var_name}", replacement)
                         replacement_str = f"Local.{temp_var_name}"
@@ -849,6 +866,9 @@ class DeclarativeWorkflowState:
     def interpolate_string(self, text: str) -> str:
         """Interpolate {Variable.Path} references in a string.
 
+        Matched path segments must be valid declarative identifiers
+        (``[A-Za-z][A-Za-z0-9_]*``); other braced tokens are left as-is.
+
         This handles template-style variable substitution like:
         - "Created ticket #{Local.TicketParameters.TicketId}"
         - "Routing to {Local.RoutingParameters.TeamName}"
@@ -866,8 +886,8 @@ class DeclarativeWorkflowState:
             value = self.get(var_path)
             return str(value) if value is not None else ""
 
-        # Match {Variable.Path} patterns
-        pattern = r"\{([A-Za-z][A-Za-z0-9_.]*)\}"
+        # Match {Variable.Path} patterns where each segment is a declarative identifier.
+        pattern = r"\{([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\}"
 
         # Replace all matches
         result = text
