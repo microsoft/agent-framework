@@ -2,9 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.AGUI.A2UI;
 
@@ -52,6 +54,11 @@ public sealed record A2UIRecoveryResult(string Envelope, IReadOnlyList<A2UIAttem
 /// </remarks>
 public static class A2UIGenerationRecovery
 {
+    private static readonly A2UIValidationError s_noToolCallError = new(
+        A2UIValidationErrorCodes.EmptyComponents,
+        "components",
+        "Sub-agent did not call render_a2ui");
+
     /// <summary>
     /// Formats validation errors as a compact, model-readable list
     /// (<c>- [code] path: message</c> per line).
@@ -59,7 +66,10 @@ public static class A2UIGenerationRecovery
     /// <param name="errors">The errors to format.</param>
     /// <returns>The formatted block.</returns>
     public static string FormatValidationErrors(IEnumerable<A2UIValidationError> errors)
-        => throw new NotImplementedException();
+    {
+        Throw.IfNull(errors);
+        return string.Join("\n", errors.Select(e => $"- [{e.Code}] {e.Path}: {e.Message}"));
+    }
 
     /// <summary>
     /// Appends a fix-it block carrying <paramref name="errors"/> to <paramref name="prompt"/>.
@@ -69,7 +79,12 @@ public static class A2UIGenerationRecovery
     /// <param name="errors">The prior attempt's validation errors.</param>
     /// <returns>The augmented prompt.</returns>
     public static string AugmentPromptWithValidationErrors(string prompt, IReadOnlyList<A2UIValidationError> errors)
-        => throw new NotImplementedException();
+    {
+        Throw.IfNull(errors);
+        return errors.Count == 0
+            ? prompt
+            : $"{prompt}\n\n## Previous attempt was invalid — fix these and regenerate:\n{FormatValidationErrors(errors)}\n";
+    }
 
     /// <summary>
     /// Runs the validate-and-retry loop until a valid surface is produced or the attempt cap is reached.
@@ -86,7 +101,7 @@ public static class A2UIGenerationRecovery
     /// <param name="onAttempt">Observability callback invoked after each attempt is validated.</param>
     /// <param name="cancellationToken">A token to cancel the loop between attempts.</param>
     /// <returns>The loop outcome.</returns>
-    public static Task<A2UIRecoveryResult> RunAsync(
+    public static async Task<A2UIRecoveryResult> RunAsync(
         string basePrompt,
         Func<string, int, CancellationToken, ValueTask<JsonObject?>> invokeSubagentAsync,
         Func<JsonObject, string> buildEnvelope,
@@ -94,5 +109,80 @@ public static class A2UIGenerationRecovery
         A2UIRecoveryConfig? config = null,
         Action<A2UIAttemptRecord>? onAttempt = null,
         CancellationToken cancellationToken = default)
-        => throw new NotImplementedException();
+    {
+        Throw.IfNull(basePrompt);
+        Throw.IfNull(invokeSubagentAsync);
+        Throw.IfNull(buildEnvelope);
+
+        int maxAttempts = config?.MaxAttempts ?? A2UIConstants.MaxA2UIAttempts;
+        List<A2UIAttemptRecord> attempts = [];
+        IReadOnlyList<A2UIValidationError> lastErrors = [];
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string prompt = AugmentPromptWithValidationErrors(basePrompt, lastErrors);
+            JsonObject? args = await invokeSubagentAsync(prompt, attempt, cancellationToken).ConfigureAwait(false);
+
+            A2UIAttemptRecord record;
+            if (args is null)
+            {
+                record = new A2UIAttemptRecord(attempt, Ok: false, [s_noToolCallError]);
+                attempts.Add(record);
+                onAttempt?.Invoke(record);
+                lastErrors = record.Errors;
+                continue;
+            }
+
+            // The model output is untrusted: narrow components/data to the expected shapes.
+            JsonArray? components = args["components"] as JsonArray;
+            JsonObject? data = args["data"] as JsonObject;
+            A2UIValidationResult result = A2UIComponentValidator.Validate(components, data, catalog);
+            record = new A2UIAttemptRecord(attempt, result.Valid, result.Errors);
+            attempts.Add(record);
+            onAttempt?.Invoke(record);
+
+            if (result.Valid)
+            {
+                return new A2UIRecoveryResult(buildEnvelope(args), attempts, Ok: true);
+            }
+
+            lastErrors = result.Errors;
+        }
+
+        return new A2UIRecoveryResult(WrapRecoveryExhaustedEnvelope(maxAttempts, attempts), attempts, Ok: false);
+    }
+
+    private static string WrapRecoveryExhaustedEnvelope(int maxAttempts, IReadOnlyList<A2UIAttemptRecord> attempts)
+    {
+        var attemptsArray = new JsonArray();
+        foreach (A2UIAttemptRecord attempt in attempts)
+        {
+            var errorsArray = new JsonArray();
+            foreach (A2UIValidationError error in attempt.Errors)
+            {
+                errorsArray.Add((JsonNode)new JsonObject
+                {
+                    ["code"] = error.Code,
+                    ["path"] = error.Path,
+                    ["message"] = error.Message,
+                });
+            }
+
+            attemptsArray.Add((JsonNode)new JsonObject
+            {
+                ["attempt"] = attempt.Attempt,
+                ["ok"] = attempt.Ok,
+                ["errors"] = errorsArray,
+            });
+        }
+
+        return new JsonObject
+        {
+            ["error"] = $"Failed to generate valid A2UI after {maxAttempts} attempt(s)",
+            ["code"] = "a2ui_recovery_exhausted",
+            ["attempts"] = attemptsArray,
+        }.ToJsonString();
+    }
 }

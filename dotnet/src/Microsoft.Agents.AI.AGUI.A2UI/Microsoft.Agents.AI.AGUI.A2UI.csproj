@@ -5,6 +5,7 @@
     <Title>Microsoft Agent Framework AG-UI A2UI Toolkit</Title>
     <Description>Framework-agnostic helpers for building A2UI (Agent-to-UI) generation tools on top of the AG-UI protocol.</Description>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+    <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>
 
   <ItemGroup>

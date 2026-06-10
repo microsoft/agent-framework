@@ -110,5 +110,236 @@ public static class A2UIComponentValidator
         JsonObject? data = null,
         A2UIValidationCatalog? catalog = null,
         bool validateBindings = true)
-        => throw new NotImplementedException();
+    {
+        // Fail loud on a missing/empty payload.
+        if (components is null || components.Count == 0)
+        {
+            return new A2UIValidationResult(false,
+            [
+                new A2UIValidationError(
+                    A2UIValidationErrorCodes.EmptyComponents,
+                    "components",
+                    "A2UI components must be a non-empty array"),
+            ]);
+        }
+
+        List<A2UIValidationError> errors = [];
+
+        // First pass: collect ids and flag duplicates.
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonNode? node in components)
+        {
+            if (node is JsonObject component && component["id"] is JsonValue idValue &&
+                idValue.TryGetValue(out string? id) && !ids.Add(id))
+            {
+                errors.Add(new A2UIValidationError(
+                    A2UIValidationErrorCodes.DuplicateId,
+                    $"components[id={id}]",
+                    $"Duplicate component id '{id}'"));
+            }
+        }
+
+        for (int i = 0; i < components.Count; i++)
+        {
+            JsonObject? component = components[i] as JsonObject;
+            string? id = TryGetString(component?["id"]);
+            string? componentType = TryGetString(component?["component"]);
+
+            if (string.IsNullOrEmpty(id))
+            {
+                errors.Add(new A2UIValidationError(
+                    A2UIValidationErrorCodes.MissingId,
+                    $"components[{i}].id",
+                    $"Component at index {i} is missing a string 'id'"));
+            }
+
+            if (string.IsNullOrEmpty(componentType))
+            {
+                errors.Add(new A2UIValidationError(
+                    A2UIValidationErrorCodes.MissingComponentType,
+                    $"components[{i}].component",
+                    $"Component at index {i} is missing a string 'component' type"));
+            }
+
+            if (catalog is not null && componentType is not null)
+            {
+                if (catalog.Components[componentType] is not JsonObject schema)
+                {
+                    errors.Add(new A2UIValidationError(
+                        A2UIValidationErrorCodes.UnknownComponent,
+                        $"components[{i}].component",
+                        $"Component type '{componentType}' is not in the catalog"));
+                }
+                else if (schema["required"] is JsonArray required)
+                {
+                    foreach (JsonNode? requiredNode in required)
+                    {
+                        if (TryGetString(requiredNode) is string requiredProp &&
+                            component?.ContainsKey(requiredProp) != true)
+                        {
+                            errors.Add(new A2UIValidationError(
+                                A2UIValidationErrorCodes.MissingRequiredProp,
+                                $"components[{i}].{requiredProp}",
+                                $"Component '{componentType}' (index {i}) is missing required prop '{requiredProp}'"));
+                        }
+                    }
+                }
+            }
+
+            if (component is not null)
+            {
+                foreach (string reference in CollectChildReferences(component["children"]))
+                {
+                    if (!ids.Contains(reference))
+                    {
+                        errors.Add(new A2UIValidationError(
+                            A2UIValidationErrorCodes.UnresolvedChild,
+                            $"components[{i}].children",
+                            $"Child reference '{reference}' does not match any component id"));
+                    }
+                }
+
+                if (validateBindings)
+                {
+                    List<string> bindingPaths = [];
+                    CollectAbsoluteBindingPaths(component, bindingPaths);
+                    foreach (string path in bindingPaths)
+                    {
+                        if (!AbsolutePathResolves(path, data))
+                        {
+                            errors.Add(new A2UIValidationError(
+                                A2UIValidationErrorCodes.UnresolvedBinding,
+                                $"components[{i}]",
+                                $"Binding path '{path}' does not resolve in the data model"));
+                        }
+                    }
+                }
+            }
+        }
+
+        bool hasRoot = false;
+        foreach (JsonNode? node in components)
+        {
+            if (node is JsonObject component && TryGetString(component["id"]) == "root")
+            {
+                hasRoot = true;
+                break;
+            }
+        }
+
+        if (!hasRoot)
+        {
+            errors.Add(new A2UIValidationError(
+                A2UIValidationErrorCodes.NoRoot,
+                "components",
+                "No component has id 'root'"));
+        }
+
+        return new A2UIValidationResult(errors.Count == 0, errors);
+    }
+
+    private static string? TryGetString(JsonNode? node)
+        => node is JsonValue value && value.TryGetValue(out string? text) ? text : null;
+
+    private static bool AbsolutePathResolves(string path, JsonNode? data)
+    {
+        JsonNode? cursor = data;
+        foreach (string segment in path.Split('/'))
+        {
+            if (segment.Length == 0)
+            {
+                continue;
+            }
+
+            switch (cursor)
+            {
+                case JsonArray array:
+                    if (!int.TryParse(segment, out int index) || index < 0 || index >= array.Count)
+                    {
+                        return false;
+                    }
+
+                    cursor = array[index];
+                    break;
+
+                case JsonObject obj:
+                    if (!obj.TryGetPropertyValue(segment, out JsonNode? next))
+                    {
+                        return false;
+                    }
+
+                    cursor = next;
+                    break;
+
+                default:
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static List<string> CollectChildReferences(JsonNode? children)
+    {
+        List<string> references = [];
+
+        void Push(JsonNode? node)
+        {
+            if (TryGetString(node) is string id)
+            {
+                references.Add(id);
+            }
+            else if (node is JsonObject obj && TryGetString(obj["componentId"]) is string componentId)
+            {
+                references.Add(componentId);
+            }
+        }
+
+        if (children is JsonArray array)
+        {
+            foreach (JsonNode? child in array)
+            {
+                Push(child);
+            }
+        }
+        else if (children is JsonObject)
+        {
+            Push(children);
+        }
+
+        return references;
+    }
+
+    private static void CollectAbsoluteBindingPaths(JsonNode? node, List<string> accumulator)
+    {
+        switch (node)
+        {
+            case JsonArray array:
+                foreach (JsonNode? item in array)
+                {
+                    CollectAbsoluteBindingPaths(item, accumulator);
+                }
+
+                break;
+
+            case JsonObject obj:
+                if (TryGetString(obj["path"]) is string path && path.Length > 0 && path[0] == '/')
+                {
+                    accumulator.Add(path);
+                }
+
+                foreach (KeyValuePair<string, JsonNode?> property in obj)
+                {
+                    if (!string.Equals(property.Key, "path", StringComparison.Ordinal))
+                    {
+                        CollectAbsoluteBindingPaths(property.Value, accumulator);
+                    }
+                }
+
+                break;
+
+            default:
+                break;
+        }
+    }
 }
