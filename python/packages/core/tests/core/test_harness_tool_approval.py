@@ -25,7 +25,7 @@ def _approval_requests(messages: list[Message]) -> list[Content]:
     ]
 
 
-async def test_mixed_batch_hides_auto_approvable_request_until_approval_replay(
+async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     """Mixed batches should only show real approval requests when a session can store hidden requests."""
@@ -181,6 +181,81 @@ async def test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn(
     assert risky_calls == 1
 
 
+async def test_hidden_mixed_batch_requests_replay_only_for_matching_visible_approval(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Approving one mixed batch must not replay hidden calls from another abandoned batch."""
+    safe_a_calls = 0
+    safe_b_calls = 0
+    risky_a_calls = 0
+    risky_b_calls = 0
+
+    @tool(name="safe_a", approval_mode="never_require")
+    def safe_a() -> str:
+        nonlocal safe_a_calls
+        safe_a_calls += 1
+        return "safe-a"
+
+    @tool(name="safe_b", approval_mode="never_require")
+    def safe_b() -> str:
+        nonlocal safe_b_calls
+        safe_b_calls += 1
+        return "safe-b"
+
+    @tool(name="risky_a", approval_mode="always_require")
+    def risky_a() -> str:
+        nonlocal risky_a_calls
+        risky_a_calls += 1
+        return "risky-a"
+
+    @tool(name="risky_b", approval_mode="always_require")
+    def risky_b() -> str:
+        nonlocal risky_b_calls
+        risky_b_calls += 1
+        return "risky-b"
+
+    agent = Agent(client=chat_client_base, tools=[safe_a, safe_b, risky_a, risky_b])
+    session = AgentSession(session_id="grouped-hidden-session")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_safe_a", name="safe_a", arguments="{}"),
+                    Content.from_function_call(call_id="call_risky_a", name="risky_a", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("batch a", session=session)
+    assert [request.function_call.name for request in _approval_requests(first_response.messages)] == ["risky_a"]
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_safe_b", name="safe_b", arguments="{}"),
+                    Content.from_function_call(call_id="call_risky_b", name="risky_b", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    second_response = await agent.run("batch b", session=session)
+    second_request = _approval_requests(second_response.messages)[0]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
+    final_response = await agent.run(second_request.to_function_approval_response(approved=True), session=session)
+
+    assert final_response.text == "done"
+    assert safe_a_calls == 0
+    assert risky_a_calls == 0
+    assert safe_b_calls == 1
+    assert risky_b_calls == 1
+
+
 async def test_tool_approval_middleware_queues_multiple_approval_requests(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
@@ -243,7 +318,7 @@ async def test_tool_approval_middleware_queues_multiple_approval_requests(
 async def test_tool_approval_middleware_preserves_hidden_mixed_batch_requests(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    """Middleware state saves should not discard core hidden auto-approvable requests."""
+    """Middleware state saves should not discard core hidden already-approved requests."""
     lookup_calls = 0
     write_calls = 0
 
@@ -344,6 +419,61 @@ async def test_tool_approval_middleware_auto_approval_rule_receives_function_cal
     assert final_response.text == "done"
     assert auto_calls == 1
     assert manual_calls == 1
+
+
+async def test_tool_approval_middleware_auto_approved_loops_share_function_call_budget(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Auto-approved re-entry should not reset max_function_calls."""
+    calls = 0
+
+    @tool(name="budgeted_tool", approval_mode="always_require")
+    def budgeted_tool(value: str) -> str:
+        nonlocal calls
+        calls += 1
+        return value
+
+    def auto_approve_budgeted_tool(function_call: Content) -> bool:
+        return function_call.name == "budgeted_tool"
+
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[budgeted_tool],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[auto_approve_budgeted_tool])],
+    )
+    session = AgentSession(session_id="shared-budget-session")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_first",
+                        name="budgeted_tool",
+                        arguments='{"value": "first"}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_second",
+                        name="budgeted_tool",
+                        arguments='{"value": "second"}',
+                    )
+                ],
+            )
+        ),
+    ]
+
+    response = await agent.run("call repeatedly", session=session)
+
+    assert response.text == "I broke out of the function invocation loop..."
+    assert calls == 1
 
 
 async def test_tool_approval_middleware_queues_streamed_approval_requests(
@@ -480,6 +610,66 @@ async def test_tool_approval_middleware_always_approve_tool_rule(
     assert calls == 2
 
 
+async def test_tool_approval_middleware_standing_rules_include_hosted_server_boundary(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A standing hosted-tool rule should only match the same server_label."""
+    calls = 0
+
+    @tool(name="hosted_tool", approval_mode="always_require")
+    def hosted_tool() -> str:
+        nonlocal calls
+        calls += 1
+        return "hosted"
+
+    def hosted_call(call_id: str, server_label: str) -> Content:
+        return Content.from_function_call(
+            call_id=call_id,
+            name="hosted_tool",
+            arguments="{}",
+            additional_properties={"server_label": server_label},
+        )
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[hosted_tool],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="hosted-boundary-session")
+    chat_client_base.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=[hosted_call("call_initial", "server-a")]))
+    ]
+
+    first_response = await agent.run("call hosted a", session=session)
+    first_request = _approval_requests(first_response.messages)[0]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["server a done"]))]
+    await agent.run(create_always_approve_tool_response(first_request), session=session)
+
+    assert calls == 0
+
+    chat_client_base.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=[hosted_call("call_same_server", "server-a")])),
+        ChatResponse(messages=Message(role="assistant", contents=["same server done"])),
+    ]
+
+    same_server_response = await agent.run("call hosted a again", session=session)
+
+    assert same_server_response.text == "same server done"
+    assert _approval_requests(same_server_response.messages) == []
+    assert calls == 0
+
+    chat_client_base.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=[hosted_call("call_other_server", "server-b")]))
+    ]
+
+    other_server_response = await agent.run("call hosted b", session=session)
+
+    requests = _approval_requests(other_server_response.messages)
+    assert [request.function_call.additional_properties["server_label"] for request in requests] == ["server-b"]
+    assert calls == 0
+
+
 async def test_tool_approval_middleware_always_approve_tool_with_arguments_rule(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
@@ -562,3 +752,66 @@ async def test_tool_approval_middleware_always_approve_tool_with_arguments_rule(
     requests = _approval_requests(third_response.messages)
     assert [request.function_call.arguments for request in requests] == ['{"value": "different"}']
     assert calls == 2
+
+
+async def test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An argument-scoped no-argument approval should not become a wildcard."""
+    calls = 0
+
+    @tool(name="optional_args_tool", approval_mode="always_require")
+    def optional_args_tool(value: str = "default") -> str:
+        nonlocal calls
+        calls += 1
+        return value
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[optional_args_tool],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="empty-arguments-rule-session")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_empty",
+                        name="optional_args_tool",
+                        arguments="{}",
+                    )
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("call without args", session=session)
+    first_request = _approval_requests(first_response.messages)[0]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["empty done"]))]
+    await agent.run(create_always_approve_tool_with_arguments_response(first_request), session=session)
+
+    assert calls == 1
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_non_empty",
+                        name="optional_args_tool",
+                        arguments='{"value": "custom"}',
+                    )
+                ],
+            )
+        )
+    ]
+
+    second_response = await agent.run("call with args", session=session)
+
+    requests = _approval_requests(second_response.messages)
+    assert [request.function_call.arguments for request in requests] == ['{"value": "custom"}']
+    assert calls == 1

@@ -106,13 +106,16 @@ agent_framework/
   rules, heuristic `auto_approval_rules`, queued approval requests, collected approval responses, and
   streaming/non-streaming approval prompts. Heuristic callbacks receive the underlying `function_call` content.
 - **`ToolApprovalRule`** / **`ToolApprovalState`** - Serializable state models for standing approvals and queued
-  approval flow.
+  approval flow. `ToolApprovalRule.arguments is None` means a tool-wide rule; an empty dict `{}` means an exact
+  no-argument call for `create_always_approve_tool_with_arguments_response`.
 - **`create_always_approve_tool_response`** / **`create_always_approve_tool_with_arguments_response`** - Helpers
   that return normal `function_approval_response` content with `additional_properties` metadata consumed by
-  `ToolApprovalMiddleware`.
+  `ToolApprovalMiddleware`. Standing rules for hosted tools include the `server_label` boundary, so same-named tools
+  on different hosted servers do not share approvals.
 - Mixed tool-call batches use a default .NET-style bypass in the function invocation loop: when a session is
-  available, approval requests for known non-approval-required tools are hidden, stored in session state, and
-  reinjected as approved responses when the visible approval flow resumes.
+  available, approval requests for known non-approval-required tools are treated as already approved, hidden, stored
+  in session state keyed to the visible approval request ids from that batch, and reinjected only when that visible
+  approval flow resumes.
 
 ### Workflows (`_workflows/`)
 

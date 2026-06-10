@@ -91,7 +91,8 @@ DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
-_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY: Final[str] = "auto_approvable_approval_requests"
+_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
+_FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -1721,9 +1722,9 @@ async def _try_execute_function_calls(
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
     if approval_needed:
         # approval can only be needed for Function Call Content, not Approval Responses.
-        logger.debug("Returning visible function_approval_request contents and storing auto-approvable requests")
+        logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
-        auto_approvable_requests: list[Content] = []
+        already_approved_requests: list[Content] = []
         for fcc in function_calls:
             if fcc.type != "function_call":
                 continue
@@ -1747,8 +1748,12 @@ async def _try_execute_function_calls(
             if invocation_session is None:
                 visible_requests.append(approval_request)
                 continue
-            auto_approvable_requests.append(approval_request)
-        _store_auto_approvable_approval_requests(invocation_session, auto_approvable_requests)
+            already_approved_requests.append(approval_request)
+        _store_already_approved_approval_requests(
+            invocation_session,
+            visible_requests,
+            already_approved_requests,
+        )
         return (visible_requests, False)
     if declaration_only_flag:
         # return the declaration only tools to the user, since we cannot execute them.
@@ -1968,40 +1973,71 @@ def _content_from_state(value: Any) -> Content | None:
     return None
 
 
-def _store_auto_approvable_approval_requests(
+def _store_already_approved_approval_requests(
     invocation_session: AgentSession | None,
-    approval_requests: Sequence[Content],
+    visible_approval_requests: Sequence[Content],
+    already_approved_requests: Sequence[Content],
 ) -> None:
-    """Store hidden approval requests that should be auto-approved on the next inbound turn."""
-    if not approval_requests:
+    """Store hidden already-approved requests keyed by the visible approvals that resume the batch."""
+    if not already_approved_requests:
         return
     state = _get_tool_approval_state(invocation_session)
     if state is None:
         return
-    existing = state.get(_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY)
-    pending: list[Any] = list(cast(Iterable[Any], existing)) if isinstance(existing, list) else []
-    pending.extend(request.to_dict() for request in approval_requests)
-    state[_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY] = pending
+    visible_ids = [request.id for request in visible_approval_requests if request.id]
+    if not visible_ids:
+        return
+
+    existing_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY)
+    pending_groups: list[Any] = (
+        list(cast(Iterable[Any], existing_groups)) if isinstance(existing_groups, list) else []
+    )
+    pending_groups.append({
+        "approval_request_ids": visible_ids,
+        "approval_requests": [request.to_dict() for request in already_approved_requests],
+    })
+    state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = pending_groups
 
 
-def _pop_auto_approvable_approval_responses(invocation_session: AgentSession | None) -> list[Content]:
-    """Pop stored auto-approvable requests and convert them to approved responses."""
+def _pop_already_approved_approval_responses(
+    invocation_session: AgentSession | None,
+    approval_response_ids: set[str],
+) -> list[Content]:
+    """Pop already-approved requests for the visible approval ids being answered."""
+    if not approval_response_ids:
+        return []
     state = _get_tool_approval_state(invocation_session)
     if state is None:
         return []
-    raw_requests = state.pop(_AUTO_APPROVABLE_APPROVAL_REQUESTS_KEY, [])
-    if not isinstance(raw_requests, list):
+    raw_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, [])
+    if not isinstance(raw_groups, list):
         return []
 
     responses: list[Content] = []
-    raw_request_items = list(cast(Iterable[Any], raw_requests))
-    for raw_request in raw_request_items:
-        request = _content_from_state(raw_request)
-        if request is None or request.type != "function_approval_request":
+    remaining_groups: list[Any] = []
+    raw_group_items = list(cast(Iterable[Any], raw_groups))
+    for raw_group in raw_group_items:
+        if not isinstance(raw_group, Mapping):
             continue
-        responses.append(
-            request.to_function_approval_response(approved=True),
-        )
+        group = cast(Mapping[str, Any], raw_group)
+        raw_ids = group.get("approval_request_ids")
+        raw_group_ids: Iterable[Any] = cast(Iterable[Any], raw_ids) if isinstance(raw_ids, list) else ()
+        group_ids = {str(item) for item in raw_group_ids}
+        if group_ids.isdisjoint(approval_response_ids):
+            remaining_groups.append(raw_group)
+            continue
+        raw_requests = group.get("approval_requests")
+        if not isinstance(raw_requests, list):
+            continue
+        for raw_request in list(cast(Iterable[Any], raw_requests)):
+            request = _content_from_state(raw_request)
+            if request is None or request.type != "function_approval_request":
+                continue
+            responses.append(request.to_function_approval_response(approved=True))
+    if remaining_groups:
+        state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = remaining_groups
+    else:
+        state.pop(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, None)
     return responses
 
 
@@ -2255,16 +2291,19 @@ async def _process_function_requests(
     from ._types import Message
 
     if prepped_messages is not None:
-        has_explicit_approval_response = any(
-            content.type == "function_approval_response"
+        explicit_approval_response_ids = {
+            content.id
             for message in prepped_messages
             if isinstance(message, Message)
             for content in message.contents
+            if content.type == "function_approval_response" and content.id
+        }
+        already_approved_responses = _pop_already_approved_approval_responses(
+            invocation_session,
+            explicit_approval_response_ids,
         )
-        if has_explicit_approval_response:
-            pending_auto_approval_responses = _pop_auto_approvable_approval_responses(invocation_session)
-            if pending_auto_approval_responses:
-                prepped_messages.append(Message(role="user", contents=pending_auto_approval_responses))
+        if already_approved_responses:
+            prepped_messages.append(Message(role="user", contents=already_approved_responses))
         fcc_todo = _collect_approval_responses(prepped_messages)
         if not fcc_todo:
             fcc_todo = {}
@@ -2468,6 +2507,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         function_middleware_pipeline = self._get_function_middleware_pipeline(runtime_middleware["function"])
         if runtime_middleware["chat"]:
             effective_client_kwargs["middleware"] = runtime_middleware["chat"]
+        raw_budget_state = effective_client_kwargs.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
+        budget_state: dict[str, Any] = (
+            cast(dict[str, Any], raw_budget_state) if isinstance(raw_budget_state, dict) else {}
+        )
         max_errors = self.function_invocation_configuration.get(
             "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
         )
@@ -2517,7 +2560,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 nonlocal mutable_options
                 nonlocal filtered_kwargs
                 errors_in_a_row: int = 0
-                total_function_calls: int = 0
+                total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
                 max_function_calls: int | None = self.function_invocation_configuration.get("max_function_calls")
                 prepped_messages = list(messages)
                 fcc_messages: list[Message] = []
@@ -2526,7 +2569,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
                 loop_enabled = self.function_invocation_configuration.get("enabled", True)
                 max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
-                for attempt_idx in range(max_iterations if loop_enabled else 0):
+                attempt_start = int(budget_state.get("attempt_count", 0) or 0)
+                for attempt_idx in range(attempt_start, max_iterations if loop_enabled else 0):
+                    budget_state["attempt_count"] = attempt_idx + 1
                     approval_result = await _process_function_requests(
                         response=None,
                         prepped_messages=prepped_messages,
@@ -2543,6 +2588,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         break
                     errors_in_a_row = approval_result.get("errors_in_a_row", errors_in_a_row)
                     total_function_calls += approval_result.get("function_call_count", 0)
+                    budget_state["total_function_calls"] = total_function_calls
+                    if max_function_calls is not None and total_function_calls >= max_function_calls:
+                        logger.info(
+                            "Maximum function calls reached (%d/%d). Stopping further function calls for this request.",
+                            total_function_calls,
+                            max_function_calls,
+                        )
+                        mutable_options["tool_choice"] = "none"
 
                     response = cast(
                         ChatResponse[Any],
@@ -2581,6 +2634,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         response.usage_details = aggregated_usage
                         return _clear_internal_conversation_id(response)
                     total_function_calls += result.get("function_call_count", 0)
+                    budget_state["total_function_calls"] = total_function_calls
                     if result.get("action") == "stop":
                         # Error threshold reached: force a final non-tool turn so
                         # function_call_output items are submitted before exit.
@@ -2657,7 +2711,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             nonlocal mutable_options
             nonlocal stream_result_hooks
             errors_in_a_row: int = 0
-            total_function_calls: int = 0
+            total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
             max_function_calls: int | None = self.function_invocation_configuration.get("max_function_calls")
             prepped_messages = list(messages)
             fcc_messages: list[Message] = []
@@ -2665,7 +2719,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
             loop_enabled = self.function_invocation_configuration.get("enabled", True)
             max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
-            for attempt_idx in range(max_iterations if loop_enabled else 0):
+            attempt_start = int(budget_state.get("attempt_count", 0) or 0)
+            for attempt_idx in range(attempt_start, max_iterations if loop_enabled else 0):
+                budget_state["attempt_count"] = attempt_idx + 1
                 approval_result = await _process_function_requests(
                     response=None,
                     prepped_messages=prepped_messages,
@@ -2679,6 +2735,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
                 errors_in_a_row = approval_result.get("errors_in_a_row", errors_in_a_row)
                 total_function_calls += approval_result.get("function_call_count", 0)
+                budget_state["total_function_calls"] = total_function_calls
+                if max_function_calls is not None and total_function_calls >= max_function_calls:
+                    logger.info(
+                        "Maximum function calls reached (%d/%d). Stopping further function calls for this request.",
+                        total_function_calls,
+                        max_function_calls,
+                    )
+                    mutable_options["tool_choice"] = "none"
                 if approval_result.get("action") == "stop":
                     mutable_options["tool_choice"] = "none"
                     return
@@ -2735,6 +2799,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
                 errors_in_a_row = result.get("errors_in_a_row", errors_in_a_row)
                 total_function_calls += result.get("function_call_count", 0)
+                budget_state["total_function_calls"] = total_function_calls
                 if role := result.get("update_role"):
                     yield ChatResponseUpdate(
                         contents=result.get("function_call_results") or [],

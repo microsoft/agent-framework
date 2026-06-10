@@ -13,7 +13,6 @@ from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession
-from .._tools import _TOOL_APPROVAL_STATE_KEY  # pyright: ignore[reportPrivateUsage]
 from .._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -24,7 +23,8 @@ from .._types import (
     ResponseStream,
 )
 
-DEFAULT_TOOL_APPROVAL_SOURCE_ID = _TOOL_APPROVAL_STATE_KEY
+DEFAULT_TOOL_APPROVAL_SOURCE_ID = "tool_approval"
+_FUNCTION_INVOCATION_BUDGET_STATE_KEY = "_function_invocation_budget_state"
 ALWAYS_APPROVE_PROPERTY = "tool_approval"
 ALWAYS_APPROVE_SCOPE_PROPERTY = "always_approve"
 ALWAYS_APPROVE_TOOL: Literal["tool"] = "tool"
@@ -47,11 +47,21 @@ def _serialize_argument_value(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def _serialize_arguments(function_call: Content) -> dict[str, str] | None:
+def _serialize_arguments(function_call: Content) -> dict[str, str]:
+    """Serialize arguments for exact matching.
+
+    ``None`` is reserved on :class:`ToolApprovalRule` for tool-wide rules.
+    An argument-scoped rule for a no-argument call stores ``{}``, so it only
+    matches future no-argument calls and never becomes a wildcard.
+    """
     arguments = _parse_function_arguments(function_call)
-    if not arguments:
-        return None
     return {key: _serialize_argument_value(value) for key, value in arguments.items()}
+
+
+def _server_label(function_call: Content) -> str | None:
+    """Return the hosted-tool server boundary for a function call, if present."""
+    value = function_call.additional_properties.get("server_label")
+    return value if isinstance(value, str) else None
 
 
 def _content_from_state(value: Any) -> Content:
@@ -79,20 +89,33 @@ class ToolApprovalRule(SerializationMixin):
 
     tool_name: str
     arguments: dict[str, str] | None
+    server_label: str | None
 
-    def __init__(self, tool_name: str, arguments: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, str] | None = None,
+        *,
+        server_label: str | None = None,
+    ) -> None:
         """Initialize a tool approval rule.
 
         Args:
             tool_name: The function tool name this rule applies to.
             arguments: Optional canonicalized argument values. When omitted, the
-                rule applies to every call to the tool.
+                rule applies to every call to the tool. Use an empty mapping to
+                match only no-argument calls.
+
+        Keyword Args:
+            server_label: Optional hosted-tool server boundary. Hosted approvals
+                only match future approvals from the same server label.
         """
         normalized_name = tool_name.strip()
         if not normalized_name:
             raise ValueError("Tool approval rule tool_name must be a non-empty string.")
         self.tool_name = normalized_name
         self.arguments = dict(arguments) if arguments is not None else None
+        self.server_label = server_label
 
     @classmethod
     def from_dict(
@@ -110,12 +133,15 @@ class ToolApprovalRule(SerializationMixin):
         raw_arguments = value.get("arguments")
         if raw_arguments is not None and not isinstance(raw_arguments, Mapping):
             raise ValueError("Tool approval rule arguments must be a mapping or None.")
+        server_label = value.get("server_label")
+        if server_label is not None and not isinstance(server_label, str):
+            raise ValueError("Tool approval rule server_label must be a string or None.")
         arguments = (
             {str(key): str(argument_value) for key, argument_value in cast(Mapping[str, Any], raw_arguments).items()}
             if isinstance(raw_arguments, Mapping)
             else None
         )
-        return cls(tool_name=tool_name, arguments=arguments)
+        return cls(tool_name=tool_name, arguments=arguments, server_label=server_label)
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Serialize the rule."""
@@ -125,6 +151,8 @@ class ToolApprovalRule(SerializationMixin):
             payload["type"] = self._get_type_identifier()
         if self.arguments is not None or not exclude_none:
             payload["arguments"] = self.arguments
+        if self.server_label is not None or not exclude_none:
+            payload["server_label"] = self.server_label
         return payload
 
 
@@ -253,6 +281,8 @@ def _rule_exists(rules: Sequence[ToolApprovalRule], new_rule: ToolApprovalRule) 
     for rule in rules:
         if rule.tool_name != new_rule.tool_name:
             continue
+        if rule.server_label != new_rule.server_label:
+            continue
         if rule.arguments == new_rule.arguments:
             return True
     return False
@@ -283,6 +313,8 @@ def _matches_rule(request: Content, rules: Sequence[ToolApprovalRule]) -> bool:
         return False
     for rule in rules:
         if rule.tool_name != function_call.name:
+            continue
+        if rule.server_label != _server_label(function_call):
             continue
         if rule.arguments is None:
             return True
@@ -342,6 +374,7 @@ class ToolApprovalMiddleware(AgentMiddleware):
             raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
 
         state = _get_state(context.session, source_id=self.source_id)
+        context.client_kwargs.setdefault(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, {})
         context.messages = self._prepare_inbound_messages(context.messages, state)
         await self._drain_auto_approvable_queue(state)
         if next_queued := self._pop_next_queued_request(state):
@@ -487,13 +520,20 @@ class ToolApprovalMiddleware(AgentMiddleware):
         function_call = response.function_call
         if function_call is not None and function_call.type == "function_call" and function_call.name is not None:
             if scope == ALWAYS_APPROVE_TOOL:
-                _add_rule_if_missing(state, ToolApprovalRule(tool_name=function_call.name))
+                _add_rule_if_missing(
+                    state,
+                    ToolApprovalRule(
+                        tool_name=function_call.name,
+                        server_label=_server_label(function_call),
+                    ),
+                )
             else:
                 _add_rule_if_missing(
                     state,
                     ToolApprovalRule(
                         tool_name=function_call.name,
                         arguments=_serialize_arguments(function_call),
+                        server_label=_server_label(function_call),
                     ),
                 )
         return _clone_without_always_approve_metadata(response)
