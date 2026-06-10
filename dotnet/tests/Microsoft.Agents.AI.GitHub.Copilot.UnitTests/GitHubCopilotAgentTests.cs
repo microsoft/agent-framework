@@ -222,6 +222,72 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
+    public void CopySessionConfig_WithStreamingDisabled_PreservesStreamingValue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            Streaming = false,
+            Model = "gpt-4o",
+        };
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
+        Assert.False(result.Streaming);
+    }
+
+    [Fact]
+    public void CopySessionConfig_WithStreamingNull_DefaultsToTrue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            Model = "gpt-4o",
+        };
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
+        Assert.True(result.Streaming);
+    }
+
+    [Fact]
+    public void CopyResumeSessionConfig_WithStreamingDisabled_PreservesStreamingValue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            Streaming = false,
+            Model = "gpt-4o",
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+
+        // Assert
+        Assert.False(result.Streaming);
+    }
+
+    [Fact]
+    public void CopyResumeSessionConfig_WithStreamingNull_DefaultsToTrue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            Model = "gpt-4o",
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+
+        // Assert
+        Assert.True(result.Streaming);
+    }
+
+    [Fact]
     public void ConvertToAgentResponseUpdate_AssistantMessageEvent_DoesNotEmitTextContent()
     {
         var assistantMessage = new AssistantMessageEvent

@@ -271,19 +271,20 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <summary>
-    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance
-    /// with <see cref="SessionConfigBase.Streaming"/> set to <c>true</c>.
+    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance,
+    /// preserving <see cref="SessionConfigBase.Streaming"/> from the source (defaulting to <c>true</c> if unset).
     /// </summary>
     internal static SessionConfig CopySessionConfig(SessionConfig source)
     {
         SessionConfig copy = source.Clone();
-        copy.Streaming = true;
+        copy.Streaming = source.Streaming ?? true;
         return copy;
     }
 
     /// <summary>
     /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new
-    /// <see cref="ResumeSessionConfig"/> with <see cref="SessionConfigBase.Streaming"/> set to <c>true</c>.
+    /// <see cref="ResumeSessionConfig"/>, preserving <see cref="SessionConfigBase.Streaming"/>
+    /// from the source (defaulting to <c>true</c> if unset).
     /// </summary>
     internal static ResumeSessionConfig CopyResumeSessionConfig(SessionConfig? source)
     {
@@ -306,7 +307,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             SkillDirectories = source?.SkillDirectories,
             DisabledSkills = source?.DisabledSkills,
             InfiniteSessions = source?.InfiniteSessions,
-            Streaming = true
+            Streaming = source?.Streaming ?? true
         };
     }
 
