@@ -1341,8 +1341,8 @@ class TestAgentFunctionAppWorkflow:
 
         assert app.workflow is mock_workflow
 
-    def test_init_with_workflow_extracts_agents(self) -> None:
-        """Test that agents are extracted from workflow executors."""
+    def test_init_with_workflow_registers_agent_entity_by_executor_id(self) -> None:
+        """Workflow agent executors are registered as entities keyed by executor id."""
         from agent_framework import AgentExecutor
 
         mock_agent = Mock()
@@ -1350,18 +1350,24 @@ class TestAgentFunctionAppWorkflow:
 
         mock_executor = Mock(spec=AgentExecutor)
         mock_executor.agent = mock_agent
+        # Executor id intentionally differs from the agent name to exercise the
+        # identity fix: dispatch uses the executor id, so registration must too.
+        mock_executor.id = "custom-executor-id"
 
         mock_workflow = Mock()
-        mock_workflow.executors = {"WorkflowAgent": mock_executor}
+        mock_workflow.executors = {"custom-executor-id": mock_executor}
 
         with (
             patch.object(AgentFunctionApp, "_setup_executor_activity"),
             patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
-            patch.object(AgentFunctionApp, "_setup_agent_functions"),
+            patch.object(AgentFunctionApp, "_setup_agent_entity") as setup_entity,
         ):
-            app = AgentFunctionApp(workflow=mock_workflow)
+            AgentFunctionApp(workflow=mock_workflow)
 
-        assert "WorkflowAgent" in app.agents
+        setup_entity.assert_called_once()
+        call_args = setup_entity.call_args.args
+        assert call_args[0] is mock_agent
+        assert call_args[1] == "custom-executor-id"
 
     def test_init_with_workflow_calls_setup_methods(self) -> None:
         """Test that workflow setup methods are called."""
@@ -1395,8 +1401,8 @@ class TestAgentFunctionAppWorkflow:
         setup_exec.assert_not_called()
         setup_orch.assert_not_called()
 
-    def test_init_with_workflow_deduplicates_agents(self) -> None:
-        """Test that agents in both 'agents' and workflow are not double-registered."""
+    def test_init_with_workflow_and_explicit_agent_does_not_raise(self) -> None:
+        """An agent passed explicitly and present in the workflow registers without error."""
         from agent_framework import AgentExecutor
 
         mock_agent = Mock()
@@ -1404,6 +1410,7 @@ class TestAgentFunctionAppWorkflow:
 
         mock_executor = Mock(spec=AgentExecutor)
         mock_executor.agent = mock_agent
+        mock_executor.id = "SharedAgent"
 
         mock_workflow = Mock()
         mock_workflow.executors = {"SharedAgent": mock_executor}
@@ -1412,6 +1419,7 @@ class TestAgentFunctionAppWorkflow:
             patch.object(AgentFunctionApp, "_setup_executor_activity"),
             patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
             patch.object(AgentFunctionApp, "_setup_agent_functions"),
+            patch.object(AgentFunctionApp, "_setup_agent_entity"),
         ):
             # Same agent passed explicitly AND present in workflow — should not raise
             app = AgentFunctionApp(agents=[mock_agent], workflow=mock_workflow)
