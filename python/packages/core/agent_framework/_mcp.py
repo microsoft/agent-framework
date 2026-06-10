@@ -230,9 +230,11 @@ class MCPTool:
             approval_mode: Whether approval is required to run tools.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
-                An empty collection (``[]``) exposes no tools, which is useful when the
-                server is being used only for prompts or other capabilities. A non-empty
-                collection exposes only the tools whose names appear in it.
+                A non-empty collection exposes only the tools whose names appear in it.
+                An empty collection (``[]``) exposes no tools — if you simply want to
+                disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
+                useful as a runtime guard or when you want to load tool metadata for
+                inspection without exposing the tools for invocation.
             tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
             load_tools: Whether to load tools from the MCP server.
             parse_tool_results: An optional callable with signature
@@ -1598,9 +1600,11 @@ class MCPStdioTool(MCPTool):
                 A tool should not be listed in both, if so, it will require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
-                An empty collection (``[]``) exposes no tools, which is useful when the
-                server is being used only for prompts or other capabilities. A non-empty
-                collection exposes only the tools whose names appear in it.
+                A non-empty collection exposes only the tools whose names appear in it.
+                An empty collection (``[]``) exposes no tools — if you simply want to
+                disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
+                useful as a runtime guard or when you want to load tool metadata for
+                inspection without exposing the tools for invocation.
             additional_properties: Additional properties.
             args: The arguments to pass to the command.
             env: The environment variables to set for the command.
@@ -1736,9 +1740,11 @@ class MCPStreamableHTTPTool(MCPTool):
                 A tool should not be listed in both, if so, it will require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
-                An empty collection (``[]``) exposes no tools, which is useful when the
-                server is being used only for prompts or other capabilities. A non-empty
-                collection exposes only the tools whose names appear in it.
+                A non-empty collection exposes only the tools whose names appear in it.
+                An empty collection (``[]``) exposes no tools — if you simply want to
+                disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
+                useful as a runtime guard or when you want to load tool metadata for
+                inspection without exposing the tools for invocation.
             additional_properties: Additional properties.
             terminate_on_close: Close the transport when the MCP client is terminated.
             client: The chat client to use for sampling.
@@ -1915,9 +1921,11 @@ class MCPWebsocketTool(MCPTool):
                 A tool should not be listed in both, if so, it will require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
-                An empty collection (``[]``) exposes no tools, which is useful when the
-                server is being used only for prompts or other capabilities. A non-empty
-                collection exposes only the tools whose names appear in it.
+                A non-empty collection exposes only the tools whose names appear in it.
+                An empty collection (``[]``) exposes no tools — if you simply want to
+                disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
+                useful as a runtime guard or when you want to load tool metadata for
+                inspection without exposing the tools for invocation.
             additional_properties: Additional properties.
             client: The chat client to use for sampling.
             kwargs: Any extra arguments to pass to the WebSocket client.
