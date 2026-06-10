@@ -761,6 +761,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     ) -> ChatResponse[Any]:
         """Finalize streamed updates and add post-stream Azure AI Search citation metadata."""
         self._enrich_streamed_azure_ai_search_citations(updates)
+        self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
         return super()._finalize_response_updates(updates, response_format=response_format)
 
     @classmethod
@@ -2036,6 +2037,89 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     additional_properties["get_url"] = get_urls[doc_index]
 
     @staticmethod
+    def _extract_mcp_search_documents_from_text(text: str) -> dict[str, Mapping[str, Any]]:
+        """Extract MCP search-index document metadata JSON objects from hosted-MCP output text."""
+        documents: dict[str, Mapping[str, Any]] = {}
+        decoder = json.JSONDecoder()
+        start = 0
+        while True:
+            object_start = text.find("{", start)
+            if object_start < 0:
+                return documents
+            try:
+                value, offset = decoder.raw_decode(text[object_start:])
+            except json.JSONDecodeError:
+                start = object_start + 1
+                continue
+            if isinstance(value, Mapping):
+                document = cast("Mapping[str, Any]", value)
+                document_id = document.get("id")
+                if isinstance(document_id, str) and document_id:
+                    documents[document_id] = document
+            start = object_start + offset
+
+    @classmethod
+    def _extract_mcp_search_documents_from_content(cls, content: Content) -> dict[str, Mapping[str, Any]]:
+        """Extract MCP search-index document metadata from an MCP tool-result content item."""
+        documents: dict[str, Mapping[str, Any]] = {}
+        if content.type != "mcp_server_tool_result":
+            return documents
+
+        def _add_from_output(output: Any) -> None:
+            if isinstance(output, str):
+                documents.update(cls._extract_mcp_search_documents_from_text(output))
+                return
+            if isinstance(output, Content):
+                if output.type == "text" and isinstance(output.text, str):
+                    documents.update(cls._extract_mcp_search_documents_from_text(output.text))
+                return
+            if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
+                for item in cast("Sequence[object]", output):
+                    _add_from_output(item)
+
+        _add_from_output(content.output)
+        raw_output = getattr(content.raw_representation, "output", None)
+        _add_from_output(raw_output)
+        return documents
+
+    @staticmethod
+    def _mcp_search_document_id(annotation: Annotation) -> str | None:
+        """Return the document id encoded in an `mcp://searchindex/<id>` citation."""
+        for key in ("url", "title"):
+            value = annotation.get(key)
+            if isinstance(value, str) and value.startswith("mcp://searchindex/"):
+                return value.removeprefix("mcp://searchindex/").split("?", 1)[0].split("#", 1)[0]
+        return None
+
+    @classmethod
+    def _enrich_mcp_search_citations(cls, contents: Sequence[Content]) -> None:
+        """Add MCP search-index document metadata to matching citation annotations."""
+        documents: dict[str, Mapping[str, Any]] = {}
+        for content in contents:
+            documents.update(cls._extract_mcp_search_documents_from_content(content))
+        if not documents:
+            return
+
+        for content in contents:
+            if content.type != "text" or not content.annotations:
+                continue
+            for annotation in content.annotations:
+                document_id = cls._mcp_search_document_id(annotation)
+                if document_id is None:
+                    continue
+                document = documents.get(document_id)
+                if document is None:
+                    continue
+                additional_properties = annotation.setdefault("additional_properties", {})
+                additional_properties.setdefault("mcp_document_id", document_id)
+                document_title = document.get("title")
+                if isinstance(document_title, str) and document_title:
+                    additional_properties.setdefault("document_title", document_title)
+                source = document.get("source")
+                if isinstance(source, str) and source:
+                    additional_properties.setdefault("source", source)
+
+    @staticmethod
     def _get_search_tool_name(item_type: str) -> str:
         """Map OpenAI search output item types to unified content tool names."""
         return "web_search" if item_type == "web_search_call" else "file_search"
@@ -2452,7 +2536,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # Set continuation_token when background operation is still in progress
         if response.status and response.status in ("in_progress", "queued"):
             args["continuation_token"] = OpenAIContinuationToken(response_id=response.id)
-        return ChatResponse(**args)
+        chat_response = ChatResponse(**args)
+        if chat_response.messages:
+            self._enrich_mcp_search_citations(chat_response.messages[0].contents)
+        return chat_response
 
     def _parse_chunk_from_openai(
         self,
