@@ -329,7 +329,7 @@ internal sealed class InvokeFunctionToolExecutor(
             };
         }
 
-AIFunctionArguments? functionArguments = arguments is null ? null : new AIFunctionArguments(arguments.NormalizePortableValues());
+        AIFunctionArguments? functionArguments = arguments is null ? null : new AIFunctionArguments(arguments.NormalizePortableValues());
 
         object? result;
         try
