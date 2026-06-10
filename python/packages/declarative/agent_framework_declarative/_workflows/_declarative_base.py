@@ -64,7 +64,6 @@ logger = logging.getLogger(__name__)
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
 
 # Allowed identifier shape for object-attribute steps in declarative state paths
-# (matches PowerFx / Copilot Studio identifier rules).
 _SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 @dataclass(frozen=True)
