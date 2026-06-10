@@ -335,11 +335,11 @@ FINISH_REASON_MAP = {
 }
 
 _USAGE_FIELD_TO_OTEL_ATTR: dict[str, str] = {
-    "input_token_count": "gen_ai.usage.input_tokens",
-    "output_token_count": "gen_ai.usage.output_tokens",
-    "cache_creation_input_token_count": "gen_ai.usage.cache_creation.input_tokens",
-    "cache_read_input_token_count": "gen_ai.usage.cache_read.input_tokens",
-    "reasoning_output_token_count": "gen_ai.usage.reasoning.output_tokens",
+    "input_token_count": OtelAttr.INPUT_TOKENS.value,
+    "output_token_count": OtelAttr.OUTPUT_TOKENS.value,
+    "cache_creation_input_token_count": OtelAttr.CACHE_CREATION_INPUT_TOKENS.value,
+    "cache_read_input_token_count": OtelAttr.CACHE_READ_INPUT_TOKENS.value,
+    "reasoning_output_token_count": OtelAttr.REASONING_OUTPUT_TOKENS.value,
 }
 
 
