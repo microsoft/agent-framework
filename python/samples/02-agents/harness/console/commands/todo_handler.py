@@ -45,9 +45,7 @@ class TodoCommandHandler(CommandHandler):
             ux.append_info_line("TodoProvider is not available.")
             return True
 
-        todos = await self._todo_provider.store.load_items(
-            session, source_id=self._todo_provider.source_id
-        )
+        todos = await self._todo_provider.store.load_items(session, source_id=self._todo_provider.source_id)
 
         if not todos:
             ux.append_info_line("No todos yet.")

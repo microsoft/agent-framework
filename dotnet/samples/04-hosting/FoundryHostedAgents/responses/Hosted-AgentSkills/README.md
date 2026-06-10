@@ -107,3 +107,29 @@ azd env set SKILL_NAMES "support-style,escalation-policy"
 The deployed agent's Managed Identity needs **Azure AI User** on the Foundry project to download skills at startup.
 
 > The `skills/` source folder is **not** deployed to Foundry — only the downloaded skills are used at runtime. The provisioning step must have been run against the same Foundry project before the agent can download the skills.
+
+### Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-agent-skills && cd hosted-agent-skills
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-AgentSkills/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-agent-skills
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).

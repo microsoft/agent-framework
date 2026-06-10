@@ -206,6 +206,7 @@ temp*/
 .temp/
 
 # AI
+**/.checkpoints/
 .claude/
 .omc/
 .omx/
