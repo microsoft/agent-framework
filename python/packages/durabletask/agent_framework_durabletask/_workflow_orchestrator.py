@@ -33,6 +33,7 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
+    Executor,
     Message,
     Workflow,
     WorkflowConvergenceException,
@@ -481,6 +482,54 @@ def _extract_message_content(message: Any) -> str:
     return message_content
 
 
+def _select_primary_input_type(executor: Executor) -> type | None:
+    """Return the executor's primary concrete declared input type, if any.
+
+    The first declared input type that is a concrete class is used; union or
+    unannotated types yield ``None`` (the caller then passes the value through
+    unchanged).
+    """
+    for input_type in executor.input_types:
+        if isinstance(input_type, type):
+            return input_type
+    return None
+
+
+def _coerce_initial_input(workflow: Workflow, raw_value: Any) -> Any:
+    """Coerce the client's initial workflow input to the start executor's type.
+
+    A durable workflow runs as a durable orchestration, so its initial payload
+    arrives as plain JSON via ``context.get_input()`` -- without the type markers
+    that inter-executor messages carry (those are reconstructed by
+    :func:`deserialize_value`). This single entry hop therefore needs explicit
+    reconstruction to mirror in-process delivery, where the start executor
+    receives its declared type:
+
+    * Agent start executors only consume text, so non-text input is stringified.
+    * Other executors get their primary declared input type reconstructed
+      (``dict`` -> Pydantic/dataclass, ``str`` -> ``str``, ...) via
+      :func:`reconstruct_to_type`; union/unannotated types pass through unchanged.
+    """
+    start_executor = workflow.executors.get(workflow.start_executor_id)
+    if start_executor is None:
+        return raw_value
+
+    if isinstance(start_executor, AgentExecutor):
+        if isinstance(raw_value, str):
+            return raw_value
+        if isinstance(raw_value, (dict, list)):
+            return json.dumps(raw_value)
+        return str(raw_value)
+
+    input_type = _select_primary_input_type(start_executor)
+    if input_type is None:
+        return raw_value
+    # The initial payload is untrusted external input (HTTP body / client input) with no
+    # legitimate checkpoint type markers, so neutralize any pickle-marker injection before
+    # it can reach deserialize_value() inside reconstruct_to_type() (avoids pickle RCE).
+    return reconstruct_to_type(strip_pickle_markers(raw_value), input_type)
+
+
 # ============================================================================
 # HITL Response Handler Execution
 # ============================================================================
@@ -666,7 +715,7 @@ def run_workflow_orchestrator(
         List of workflow outputs collected from executor activities.
     """
     pending_messages: dict[str, list[tuple[Any, str]]] = {
-        workflow.start_executor_id: [(initial_message, SOURCE_WORKFLOW_START)]
+        workflow.start_executor_id: [(_coerce_initial_input(workflow, initial_message), SOURCE_WORKFLOW_START)]
     }
     workflow_outputs: list[Any] = []
     iteration = 0

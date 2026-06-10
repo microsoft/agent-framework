@@ -9,7 +9,6 @@ as durable orchestrations with automatically generated activity functions.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -89,37 +88,44 @@ class DurableAIAgentWorker:
         self,
         agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
+        *,
+        entity_id: str | None = None,
     ) -> None:
         """Register an agent with the worker.
 
         This method creates a durable entity class for the agent and registers
         it with the underlying durabletask worker. The entity will be accessible
-        by the name "dafx-{agent_name}".
+        by the name "dafx-{entity_id or agent_name}".
 
         Args:
             agent: The agent to register (must have a name)
             callback: Optional callback for this specific agent (overrides worker-level callback)
+            entity_id: Optional identity to register the entity under instead of
+                ``agent.name``. Workflow hosting passes the executor's ``id`` so the
+                entity matches the identity the orchestrator dispatches to.
 
         Raises:
             ValueError: If the agent doesn't have a name or is already registered
         """
-        agent_name = agent.name
-        if not agent_name:
+        registration_name = entity_id or agent.name
+        if not registration_name:
             raise ValueError("Agent must have a name to be registered")
 
-        if agent_name in self._registered_agents:
-            raise ValueError(f"Agent '{agent_name}' is already registered")
+        if registration_name in self._registered_agents:
+            raise ValueError(f"Agent '{registration_name}' is already registered")
 
-        logger.info("[DurableAIAgentWorker] Registering agent: %s as entity: dafx-%s", agent_name, agent_name)
+        logger.info(
+            "[DurableAIAgentWorker] Registering agent: %s as entity: dafx-%s", registration_name, registration_name
+        )
 
         # Store the agent reference
-        self._registered_agents[agent_name] = agent
+        self._registered_agents[registration_name] = agent
 
         # Use agent-specific callback if provided, otherwise use worker-level callback
         effective_callback = callback or self._callback
 
         # Create a configured entity class using the factory
-        entity_class = self.__create_agent_entity(agent, effective_callback)
+        entity_class = self.__create_agent_entity(agent, effective_callback, entity_id=registration_name)
 
         # Register the entity class with the worker
         # The worker.add_entity method takes a class
@@ -128,7 +134,7 @@ class DurableAIAgentWorker:
         logger.debug(
             "[DurableAIAgentWorker] Successfully registered entity class %s for agent: %s",
             entity_registered,
-            agent_name,
+            registration_name,
         )
 
     def start(self) -> None:
@@ -184,10 +190,13 @@ class DurableAIAgentWorker:
         # is shared with the Azure Functions host via plan_workflow_registration.
         plan = plan_workflow_registration(workflow)
 
-        # Register agent executors as durable entities.
-        for agent in plan.agents:
-            if agent.name and agent.name not in self._registered_agents:
-                self.add_agent(agent, callback=callback)
+        # Register agent executors as durable entities. Each entity is keyed by
+        # the executor's id (the identity the orchestrator dispatches to) so
+        # AgentExecutor(agent, id=...) works even when the id differs from the
+        # agent's name.
+        for agent_executor in plan.agent_executors:
+            if agent_executor.id not in self._registered_agents:
+                self.add_agent(agent_executor.agent, callback=callback, entity_id=agent_executor.id)
 
         # Register non-agent executors as durable activities.
         for executor in plan.activity_executors:
@@ -199,7 +208,7 @@ class DurableAIAgentWorker:
         logger.info(
             "[DurableAIAgentWorker] Workflow configured with %d executors (%d agents, %d activities)",
             len(workflow.executors),
-            len(plan.agents),
+            len(plan.agent_executors),
             len(plan.activity_executors),
         )
 
@@ -227,7 +236,9 @@ class DurableAIAgentWorker:
             if captured_workflow is None:
                 raise RuntimeError("Workflow not configured")
 
-            initial_message = json.dumps(input_data) if isinstance(input_data, (dict, list)) else str(input_data)
+            # Pass the deserialized client input straight to the shared engine, which
+            # reconstructs the start executor's declared type (see _coerce_initial_input).
+            initial_message = input_data
             shared_state: dict[str, Any] = {}
 
             dt_ctx = DurableTaskWorkflowContext(context)
@@ -244,6 +255,8 @@ class DurableAIAgentWorker:
         self,
         agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
+        *,
+        entity_id: str | None = None,
     ) -> type[DurableTaskEntityStateProvider]:
         """Factory function to create a DurableEntity class configured with an agent.
 
@@ -253,11 +266,14 @@ class DurableAIAgentWorker:
         Args:
             agent: The agent instance to wrap
             callback: Optional callback for agent responses
+            entity_id: Optional identity to register the entity under instead of
+                ``agent.name`` (used by workflow hosting to key entities by
+                executor id).
 
         Returns:
             A new DurableEntity subclass configured for this agent
         """
-        agent_name = agent.name or type(agent).__name__
+        agent_name = entity_id or agent.name or type(agent).__name__
         entity_name = f"dafx-{agent_name}"
 
         class ConfiguredAgentEntity(DurableTaskEntityStateProvider):

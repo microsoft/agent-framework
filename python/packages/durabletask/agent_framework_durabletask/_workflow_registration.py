@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent_framework import AgentExecutor, Executor, SupportsAgentRun, Workflow
+from agent_framework import AgentExecutor, Executor, Workflow
 
 from ._workflow_orchestrator import WORKFLOW_ORCHESTRATOR_NAME
 
@@ -33,12 +33,17 @@ class WorkflowRegistrationPlan:
     """The durable primitives a workflow registers, independent of host.
 
     Attributes:
-        agents: Agents (from agent executors) to register as durable entities.
+        agent_executors: Agent executors to register as durable entities. The
+            full :class:`AgentExecutor` is carried (not just its agent) so each
+            host can register the entity under the executor's ``id`` — the same
+            identity the orchestrator dispatches to — which keeps
+            ``AgentExecutor(agent, id=...)`` working when the id differs from
+            ``agent.name``.
         activity_executors: Non-agent executors to register as durable activities.
         orchestrator_name: The orchestrator name to register and to start runs with.
     """
 
-    agents: list[SupportsAgentRun]
+    agent_executors: list[AgentExecutor]
     activity_executors: list[Executor]
     orchestrator_name: str
 
@@ -50,20 +55,20 @@ def plan_workflow_registration(workflow: Workflow) -> WorkflowRegistrationPlan:
         workflow: The MAF :class:`Workflow` to host.
 
     Returns:
-        A :class:`WorkflowRegistrationPlan` describing the agents (entities),
-        non-agent executors (activities), and the orchestrator name.
+        A :class:`WorkflowRegistrationPlan` describing the agent executors
+        (entities), non-agent executors (activities), and the orchestrator name.
     """
-    agents: list[SupportsAgentRun] = []
+    agent_executors: list[AgentExecutor] = []
     activity_executors: list[Executor] = []
 
     for executor in workflow.executors.values():
         if isinstance(executor, AgentExecutor):
-            agents.append(executor.agent)
+            agent_executors.append(executor)
         else:
             activity_executors.append(executor)
 
     return WorkflowRegistrationPlan(
-        agents=agents,
+        agent_executors=agent_executors,
         activity_executors=activity_executors,
         orchestrator_name=WORKFLOW_ORCHESTRATOR_NAME,
     )

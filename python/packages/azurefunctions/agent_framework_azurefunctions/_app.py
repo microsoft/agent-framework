@@ -228,11 +228,13 @@ class AgentFunctionApp(DFAppBase):
         # The "what to register" decision (agent -> entity, non-agent -> activity)
         # is shared with the standalone durabletask host via plan_workflow_registration.
         if workflow:
-            if agents is None:
-                agents = []
             logger.debug("[AgentFunctionApp] Extracting agents from workflow")
             plan = plan_workflow_registration(workflow)
-            agents.extend(plan.agents)
+            for agent_executor in plan.agent_executors:
+                # Register each agent executor's entity under its executor id (the
+                # identity the orchestrator dispatches to), so AgentExecutor(agent,
+                # id=...) works even when the id differs from agent.name.
+                self._setup_agent_entity(agent_executor.agent, agent_executor.id, self.default_callback)
             for executor in plan.activity_executors:
                 # Set up a Functions activity trigger for each non-agent executor.
                 self._setup_executor_activity(executor.id)
@@ -296,8 +298,9 @@ class AgentFunctionApp(DFAppBase):
 
             input_data = context.get_input()
 
-            # Ensure input is a string for the agent
-            initial_message = json.dumps(input_data) if isinstance(input_data, (dict, list)) else str(input_data)
+            # Pass the deserialized client input straight to the shared engine, which
+            # reconstructs the start executor's declared type (see _coerce_initial_input).
+            initial_message = input_data
 
             # Create local shared state dict for cross-executor state sharing
             shared_state: dict[str, Any] = {}
