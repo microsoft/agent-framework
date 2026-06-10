@@ -1362,12 +1362,19 @@ class TestAgentFunctionAppWorkflow:
             patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
             patch.object(AgentFunctionApp, "_setup_agent_entity") as setup_entity,
         ):
-            AgentFunctionApp(workflow=mock_workflow)
+            app = AgentFunctionApp(workflow=mock_workflow)
 
+        # The entity is registered under the executor id (the dispatch identity).
         setup_entity.assert_called_once()
         call_args = setup_entity.call_args.args
         assert call_args[0] is mock_agent
         assert call_args[1] == "custom-executor-id"
+
+        # Regression guard: the workflow agent must also be tracked on the app's
+        # normal registration surface, keyed by the executor id, so it appears in
+        # ``agents`` and is retrievable via ``get_agent`` (as the constructor documents).
+        assert "custom-executor-id" in app.agents
+        assert app.agents["custom-executor-id"] is mock_agent
 
     def test_init_with_workflow_calls_setup_methods(self) -> None:
         """Test that workflow setup methods are called."""

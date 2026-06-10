@@ -18,6 +18,7 @@ invocations regardless of which worker thread the host happens to use.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 from collections.abc import Coroutine
 from typing import Any, TypeVar
@@ -30,28 +31,43 @@ _lock = threading.Lock()
 
 
 def _ensure_loop() -> asyncio.AbstractEventLoop:
-    """Return the shared persistent event loop, starting it on first use."""
+    """Return the shared persistent event loop, starting it on first use.
+
+    The loop is only reusable when it is open *and* its backing thread is still
+    alive. A loop whose thread has died (e.g. during interpreter shutdown) is not
+    reusable: ``run_coroutine_threadsafe`` would schedule onto a loop that will
+    never run again and ``future.result()`` would block forever. Such a loop is
+    replaced with a fresh loop + thread.
+    """
     global _loop, _thread
 
-    if _loop is not None and not _loop.is_closed():
-        return _loop
+    loop, thread = _loop, _thread
+    if loop is not None and not loop.is_closed() and thread is not None and thread.is_alive():
+        return loop
 
     with _lock:
-        if _loop is not None and not _loop.is_closed():
-            return _loop
+        loop, thread = _loop, _thread
+        if loop is not None and not loop.is_closed() and thread is not None and thread.is_alive():
+            return loop
 
-        loop = asyncio.new_event_loop()
+        # An existing loop whose thread has died is orphaned; close it best-effort
+        # before replacing it so it does not leak.
+        if loop is not None and not loop.is_closed():
+            with contextlib.suppress(Exception):
+                loop.close()
+
+        new_loop = asyncio.new_event_loop()
 
         def _run() -> None:
-            asyncio.set_event_loop(loop)
-            loop.run_forever()
+            asyncio.set_event_loop(new_loop)
+            new_loop.run_forever()
 
-        thread = threading.Thread(target=_run, name="dafx-agent-loop", daemon=True)
-        thread.start()
+        new_thread = threading.Thread(target=_run, name="dafx-agent-loop", daemon=True)
+        new_thread.start()
 
-        _loop = loop
-        _thread = thread
-        return loop
+        _loop = new_loop
+        _thread = new_thread
+        return new_loop
 
 
 def run_agent_coroutine(coro: Coroutine[Any, Any, _T]) -> _T:

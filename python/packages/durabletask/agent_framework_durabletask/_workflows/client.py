@@ -112,6 +112,26 @@ class DurableWorkflowClient:
         # checkpoint-marker dicts. Reconstruct the originals before returning.
         return deserialize_workflow_output(json.loads(metadata.serialized_output))
 
+    def get_runtime_status(self, instance_id: str) -> str | None:
+        """Return the workflow's current runtime status name, or ``None`` if unknown.
+
+        Lets callers distinguish a workflow that is still running or paused for
+        human input from one that has reached a terminal state (for example
+        ``COMPLETED``, ``FAILED``, or ``TERMINATED``) — useful when polling, so a
+        workflow that ends without pausing is not mistaken for one that never paused.
+
+        Args:
+            instance_id: The instance ID returned by ``start_workflow``.
+
+        Returns:
+            The runtime status name (e.g. ``"RUNNING"``, ``"COMPLETED"``), or
+            ``None`` if no state is available for the instance.
+        """
+        state = self._client.get_orchestration_state(instance_id)
+        if state is None:
+            return None
+        return state.runtime_status.name
+
     def get_pending_hitl_requests(self, instance_id: str) -> list[dict[str, Any]]:
         """Return the workflow's pending human-in-the-loop (HITL) requests, if any.
 

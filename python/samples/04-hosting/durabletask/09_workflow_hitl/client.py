@@ -52,12 +52,24 @@ def get_client(taskhub: str | None = None, endpoint: str | None = None) -> Durab
 def _wait_for_hitl_request(
     client: DurableWorkflowClient, instance_id: str, timeout_seconds: int = 60
 ) -> list[dict[str, Any]]:
-    """Poll until the workflow has at least one pending HITL request."""
+    """Poll until the workflow has at least one pending HITL request.
+
+    Stops early if the workflow reaches a terminal state (e.g. completed or failed)
+    without pausing, so a misconfiguration or early failure surfaces the real
+    status instead of a misleading timeout.
+    """
+    terminal_statuses = {"COMPLETED", "FAILED", "TERMINATED"}
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         pending = client.get_pending_hitl_requests(instance_id)
         if pending:
             return pending
+        status = client.get_runtime_status(instance_id)
+        if status in terminal_statuses:
+            raise RuntimeError(
+                f"Workflow instance {instance_id} reached terminal state '{status}' "
+                "before pausing for human input."
+            )
         time.sleep(2)
     raise TimeoutError(f"Timed out waiting for a HITL request on instance {instance_id}")
 

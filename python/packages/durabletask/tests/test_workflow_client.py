@@ -138,6 +138,24 @@ class TestAwaitWorkflowOutput:
             workflow_client.await_workflow_output("instance-1")
 
 
+class TestGetRuntimeStatus:
+    """Test reading the workflow's runtime status."""
+
+    def test_returns_status_name(self, workflow_client: DurableWorkflowClient, mock_client: Mock) -> None:
+        """The runtime status name is returned when state is available."""
+        state = Mock()
+        state.runtime_status.name = "RUNNING"
+        mock_client.get_orchestration_state.return_value = state
+
+        assert workflow_client.get_runtime_status("instance-1") == "RUNNING"
+
+    def test_returns_none_when_no_state(self, workflow_client: DurableWorkflowClient, mock_client: Mock) -> None:
+        """No orchestration state yields None (status unknown)."""
+        mock_client.get_orchestration_state.return_value = None
+
+        assert workflow_client.get_runtime_status("instance-1") is None
+
+
 class TestGetPendingHitlRequests:
     """Test parsing pending HITL requests from custom status."""
 
@@ -236,3 +254,21 @@ class TestSendHitlResponse:
         _, kwargs = mock_client.raise_orchestration_event.call_args
         assert kwargs["event_name"] == "req-1"
         assert kwargs["data"] == {"approved": True}
+
+    def test_strips_pickle_markers_before_delivery(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A crafted pickle-marker payload is neutralized before reaching the worker.
+
+        The HITL response is sent to the worker which deserializes it, so a payload
+        carrying the checkpoint ``__pickled__`` marker must be stripped client-side
+        (regression guard for the strip_pickle_markers call in send_hitl_response).
+        """
+        malicious = {"__pickled__": "<crafted-base64-payload>", "approved": True}
+
+        workflow_client.send_hitl_response("instance-1", "req-1", malicious)
+
+        _, kwargs = mock_client.raise_orchestration_event.call_args
+        # The whole marker-bearing dict is neutralized (replaced with None) rather
+        # than forwarded, so it can never reach pickle.loads on the worker.
+        assert kwargs["data"] is None

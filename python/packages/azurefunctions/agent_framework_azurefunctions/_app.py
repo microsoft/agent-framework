@@ -258,10 +258,16 @@ class AgentFunctionApp(DFAppBase):
             logger.debug("[AgentFunctionApp] Extracting agents from workflow")
             plan = plan_workflow_registration(workflow)
             for agent_executor in plan.agent_executors:
-                # Register each agent executor's entity under its executor id (the
-                # identity the orchestrator dispatches to), so AgentExecutor(agent,
-                # id=...) works even when the id differs from agent.name.
-                self._setup_agent_entity(agent_executor.agent, agent_executor.id, self.default_callback)
+                # Register each workflow agent through the same surface as a
+                # standalone agent (so it is tracked in ``agents`` / ``get_agent``),
+                # but keyed by the executor id the orchestrator dispatches to, so
+                # AgentExecutor(agent, id=...) works when the id differs from
+                # agent.name. Mirrors DurableAIAgentWorker.add_agent(entity_id=...).
+                self.add_agent(
+                    agent_executor.agent,
+                    callback=self.default_callback,
+                    entity_id=agent_executor.id,
+                )
             for executor in plan.activity_executors:
                 # Set up a Functions activity trigger for each non-agent executor.
                 self._setup_executor_activity(executor.id)
@@ -496,6 +502,8 @@ class AgentFunctionApp(DFAppBase):
         callback: AgentResponseCallbackProtocol | None = None,
         enable_http_endpoint: bool | None = None,
         enable_mcp_tool_trigger: bool | None = None,
+        *,
+        entity_id: str | None = None,
     ) -> None:
         """Add an agent to the function app after initialization.
 
@@ -507,6 +515,11 @@ class AgentFunctionApp(DFAppBase):
                                   The app level enable_http_endpoints setting will override this setting.
             enable_mcp_tool_trigger: Optional flag to enable/disable MCP tool trigger for this agent.
                                      The app level enable_mcp_tool_trigger setting will override this setting.
+            entity_id: Optional identity to register the agent under instead of
+                ``agent.name``. Workflow hosting passes the executor's ``id`` so the
+                durable entity (and the ``agents`` / ``get_agent`` key) matches the
+                identity the orchestrator dispatches to. Mirrors
+                ``DurableAIAgentWorker.add_agent(entity_id=...)``.
 
         Raises:
             ValueError: If the agent doesn't have a 'name' attribute.
@@ -516,8 +529,15 @@ class AgentFunctionApp(DFAppBase):
         if name is None:
             raise ValueError("Agent does not have a 'name' attribute. All agents must have a 'name' attribute.")
 
-        if name in self._agent_metadata:
-            logger.warning("[AgentFunctionApp] Agent '%s' is already registered, skipping duplicate.", name)
+        # The registration name keys the agent everywhere on this app (metadata,
+        # routes, entity). It defaults to the agent name but can be overridden so a
+        # workflow agent is keyed by its executor id.
+        registration_name = entity_id or name
+
+        if registration_name in self._agent_metadata:
+            logger.warning(
+                "[AgentFunctionApp] Agent '%s' is already registered, skipping duplicate.", registration_name
+            )
             return
 
         effective_enable_http_endpoint = (
@@ -529,19 +549,19 @@ class AgentFunctionApp(DFAppBase):
             else self._coerce_to_bool(enable_mcp_tool_trigger)
         )
 
-        logger.debug(f"[AgentFunctionApp] Adding agent: {name}")
-        logger.debug(f"[AgentFunctionApp] Route: /api/agents/{name}")
+        logger.debug(f"[AgentFunctionApp] Adding agent: {registration_name}")
+        logger.debug(f"[AgentFunctionApp] Route: /api/agents/{registration_name}")
         logger.debug(
             "[AgentFunctionApp] HTTP endpoint %s for agent '%s'",
             "enabled" if effective_enable_http_endpoint else "disabled",
-            name,
+            registration_name,
         )
         logger.debug(
             f"[AgentFunctionApp] MCP tool trigger: {'enabled' if effective_enable_mcp_endpoint else 'disabled'}"
         )
 
         # Store agent metadata
-        self._agent_metadata[name] = AgentMetadata(
+        self._agent_metadata[registration_name] = AgentMetadata(
             agent=agent,
             http_endpoint_enabled=effective_enable_http_endpoint,
             mcp_tool_enabled=effective_enable_mcp_endpoint,
@@ -550,10 +570,10 @@ class AgentFunctionApp(DFAppBase):
         effective_callback = callback or self.default_callback
 
         self._setup_agent_functions(
-            agent, name, effective_callback, effective_enable_http_endpoint, effective_enable_mcp_endpoint
+            agent, registration_name, effective_callback, effective_enable_http_endpoint, effective_enable_mcp_endpoint
         )
 
-        logger.debug(f"[AgentFunctionApp] Agent '{name}' added successfully")
+        logger.debug(f"[AgentFunctionApp] Agent '{registration_name}' added successfully")
 
     def get_agent(
         self,
