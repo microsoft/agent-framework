@@ -31,7 +31,6 @@ Run the worker (this process), then run ``client.py`` in another process.
 """
 
 import asyncio
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -144,15 +143,7 @@ class InputRouterExecutor(Executor):
         super().__init__(id="input_router")
 
     @handler
-    async def route_input(self, input_json: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        data = json.loads(input_json) if isinstance(input_json, str) else input_json
-
-        submission = ContentSubmission(
-            content_id=data.get("content_id", "unknown"),
-            title=data.get("title", "Untitled"),
-            body=data.get("body", ""),
-            author=data.get("author", "Anonymous"),
-        )
+    async def route_input(self, submission: ContentSubmission, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         ctx.set_state("current_submission", submission)
 
         message = (
