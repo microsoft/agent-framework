@@ -19,6 +19,7 @@ task_any) is delegated to the ``WorkflowOrchestrationContext`` adapter.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from collections import defaultdict
@@ -131,24 +132,29 @@ DEFAULT_HITL_TIMEOUT_HOURS = 72.0
 def _evaluate_edge_condition_sync(edge: Edge, message: Any) -> bool:
     """Evaluate an edge's condition synchronously.
 
-    Durable orchestrators use generators, not async/await, so we cannot call
-    async methods like ``edge.should_route()``.
+    Durable orchestrators run as generators, so conditions are evaluated
+    synchronously here; the durabletask host does not support ``async`` edge
+    conditions. A condition that returns an awaitable cannot be evaluated in
+    this context, so the edge is treated as *not matched* (not traversed)
+    rather than assuming a result.
     """
     condition = edge._condition  # pyright: ignore[reportPrivateUsage]
     if condition is None:
         return True
     result = condition(message)
-    if hasattr(result, "__await__"):
-        import warnings
-
-        warnings.warn(
-            f"Edge condition for {edge.source_id}->{edge.target_id} is async, "
-            "which is not supported in durable orchestrators. "
-            "The edge will be traversed unconditionally.",
-            RuntimeWarning,
-            stacklevel=2,
+    if inspect.isawaitable(result):
+        # Async conditions cannot be evaluated in a synchronous orchestrator.
+        # Close the unawaited coroutine to avoid a "never awaited" warning and
+        # decline to traverse the edge (treated as not matched).
+        if inspect.iscoroutine(result):
+            result.close()
+        logger.warning(
+            "Edge condition for %s->%s is async and cannot be evaluated by the durabletask host; "
+            "the edge is not traversed. Use a synchronous condition.",
+            edge.source_id,
+            edge.target_id,
         )
-        return True
+        return False
     return bool(result)
 
 
