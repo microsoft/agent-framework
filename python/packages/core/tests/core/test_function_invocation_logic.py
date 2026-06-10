@@ -690,26 +690,28 @@ async def test_function_invocation_scenarios(
     else:  # num_functions == 2
         # Two functions with mixed approval
         if not streaming:
-            # Mixed: assistant message has both calls + approval requests (4 items total)
-            # (because when one requires approval, all are batched for approval)
-            assert len(messages) == 1
-            # Should have: 2 FunctionCallContent + 2 FunctionApprovalRequestContent
-            assert len(messages[0].contents) == 4
+            assert len(messages) == 2
             assert messages[0].contents[0].type == "function_call"
             assert messages[0].contents[1].type == "function_call"
-            # Both should result in approval requests
             approval_requests = [c for c in messages[0].contents if c.type == "function_approval_request"]
-            assert len(approval_requests) == 2
-            assert exec_counter == 0  # Neither function executed yet
+            assert len(approval_requests) == 1
+            assert approval_requests[0].function_call.name == "approval_func"
+            assert messages[1].role == "tool"
+            assert messages[1].contents[0].type == "function_result"
+            assert messages[1].contents[0].call_id == "1"
+            assert messages[1].contents[0].result == "Processed value1"
+            assert exec_counter == 1
         else:
-            # Streaming: 2 function call updates + 1 approval request with 2 contents
-            assert len(messages) == 3
+            assert len(messages) == 4
             assert messages[0].contents[0].type == "function_call"
             assert messages[1].contents[0].type == "function_call"
-            # The approval request message contains both approval requests
-            assert len(messages[2].contents) == 2
-            assert all(c.type == "function_approval_request" for c in messages[2].contents)
-            assert exec_counter == 0  # Neither function executed yet
+            assert messages[2].contents[0].type == "function_approval_request"
+            assert messages[2].contents[0].function_call.name == "approval_func"
+            assert messages[3].role == "tool"
+            assert messages[3].contents[0].type == "function_result"
+            assert messages[3].contents[0].call_id == "1"
+            assert messages[3].contents[0].result == "Processed value1"
+            assert exec_counter == 1
 
 
 async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):

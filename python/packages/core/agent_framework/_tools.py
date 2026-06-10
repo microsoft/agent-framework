@@ -1694,9 +1694,7 @@ async def _try_execute_function_calls(
     declaration_only = [tool_name for tool_name, tool in tool_map.items() if tool.declaration_only]
     configured_additional_tools = config.get("additional_tools") or []
     additional_tool_names = [tool.name for tool in configured_additional_tools]
-    # check if any are calling functions that need approval
-    # if so, we return approval request for all
-    approval_needed = False
+    approval_call_ids: set[str] = set()
     declaration_only_flag = False
     for fcc in function_calls:
         fcc_name = getattr(fcc, "name", None)
@@ -1708,8 +1706,8 @@ async def _try_execute_function_calls(
         )
         if fcc.type == "function_call" and fcc.name in approval_tools:  # type: ignore[attr-defined]
             logger.debug("Approval needed for function: %s", fcc.name)
-            approval_needed = True
-            break
+            approval_call_ids.add(fcc.call_id)  # type: ignore[attr-defined]
+            continue
         if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):  # type: ignore[attr-defined]
             declaration_only_flag = True
             break
@@ -1717,17 +1715,6 @@ async def _try_execute_function_calls(
             config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map  # type: ignore[attr-defined]
         ):
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
-    if approval_needed:
-        # approval can only be needed for Function Call Content, not Approval Responses.
-        logger.debug("Returning function_approval_request contents")
-        return (
-            [
-                Content.from_function_approval_request(id=fcc.call_id, function_call=fcc)  # type: ignore[attr-defined, arg-type]
-                for fcc in function_calls
-                if fcc.type == "function_call"
-            ],
-            False,
-        )
     if declaration_only_flag:
         # return the declaration only tools to the user, since we cannot execute them.
         # Mark as user_input_request so AgentExecutor emits request_info events and pauses the workflow.
@@ -1793,12 +1780,34 @@ async def _try_execute_function_calls(
                 False,
             )
 
+    indexed_results: list[tuple[int, Content]] = []
+    executable_calls: list[tuple[int, Content]] = []
+    if approval_call_ids:
+        logger.debug(
+            "Returning approval requests for function calls: %s",
+            sorted(approval_call_ids),
+        )
+        for seq_idx, fcc in enumerate(function_calls):
+            if fcc.type == "function_call" and fcc.call_id in approval_call_ids:  # type: ignore[attr-defined]
+                indexed_results.append(
+                    (
+                        seq_idx,
+                        Content.from_function_approval_request(id=fcc.call_id, function_call=fcc),  # type: ignore[attr-defined, arg-type]
+                    )
+                )
+            else:
+                executable_calls.append((seq_idx, fcc))
+    else:
+        executable_calls = list(enumerate(function_calls))
+
     execution_results = await asyncio.gather(*[
-        invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
+        invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in executable_calls
     ])
 
-    # Unpack results - each is (Content, terminate_flag)
-    contents: list[Content] = [result[0] for result in execution_results]
+    for (seq_idx, _), result in zip(executable_calls, execution_results):
+        indexed_results.append((seq_idx, result[0]))
+
+    contents = [content for _, content in sorted(indexed_results, key=lambda item: item[0])]
     contents.extend(extra_user_input_contents)
     # If any function requested termination, terminate the loop
     should_terminate = any(result[1] for result in execution_results)
@@ -2089,6 +2098,7 @@ class FunctionRequestResult(TypedDict, total=False):
     update_role: Literal["assistant", "tool"] | None
     function_call_results: list[Content] | None
     function_call_count: int
+    function_call_updates: list[tuple[Literal["assistant", "tool"], list[Content]]] | None
 
 
 def _handle_function_call_results(
@@ -2108,18 +2118,30 @@ def _handle_function_call_results(
     ):
         # Only add items that aren't already in the message (e.g. function_approval_request wrappers).
         # Declaration-only function_call items are already present from the LLM response.
-        new_items = [fccr for fccr in function_call_results if fccr.type != "function_call"]
-        if new_items:
+        assistant_items = [
+            fccr
+            for fccr in function_call_results
+            if fccr.type != "function_call" and fccr.type != "function_result"
+        ]
+        tool_items = [fccr for fccr in function_call_results if fccr.type == "function_result"]
+        updates: list[tuple[Literal["assistant", "tool"], list[Content]]] = []
+        if assistant_items:
             if response.messages and response.messages[0].role == "assistant":
-                response.messages[0].contents.extend(new_items)
+                response.messages[0].contents.extend(assistant_items)
             else:
-                response.messages.append(Message(role="assistant", contents=new_items))
+                response.messages.append(Message(role="assistant", contents=assistant_items))
+            updates.append(("assistant", assistant_items))
+        if tool_items:
+            result_message = Message(role="tool", contents=tool_items)
+            response.messages.append(result_message)
+            updates.append(("tool", tool_items))
         return {
             "action": "return",
             "errors_in_a_row": errors_in_a_row,
             "result_message": None,
-            "update_role": "assistant",
+            "update_role": None,
             "function_call_results": None,
+            "function_call_updates": updates,
         }
 
     if had_errors:
@@ -2230,7 +2252,8 @@ async def _process_function_requests(
         had_errors=had_errors,
         max_errors=max_errors,
     )
-    result["function_call_results"] = list(function_call_results)
+    if result.get("function_call_results") is None and result.get("function_call_updates") is None:
+        result["function_call_results"] = list(function_call_results)
     result["function_call_count"] = sum(1 for r in function_call_results if r.type == "function_result")
     # If middleware requested termination, change action to return
     if should_terminate:
@@ -2625,7 +2648,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
                 errors_in_a_row = result.get("errors_in_a_row", errors_in_a_row)
                 total_function_calls += result.get("function_call_count", 0)
-                if role := result.get("update_role"):
+                if updates := result.get("function_call_updates"):
+                    for role, contents in updates:
+                        yield ChatResponseUpdate(
+                            contents=contents,
+                            role=role,
+                        )
+                elif role := result.get("update_role"):
                     yield ChatResponseUpdate(
                         contents=result.get("function_call_results") or [],
                         role=role,
