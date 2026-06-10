@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Squad.SquadWithDTS</RootNamespace>
+    <AssemblyName>Squad.SquadWithDTS</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft Agent Framework: Squad + DTS support -->
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.6.1" />
+    <PackageReference Include="Microsoft.Agents.AI.DurableTask" Version="1.6.1-preview" />
+    <PackageReference Include="Microsoft.Agents.AI.GitHub.Copilot" Version="1.6.1-preview" />
+
+    <!-- Durable Task Scheduler: Azure-Managed transport (also used by DTS emulator) -->
+    <PackageReference Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.24.2" />
+    <PackageReference Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.24.2" />
+
+    <!-- Observability: OTel SDK + OTLP exporter -->
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.3" />
+    <PackageReference Include="Microsoft.Extensions.ServiceDiscovery.Yarp" Version="9.3.0" />
+    <PackageReference Include="Aspire.Hosting" Version="9.3.0" />
+  </ItemGroup>
+</Project>
