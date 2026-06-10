@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI.Valkey</RootNamespace>
-    <VersionSuffix>preview</VersionSuffix>
+    <VersionSuffix>alpha</VersionSuffix>
     <NoWarn>$(NoWarn);CA1873</NoWarn>
   </PropertyGroup>
 
