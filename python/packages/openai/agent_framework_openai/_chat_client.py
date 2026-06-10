@@ -120,6 +120,8 @@ OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY = "openai.responses.local_shell.call_item_id
 OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY = "openai.local_shell_command_parts"
 OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL = "shell_call_output"
 OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL = "local_shell_call_output"
+_AZURE_AI_SEARCH_CALL_OUTPUT_TYPE = "azure_ai_search_call_output"
+_AZURE_AI_SEARCH_OUTPUT_EVENT_TYPES = {"response.output_item.added", "response.output_item.done"}
 
 # Internal marker emitted by `_prepare_content_for_openai` for an
 # `mcp_server_tool_result` Content. The Responses API expects an `mcp_call`
@@ -749,6 +751,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             return chat_response
 
         return _get_response()
+
+    @override
+    def _finalize_response_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse[Any]:
+        """Finalize streamed updates and add post-stream Azure AI Search citation metadata."""
+        self._enrich_streamed_azure_ai_search_citations(updates)
+        return super()._finalize_response_updates(updates, response_format=response_format)
 
     @classmethod
     def _extract_served_model(cls, headers: Any) -> str | None:
@@ -1949,6 +1962,80 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         return value
 
     @staticmethod
+    def _parse_azure_ai_search_output_payload(output: Any) -> Mapping[str, Any] | None:
+        """Parse an Azure AI Search tool output payload from a streamed Responses event."""
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except json.JSONDecodeError:
+                logger.debug("Unable to parse Azure AI Search call output JSON.", exc_info=True)
+                return None
+
+        output = RawOpenAIChatClient._serialize_provider_payload(output)
+        if isinstance(output, Mapping):
+            return cast("Mapping[str, Any]", output)
+        return None
+
+    @staticmethod
+    def _extract_azure_ai_search_get_urls(event: Any) -> list[str]:
+        """Extract per-document Azure AI Search REST URLs from a streamed Responses event."""
+        if getattr(event, "type", None) not in _AZURE_AI_SEARCH_OUTPUT_EVENT_TYPES:
+            return []
+
+        item = getattr(event, "item", None)
+        if getattr(item, "type", None) != _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
+            return []
+
+        payload = RawOpenAIChatClient._parse_azure_ai_search_output_payload(getattr(item, "output", None))
+        if payload is None:
+            return []
+
+        get_urls = payload.get("get_urls")
+        if not isinstance(get_urls, Sequence) or isinstance(get_urls, (str, bytes, bytearray)):
+            return []
+
+        urls: list[str] = []
+        for url in cast("Sequence[object]", get_urls):
+            if isinstance(url, str) and url:
+                urls.append(url)
+        return urls
+
+    @staticmethod
+    def _azure_ai_search_doc_index(annotation: Annotation) -> int | None:
+        """Return the document index encoded in a Foundry Azure AI Search `doc_N` citation title."""
+        title = annotation.get("title")
+        if not isinstance(title, str) or not title.startswith("doc_"):
+            return None
+        index_text = title.removeprefix("doc_")
+        if not index_text.isdigit():
+            return None
+        return int(index_text)
+
+    @classmethod
+    def _enrich_streamed_azure_ai_search_citations(cls, updates: Sequence[ChatResponseUpdate]) -> None:
+        """Enrich streamed Azure AI Search citation annotations with per-document REST URLs."""
+        get_urls: list[str] = []
+        for update in updates:
+            get_urls.extend(cls._extract_azure_ai_search_get_urls(update.raw_representation))
+        if not get_urls:
+            return
+
+        for update in updates:
+            for content in update.contents:
+                if content.type != "text" or not content.annotations:
+                    continue
+                for annotation in content.annotations:
+                    if annotation.get("type") != "citation" or annotation.get("file_id"):
+                        continue
+                    additional_properties = annotation.setdefault("additional_properties", {})
+                    if "get_url" in additional_properties:
+                        continue
+                    doc_index = cls._azure_ai_search_doc_index(annotation)
+                    if doc_index is None or doc_index >= len(get_urls):
+                        continue
+                    additional_properties["get_url"] = get_urls[doc_index]
+
+    @staticmethod
     def _get_search_tool_name(item_type: str) -> str:
         """Map OpenAI search output item types to unified content tool names."""
         return "web_search" if item_type == "web_search_call" else "file_search"
@@ -2789,7 +2876,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     case "web_search_call" | "file_search_call":
                         contents.append(self._parse_search_tool_call_content(event_item))
                     case _:
-                        logger.debug("Unparsed event of type: %s: %s", event.type, event)
+                        if getattr(event_item, "type", None) != _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
+                            logger.debug("Unparsed event of type: %s: %s", event.type, event)
             case (
                 "response.web_search_call.in_progress"
                 | "response.web_search_call.searching"
@@ -2958,6 +3046,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     )
                 elif getattr(done_item, "type", None) in ("web_search_call", "file_search_call"):
                     contents.append(self._parse_search_tool_result_content(done_item))
+                elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
+                    pass
             case _:
                 logger.debug("Unparsed event of type: %s: %s", event.type, event)
 

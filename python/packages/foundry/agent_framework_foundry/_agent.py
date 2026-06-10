@@ -365,6 +365,8 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         # ``agent_name`` instead, so skip there. See issue #5582.
         if not self.allow_preview:
             extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
+            if conversation_id is None or _uses_foundry_agent_session(conversation_id):
+                run_options.pop("model", None)
         if extra_body:
             run_options["extra_body"] = extra_body
 

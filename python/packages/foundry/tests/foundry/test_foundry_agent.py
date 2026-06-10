@@ -8,6 +8,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from agent_framework import (
@@ -21,8 +22,10 @@ from agent_framework import (
     tool,
 )
 from agent_framework_openai._chat_client import RawOpenAIChatClient
+from azure.ai.projects import models as projects_models
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 
 from agent_framework_foundry._agent import (
     FoundryAgent,
@@ -30,6 +33,7 @@ from agent_framework_foundry._agent import (
     RawFoundryAgentChatClient,
     _FoundryAgentChatClient,
 )
+from agent_framework_foundry._chat_client import FoundryChatClient
 
 skip_if_foundry_agent_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.services.ai.azure.com/")
@@ -37,10 +41,35 @@ skip_if_foundry_agent_integration_tests_disabled = pytest.mark.skipif(
     reason="No real FOUNDRY_PROJECT_ENDPOINT or FOUNDRY_AGENT_NAME provided; skipping integration tests.",
 )
 
+_FOUNDRY_AZURE_AI_SEARCH_MODEL_ENV_VARS = (
+    "FOUNDRY_AZURE_AI_SEARCH_MODEL",
+    "OPENAI_MODEL",
+    "AZURE_OPENAI_MODEL",
+    "AZURE_OPENAI_CHAT_MODEL",
+    "FOUNDRY_MODEL",
+)
+
+
+def _get_foundry_azure_ai_search_model() -> str | None:
+    """Return the model/deployment to use for local Azure AI Search integration validation."""
+    return next((os.environ[key] for key in _FOUNDRY_AZURE_AI_SEARCH_MODEL_ENV_VARS if os.getenv(key)), None)
+
+
+skip_if_foundry_azure_ai_search_integration_tests_disabled = pytest.mark.skipif(
+    os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.services.ai.azure.com/")
+    or os.getenv("AZURE_SEARCH_ENDPOINT", "") == ""
+    or os.getenv("AZURE_SEARCH_INDEX_NAME", "") == ""
+    or _get_foundry_azure_ai_search_model() is None,
+    reason="No live Foundry project, Azure Search index, or model provided for Azure AI Search integration tests.",
+)
+
 _FOUNDRY_AGENT_ENV_VARS = (
     "FOUNDRY_PROJECT_ENDPOINT",
     "FOUNDRY_AGENT_NAME",
     "FOUNDRY_AGENT_VERSION",
+    "FOUNDRY_AZURE_AI_SEARCH_AGENT_NAME",
+    "FOUNDRY_AZURE_AI_SEARCH_AGENT_VERSION",
+    "FOUNDRY_AZURE_AI_SEARCH_MODEL",
 )
 
 
@@ -261,7 +290,7 @@ async def test_raw_foundry_agent_chat_client_prepare_options_accepts_function_to
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_fields() -> None:
-    """Test that _prepare_options strips tool-loop fields but preserves model for non-session requests."""
+    """Test that _prepare_options strips client-side fields for Prompt Agent requests."""
 
     mock_project = MagicMock()
     mock_openai = MagicMock()
@@ -293,14 +322,12 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
             options={"tools": [my_func]},
         )
 
-    # model is preserved for non-session (PromptAgent) requests
-    assert result["model"] == "gpt-4.1"
+    assert "model" not in result
     assert "tools" not in result
     assert "tool_choice" not in result
     assert "parallel_tool_calls" not in result
     # agent_reference is required so the Responses API can resolve model server-side; see #5582.
     assert result == {
-        "model": "gpt-4.1",
         "extra_body": {"agent_reference": {"name": "test-agent", "type": "agent_reference"}},
     }
 
@@ -451,6 +478,7 @@ async def test_raw_foundry_agent_chat_client_prepare_options_respects_caller_age
             options={"extra_body": {"agent_reference": caller_reference}},
         )
 
+    assert "model" not in result
     assert result["extra_body"]["agent_reference"] == caller_reference
 
 
@@ -1001,6 +1029,92 @@ async def test_foundry_agent_custom_client_run() -> None:
     assert isinstance(response, AgentResponse)
     assert response.text is not None
     assert "response test" in response.text.lower()
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_foundry_azure_ai_search_integration_tests_disabled
+async def test_foundry_agent_azure_ai_search_streaming_citation_get_url() -> None:
+    """Live regression for Foundry server-side Azure AI Search streaming output."""
+    credential = AsyncAzureCliCredential()
+    project_client: Any | None = None
+    agent_created = False
+    agent_name = f"af-5995-{uuid4().hex[:12]}"
+    query = os.getenv("FOUNDRY_AZURE_AI_SEARCH_QUERY") or "Search the knowledge base for hotels and cite one result."
+    model = _get_foundry_azure_ai_search_model()
+    assert model is not None
+
+    try:
+        from azure.ai.projects.aio import AIProjectClient
+
+        project_client = AIProjectClient(
+            endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            credential=credential,
+            allow_preview=True,
+        )
+        try:
+            search_connection = await project_client.connections.get_default(
+                projects_models.ConnectionType.AZURE_AI_SEARCH
+            )
+        except Exception as exc:
+            pytest.skip(f"No default Azure AI Search connection is configured in the Foundry project: {exc}")
+        if not search_connection.id:
+            pytest.skip("Default Azure AI Search connection does not expose an id.")
+
+        tool = FoundryChatClient.get_azure_ai_search_tool(
+            index_connection_id=search_connection.id,
+            index_name=os.environ["AZURE_SEARCH_INDEX_NAME"],
+            query_type="simple",
+            top_k=3,
+        )
+        definition = projects_models.PromptAgentDefinition(
+            model=model,
+            instructions="You must use Azure AI Search for every answer and cite retrieved documents.",
+            tools=[tool],
+            tool_choice="required",
+        )
+        await project_client.agents.create_version(agent_name, definition=definition)
+        agent_created = True
+
+        async with FoundryAgent(project_client=project_client, agent_name=agent_name, allow_preview=False) as agent:
+            stream = agent.run(query, stream=True)
+            async for _ in stream:
+                pass
+            response = await stream.get_final_response()
+
+        raw_events = []
+        for raw_agent_update in response.raw_representation or []:
+            raw_chat_update = getattr(raw_agent_update, "raw_representation", raw_agent_update)
+            raw_events.append(getattr(raw_chat_update, "raw_representation", raw_chat_update))
+
+        live_get_urls = [
+            get_url for event in raw_events for get_url in RawOpenAIChatClient._extract_azure_ai_search_get_urls(event)
+        ]
+        assert live_get_urls, "Expected the live Azure AI Search stream to include get_urls."
+
+        citations = [
+            annotation
+            for message in response.messages
+            for content in message.contents
+            for annotation in (content.annotations or [])
+            if annotation.get("type") == "citation"
+        ]
+        doc_citations = [
+            annotation
+            for annotation in citations
+            if isinstance(annotation.get("title"), str) and annotation["title"].startswith("doc_")
+        ]
+        if doc_citations:
+            assert any(
+                isinstance((annotation.get("additional_properties") or {}).get("get_url"), str)
+                for annotation in doc_citations
+            ), "Expected doc_N citations to be enriched with additional_properties.get_url."
+    finally:
+        if project_client is not None:
+            if agent_created:
+                await project_client.agents.delete(agent_name, force=True)
+            await project_client.close()
+        await credential.close()
 
 
 def test_parse_chunk_surfaces_oauth_consent_request() -> None:
