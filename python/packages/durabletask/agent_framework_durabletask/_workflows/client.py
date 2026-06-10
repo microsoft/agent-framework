@@ -15,8 +15,8 @@ from typing import Any, cast
 
 from durabletask.client import TaskHubGrpcClient
 
-from ._workflow_orchestrator import WORKFLOW_ORCHESTRATOR_NAME
-from ._workflow_serialization import strip_pickle_markers
+from .orchestrator import WORKFLOW_ORCHESTRATOR_NAME
+from .serialization import strip_pickle_markers
 
 logger = logging.getLogger("agent_framework.durabletask")
 

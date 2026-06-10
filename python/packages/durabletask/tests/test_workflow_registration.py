@@ -13,7 +13,7 @@ from unittest.mock import Mock
 from agent_framework import AgentExecutor, Executor
 
 from agent_framework_durabletask import WorkflowRegistrationPlan, plan_workflow_registration
-from agent_framework_durabletask._workflow_orchestrator import WORKFLOW_ORCHESTRATOR_NAME
+from agent_framework_durabletask._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME
 
 
 def _agent_executor(executor_id: str, agent_name: str) -> Mock:

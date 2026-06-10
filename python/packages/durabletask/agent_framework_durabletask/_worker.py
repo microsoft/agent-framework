@@ -19,10 +19,10 @@ from durabletask.worker import TaskHubGrpcWorker
 from ._async_bridge import run_agent_coroutine
 from ._callbacks import AgentResponseCallbackProtocol
 from ._entities import AgentEntity, DurableTaskEntityStateProvider
-from ._workflow_activity import execute_workflow_activity
-from ._workflow_dt_context import DurableTaskWorkflowContext
-from ._workflow_orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
-from ._workflow_registration import plan_workflow_registration
+from ._workflows.activity import execute_workflow_activity
+from ._workflows.dt_context import DurableTaskWorkflowContext
+from ._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
+from ._workflows.registration import plan_workflow_registration
 
 logger = logging.getLogger("agent_framework.durabletask")
 

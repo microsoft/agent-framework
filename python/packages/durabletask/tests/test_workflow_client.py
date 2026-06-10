@@ -13,7 +13,7 @@ from unittest.mock import Mock
 import pytest
 
 from agent_framework_durabletask import DurableWorkflowClient
-from agent_framework_durabletask._workflow_orchestrator import WORKFLOW_ORCHESTRATOR_NAME
+from agent_framework_durabletask._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME
 
 
 @pytest.fixture

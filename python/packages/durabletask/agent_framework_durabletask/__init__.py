@@ -51,13 +51,13 @@ from ._orchestration_context import DurableAIAgentOrchestrationContext
 from ._response_utils import ensure_response_format, load_agent_response
 from ._shim import DurableAIAgent
 from ._worker import DurableAIAgentWorker
-from ._workflow_activity import execute_workflow_activity
-from ._workflow_client import DurableWorkflowClient
-from ._workflow_context import WorkflowOrchestrationContext
-from ._workflow_dt_context import DurableTaskWorkflowContext
-from ._workflow_orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
-from ._workflow_registration import WorkflowRegistrationPlan, plan_workflow_registration
-from ._workflow_runner_context import CapturingRunnerContext
+from ._workflows.activity import execute_workflow_activity
+from ._workflows.client import DurableWorkflowClient
+from ._workflows.context import WorkflowOrchestrationContext
+from ._workflows.dt_context import DurableTaskWorkflowContext
+from ._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
+from ._workflows.registration import WorkflowRegistrationPlan, plan_workflow_registration
+from ._workflows.runner_context import CapturingRunnerContext
 
 try:
     __version__ = importlib.metadata.version(__name__)

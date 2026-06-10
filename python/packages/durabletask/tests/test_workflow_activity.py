@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 from agent_framework_durabletask import execute_workflow_activity
-from agent_framework_durabletask._workflow_orchestrator import SOURCE_ORCHESTRATOR
+from agent_framework_durabletask._workflows.orchestrator import SOURCE_ORCHESTRATOR
 
 
 def _make_executor(executor_id: str, mutate: Any) -> Mock:

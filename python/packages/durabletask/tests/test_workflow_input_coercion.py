@@ -16,7 +16,7 @@ from unittest.mock import Mock
 from agent_framework import AgentExecutor, Executor, WorkflowContext, handler
 from pydantic import BaseModel
 
-from agent_framework_durabletask._workflow_orchestrator import _coerce_initial_input
+from agent_framework_durabletask._workflows.orchestrator import _coerce_initial_input
 
 
 @dataclass

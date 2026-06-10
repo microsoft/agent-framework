@@ -19,10 +19,10 @@ from durabletask.task import (
     when_any,  # pyright: ignore[reportUnknownVariableType]
 )
 
-from ._executors import OrchestrationAgentExecutor
-from ._models import AgentSessionId, DurableAgentSession
-from ._shim import DurableAIAgent
-from ._workflow_context import WorkflowOrchestrationContext
+from .._executors import OrchestrationAgentExecutor
+from .._models import AgentSessionId, DurableAgentSession
+from .._shim import DurableAIAgent
+from .context import WorkflowOrchestrationContext
 
 logger = logging.getLogger(__name__)
 

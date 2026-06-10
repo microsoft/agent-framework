@@ -160,7 +160,7 @@ def reconstruct_to_type(value: Any, target_type: type) -> Any:
     # Try decoding if data has pickle markers (from checkpoint encoding).
     # NOTE: This function is general-purpose.  Callers that handle untrusted
     # data (e.g. HITL responses) MUST call strip_pickle_markers() before
-    # passing data here.  See _deserialize_hitl_response in _workflow_orchestrator.py.
+    # passing data here.  See _deserialize_hitl_response in orchestrator.py.
     decoded = deserialize_value(value)
     if not isinstance(decoded, dict):
         return decoded

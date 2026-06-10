@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 from agent_framework import AgentExecutor, Executor, Workflow
 
-from ._workflow_orchestrator import WORKFLOW_ORCHESTRATOR_NAME
+from .orchestrator import WORKFLOW_ORCHESTRATOR_NAME
 
 
 @dataclass

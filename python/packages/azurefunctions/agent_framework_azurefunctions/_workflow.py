@@ -4,7 +4,7 @@
 
 This module provides the Azure Functions entry point for workflow orchestration.
 The actual orchestration logic lives in the shared module
-``agent_framework_durabletask._workflow_orchestrator`` and is host-agnostic.
+``agent_framework_durabletask._workflows.orchestrator`` and is host-agnostic.
 This module re-exports the public API and provides the AF-specific
 ``run_workflow_orchestrator`` wrapper that creates an
 :class:`AzureFunctionsWorkflowContext` before delegating.
@@ -17,7 +17,7 @@ from collections.abc import Generator
 from typing import Any
 
 from agent_framework import Workflow
-from agent_framework_durabletask._workflow_orchestrator import (
+from agent_framework_durabletask._workflows.orchestrator import (
     DEFAULT_HITL_TIMEOUT_HOURS,
     SOURCE_HITL_RESPONSE,
     SOURCE_ORCHESTRATOR,
@@ -31,7 +31,7 @@ from agent_framework_durabletask._workflow_orchestrator import (
     execute_hitl_response_handler,
     route_message_through_edge_groups,
 )
-from agent_framework_durabletask._workflow_orchestrator import (
+from agent_framework_durabletask._workflows.orchestrator import (
     run_workflow_orchestrator as _run_workflow_orchestrator_shared,
 )
 from azure.durable_functions import DurableOrchestrationContext
