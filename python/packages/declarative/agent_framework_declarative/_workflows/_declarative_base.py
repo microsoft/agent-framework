@@ -498,7 +498,7 @@ class DeclarativeWorkflowState:
     def _clear_local_path(self, name: str) -> None:
         """Remove ``name`` from the ``Local`` namespace, if present."""
         state_data = self.get_state_data()
-        local = cast(dict[str, Any], state_data.get("Local"))
+        local = state_data.get("Local")
         if local is None or name not in local:
             return
         local.pop(name, None)
