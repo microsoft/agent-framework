@@ -120,6 +120,10 @@ cd dotnet/samples/01-get-started/01_hello_agent
 dotnet run
 ```
 
+## See also
+
+For implementation conventions and best practices, see [SAMPLE_GUIDELINES.md](./SAMPLE_GUIDELINES.md).
+
 ## Current API notes
 
 - `AIAgent` is the primary agent abstraction (created via `ChatClient.AsAIAgent(...)`)
