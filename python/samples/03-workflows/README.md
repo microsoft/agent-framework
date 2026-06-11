@@ -169,7 +169,6 @@ callers can still inspect progress or supporting work from the response messages
 | Sample                           | File                                                                                             | Concepts                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
 | State with Agents                | [state-management/state_with_agents.py](./state-management/state_with_agents.py) | Store in state once and later reuse across agents                 |
-| Reset Workflow Between Runs      | [state-management/workflow_reset.py](./state-management/workflow_reset.py) | Reuse one workflow instance across independent runs via `reset_for_new_run()` |
 | Workflow Kwargs - Global Context | [state-management/workflow_kwargs_global.py](./state-management/workflow_kwargs_global.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in all agents |
 | Workflow Kwargs - Per Agent | [state-management/workflow_kwargs_per_agent.py](./state-management/workflow_kwargs_per_agent.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in individual agents |
 

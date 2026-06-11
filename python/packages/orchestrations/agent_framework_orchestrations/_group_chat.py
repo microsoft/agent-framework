@@ -327,7 +327,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         )
         self._agent = agent
         self._retry_attempts = retry_attempts
-        self._session_supplied_by_caller = session is not None
         self._session = session or agent.create_session()
         # Cache for messages since last agent invocation
         # This is different from the full conversation history maintained by the base orchestrator
@@ -337,25 +336,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     def _append_messages(self, messages: Sequence[Message]) -> None:
         self._cache.extend(messages)
         return super()._append_messages(messages)
-
-    @override
-    def _reset_pattern_state(self) -> None:
-        """Reset pattern-specific state for a new workflow run.
-
-        Clears the per-run message cache and rotates the orchestrator agent's
-        session unless the caller supplied a session explicitly (in which case
-        the caller is responsible for the session's lifecycle).
-        """
-        self._cache.clear()
-        if self._session_supplied_by_caller:
-            logger.warning(
-                "%s %s: Session was supplied by the caller and will not be reset. "
-                "If you want a fresh session for the next run, reset or replace it before invoking the workflow.",
-                self.__class__.__name__,
-                self.id,
-            )
-        else:
-            self._session = self._agent.create_session()
 
     @override
     async def _handle_messages(

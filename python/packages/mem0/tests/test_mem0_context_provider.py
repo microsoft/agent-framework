@@ -198,12 +198,7 @@ class TestBeforeRun:
         """OSS client with all scoping parameters passes them as isolated concurrent kwargs."""
         mock_oss_mem0_client.search.return_value = []
 
-        provider = Mem0ContextProvider(
-            source_id="mem0",
-            mem0_client=mock_oss_mem0_client,
-            user_id="u1",
-            agent_id="a1"
-        )
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", agent_id="a1")
 
         mock_context = MagicMock(spec=SessionContext)
         mock_msg = MagicMock()

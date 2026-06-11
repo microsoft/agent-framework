@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sessions import ContextProvider
 from .._types import ResponseStream
-from ..exceptions import WorkflowCheckpointException, WorkflowException, WorkflowRunnerException
+from ..exceptions import WorkflowCheckpointException, WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointID, CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
@@ -568,13 +568,12 @@ class Workflow(DictConvertible):
                 yield in_progress  # noqa: RUF070
 
                 # Per-run reset for fresh-message runs only. We deliberately
-                # do NOT clear shared workflow state (`_state.clear()`) or the
-                # runner context's in-flight messages (`reset_for_new_run()`)
-                # here - state and pending work persist across `run()` calls
-                # so that a `WorkflowAgent` can deliver multi-turn input on
-                # the same instance and have prior turns' context survive.
-                # Iteration counting and per-run kwargs ARE per-run though,
-                # so they're reset here.
+                # do NOT clear shared workflow state or the runner context's
+                # in-flight messages here - state and pending work persist
+                # across `run()` calls so that a `WorkflowAgent` can deliver
+                # multi-turn input on the same instance and have prior turns'
+                # context survive. Iteration counting and per-run kwargs ARE
+                # per-run though, so they're reset here.
                 if not is_continuation:
                     self._runner.reset_iteration_count()
 
@@ -1210,24 +1209,3 @@ class Workflow(DictConvertible):
         """
         existing_stream = self._active_run() if self._active_run is not None else None
         return existing_stream is not None
-
-    async def reset_for_new_run(self) -> None:
-        """Reset the workflow for a new run that is independent from prior runs.
-
-        Note:
-            This will reset EVERYTHING - executor states, workflow state, and runner
-            context (including pending requests/messages).
-
-        Raises:
-            WorkflowRunnerException: If a run is currently in progress. Reset is only
-                allowed when the workflow is idle to avoid clobbering in-flight run state.
-
-        """
-        existing_stream = self._active_run() if self._active_run is not None else None
-        if existing_stream is not None:
-            raise WorkflowRunnerException(
-                "Cannot reset the workflow while a run is in progress. "
-                "Wait for the current run to complete before calling reset_for_new_run()."
-            )
-        self._active_run = None
-        await self._runner.reset_for_new_run()

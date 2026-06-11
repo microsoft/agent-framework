@@ -3032,6 +3032,7 @@ class TestCheckpointContextPathValidation:
         agent.workflow = MagicMock()
         agent.workflow.name = "wf"
         agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.workflow.create_checkpoint = AsyncMock(return_value="cp_initial")
         agent.run = AsyncMock(
             side_effect=[
                 AgentResponse(messages=[]),
@@ -3155,6 +3156,8 @@ class TestCheckpointContextPathValidation:
         agent.workflow = MagicMock()
         agent.workflow.name = "wf"
         agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.workflow.create_checkpoint = AsyncMock(return_value="cp_initial")
+        agent.run = AsyncMock(return_value=AgentResponse(messages=[]))
 
         # Constructor inspects WorkflowAgent.workflow internals; bypass setup
         # by feeding a configured mock through a normal init.
@@ -3970,81 +3973,6 @@ class TestWorkflowAgentHosting:
         ]
         assert len(approval_responses) == 1
         assert approval_responses[0].approved is False  # type: ignore[attr-defined]
-
-    async def test_workflow_is_reset_when_no_prior_conversation(self) -> None:
-        """Without ``previous_response_id`` or ``conversation_id`` the host must
-        reset the workflow so any in-memory state from a previous request is
-        cleared before the new turn runs."""
-        workflow_agent = _build_text_workflow_agent("fresh")
-        server = _make_server(workflow_agent)
-
-        with patch.object(
-            workflow_agent.workflow,
-            "reset_for_new_run",
-            new=AsyncMock(wraps=workflow_agent.workflow.reset_for_new_run),
-        ) as reset_spy:
-            resp = await _post(server, input_text="hi", stream=False)
-
-        assert resp.status_code == 200
-        assert reset_spy.await_count == 1
-
-    async def test_workflow_is_reset_across_independent_requests(self) -> None:
-        """Two consecutive requests without a chaining context id must each
-        reset the workflow."""
-        workflow_agent = _build_text_workflow_agent("again")
-        server = _make_server(workflow_agent)
-
-        with patch.object(
-            workflow_agent.workflow,
-            "reset_for_new_run",
-            new=AsyncMock(wraps=workflow_agent.workflow.reset_for_new_run),
-        ) as reset_spy:
-            first = await _post(server, input_text="hi", stream=False)
-            second = await _post(server, input_text="hi again", stream=False)
-
-        assert first.status_code == 200
-        assert second.status_code == 200
-        assert reset_spy.await_count == 2
-
-    async def test_workflow_is_not_reset_when_resuming_from_checkpoint(self) -> None:
-        """When ``previous_response_id`` resolves to an existing workflow
-        checkpoint the host restores the checkpoint instead of resetting
-        the workflow."""
-        workflow_agent, _ = _build_approval_workflow_agent(
-            approval_request_id="apr_no_reset",
-            final_text="resumed",
-        )
-        server = _make_server(workflow_agent)
-
-        first = await _post(server, stream=False)
-        assert first.status_code == 200
-        first_body = first.json()
-        first_response_id = first_body["id"]
-        approval_request_id = next(it["id"] for it in first_body["output"] if it["type"] == "mcp_approval_request")
-
-        with patch.object(
-            workflow_agent.workflow,
-            "reset_for_new_run",
-            new=AsyncMock(wraps=workflow_agent.workflow.reset_for_new_run),
-        ) as reset_spy:
-            second = await _post_json(
-                server,
-                {
-                    "model": "test-model",
-                    "input": [
-                        {
-                            "type": "mcp_approval_response",
-                            "approval_request_id": approval_request_id,
-                            "approve": True,
-                        }
-                    ],
-                    "stream": False,
-                    "previous_response_id": first_response_id,
-                },
-            )
-
-        assert second.status_code == 200
-        assert reset_spy.await_count == 0
 
 
 # endregion

@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import logging
 from collections.abc import AsyncIterable, Awaitable
 from typing import Any, Literal, overload
 
@@ -20,7 +19,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowRunState,
 )
-from agent_framework._workflows._agent_executor import AgentExecutorRequest, AgentExecutorResponse
+from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflows._const import GLOBAL_KWARGS_KEY
 
@@ -305,108 +304,6 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
     # Verify session was restored with correct session_id
     restored_session = new_executor._session  # type: ignore[reportPrivateUsage]
     assert restored_session.session_id == session.session_id
-
-
-# region: Tests for AgentExecutor.reset()
-
-
-async def test_agent_executor_reset_clears_per_run_state() -> None:
-    """reset() clears cache, conversation snapshot, and pending request/response buffers."""
-    agent = _CountingAgent(id="reset_agent", name="ResetAgent")
-    executor = AgentExecutor(agent, id="reset_exec")
-
-    # Populate every per-run buffer.
-    executor._cache = [Message(role="user", contents=["cached"])]  # type: ignore[reportPrivateUsage]
-    executor._full_conversation = [  # type: ignore[reportPrivateUsage]
-        Message(role="user", contents=["prior turn"]),
-        Message(role="assistant", contents=["prior response"]),
-    ]
-    pending_request = Content.from_text(text="approve?")
-    executor._pending_agent_requests = {"req-1": pending_request}  # type: ignore[reportPrivateUsage]
-    executor._pending_responses_to_agent = [Content.from_text(text="approved")]  # type: ignore[reportPrivateUsage]
-
-    await executor.reset()
-
-    assert executor._cache == []  # type: ignore[reportPrivateUsage]
-    assert executor._full_conversation == []  # type: ignore[reportPrivateUsage]
-    assert executor._pending_agent_requests == {}  # type: ignore[reportPrivateUsage]
-    assert executor._pending_responses_to_agent == []  # type: ignore[reportPrivateUsage]
-
-
-async def test_agent_executor_reset_creates_fresh_session_when_auto_created() -> None:
-    """reset() replaces the agent session when the executor created it itself."""
-    agent = _CountingAgent(id="reset_session_agent", name="ResetSessionAgent")
-    # No session passed in — executor creates one via agent.create_session().
-    executor = AgentExecutor(agent, id="reset_session_exec")
-    auto_created = executor._session  # type: ignore[reportPrivateUsage]
-    auto_created.state["history"] = {"messages": [Message(role="user", contents=["old"])]}
-
-    await executor.reset()
-
-    new_session = executor._session  # type: ignore[reportPrivateUsage]
-    assert new_session is not auto_created
-    assert new_session.session_id != auto_created.session_id
-    assert "history" not in new_session.state
-
-
-async def test_agent_executor_reset_preserves_caller_supplied_session(caplog: pytest.LogCaptureFixture) -> None:
-    """reset() leaves a session passed in via __init__ untouched and warns the caller."""
-    agent = _CountingAgent(id="reset_session_agent", name="ResetSessionAgent")
-    caller_session = AgentSession()
-    history_payload = {"messages": [Message(role="user", contents=["old"])]}
-    caller_session.state["history"] = history_payload
-    executor = AgentExecutor(agent, id="reset_session_exec", session=caller_session)
-
-    assert executor._session is caller_session  # type: ignore[reportPrivateUsage]
-
-    with caplog.at_level(logging.WARNING, logger="agent_framework._workflows._agent_executor"):
-        await executor.reset()
-
-    # Same instance, state untouched — the caller is responsible for managing the session.
-    assert executor._session is caller_session  # type: ignore[reportPrivateUsage]
-    assert caller_session.state["history"] is history_payload
-    assert any("Session was supplied by the caller" in record.message for record in caplog.records)
-
-
-async def test_agent_executor_reset_allows_subsequent_run() -> None:
-    """After reset(), the executor can be reused for a fresh workflow run without leaking state."""
-    agent = _CountingAgent(id="reset_reuse_agent", name="ResetReuseAgent")
-    executor = AgentExecutor(agent, id="reset_reuse_exec")
-    workflow = WorkflowBuilder(start_executor=executor, output_from=[executor]).build()
-
-    first_outputs: list[WorkflowEvent] = []
-    async for event in workflow.run(
-        AgentExecutorRequest(messages=[Message(role="user", contents=["hello"])]),
-        stream=True,
-    ):
-        if event.type == "output":
-            first_outputs.append(event)
-
-    assert first_outputs, "first run should have produced at least one output event"
-    # After a normal run the cache is drained but the conversation snapshot remains.
-    assert executor._cache == []  # type: ignore[reportPrivateUsage]
-    assert executor._full_conversation != []  # type: ignore[reportPrivateUsage]
-    first_session_id = executor._session.session_id  # type: ignore[reportPrivateUsage]
-
-    await workflow.reset_for_new_run()
-
-    assert executor._full_conversation == []  # type: ignore[reportPrivateUsage]
-    # Session was auto-created, so reset() rotates it to a fresh one.
-    assert executor._session.session_id != first_session_id  # type: ignore[reportPrivateUsage]
-
-    second_outputs: list[WorkflowEvent] = []
-    async for event in workflow.run(
-        AgentExecutorRequest(messages=[Message(role="user", contents=["second"])]),
-        stream=True,
-    ):
-        if event.type == "output":
-            second_outputs.append(event)
-
-    assert second_outputs, "second run after reset should have produced at least one output event"
-    assert agent.call_count == 2
-
-
-# endregion: Tests for AgentExecutor.reset()
 
 
 async def test_prepare_agent_run_args_extracts_invocation_kwargs() -> None:

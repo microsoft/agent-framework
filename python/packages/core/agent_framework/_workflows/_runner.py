@@ -88,23 +88,6 @@ class Runner:
         """
         self._iteration = 0
 
-    async def reset_for_new_run(self) -> None:
-        """Reset the runner for a new run.
-
-        This is useful when reusing the same workflow instance for a different run
-        that is independent from prior runs.
-
-        Concurrent-run rejection lives at the :class:`Workflow` level via the
-        active-run weak reference, so this method does not re-validate that
-        no run is in progress; callers are expected to have already done so.
-        """
-        self.reset_iteration_count()
-        self._ctx.reset_for_new_run()
-        self._state.clear()
-        self._resumed_from_checkpoint = False
-        for executor in self._executors.values():
-            await executor.reset()
-
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
         # Emit any events already produced prior to entering loop

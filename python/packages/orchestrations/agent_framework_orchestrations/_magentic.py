@@ -509,14 +509,6 @@ class MagenticManagerBase(ABC):
         """Restore runtime state from checkpoint data."""
         return
 
-    def on_reset(self) -> None:
-        """Reset per-run runtime state for a new workflow run.
-
-        Subclasses should clear any state accumulated during a run (e.g. cached
-        ledgers, agent sessions) so the manager is ready to start fresh.
-        """
-        return
-
 
 class StandardMagenticManager(MagenticManagerBase):
     """Standard Magentic manager that performs real LLM calls via a Agent.
@@ -768,12 +760,6 @@ class StandardMagenticManager(MagenticManagerBase):
                 self._session = AgentSession.from_dict(session_payload)
             except Exception:  # pragma: no cover - defensive
                 logger.warning("Failed to restore manager agent session from checkpoint state")
-
-    @override
-    def on_reset(self) -> None:
-        """Clear cached ledger and start a fresh agent session for a new run."""
-        self.task_ledger = None
-        self._session = self._agent.create_session()
 
 
 # endregion Magentic Manager
@@ -1276,15 +1262,6 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Orchestrator is connected to all participants. Sending the message without specifying
         # a target will broadcast to all.
         await ctx.send_message(MagenticResetSignal())
-
-    @override
-    def _reset_pattern_state(self) -> None:
-        """Reset Magentic-specific per-run state for a new workflow run."""
-        self._magentic_context = None
-        self._task_ledger = None
-        self._progress_ledger = None
-        self._terminated = False
-        self._manager.on_reset()
 
     @override
     async def on_checkpoint_save(self) -> dict[str, Any]:

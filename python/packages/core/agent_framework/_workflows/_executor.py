@@ -516,14 +516,6 @@ class Executor(RequestInfoMixin, DictConvertible):
         """
         ...
 
-    async def reset(self) -> None:
-        """Reset the executor to its initial state.
-
-        Override this method in subclasses to implement custom logic that should
-        run when the workflow is reset.
-        """
-        ...
-
 
 # endregion: Executor
 
