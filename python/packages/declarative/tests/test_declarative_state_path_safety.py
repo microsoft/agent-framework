@@ -210,7 +210,7 @@ class TestSetRejectsInvalidPaths:
         """Rejected set() must not create an unreachable entry in the state."""
         state.set("Local.user_input", "pre")
         with pytest.raises(ValueError):
-            state.set("Local.", "leak")
+            state.set("Local.", "value")
         local = state.get_state_data().get("Local", {})
         assert "" not in local
         assert local == {"user_input": "pre"}
@@ -221,14 +221,14 @@ class TestSetRejectsInvalidPaths:
         """Rejected append() must not create an unreachable entry in the state."""
         state.set("Local.items", ["a"])
         with pytest.raises(ValueError):
-            state.append("Local.", "leak")
+            state.append("Local.", "value")
         local = state.get_state_data().get("Local", {})
         assert "" not in local
         assert local == {"items": ["a"]}
 
 
 # ---------------------------------------------------------------------------
-# interpolate_string(): invalid placeholders left intact, valid ones resolved
+# interpolate_string(): permissive matcher; get() enforces safety
 # ---------------------------------------------------------------------------
 
 
@@ -241,11 +241,17 @@ class TestInterpolateString:
         out = state.interpolate_string("X={Local.obj.__class__.__init__.__globals__.os.environ}")
 
         assert sentinel not in out
-        assert "{Local.obj.__class__" in out  # placeholder left as literal text
+        assert out == "X="
 
-    def test_ignores_leading_underscore_segment(self, state: DeclarativeWorkflowState) -> None:
-        out = state.interpolate_string("v={Local._private}")
-        assert out == "v={Local._private}"
+    def test_unknown_path_reduces_to_empty(self, state: DeclarativeWorkflowState) -> None:
+        assert state.interpolate_string("v={Local._private}") == "v="
+
+    @pytest.mark.parametrize(
+        "literal",
+        ["{foo-bar}", "{Ctrl+C}", "{not:a:path}", "{Local.}", "{}"],
+    )
+    def test_non_state_braced_tokens_left_literal(self, state: DeclarativeWorkflowState, literal: str) -> None:
+        assert state.interpolate_string(f"v={literal}") == f"v={literal}"
 
     def test_allows_underscore_inside_identifier(self, state: DeclarativeWorkflowState) -> None:
         state.set("Local.user_input", "hello")
@@ -255,12 +261,29 @@ class TestInterpolateString:
         state.set("Local.params", {"team": "alpha"})
         assert state.interpolate_string("team={Local.params.team}") == "team=alpha"
 
-    def test_end_to_end_send_activity_literal_placeholder(
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("_id", "abc123"),
+            ("1", "one"),
+            ("2025", "year-bucket"),
+        ],
+    )
+    def test_resolves_dict_keyed_segments(self, state: DeclarativeWorkflowState, key: str, value: str) -> None:
+        state.set("Local.bag", {key: value})
+        assert state.interpolate_string(f"v={{Local.bag.{key}}}") == f"v={value}"
+
+    def test_resolves_uuid_conversation_key(self, state: DeclarativeWorkflowState) -> None:
+        conv_id = "eb815014-06f1-4db6-b7c1-304ea135424f"
+        state.set(f"System.conversations.{conv_id}.messages", ["hello"])
+        out = state.interpolate_string(f"m={{System.conversations.{conv_id}.messages}}")
+        assert out == "m=['hello']"
+
+    def test_end_to_end_send_activity_payload_neutralized(
         self,
         state: DeclarativeWorkflowState,
         monkeypatch,
     ) -> None:
-        """Mirror the SendActivity flow: eval_if_expression then interpolate_string."""
         sentinel = "agent-framework-e2e-sentinel"
         monkeypatch.setenv("AF_E2E_SENTINEL", sentinel)
         state.set("Local.toolResult", _PlainObj())
@@ -269,8 +292,8 @@ class TestInterpolateString:
         evaluated = state.eval_if_expression(payload)
         rendered = state.interpolate_string(evaluated) if isinstance(evaluated, str) else str(evaluated)
 
-        assert rendered == payload
         assert sentinel not in rendered
+        assert rendered == ""
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +309,7 @@ class TestPowerFxStillWorks:
         assert state.eval("=Local.x * Local.y") == 42
 
     def test_internal_temp_message_text_still_works(self, state: DeclarativeWorkflowState) -> None:
-        """Long MessageText() results stored in TempMessageText{n} still round-trip."""
+        """Long MessageText() results round-trip and the temp key is removed after eval."""
         long_text = "A" * 600
         state.set(
             "Local.Messages",
@@ -296,4 +319,46 @@ class TestPowerFxStillWorks:
         result = state.eval("=Upper(MessageText(Local.Messages))")
         assert result == "A" * 600
 
-        assert state.get("Local.TempMessageText0") == long_text
+        local = state.get_state_data().get("Local", {})
+        remaining = sorted(k for k in local if k.startswith("_TempMessageText"))
+        assert not remaining, f"Temporary keys remain in Local: {remaining}"
+
+    def test_message_text_eval_preserves_user_temp_value(self, state: DeclarativeWorkflowState) -> None:
+        """User state at the temp key path survives a long MessageText eval."""
+        long_text = "A" * 600
+        state.set("Local._TempMessageText0", "user-important-value")
+        state.set(
+            "Local.Messages",
+            [{"text": long_text, "contents": [{"type": "text", "text": long_text}]}],
+        )
+
+        result = state.eval("=Upper(MessageText(Local.Messages))")
+        assert result == "A" * 600
+        assert state.get("Local._TempMessageText0") == "user-important-value"
+
+    def test_message_text_eval_cleans_up_on_powerfx_failure(
+        self,
+        state: DeclarativeWorkflowState,
+        monkeypatch,
+    ) -> None:
+        """Temp key is removed even when PowerFx evaluation raises."""
+        from agent_framework_declarative._workflows import _declarative_base as base
+
+        class _FailingEngine:
+            def eval(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(base, "Engine", _FailingEngine)
+
+        long_text = "A" * 600
+        state.set(
+            "Local.Messages",
+            [{"text": long_text, "contents": [{"type": "text", "text": long_text}]}],
+        )
+
+        with pytest.raises(RuntimeError, match="boom"):
+            state.eval("=Upper(MessageText(Local.Messages))")
+
+        local = state.get_state_data().get("Local", {})
+        remaining = sorted(k for k in local if k.startswith("_TempMessageText"))
+        assert not remaining, f"Temporary keys remain in Local after PowerFx failure: {remaining}"
