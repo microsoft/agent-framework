@@ -27,7 +27,8 @@ internal static class A2UIFixedSchemaTools
         "favicon API like 'https://www.google.com/s2/favicons?domain=united.com&sz=128'), " +
         "flightNumber, origin, destination, date (e.g. 'Tue, Mar 18'), departureTime, " +
         "arrivalTime, duration (e.g. '4h 25m'), status ('On Time' or 'Delayed'), " +
-        "and price (e.g. '$289').");
+        "and price (e.g. '$289').",
+        AGUIDojoServerSerializerContext.Default.Options);
 
     /// <summary>Creates the <c>search_hotels</c> tool.</summary>
     public static AIFunction CreateSearchHotelsTool() => AIFunctionFactory.Create(
@@ -36,7 +37,8 @@ internal static class A2UIFixedSchemaTools
         "Search for hotels and display the results as rich cards with star ratings. " +
         "Each hotel must have: id, name (e.g. 'The Plaza'), location " +
         "(e.g. 'Midtown Manhattan, NYC'), rating (float 0-5, e.g. 4.5), and " +
-        "price (per night, e.g. '$350'). Generate 3-4 realistic results.");
+        "price (per night, e.g. '$350'). Generate 3-4 realistic results.",
+        AGUIDojoServerSerializerContext.Default.Options);
 
     private static string SearchFlights(
         [Description("Array of flight result objects.")] JsonArray flights)

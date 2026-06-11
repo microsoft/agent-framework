@@ -32,8 +32,13 @@ internal static class ChatClientAgentFactory
             // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
             // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
             // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+            if (!Uri.TryCreate(azureEndpoint, UriKind.Absolute, out Uri? azureUri))
+            {
+                throw new InvalidOperationException($"AZURE_OPENAI_ENDPOINT is not a valid absolute URI: '{azureEndpoint}'.");
+            }
+
             s_openAIClient = new AzureOpenAIClient(
-                new Uri(azureEndpoint),
+                azureUri,
                 new DefaultAzureCredential());
             return;
         }
@@ -47,7 +52,12 @@ internal static class ChatClientAgentFactory
         string? baseUrl = configuration["OPENAI_BASE_URL"];
         if (!string.IsNullOrEmpty(baseUrl))
         {
-            options.Endpoint = new Uri(baseUrl);
+            if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri? baseUri))
+            {
+                throw new InvalidOperationException($"OPENAI_BASE_URL is not a valid absolute URI: '{baseUrl}'. Include the scheme, e.g. 'http://localhost:8000/v1'.");
+            }
+
+            options.Endpoint = baseUri;
         }
 
         s_openAIClient = new OpenAIClient(new System.ClientModel.ApiKeyCredential(apiKey), options);
@@ -59,7 +69,7 @@ internal static class ChatClientAgentFactory
 
         return chatClient.AsAIAgent(
             name: "AgenticChat",
-            description: "A simple chat agent using Azure OpenAI");
+            description: "A simple chat agent");
     }
 
     public static ChatClientAgent CreateBackendToolRendering()
@@ -68,7 +78,7 @@ internal static class ChatClientAgentFactory
 
         return chatClient.AsAIAgent(
             name: "BackendToolRenderer",
-            description: "An agent that can render backend tools using Azure OpenAI",
+            description: "An agent that can render backend tools",
             tools: [AIFunctionFactory.Create(
                 GetWeather,
                 name: "get_weather",
@@ -82,7 +92,7 @@ internal static class ChatClientAgentFactory
 
         return chatClient.AsAIAgent(
             name: "HumanInTheLoopAgent",
-            description: "An agent that involves human feedback in its decision-making process using Azure OpenAI");
+            description: "An agent that involves human feedback in its decision-making process");
     }
 
     public static ChatClientAgent CreateToolBasedGenerativeUI()
@@ -91,7 +101,7 @@ internal static class ChatClientAgentFactory
 
         return chatClient.AsAIAgent(
             name: "ToolBasedGenerativeUIAgent",
-            description: "An agent that uses tools to generate user interfaces using Azure OpenAI");
+            description: "An agent that uses tools to generate user interfaces");
     }
 
     public static AIAgent CreateAgenticUI(JsonSerializerOptions options)
@@ -100,7 +110,7 @@ internal static class ChatClientAgentFactory
         var baseAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
         {
             Name = "AgenticUIAgent",
-            Description = "An agent that generates agentic user interfaces using Azure OpenAI",
+            Description = "An agent that generates agentic user interfaces",
             ChatOptions = new ChatOptions
             {
                 Instructions = """
@@ -142,7 +152,7 @@ internal static class ChatClientAgentFactory
 
         var baseAgent = chatClient.AsAIAgent(
             name: "SharedStateAgent",
-            description: "An agent that demonstrates shared state patterns using Azure OpenAI");
+            description: "An agent that demonstrates shared state patterns");
 
         return new SharedStateAgent(baseAgent, options);
     }
@@ -154,7 +164,7 @@ internal static class ChatClientAgentFactory
         var baseAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
         {
             Name = "PredictiveStateUpdatesAgent",
-            Description = "An agent that demonstrates predictive state updates using Azure OpenAI",
+            Description = "An agent that demonstrates predictive state updates",
             ChatOptions = new ChatOptions
             {
                 Instructions = """
