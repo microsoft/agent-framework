@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Reflection;
 using System.Text.Json.Serialization;
 using Microsoft.Shared.Diagnostics;
 
@@ -11,11 +12,37 @@ namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 /// </summary>
 public sealed class TypeId : IEquatable<TypeId>
 {
+    private string? _assemblySimpleName;
+
     /// <inheritdoc cref="System.Reflection.Assembly.FullName"/>
     public string AssemblyName { get; }
 
     /// <inheritdoc cref="Type.FullName"/>
     public string TypeName { get; }
+
+    /// <summary>
+    /// Gets the simple (version-, culture-, and public-key-token-independent) name of the assembly,
+    /// derived from <see cref="AssemblyName"/>. This is used for identity comparisons and type
+    /// resolution so that checkpoints remain compatible across assembly version changes.
+    /// </summary>
+    internal string AssemblySimpleName => this._assemblySimpleName ??= NormalizeAssemblyName(this.AssemblyName);
+
+    /// <summary>
+    /// Extracts the simple assembly name from a (possibly fully-qualified) assembly name string,
+    /// discarding version, culture, and public key token. Falls back to the original value if it
+    /// cannot be parsed.
+    /// </summary>
+    private static string NormalizeAssemblyName(string assemblyName)
+    {
+        try
+        {
+            return new AssemblyName(assemblyName).Name ?? assemblyName;
+        }
+        catch (Exception)
+        {
+            return assemblyName;
+        }
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TypeId"/> class.
@@ -58,11 +85,11 @@ public sealed class TypeId : IEquatable<TypeId>
             return true;
         }
 
-        return this.AssemblyName == other.AssemblyName && this.TypeName == other.TypeName;
+        return this.AssemblySimpleName == other.AssemblySimpleName && this.TypeName == other.TypeName;
     }
 
     /// <inheritdoc />
-    public override int GetHashCode() => HashCode.Combine(this.AssemblyName, this.TypeName);
+    public override int GetHashCode() => HashCode.Combine(this.AssemblySimpleName, this.TypeName);
 
     /// <inheritdoc />
     public static bool operator ==(TypeId? left, TypeId? right) => left is null ? right is null : left.Equals(right);
@@ -78,7 +105,7 @@ public sealed class TypeId : IEquatable<TypeId>
     /// false.</returns>
     public bool IsMatch(Type type)
     {
-        return this.AssemblyName == type.Assembly.FullName
+        return this.AssemblySimpleName == type.Assembly.GetName().Name
             && this.TypeName == type.FullName;
     }
 
