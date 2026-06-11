@@ -177,6 +177,31 @@ public sealed class A2UIAgentTests
     }
 
     [Fact]
+    public async Task RunStreamingAsync_PreservesPlannerNarrationInNextRoundHistoryAsync()
+    {
+        // Arrange: the planner narrates alongside its generate_a2ui call on round 1.
+        var inner = new ScriptedPlannerAgent(generateArguments: new() { ["intent"] = "create" })
+        {
+            RoundOneText = "Let me put that together.",
+        };
+        var subagent = new ScriptedChatClient(_ => s_validRenderArgs) { StreamingChunks = 1 };
+        var agent = new A2UIAgent(inner, subagent);
+
+        // Act
+        await foreach (AgentResponseUpdate _ in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "show hotels")]))
+        {
+        }
+
+        // Assert: round 2's history carries the planner's round-1 narration, not just the
+        // generate_a2ui call — the reconstructed assistant message is not lossy.
+        Assert.Equal(2, inner.Runs.Count);
+        Assert.Contains(inner.Runs[1], m =>
+            m.Role == ChatRole.Assistant &&
+            m.Contents.OfType<TextContent>().Any(t => t.Text == "Let me put that together.") &&
+            m.Contents.OfType<FunctionCallContent>().Any(c => c.CallId == "call-g1"));
+    }
+
+    [Fact]
     public async Task RunStreamingAsync_SubagentNeverCallsTool_ReturnsRecoveryExhaustedEnvelopeAsync()
     {
         // Arrange: the subagent never calls render_a2ui, so every attempt fails.
@@ -657,6 +682,9 @@ public sealed class A2UIAgentTests
         /// <summary>When set, emit a <c>generate_a2ui</c> call on every run instead of narrating after the first.</summary>
         public bool AlwaysGenerate { get; init; }
 
+        /// <summary>When set, the first run emits this narration text alongside its <c>generate_a2ui</c> call.</summary>
+        public string? RoundOneText { get; init; }
+
         public List<IReadOnlyList<ChatMessage>> Runs { get; } = [];
 
         /// <summary>The tool names advertised on each run, in order.</summary>
@@ -684,10 +712,14 @@ public sealed class A2UIAgentTests
             bool generateAdvertised = this.ToolsPerRun[^1].Contains(A2UIConstants.GenerateA2UIToolName);
             if (generateAdvertised && (this.AlwaysGenerate || this.Runs.Count == 1))
             {
-                yield return new AgentResponseUpdate(ChatRole.Assistant,
-                [
-                    new FunctionCallContent($"call-g{this.Runs.Count}", A2UIConstants.GenerateA2UIToolName, this._generateArguments),
-                ]);
+                List<AIContent> contents = [];
+                if (this.RoundOneText is not null && this.Runs.Count == 1)
+                {
+                    contents.Add(new TextContent(this.RoundOneText));
+                }
+
+                contents.Add(new FunctionCallContent($"call-g{this.Runs.Count}", A2UIConstants.GenerateA2UIToolName, this._generateArguments));
+                yield return new AgentResponseUpdate(ChatRole.Assistant, contents);
             }
             else
             {

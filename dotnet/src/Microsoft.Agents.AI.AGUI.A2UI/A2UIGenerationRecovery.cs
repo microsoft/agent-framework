@@ -114,7 +114,7 @@ public static class A2UIGenerationRecovery
         Throw.IfNull(invokeSubagentAsync);
         Throw.IfNull(buildEnvelope);
 
-        int maxAttempts = config?.MaxAttempts ?? A2UIConstants.MaxA2UIAttempts;
+        int maxAttempts = ResolveMaxAttempts(config);
         List<A2UIAttemptRecord> attempts = [];
         IReadOnlyList<A2UIValidationError> lastErrors = [];
 
@@ -139,6 +139,17 @@ public static class A2UIGenerationRecovery
 
         return new A2UIRecoveryResult(WrapRecoveryExhaustedEnvelope(maxAttempts, attempts), attempts, Ok: false);
     }
+
+    /// <summary>
+    /// Resolves the attempt cap, falling back to <see cref="A2UIConstants.MaxA2UIAttempts"/>
+    /// when the configured value is unset or non-positive. A zero/negative cap would skip
+    /// the loop entirely and emit a confusing "0 attempt(s)" envelope, so it is treated as
+    /// unset rather than honored. Shared by both generation paths.
+    /// </summary>
+    /// <param name="config">The recovery configuration, if any.</param>
+    /// <returns>The effective maximum number of attempts (at least 1).</returns>
+    internal static int ResolveMaxAttempts(A2UIRecoveryConfig? config)
+        => config?.MaxAttempts is int max && max > 0 ? max : A2UIConstants.MaxA2UIAttempts;
 
     /// <summary>
     /// Validates one attempt's structured <c>render_a2ui</c> arguments, narrowing the

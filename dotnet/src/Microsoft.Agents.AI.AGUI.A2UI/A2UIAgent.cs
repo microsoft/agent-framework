@@ -115,15 +115,23 @@ public sealed class A2UIAgent : DelegatingAIAgent
         for (int round = 1; round <= MaxPlannerRounds; round++)
         {
             List<FunctionCallContent> generateCalls = [];
+            List<AIContent> assistantContents = [];
             await foreach (AgentResponseUpdate update in this.InnerAgent
                 .RunStreamingAsync(pending, pendingSession, runOptions, cancellationToken)
                 .ConfigureAwait(false))
             {
                 foreach (AIContent content in update.Contents)
                 {
-                    if (content is FunctionCallContent call &&
+                    // Preserve the planner's own narration alongside its generate_a2ui
+                    // calls so the message fed back to it next round is not lossy.
+                    if (content is TextContent text)
+                    {
+                        assistantContents.Add(text);
+                    }
+                    else if (content is FunctionCallContent call &&
                         string.Equals(call.Name, generateTool.Name, StringComparison.Ordinal))
                     {
+                        assistantContents.Add(call);
                         generateCalls.Add(call);
                     }
                 }
@@ -154,7 +162,7 @@ public sealed class A2UIAgent : DelegatingAIAgent
             var toolMessage = new ChatMessage(ChatRole.Tool, results);
             yield return new AgentResponseUpdate(ChatRole.Tool, results);
 
-            history.Add(new ChatMessage(ChatRole.Assistant, [.. generateCalls]));
+            history.Add(new ChatMessage(ChatRole.Assistant, assistantContents));
             history.Add(toolMessage);
             pending = history;
             pendingSession = null;
@@ -163,12 +171,15 @@ public sealed class A2UIAgent : DelegatingAIAgent
         // The planner kept requesting generations through the round cap. Give it one final
         // turn to consume the last tool result and narrate, with the generate tool withheld
         // so it cannot request another surface — otherwise the run would end on an
-        // unanswered tool result with no closing assistant message.
-        chatOptions.Tools = (chatOptions.Tools ?? Enumerable.Empty<AITool>())
+        // unanswered tool result with no closing assistant message. A fresh options instance
+        // keeps the loop's own options untouched.
+        var closingChatOptions = chatOptions.Clone();
+        closingChatOptions.Tools = (chatOptions.Tools ?? Enumerable.Empty<AITool>())
             .Where(t => !string.Equals(t.Name, generateTool.Name, StringComparison.Ordinal))
             .ToList();
+        var closingOptions = new ChatClientAgentRunOptions { ChatOptions = closingChatOptions, ChatClientFactory = runOptions.ChatClientFactory };
         await foreach (AgentResponseUpdate update in this.InnerAgent
-            .RunStreamingAsync(history, pendingSession, runOptions, cancellationToken)
+            .RunStreamingAsync(history, pendingSession, closingOptions, cancellationToken)
             .ConfigureAwait(false))
         {
             yield return update;
@@ -203,7 +214,7 @@ public sealed class A2UIAgent : DelegatingAIAgent
 
         // The streaming twin of A2UIGenerationRecovery.RunAsync: same attempt semantics,
         // but each subagent call streams so its updates can be forwarded between attempts.
-        int maxAttempts = this._parameters.Recovery?.MaxAttempts ?? A2UIConstants.MaxA2UIAttempts;
+        int maxAttempts = A2UIGenerationRecovery.ResolveMaxAttempts(this._parameters.Recovery);
         List<A2UIAttemptRecord> attempts = [];
         IReadOnlyList<A2UIValidationError> lastErrors = [];
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
