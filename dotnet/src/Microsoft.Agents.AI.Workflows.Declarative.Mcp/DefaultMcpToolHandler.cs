@@ -2,10 +2,10 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -39,7 +39,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
 
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
-    private readonly Dictionary<string, McpClient> _clients = [];
+    private readonly Dictionary<(string Url, string Label, string Connection, string HeadersHash), McpClient> _clients = [];
     private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
     private readonly SemaphoreSlim _clientLock = new(1, 1);
 
@@ -66,16 +66,15 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         string? connectionName,
         CancellationToken cancellationToken = default)
     {
-        // TODO: Handle connectionName and server label appropriately when Hosted scenario supports them. For now, ignore
         if (IsListToolsToolName(toolName))
         {
             ThrowIfListToolsArgumentsSpecified(arguments);
-            McpClient listToolsClient = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
+            McpClient listToolsClient = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, connectionName, cancellationToken).ConfigureAwait(false);
             IList<McpClientTool> tools = await listToolsClient.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
             return CreateListToolsResultContent(tools.Select(tool => tool.ProtocolTool));
         }
 
-        McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
+        McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, connectionName, cancellationToken).ConfigureAwait(false);
 
         McpServerToolResultContent resultContent = new(Guid.NewGuid().ToString());
 
@@ -145,10 +144,11 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
+        string? connectionName,
         CancellationToken cancellationToken)
     {
-        string normalizedUrl = serverUrl.Trim().ToUpperInvariant();
-        string clientCacheKey = $"{normalizedUrl}|{ComputeHeadersHash(headers)}";
+        string trimmedUrl = serverUrl.Trim();
+        var clientCacheKey = BuildCacheKey(trimmedUrl, serverLabel, connectionName, headers);
 
         await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -158,7 +158,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
                 return existingClient;
             }
 
-            McpClient newClient = await this.CreateClientAsync(serverUrl, serverLabel, headers, normalizedUrl, cancellationToken).ConfigureAwait(false);
+            McpClient newClient = await this.CreateClientAsync(trimmedUrl, serverLabel, headers, trimmedUrl, cancellationToken).ConfigureAwait(false);
             this._clients[clientCacheKey] = newClient;
             return newClient;
         }
@@ -167,6 +167,19 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             this._clientLock.Release();
         }
     }
+
+    /// <summary>
+    /// Builds the per-client cache key as a 4-tuple of
+    /// (trimmed serverUrl, serverLabel, connectionName, headers hash). All four components
+    /// participate so that callers using different labels/connections/headers receive
+    /// distinct <see cref="McpClient"/> instances even when targeting the same URL.
+    /// </summary>
+    internal static (string Url, string Label, string Connection, string HeadersHash) BuildCacheKey(
+        string trimmedUrl,
+        string? serverLabel,
+        string? connectionName,
+        IDictionary<string, string>? headers) =>
+        (trimmedUrl, serverLabel ?? string.Empty, connectionName ?? string.Empty, ComputeHeadersHash(headers));
 
     private async Task<McpClient> CreateClientAsync(
         string serverUrl,
@@ -185,7 +198,12 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
         if (httpClient is null && !this._ownedHttpClients.TryGetValue(httpClientCacheKey, out httpClient))
         {
-            httpClient = new HttpClient();
+            // Disable cookies so handler-level state (cookie jar) cannot cross the cache-key
+            // isolation boundary established by GetOrCreateClientAsync. The actual MCP auth
+            // travels via AdditionalHeaders (set per-transport below), not session cookies.
+            // CheckCertificateRevocationList satisfies CA5399 since we're explicitly constructing the handler.
+            HttpClientHandler handler = new() { UseCookies = false, CheckCertificateRevocationList = true };
+            httpClient = new HttpClient(handler);
             this._ownedHttpClients[httpClientCacheKey] = httpClient;
         }
 
@@ -202,26 +220,50 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         return await McpClient.CreateAsync(transport, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private static string ComputeHeadersHash(IDictionary<string, string>? headers)
+    /// <summary>
+    /// Computes a deterministic, order-independent hash of the header set.
+    /// Header names are lower-cased for case-insensitive matching (RFC 7230 §3.2).
+    /// Header values remain case-sensitive (RFC 7235 — credentials are case-sensitive).
+    /// </summary>
+#pragma warning disable CA1308 // RFC 7230 §3.2 requires lower-cased header names for case-insensitive comparison; CA1308's uppercase preference does not apply here
+    internal static string ComputeHeadersHash(IDictionary<string, string>? headers)
     {
         if (headers is null || headers.Count == 0)
         {
             return string.Empty;
         }
 
-        // Build a deterministic, sorted representation of the headers
-        // Within a single process lifetime, the hashcodes are consistent.
-        // This will ensure that the same set of headers always produces the same hash, regardless of order.
-        SortedDictionary<string, string> sorted = new(headers.ToDictionary(h => h.Key.ToUpperInvariant(), h => h.Value.ToUpperInvariant()));
-        int hashCode = 17;
-        foreach (KeyValuePair<string, string> kvp in sorted)
+        // Sort by lower-cased key for deterministic ordering, preserving value case.
+        SortedDictionary<string, string> sorted = new(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, string> header in headers)
         {
-            hashCode = (hashCode * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(kvp.Key);
-            hashCode = (hashCode * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(kvp.Value);
+            sorted[header.Key.ToLowerInvariant()] = header.Value;
         }
 
-        return hashCode.ToString(CultureInfo.InvariantCulture);
+        StringBuilder payload = new();
+        foreach (KeyValuePair<string, string> kvp in sorted)
+        {
+            payload.Append(kvp.Key).Append(':').Append(kvp.Value).Append('\n');
+        }
+
+        byte[] inputBytes = Encoding.UTF8.GetBytes(payload.ToString());
+#if NET5_0_OR_GREATER
+        byte[] hashBytes = SHA256.HashData(inputBytes);
+#else
+        using SHA256 sha256 = SHA256.Create();
+        byte[] hashBytes = sha256.ComputeHash(inputBytes);
+#endif
+
+        // Convert to hex string (compatible with net472/netstandard2.0)
+        StringBuilder hex = new(hashBytes.Length * 2);
+        foreach (byte b in hashBytes)
+        {
+            hex.Append(b.ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        return hex.ToString();
     }
+#pragma warning restore CA1308
 
     private static void ThrowIfListToolsArgumentsSpecified(IDictionary<string, object?>? arguments)
     {

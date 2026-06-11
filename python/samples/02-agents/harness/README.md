@@ -45,7 +45,7 @@ python samples/02-agents/harness/harness_research.py
 
 ### Minimal Setup
 
-`create_harness_agent` requires only a chat client and token budget parameters:
+`create_harness_agent` requires only a chat client:
 
 ```python
 from agent_framework import create_harness_agent
@@ -54,12 +54,22 @@ from azure.identity import AzureCliCredential
 
 agent = create_harness_agent(
     client=FoundryChatClient(credential=AzureCliCredential()),
+)
+```
+
+### With Compaction
+
+Provide token budget parameters to enable automatic context-window compaction:
+
+```python
+agent = create_harness_agent(
+    client=FoundryChatClient(credential=AzureCliCredential()),
     max_context_window_tokens=128_000,
     max_output_tokens=16_384,
 )
 ```
 
-### Customization
+### Further Customization
 
 Disable or customize any feature:
 

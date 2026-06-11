@@ -41,8 +41,7 @@ class PlanningQuestion(BaseModel):
     choices: list[str] | None = Field(
         default=None,
         description=(
-            "For clarifications, this has a list of options that the user can "
-            "choose from. null for approvals."
+            "For clarifications, this has a list of options that the user can choose from. null for approvals."
         ),
     )
 

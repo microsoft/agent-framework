@@ -35,26 +35,22 @@ description: Convert between common units.
 Body content here.
 """
 
-SAMPLE_SKILL_INDEX = json.dumps(
-    {
-        "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-        "skills": [
-            {
-                "name": "unit-converter",
-                "type": "skill-md",
-                "description": "Convert between common units.",
-                "url": "skill://unit-converter/SKILL.md",
-            }
-        ],
-    }
-)
+SAMPLE_SKILL_INDEX = json.dumps({
+    "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+    "skills": [
+        {
+            "name": "unit-converter",
+            "type": "skill-md",
+            "description": "Convert between common units.",
+            "url": "skill://unit-converter/SKILL.md",
+        }
+    ],
+})
 
 
 def _make_text_result(text: str, uri: str = "skill://test") -> ReadResourceResult:
     """Create a ReadResourceResult with a single TextResourceContents."""
-    return ReadResourceResult(
-        contents=[TextResourceContents(uri=AnyUrl(uri), text=text, mimeType="text/markdown")]
-    )
+    return ReadResourceResult(contents=[TextResourceContents(uri=AnyUrl(uri), text=text, mimeType="text/markdown")])
 
 
 def _make_blob_result(
@@ -230,12 +226,10 @@ class TestMCPSkill:
 
     @pytest.mark.asyncio
     async def test_get_resource_text(self) -> None:
-        client = _make_client(
-            **{
-                "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
-                "skill://unit-converter/references/checklist.md": _make_text_result("- check thing 1\n- check thing 2"),
-            }
-        )
+        client = _make_client(**{
+            "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+            "skill://unit-converter/references/checklist.md": _make_text_result("- check thing 1\n- check thing 2"),
+        })
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
@@ -249,12 +243,10 @@ class TestMCPSkill:
     @pytest.mark.asyncio
     async def test_get_resource_binary(self) -> None:
         data = bytes([0x01, 0x02, 0x03, 0x04])
-        client = _make_client(
-            **{
-                "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
-                "skill://unit-converter/assets/icon.bin": _make_blob_result(data),
-            }
-        )
+        client = _make_client(**{
+            "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+            "skill://unit-converter/assets/icon.bin": _make_blob_result(data),
+        })
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
@@ -345,12 +337,10 @@ class TestMCPSkillsSource:
 
     @pytest.mark.asyncio
     async def test_index_based_discovery_returns_skill(self) -> None:
-        client = _make_client(
-            **{
-                "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
-                "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
-            }
-        )
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+        })
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
 
@@ -373,9 +363,7 @@ class TestMCPSkillsSource:
     async def test_does_not_read_skill_md_during_discovery(self) -> None:
         # Index points to a skill, but SKILL.md is not registered on the server.
         # Discovery should succeed because it only reads the index.
-        client = _make_client(
-            **{"skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json")}
-        )
+        client = _make_client(**{"skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
 
@@ -384,19 +372,17 @@ class TestMCPSkillsSource:
 
     @pytest.mark.asyncio
     async def test_invalid_name_is_skipped(self) -> None:
-        index_json = json.dumps(
-            {
-                "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-                "skills": [
-                    {
-                        "name": "UnitConverter",  # Invalid: uppercase
-                        "type": "skill-md",
-                        "description": "Convert between common units.",
-                        "url": "skill://UnitConverter/SKILL.md",
-                    }
-                ],
-            }
-        )
+        index_json = json.dumps({
+            "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+            "skills": [
+                {
+                    "name": "UnitConverter",  # Invalid: uppercase
+                    "type": "skill-md",
+                    "description": "Convert between common units.",
+                    "url": "skill://UnitConverter/SKILL.md",
+                }
+            ],
+        })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
@@ -404,18 +390,16 @@ class TestMCPSkillsSource:
 
     @pytest.mark.asyncio
     async def test_missing_required_fields_is_skipped(self) -> None:
-        index_json = json.dumps(
-            {
-                "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-                "skills": [
-                    {
-                        "name": "unit-converter",
-                        "type": "skill-md",
-                        # Missing description and url
-                    }
-                ],
-            }
-        )
+        index_json = json.dumps({
+            "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+            "skills": [
+                {
+                    "name": "unit-converter",
+                    "type": "skill-md",
+                    # Missing description and url
+                }
+            ],
+        })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
@@ -423,19 +407,17 @@ class TestMCPSkillsSource:
 
     @pytest.mark.asyncio
     async def test_unsupported_type_is_skipped(self) -> None:
-        index_json = json.dumps(
-            {
-                "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-                "skills": [
-                    {
-                        "name": "some-skill",
-                        "type": "archive",
-                        "description": "Packaged skill.",
-                        "url": "skill://some-skill.tar.gz",
-                    }
-                ],
-            }
-        )
+        index_json = json.dumps({
+            "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+            "skills": [
+                {
+                    "name": "some-skill",
+                    "type": "archive",
+                    "description": "Packaged skill.",
+                    "url": "skill://some-skill.tar.gz",
+                }
+            ],
+        })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
@@ -443,18 +425,16 @@ class TestMCPSkillsSource:
 
     @pytest.mark.asyncio
     async def test_template_type_is_skipped(self) -> None:
-        index_json = json.dumps(
-            {
-                "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-                "skills": [
-                    {
-                        "type": "mcp-resource-template",
-                        "description": "Per-product documentation skill",
-                        "url": "skill://docs/{product}/SKILL.md",
-                    }
-                ],
-            }
-        )
+        index_json = json.dumps({
+            "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+            "skills": [
+                {
+                    "type": "mcp-resource-template",
+                    "description": "Per-product documentation skill",
+                    "url": "skill://docs/{product}/SKILL.md",
+                }
+            ],
+        })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
@@ -462,31 +442,25 @@ class TestMCPSkillsSource:
 
     @pytest.mark.asyncio
     async def test_empty_index_returns_empty(self) -> None:
-        client = _make_client(
-            **{"skill://index.json": _make_text_result('{"skills": []}', uri="skill://index.json")}
-        )
+        client = _make_client(**{"skill://index.json": _make_text_result('{"skills": []}', uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
         assert skills == []
 
     @pytest.mark.asyncio
     async def test_malformed_index_json_returns_empty(self) -> None:
-        client = _make_client(
-            **{"skill://index.json": _make_text_result("not valid json", uri="skill://index.json")}
-        )
+        client = _make_client(**{"skill://index.json": _make_text_result("not valid json", uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills()
         assert skills == []
 
     @pytest.mark.asyncio
     async def test_sibling_text_resource(self) -> None:
-        client = _make_client(
-            **{
-                "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
-                "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
-                "skill://unit-converter/references/checklist.md": _make_text_result("- check thing 1\n- check thing 2"),
-            }
-        )
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+            "skill://unit-converter/references/checklist.md": _make_text_result("- check thing 1\n- check thing 2"),
+        })
         source = MCPSkillsSource(client=client)
         skill = (await source.get_skills())[0]
         resource = await skill.get_resource("references/checklist.md")
@@ -497,13 +471,11 @@ class TestMCPSkillsSource:
     @pytest.mark.asyncio
     async def test_sibling_binary_resource(self) -> None:
         data = bytes([0x01, 0x02, 0x03, 0x04])
-        client = _make_client(
-            **{
-                "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
-                "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
-                "skill://unit-converter/assets/icon.bin": _make_blob_result(data),
-            }
-        )
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+            "skill://unit-converter/assets/icon.bin": _make_blob_result(data),
+        })
         source = MCPSkillsSource(client=client)
         skill = (await source.get_skills())[0]
         resource = await skill.get_resource("assets/icon.bin")
@@ -649,9 +621,7 @@ class TestMCPSkillsSourceErrorCodeBranching:
         from agent_framework import SkillFrontmatter
 
         client = AsyncMock()
-        client.read_resource = AsyncMock(
-            side_effect=McpError(error=ErrorData(code=0, message="Handler error"))
-        )
+        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=0, message="Handler error")))
         fm = SkillFrontmatter(name="test-skill", description="Test.")
         skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
         with pytest.raises(McpError):

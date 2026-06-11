@@ -313,9 +313,7 @@ class HarnessAgentRunner:
         """
         actions: list[FollowUpAction] = []
         for observer in self._observers:
-            observer_actions = await observer.on_stream_complete(
-                self._ux, self._agent, session
-            )
+            observer_actions = await observer.on_stream_complete(self._ux, self._agent, session)
             if observer_actions:
                 actions.extend(observer_actions)
         return actions
