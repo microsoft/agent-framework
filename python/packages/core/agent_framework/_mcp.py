@@ -16,6 +16,7 @@ from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ig
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
+from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from opentelemetry import propagate
@@ -98,6 +99,22 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
 _mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
 MCP_DEFAULT_TIMEOUT = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
+
+# Default safety limits applied to server-initiated MCP sampling requests
+# (``sampling/createMessage``). MCP servers are untrusted third parties, so the
+# default ``sampling_callback`` denies requests unless an approval callback is
+# supplied, and bounds the cost of any approved request.
+# - ``_DEFAULT_SAMPLING_MAX_TOKENS`` clamps the server-requested ``maxTokens``.
+# - ``_DEFAULT_SAMPLING_MAX_REQUESTS`` caps the number of sampling requests per
+#   session connection (the counter resets on reconnect).
+_DEFAULT_SAMPLING_MAX_TOKENS = 4096
+_DEFAULT_SAMPLING_MAX_REQUESTS = 25
+
+# A user-supplied gate invoked before each server-initiated sampling request is
+# forwarded to the chat client. It receives the raw ``CreateMessageRequestParams``
+# and returns (or awaits to) a truthy value to approve the request or a falsy
+# value to deny it. Both synchronous and asynchronous callables are supported.
+SamplingApprovalCallback = Callable[["types.CreateMessageRequestParams"], "bool | Coroutine[Any, Any, bool]"]
 
 # region: Helpers
 
@@ -345,6 +362,9 @@ class MCPTool:
         session: ClientSession | None = None,
         request_timeout: int | None = None,
         client: SupportsChatGetResponse | None = None,
+        sampling_approval_callback: SamplingApprovalCallback | None = None,
+        sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
+        sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
         additional_properties: dict[str, Any] | None = None,
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
@@ -378,6 +398,20 @@ class MCPTool:
             session: An existing MCP client session to use.
             request_timeout: Timeout in seconds for MCP requests.
             client: A chat client for sampling callbacks.
+            sampling_approval_callback: Optional gate invoked before each server-initiated
+                ``sampling/createMessage`` request is forwarded to ``client``. It receives the
+                raw ``CreateMessageRequestParams`` and may be synchronous or asynchronous;
+                returning a truthy value approves the request and a falsy value denies it. When
+                ``None`` (the default), every sampling request is **denied** because MCP servers
+                are untrusted third parties (confused-deputy risk). To restore the legacy
+                auto-approve behavior, pass ``lambda params: True`` as an explicit, conscious
+                opt-in.
+            sampling_max_tokens: Upper bound applied to the server-requested ``maxTokens`` for an
+                approved sampling request. The effective value is ``min(requested, cap)``. Set to
+                ``None`` to disable the cap. Defaults to ``_DEFAULT_SAMPLING_MAX_TOKENS``.
+            sampling_max_requests: Maximum number of sampling requests allowed per session
+                connection; further requests are rejected. The counter resets on reconnect. Set
+                to ``None`` to disable the limit. Defaults to ``_DEFAULT_SAMPLING_MAX_REQUESTS``.
             additional_properties: Additional properties for the tool.
             task_options: Options controlling how long-running MCP tasks are driven for
                 tools that advertise ``execution.taskSupport == "required"``. When ``None``,
@@ -410,6 +444,10 @@ class MCPTool:
         self.session = session
         self.request_timeout = request_timeout
         self.client = client
+        self.sampling_approval_callback = sampling_approval_callback
+        self.sampling_max_tokens = sampling_max_tokens
+        self.sampling_max_requests = sampling_max_requests
+        self._sampling_request_count = 0
         self._functions: list[FunctionTool] = []
         self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         self._tool_task_support_by_name: dict[str, str] = {}
@@ -538,6 +576,9 @@ class MCPTool:
                             )
                 case _:
                     result.append(Content.from_text(str(item)))
+
+        if mcp_type.structuredContent is not None:
+            result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str)))
 
         if not result:
             result.append(Content.from_text("null"))
@@ -840,6 +881,7 @@ class MCPTool:
         self._supports_prompts = True
         self._supports_logging = None
         self._ping_available = True
+        self._sampling_request_count = 0
 
     def _set_server_capabilities(self, capabilities: types.ServerCapabilities | None) -> None:
         self._server_capabilities = capabilities
@@ -994,6 +1036,49 @@ class MCPTool:
             except Exception as exc:
                 logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
 
+    async def _sampling_request_approved(self, params: types.CreateMessageRequestParams) -> bool:
+        """Run the configured sampling approval gate.
+
+        Returns ``True`` only when an approval callback is configured and approves the request.
+        When no callback is set, the request is denied (safe default for untrusted servers).
+        """
+        callback = self.sampling_approval_callback
+        if callback is None:
+            logger.warning(
+                "Denying MCP sampling request from '%s': no 'sampling_approval_callback' configured.",
+                self.name,
+            )
+            return False
+        try:
+            outcome = callback(params)
+            if isawaitable(outcome):
+                outcome = await outcome
+        except Exception as ex:
+            logger.warning(
+                "Denying MCP sampling request from '%s': approval callback raised %s.",
+                self.name,
+                ex,
+                exc_info=True,
+            )
+            return False
+        approved = bool(outcome)
+        if not approved:
+            logger.warning("MCP sampling request from '%s' was denied by the approval callback.", self.name)
+        return approved
+
+    def _capped_sampling_max_tokens(self, requested: int) -> int:
+        """Clamp the server-requested ``maxTokens`` to ``sampling_max_tokens`` when configured."""
+        cap = self.sampling_max_tokens
+        if cap is not None and requested > cap:
+            logger.warning(
+                "Capping MCP sampling maxTokens for '%s' from %d to %d.",
+                self.name,
+                requested,
+                cap,
+            )
+            return cap
+        return requested
+
     async def sampling_callback(
         self,
         context: RequestContext[ClientSession, Any],
@@ -1001,20 +1086,32 @@ class MCPTool:
     ) -> types.CreateMessageResult | types.ErrorData:
         """Callback function for sampling.
 
-        This function is called when the MCP server needs to get a message completed.
-        It uses the configured chat client to generate responses.
+        This function is called when the MCP server sends a ``sampling/createMessage``
+        request. It enforces safety guardrails and, if the request is approved, uses the
+        configured chat client to generate a response.
+
+        Safety:
+            MCP servers are untrusted third parties, so forwarding server-controlled prompts
+            to the chat client without review is a confused-deputy risk. This callback
+            therefore applies, in order: a per-session rate limit
+            (``sampling_max_requests``), an approval gate (``sampling_approval_callback``,
+            which **denies by default** when not configured), and a ``maxTokens`` cap
+            (``sampling_max_tokens``). To allow sampling, pass a ``sampling_approval_callback``
+            that returns a truthy value (use ``lambda params: True`` to auto-approve as an
+            explicit opt-in).
 
         Note:
-            This is a simple version of this function. It can be overridden to allow
-            more complex sampling. It gets added to the session at initialization time,
-            so overriding it is the best way to customize this behavior.
+            This is the default implementation. It can be overridden to allow more complex
+            sampling. It gets added to the session at initialization time, so overriding it is
+            the best way to customize this behavior.
 
         Args:
             context: The request context from the MCP server.
             params: The message creation request parameters.
 
         Returns:
-            Either a CreateMessageResult with the generated message or ErrorData if generation fails.
+            Either a CreateMessageResult with the generated message or ErrorData if the request
+            is denied, rate limited, or generation fails.
         """
         from mcp import types
 
@@ -1023,7 +1120,38 @@ class MCPTool:
                 code=types.INTERNAL_ERROR,
                 message="No chat client available. Please set a chat client.",
             )
-        logger.debug("Sampling callback called with params: %s", params)
+
+        logger.warning(
+            "MCP server '%s' sent a sampling/createMessage request (%d message(s), maxTokens=%s).",
+            self.name,
+            len(params.messages),
+            params.maxTokens,
+        )
+
+        if self.sampling_max_requests is not None:
+            if self._sampling_request_count >= self.sampling_max_requests:
+                logger.warning(
+                    "Denying MCP sampling request from '%s': per-session limit of %d reached.",
+                    self.name,
+                    self.sampling_max_requests,
+                )
+                return types.ErrorData(
+                    code=types.INVALID_REQUEST,
+                    message="Sampling rate limit exceeded for this MCP session.",
+                )
+            self._sampling_request_count += 1
+
+        if not await self._sampling_request_approved(params):
+            if self.sampling_approval_callback is None:
+                message = (
+                    "Sampling request denied. MCP sampling is disabled by default for untrusted "
+                    "servers; provide a 'sampling_approval_callback' that approves the request to "
+                    "enable it."
+                )
+            else:
+                message = "Sampling request denied by the 'sampling_approval_callback'."
+            return types.ErrorData(code=types.INVALID_REQUEST, message=message)
+
         messages: list[Message] = []
         for msg in params.messages:
             messages.append(self._parse_message_from_mcp(msg))
@@ -1045,7 +1173,7 @@ class MCPTool:
 
         if params.temperature is not None:
             options["temperature"] = params.temperature
-        options["max_tokens"] = params.maxTokens
+        options["max_tokens"] = self._capped_sampling_max_tokens(params.maxTokens)
         if params.stopSequences is not None:
             options["stop"] = params.stopSequences
 
@@ -2219,6 +2347,9 @@ class MCPStdioTool(MCPTool):
         env: dict[str, str] | None = None,
         encoding: str | None = None,
         client: SupportsChatGetResponse | None = None,
+        sampling_approval_callback: SamplingApprovalCallback | None = None,
+        sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
+        sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
         additional_properties: dict[str, Any] | None = None,
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
@@ -2266,6 +2397,16 @@ class MCPStdioTool(MCPTool):
             env: The environment variables to set for the command.
             encoding: The encoding to use for the command output.
             client: The chat client to use for sampling.
+            sampling_approval_callback: Optional gate run before each server-initiated
+                ``sampling/createMessage`` request reaches ``client``. Receives the raw
+                ``CreateMessageRequestParams`` (sync or async); a truthy return approves the
+                request, a falsy return denies it. When ``None`` (the default) every sampling
+                request is **denied**, since MCP servers are untrusted (confused-deputy risk).
+                Pass ``lambda params: True`` to auto-approve as an explicit opt-in.
+            sampling_max_tokens: Cap applied to an approved request's ``maxTokens``
+                (``min(requested, cap)``); ``None`` disables it.
+            sampling_max_requests: Per-session cap on the number of sampling requests; further
+                requests are rejected. Resets on reconnect. ``None`` disables it.
             task_options: Options for tools that advertise
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
@@ -2300,6 +2441,9 @@ class MCPStdioTool(MCPTool):
             request_timeout=request_timeout,
             task_options=task_options,
             additional_tool_argument_names=additional_tool_argument_names,
+            sampling_approval_callback=sampling_approval_callback,
+            sampling_max_tokens=sampling_max_tokens,
+            sampling_max_requests=sampling_max_requests,
         )
         self.command = command
         self.args = args or []
@@ -2375,6 +2519,9 @@ class MCPStreamableHTTPTool(MCPTool):
         allowed_tools: Collection[str] | None = None,
         terminate_on_close: bool | None = None,
         client: SupportsChatGetResponse | None = None,
+        sampling_approval_callback: SamplingApprovalCallback | None = None,
+        sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
+        sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
         additional_properties: dict[str, Any] | None = None,
         http_client: AsyncClient | None = None,
         header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
@@ -2423,6 +2570,16 @@ class MCPStreamableHTTPTool(MCPTool):
             additional_properties: Additional properties.
             terminate_on_close: Close the transport when the MCP client is terminated.
             client: The chat client to use for sampling.
+            sampling_approval_callback: Optional gate run before each server-initiated
+                ``sampling/createMessage`` request reaches ``client``. Receives the raw
+                ``CreateMessageRequestParams`` (sync or async); a truthy return approves the
+                request, a falsy return denies it. When ``None`` (the default) every sampling
+                request is **denied**, since MCP servers are untrusted (confused-deputy risk).
+                Pass ``lambda params: True`` to auto-approve as an explicit opt-in.
+            sampling_max_tokens: Cap applied to an approved request's ``maxTokens``
+                (``min(requested, cap)``); ``None`` disables it.
+            sampling_max_requests: Per-session cap on the number of sampling requests; further
+                requests are rejected. Resets on reconnect. ``None`` disables it.
             http_client: Optional asyncClient to use. If not provided, the
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
@@ -2466,6 +2623,9 @@ class MCPStreamableHTTPTool(MCPTool):
             request_timeout=request_timeout,
             task_options=task_options,
             additional_tool_argument_names=additional_tool_argument_names,
+            sampling_approval_callback=sampling_approval_callback,
+            sampling_max_tokens=sampling_max_tokens,
+            sampling_max_requests=sampling_max_requests,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
@@ -2590,6 +2750,9 @@ class MCPWebsocketTool(MCPTool):
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         client: SupportsChatGetResponse | None = None,
+        sampling_approval_callback: SamplingApprovalCallback | None = None,
+        sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
+        sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
         additional_properties: dict[str, Any] | None = None,
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
@@ -2635,6 +2798,16 @@ class MCPWebsocketTool(MCPTool):
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
             client: The chat client to use for sampling.
+            sampling_approval_callback: Optional gate run before each server-initiated
+                ``sampling/createMessage`` request reaches ``client``. Receives the raw
+                ``CreateMessageRequestParams`` (sync or async); a truthy return approves the
+                request, a falsy return denies it. When ``None`` (the default) every sampling
+                request is **denied**, since MCP servers are untrusted (confused-deputy risk).
+                Pass ``lambda params: True`` to auto-approve as an explicit opt-in.
+            sampling_max_tokens: Cap applied to an approved request's ``maxTokens``
+                (``min(requested, cap)``); ``None`` disables it.
+            sampling_max_requests: Per-session cap on the number of sampling requests; further
+                requests are rejected. Resets on reconnect. ``None`` disables it.
             task_options: Options for tools that advertise
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
@@ -2669,6 +2842,9 @@ class MCPWebsocketTool(MCPTool):
             request_timeout=request_timeout,
             task_options=task_options,
             additional_tool_argument_names=additional_tool_argument_names,
+            sampling_approval_callback=sampling_approval_callback,
+            sampling_max_tokens=sampling_max_tokens,
+            sampling_max_requests=sampling_max_requests,
         )
         self.url = url
         self._client_kwargs = kwargs

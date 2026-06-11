@@ -78,6 +78,40 @@ docker run --rm -p 8088:8088 \
   hosted-mcp-tools
 ```
 
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir mcp-tools && cd mcp-tools
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-McpTools/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME mcp-tools
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+---
+
 ## NuGet package users
 
 Use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented section in `HostedMcpTools.csproj` for the `PackageReference` alternative.
+
+## Related samples
+
+- [`Hosted-Toolbox/`](../Hosted-Toolbox/) — connects to a single Foundry Toolbox via the AF Foundry hosting bridge (`AddFoundryToolboxes` + `FoundryAITool.CreateHostedMcpToolbox`).
+- [`Hosted-Toolbox-AuthPaths/`](../Hosted-Toolbox-AuthPaths/) — same hosting bones as `Hosted-Toolbox/`, but the toolbox bundles three MCP tools each authenticated differently (key, Entra agent identity, inline `Authorization`), driven by the shared `Using-Samples/SimpleAgent/` REPL.
+

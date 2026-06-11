@@ -344,6 +344,9 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox/HostedToolbox.csproj" />
   </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox-AuthPaths/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox-AuthPaths/Hosted-Toolbox-AuthPaths.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-ToolboxMcpSkills/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-ToolboxMcpSkills/HostedToolboxMcpSkills.csproj" />
   </Folder>

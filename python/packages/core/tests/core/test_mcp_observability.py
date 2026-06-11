@@ -76,6 +76,7 @@ def _make_call_tool_result(text: str = "result", is_error: bool = False) -> Mock
     result = Mock()
     result.isError = is_error
     result.content = [types.TextContent(type="text", text=text)]
+    result.structuredContent = None
     return result
 
 
@@ -281,9 +282,7 @@ async def test_mcp_prompts_get_creates_client_span(span_exporter: InMemorySpanEx
 async def test_mcp_prompts_get_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
     """When session.get_prompt() raises McpError, the span should have error.type and ERROR status."""
     tool = _make_connected_mcp_tool()
-    tool.session.get_prompt = AsyncMock(
-        side_effect=McpError(ErrorData(code=-32602, message="prompt not found"))
-    )
+    tool.session.get_prompt = AsyncMock(side_effect=McpError(ErrorData(code=-32602, message="prompt not found")))
 
     span_exporter.clear()
     with pytest.raises(ToolExecutionException):
