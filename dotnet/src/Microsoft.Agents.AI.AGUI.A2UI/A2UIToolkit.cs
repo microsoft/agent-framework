@@ -154,7 +154,10 @@ public static class A2UIToolkit
                     messageDeleted = false;
                     if (updateComponents["components"] is JsonArray opComponents)
                     {
-                        messageComponents = opComponents;
+                        // Clone: the captured nodes outlive this method inside the public
+                        // A2UIPriorSurface, and a parent-attached JsonNode throws when a
+                        // caller re-attaches it elsewhere.
+                        messageComponents = (JsonArray)opComponents.DeepClone();
                     }
                 }
 
@@ -163,7 +166,7 @@ public static class A2UIToolkit
                 {
                     messageMentions = true;
                     messageDeleted = false;
-                    messageData = updateDataModel["value"];
+                    messageData = updateDataModel["value"]?.DeepClone();
                     messageDataSeen = true;
                 }
             }

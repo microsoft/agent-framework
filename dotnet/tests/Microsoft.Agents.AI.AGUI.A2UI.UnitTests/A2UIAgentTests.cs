@@ -143,6 +143,70 @@ public sealed class A2UIAgentTests
         Assert.Equal(A2UIConstants.MaxA2UIAttempts, calls);
     }
 
+    [Fact]
+    public async Task GenerateA2UITool_JsonElementArguments_ReturnsOperationsEnvelopeAsync()
+    {
+        // Arrange: real chat clients deliver FunctionCallContent.Arguments values as
+        // JsonElement — exercise that marshalling arm rather than pre-built JsonNodes.
+        using JsonDocument argsDocument = JsonDocument.Parse(s_validRenderArgs.ToJsonString());
+        var elementArgs = new Dictionary<string, object?>
+        {
+            ["surfaceId"] = argsDocument.RootElement.GetProperty("surfaceId").Clone(),
+            ["components"] = argsDocument.RootElement.GetProperty("components").Clone(),
+            ["data"] = argsDocument.RootElement.GetProperty("data").Clone(),
+        };
+        var inner = new RecordingAgent();
+        var agent = new A2UIAgent(inner, new ScriptedChatClient(_ => null) { RawArguments = elementArgs });
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "show hotels")]);
+
+        // Act
+        string envelope = await InvokeGenerateToolAsync(inner, new() { ["intent"] = "create" });
+
+        // Assert
+        JsonObject parsed = Assert.IsType<JsonObject>(JsonNode.Parse(envelope));
+        JsonArray ops = Assert.IsType<JsonArray>(parsed[A2UIConstants.A2UIOperationsKey]);
+        Assert.Equal(3, ops.Count);
+    }
+
+    [Fact]
+    public async Task ReadAgentState_RoutesSchemaEntryIntoAvailableComponentsAsync()
+    {
+        // Arrange: the hosting layer forwards context entries; the catalog schema entry
+        // must land in the prompt's canonical "## Available Components" section and the
+        // plain entry under its own heading.
+        string? subagentPrompt = null;
+        var inner = new RecordingAgent();
+        var agent = new A2UIAgent(inner, new ScriptedChatClient(options => s_validRenderArgs)
+        {
+            OnMessages = messages => subagentPrompt = messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Text,
+        });
+        var runOptions = new ChatClientAgentRunOptions
+        {
+            ChatOptions = new ChatOptions
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["ag_ui_context"] = new[]
+                    {
+                        new KeyValuePair<string, string>(A2UIConstants.A2UISchemaContextDescription, "{\"components\":{}}"),
+                        new KeyValuePair<string, string>("Style guide", "use cards"),
+                    },
+                },
+            },
+        };
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "show hotels")], options: runOptions);
+
+        // Act
+        await InvokeGenerateToolAsync(inner, new() { ["intent"] = "create" });
+
+        // Assert
+        Assert.NotNull(subagentPrompt);
+        Assert.Contains("## Available Components", subagentPrompt);
+        Assert.Contains("{\"components\":{}}", subagentPrompt);
+        Assert.Contains("## Style guide", subagentPrompt);
+        Assert.DoesNotContain($"## {A2UIConstants.A2UISchemaContextDescription}", subagentPrompt);
+    }
+
     /// <summary>
     /// Pulls the injected <c>generate_a2ui</c> function from the recorded run options and
     /// invokes it the way a function-invoking chat client would.
@@ -202,17 +266,27 @@ public sealed class A2UIAgentTests
 
         public ScriptedChatClient(Func<ChatOptions?, JsonObject?> script) => this._script = script;
 
+        /// <summary>When set, the function call carries these raw argument values verbatim.</summary>
+        public IDictionary<string, object?>? RawArguments { get; init; }
+
+        /// <summary>Observes the messages each subagent invocation receives.</summary>
+        public Action<IEnumerable<ChatMessage>>? OnMessages { get; init; }
+
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
-            JsonObject? args = this._script(options);
-            ChatMessage message = args is null
+            this.OnMessages?.Invoke(messages);
+            IDictionary<string, object?>? arguments = this.RawArguments;
+            if (arguments is null)
+            {
+                JsonObject? args = this._script(options);
+                arguments = args?.ToDictionary(p => p.Key, object? (p) => p.Value?.DeepClone());
+            }
+
+            ChatMessage message = arguments is null
                 ? new ChatMessage(ChatRole.Assistant, "no tool call")
                 : new ChatMessage(ChatRole.Assistant,
                 [
-                    new FunctionCallContent(
-                        "call-1",
-                        A2UIConstants.RenderA2UIToolName,
-                        args.ToDictionary(p => p.Key, object? (p) => p.Value?.DeepClone())),
+                    new FunctionCallContent("call-1", A2UIConstants.RenderA2UIToolName, arguments),
                 ]);
             return Task.FromResult(new ChatResponse(message));
         }

@@ -188,7 +188,7 @@ public sealed class A2UIAgent : DelegatingAIAgent
     /// hosting layer: forwarded context entries plus the A2UI component catalog entry
     /// injected by the A2UI middleware.
     /// </summary>
-    private static A2UIAgentState ReadAgentState(AdditionalPropertiesDictionary? properties)
+    internal static A2UIAgentState ReadAgentState(AdditionalPropertiesDictionary? properties)
     {
         if (properties is null ||
             !properties.TryGetValue("ag_ui_context", out object? contextValue) ||
@@ -223,14 +223,25 @@ public sealed class A2UIAgent : DelegatingAIAgent
         string? content = message.Text;
         if (string.IsNullOrEmpty(content) && message.Role == ChatRole.Tool)
         {
-            FunctionResultContent? result = message.Contents.OfType<FunctionResultContent>().FirstOrDefault();
-            content = result?.Result switch
+            // A message can carry multiple tool results (parallel calls); use the first
+            // one with usable textual content rather than only the first item.
+            foreach (FunctionResultContent result in message.Contents.OfType<FunctionResultContent>())
             {
-                string text => text,
-                JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
-                JsonElement element => element.GetRawText(),
-                _ => null,
-            };
+                content = result.Result switch
+                {
+                    string text => text,
+                    JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
+                    JsonElement element => element.GetRawText(),
+                    JsonValue value when value.TryGetValue(out string? text) => text,
+                    JsonNode node => node.ToJsonString(),
+                    _ => null,
+                };
+
+                if (!string.IsNullOrEmpty(content))
+                {
+                    break;
+                }
+            }
         }
 
         return new A2UIHistoryMessage(message.Role.Value, content);

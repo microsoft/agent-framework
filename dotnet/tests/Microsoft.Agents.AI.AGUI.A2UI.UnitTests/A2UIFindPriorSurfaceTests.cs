@@ -222,6 +222,32 @@ public sealed class A2UIFindPriorSurfaceTests
     }
 
     [Fact]
+    public void FindPriorSurface_ReturnedNodes_AreDetachedFromTheParsedMessage()
+    {
+        // Arrange
+        A2UIHistoryMessage[] messages =
+        [
+            ToolMessage(Operations(
+                A2UIOperationBuilder.CreateSurface("s1", "cat://x"),
+                A2UIOperationBuilder.UpdateComponents("s1", RowComponents()),
+                A2UIOperationBuilder.UpdateDataModel("s1", new JsonObject { ["items"] = new JsonArray(1) }))),
+        ];
+        A2UIPriorSurface? prior = A2UIToolkit.FindPriorSurface(messages, "s1");
+        Assert.NotNull(prior);
+
+        // Act: re-attaching the returned nodes must not throw "node already has a parent".
+        var host = new JsonObject
+        {
+            ["components"] = prior.Components,
+            ["data"] = prior.Data,
+        };
+
+        // Assert
+        Assert.NotNull(host["components"]);
+        Assert.NotNull(host["data"]);
+    }
+
+    [Fact]
     public void FindPriorSurface_IntraMessageCreateThenDelete_ReturnsNull()
     {
         // Arrange: within the newest message the surface is created then deleted — its end

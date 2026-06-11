@@ -52,17 +52,16 @@ public sealed class AGUIContextAgent : DelegatingAIAgent
 
     private static IEnumerable<ChatMessage> WithContextPrompt(IEnumerable<ChatMessage> messages, AgentRunOptions? options)
     {
-        if (options is not ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } ||
-            !properties.TryGetValue("ag_ui_context", out object? contextValue) ||
-            contextValue is not IEnumerable<KeyValuePair<string, string>> entries)
+        if (options is not ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties })
         {
             return messages;
         }
 
-        string prompt = A2UIToolkit.BuildContextPrompt(new A2UIAgentState
-        {
-            Context = entries.Select(e => new A2UIContextEntry(e.Key, e.Value)).ToList(),
-        });
+        // Shared routing with A2UIAgent: the catalog schema entry lands in the
+        // canonical "## Available Components" section, other entries become
+        // plain context sections — both agents render the same prompt for the
+        // same forwarded context.
+        string prompt = A2UIToolkit.BuildContextPrompt(A2UIAgent.ReadAgentState(properties));
 
         return prompt.Length == 0
             ? messages

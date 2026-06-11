@@ -327,6 +327,29 @@ public sealed class A2UIEnvelopeTests
     }
 
     [Fact]
+    public void BuildA2UIEnvelope_UpdateWithData_EmitsDataModelOp()
+    {
+        // Arrange
+        var args = new JsonObject
+        {
+            ["components"] = RowComponents(),
+            ["data"] = new JsonObject { ["items"] = new JsonArray(1) },
+        };
+        var prior = new A2UIPriorSurface(new JsonArray(), null, "cat://prior");
+
+        // Act
+        JsonArray ops = ParseOperations(A2UIToolkit.BuildA2UIEnvelope(
+            args, isUpdate: true, targetSurfaceId: "s1", prior));
+
+        // Assert: update path = updateComponents + updateDataModel, both on the target.
+        Assert.Equal(2, ops.Count);
+        Assert.Equal("s1", (string?)SingleOperation(ops, "updateComponents")["surfaceId"]);
+        JsonObject updateDataModel = SingleOperation(ops, "updateDataModel");
+        Assert.Equal("s1", (string?)updateDataModel["surfaceId"]);
+        Assert.Equal("""{"items":[1]}""", updateDataModel["value"]?.ToJsonString());
+    }
+
+    [Fact]
     public void ResolveA2UIToolParams_FillsCanonicalDefaults()
     {
         // Act
