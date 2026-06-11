@@ -136,8 +136,11 @@ public sealed class StreamingToolCallArgsTests
         // Act
         List<BaseEvent> events = await CollectAsync(updates);
 
-        // Assert
-        Assert.Equal(2, events.OfType<ToolCallStartEvent>().Count());
+        // Assert: each call gets its own Start (no shared parent message collapsing
+        // the two calls into one bubble).
+        List<ToolCallStartEvent> starts = events.OfType<ToolCallStartEvent>().ToList();
+        Assert.Equal(2, starts.Count);
+        Assert.Equal(s_sequentialCallIds, starts.Select(e => e.ToolCallId).ToArray());
         Assert.Equal(
             "{\"city\":\"Paris\"}",
             string.Concat(events.OfType<ToolCallArgsEvent>().Where(a => a.ToolCallId == "call_a").Select(a => a.Delta)));
@@ -145,10 +148,11 @@ public sealed class StreamingToolCallArgsTests
             "{\"zone\":\"CET\"}",
             string.Concat(events.OfType<ToolCallArgsEvent>().Where(a => a.ToolCallId == "call_b").Select(a => a.Delta)));
         // Both calls were started on the wire, so both must close — here via the
-        // end-of-stream sweep, since no coalesced content ever arrives.
+        // end-of-stream sweep, since no coalesced content ever arrives. The sweep
+        // promises deterministic tool-call index order, so assert the wire order.
         Assert.Equal(
             s_sequentialCallIds,
-            events.OfType<ToolCallEndEvent>().Select(e => e.ToolCallId).OrderBy(id => id, StringComparer.Ordinal).ToArray());
+            events.OfType<ToolCallEndEvent>().Select(e => e.ToolCallId).ToArray());
     }
 
     [Fact]

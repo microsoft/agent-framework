@@ -278,8 +278,8 @@ internal static class ChatClientAgentFactory
             // No Catalog is supplied, so the loop exercises structural validation (missing
             // root, dangling child references, duplicate ids) like the sibling demos. The
             // recovery loop runs by default; the cap is set explicitly to show where the
-            // knob lives and equals the default (A2UIConstants.MaxA2UIAttempts).
-            Recovery = new A2UIRecoveryConfig { MaxAttempts = 3 },
+            // knob lives, using the default value.
+            Recovery = new A2UIRecoveryConfig { MaxAttempts = A2UIConstants.MaxA2UIAttempts },
         });
     }
 }

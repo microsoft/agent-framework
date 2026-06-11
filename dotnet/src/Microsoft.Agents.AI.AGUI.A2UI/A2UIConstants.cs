@@ -50,7 +50,9 @@ public static class A2UIConstants
     public const int MaxA2UIAttempts = 3;
 
     /// <summary>
-    /// The activity type identifier for A2UI recovery lifecycle records.
+    /// The activity type identifier for A2UI recovery lifecycle records. The records are
+    /// emitted by the AG-UI A2UI middleware on the client side; the constant is part of the
+    /// cross-language wire contract and is pinned here so adapters and tests can reference it.
     /// </summary>
     public const string A2UIRecoveryActivityType = "a2ui_recovery";
 
