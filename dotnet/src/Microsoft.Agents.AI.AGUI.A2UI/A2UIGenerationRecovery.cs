@@ -54,7 +54,7 @@ public sealed record A2UIRecoveryResult(string Envelope, IReadOnlyList<A2UIAttem
 /// </remarks>
 public static class A2UIGenerationRecovery
 {
-    private static readonly A2UIValidationError s_noToolCallError = new(
+    internal static readonly A2UIValidationError NoToolCallError = new(
         A2UIValidationErrorCodes.EmptyComponents,
         "components",
         "Sub-agent did not call render_a2ui");
@@ -128,7 +128,7 @@ public static class A2UIGenerationRecovery
             A2UIAttemptRecord record;
             if (args is null)
             {
-                record = new A2UIAttemptRecord(attempt, Ok: false, [s_noToolCallError]);
+                record = new A2UIAttemptRecord(attempt, Ok: false, [NoToolCallError]);
                 attempts.Add(record);
                 onAttempt?.Invoke(record);
                 lastErrors = record.Errors;
@@ -154,7 +154,7 @@ public static class A2UIGenerationRecovery
         return new A2UIRecoveryResult(WrapRecoveryExhaustedEnvelope(maxAttempts, attempts), attempts, Ok: false);
     }
 
-    private static string WrapRecoveryExhaustedEnvelope(int maxAttempts, IReadOnlyList<A2UIAttemptRecord> attempts)
+    internal static string WrapRecoveryExhaustedEnvelope(int maxAttempts, IReadOnlyList<A2UIAttemptRecord> attempts)
     {
         var attemptsArray = new JsonArray();
         foreach (A2UIAttemptRecord attempt in attempts)

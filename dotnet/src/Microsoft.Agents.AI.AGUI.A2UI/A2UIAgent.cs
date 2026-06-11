@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -66,16 +67,197 @@ public sealed class A2UIAgent : DelegatingAIAgent
         return this.InnerAgent.RunAsync(messageList, session, runOptions, cancellationToken);
     }
 
+    /// <summary>
+    /// The cap on planner rounds (model turn → generation → result fed back) per run,
+    /// guarding against a planner that keeps requesting surfaces without terminating.
+    /// </summary>
+    private const int MaxPlannerRounds = 8;
+
     /// <inheritdoc/>
-    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+    /// <remarks>
+    /// The streaming path runs the <c>generate_a2ui</c> invocation loop at the agent level
+    /// instead of through automatic function invocation: the tool is advertised as a
+    /// schema-only declaration so the planner's call surfaces on the update stream, the
+    /// render subagent is then run with a streaming chat call, and its raw updates are
+    /// forwarded so hosting layers can emit the tool-call argument fragments incrementally
+    /// (progressive surface rendering). The envelope is fed back to the planner and the
+    /// conversation continues — the same wire shape the LangGraph adapters produce.
+    /// </remarks>
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        (List<ChatMessage> messageList, AgentRunOptions runOptions) = this.PrepareRun(messages, options);
-        return this.InnerAgent.RunStreamingAsync(messageList, session, runOptions, cancellationToken);
+        List<ChatMessage> history = messages.ToList();
+
+        ChatClientAgentRunOptions runOptions = CloneRunOptions(options);
+        ChatOptions chatOptions = runOptions.ChatOptions ?? new ChatOptions();
+        runOptions.ChatOptions = chatOptions;
+
+        A2UIAgentState state = ReadAgentState(chatOptions.AdditionalProperties);
+
+        var generateTool = new GenerateA2UIToolDeclaration(this._parameters.ToolName, this._parameters.ToolDescription);
+        chatOptions.Tools = (chatOptions.Tools ?? Enumerable.Empty<AITool>())
+            .Where(t => !string.Equals(t.Name, generateTool.Name, StringComparison.Ordinal))
+            .Append(generateTool)
+            .ToList();
+
+        // Round 1 carries the caller's session so inner-agent bookkeeping still happens;
+        // later rounds resend the manually grown history without the session to avoid
+        // double-recording the same messages in session-aware inner agents.
+        List<ChatMessage> pending = history;
+        AgentSession? pendingSession = session;
+        for (int round = 1; round <= MaxPlannerRounds; round++)
+        {
+            List<FunctionCallContent> generateCalls = [];
+            await foreach (AgentResponseUpdate update in this.InnerAgent
+                .RunStreamingAsync(pending, pendingSession, runOptions, cancellationToken)
+                .ConfigureAwait(false))
+            {
+                foreach (AIContent content in update.Contents)
+                {
+                    if (content is FunctionCallContent call &&
+                        string.Equals(call.Name, generateTool.Name, StringComparison.Ordinal))
+                    {
+                        generateCalls.Add(call);
+                    }
+                }
+
+                yield return update;
+            }
+
+            if (generateCalls.Count == 0)
+            {
+                yield break;
+            }
+
+            List<AIContent> results = [];
+            foreach (FunctionCallContent call in generateCalls)
+            {
+                var envelopeBox = new StrongBox<JsonElement>();
+                await foreach (AgentResponseUpdate update in this
+                    .RunGenerateStreamingAsync(call, history, state, envelopeBox, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    yield return update;
+                }
+
+                results.Add(new FunctionResultContent(call.CallId, envelopeBox.Value));
+            }
+
+            // Surface the tool results on the wire and feed them back to the planner.
+            var toolMessage = new ChatMessage(ChatRole.Tool, results);
+            yield return new AgentResponseUpdate(ChatRole.Tool, results);
+
+            history.Add(new ChatMessage(ChatRole.Assistant, [.. generateCalls]));
+            history.Add(toolMessage);
+            pending = history;
+            pendingSession = null;
+        }
     }
+
+    /// <summary>
+    /// Runs one <c>generate_a2ui</c> invocation with the validate-and-retry loop, streaming
+    /// the render subagent's updates (each retry is a fresh, visible subagent call) and
+    /// depositing the final envelope — operations, request error, or recovery-exhausted —
+    /// into <paramref name="envelopeBox"/>.
+    /// </summary>
+    private async IAsyncEnumerable<AgentResponseUpdate> RunGenerateStreamingAsync(
+        FunctionCallContent call,
+        IReadOnlyList<ChatMessage> conversation,
+        A2UIAgentState state,
+        StrongBox<JsonElement> envelopeBox,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        string? intent = GetStringArgument(call.Arguments, "intent");
+        string? targetSurfaceId = GetStringArgument(call.Arguments, "target_surface_id");
+        string? changes = GetStringArgument(call.Arguments, "changes");
+
+        List<A2UIHistoryMessage> history = conversation.Select(ToHistoryMessage).ToList();
+        A2UIPreparedRequest prep = A2UIToolkit.PrepareA2UIRequest(
+            intent, targetSurfaceId, changes, history, state, this._parameters.Guidelines);
+        if (prep.Error is not null)
+        {
+            envelopeBox.Value = ParseEnvelope(A2UIToolkit.WrapErrorEnvelope(prep.Error));
+            yield break;
+        }
+
+        // The streaming twin of A2UIGenerationRecovery.RunAsync: same attempt semantics,
+        // but each subagent call streams so its updates can be forwarded between attempts.
+        int maxAttempts = this._parameters.Recovery?.MaxAttempts ?? A2UIConstants.MaxA2UIAttempts;
+        List<A2UIAttemptRecord> attempts = [];
+        IReadOnlyList<A2UIValidationError> lastErrors = [];
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string prompt = A2UIGenerationRecovery.AugmentPromptWithValidationErrors(prep.Prompt, lastErrors);
+            JsonObject? renderArgs = null;
+            await foreach (ChatResponseUpdate update in this._subagentChatClient
+                .GetStreamingResponseAsync(BuildSubagentMessages(prompt, conversation), CreateSubagentOptions(), cancellationToken)
+                .ConfigureAwait(false))
+            {
+                foreach (AIContent content in update.Contents)
+                {
+                    if (content is FunctionCallContent render &&
+                        string.Equals(render.Name, A2UIConstants.RenderA2UIToolName, StringComparison.Ordinal) &&
+                        render.Arguments is { } renderArguments)
+                    {
+                        renderArgs = ToJsonObject(renderArguments);
+                    }
+                }
+
+                yield return new AgentResponseUpdate(update);
+            }
+
+            A2UIAttemptRecord record;
+            if (renderArgs is null)
+            {
+                record = new A2UIAttemptRecord(attempt, Ok: false, [A2UIGenerationRecovery.NoToolCallError]);
+                attempts.Add(record);
+                this._parameters.OnAttempt?.Invoke(record);
+                lastErrors = record.Errors;
+                continue;
+            }
+
+            // The model output is untrusted: narrow components/data to the expected shapes.
+            JsonArray? components = renderArgs["components"] as JsonArray;
+            JsonObject? data = renderArgs["data"] as JsonObject;
+            A2UIValidationResult validation = A2UIComponentValidator.Validate(components, data, this._parameters.Catalog);
+            record = new A2UIAttemptRecord(attempt, validation.Valid, validation.Errors);
+            attempts.Add(record);
+            this._parameters.OnAttempt?.Invoke(record);
+
+            if (validation.Valid)
+            {
+                envelopeBox.Value = ParseEnvelope(A2UIToolkit.BuildA2UIEnvelope(
+                    renderArgs,
+                    prep.IsUpdate,
+                    targetSurfaceId,
+                    prep.Prior,
+                    this._parameters.DefaultSurfaceId,
+                    this._parameters.DefaultCatalogId));
+                yield break;
+            }
+
+            lastErrors = validation.Errors;
+        }
+
+        envelopeBox.Value = ParseEnvelope(A2UIGenerationRecovery.WrapRecoveryExhaustedEnvelope(maxAttempts, attempts));
+    }
+
+    /// <summary>Reads a string argument from a function call's argument dictionary.</summary>
+    private static string? GetStringArgument(IDictionary<string, object?>? arguments, string name) =>
+        arguments is not null && arguments.TryGetValue(name, out object? value)
+            ? value switch
+            {
+                string text => text,
+                JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString(),
+                JsonValue jsonValue when jsonValue.TryGetValue(out string? text) => text,
+                _ => null,
+            }
+            : null;
 
     /// <summary>
     /// Builds the per-run options: clones the incoming chat options and appends a
@@ -179,15 +361,8 @@ public sealed class A2UIAgent : DelegatingAIAgent
         IReadOnlyList<ChatMessage> messages,
         CancellationToken cancellationToken)
     {
-        List<ChatMessage> subagentMessages = [new ChatMessage(ChatRole.System, prompt), .. messages];
-        var subagentOptions = new ChatOptions
-        {
-            Tools = [new RenderA2UIToolDeclaration()],
-            ToolMode = ChatToolMode.RequireSpecific(A2UIConstants.RenderA2UIToolName),
-        };
-
         ChatResponse response = await this._subagentChatClient
-            .GetResponseAsync(subagentMessages, subagentOptions, cancellationToken)
+            .GetResponseAsync(BuildSubagentMessages(prompt, messages), CreateSubagentOptions(), cancellationToken)
             .ConfigureAwait(false);
 
         FunctionCallContent? call = response.Messages
@@ -197,6 +372,17 @@ public sealed class A2UIAgent : DelegatingAIAgent
 
         return call?.Arguments is { } arguments ? ToJsonObject(arguments) : null;
     }
+
+    /// <summary>Builds the render subagent's message list: the generation prompt plus the conversation.</summary>
+    private static List<ChatMessage> BuildSubagentMessages(string prompt, IReadOnlyList<ChatMessage> messages) =>
+        [new ChatMessage(ChatRole.System, prompt), .. messages];
+
+    /// <summary>Builds the render subagent's chat options: a forced <c>render_a2ui</c> structured call.</summary>
+    private static ChatOptions CreateSubagentOptions() => new()
+    {
+        Tools = [new RenderA2UIToolDeclaration()],
+        ToolMode = ChatToolMode.RequireSpecific(A2UIConstants.RenderA2UIToolName),
+    };
 
     /// <summary>
     /// Reads the AG-UI state slice from the additional properties stamped by the AG-UI
@@ -288,6 +474,59 @@ public sealed class A2UIAgent : DelegatingAIAgent
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The schema-only declaration of the planner-facing <c>generate_a2ui</c> tool, used on
+    /// the streaming path so the planner's call surfaces on the update stream instead of
+    /// being invoked by the automatic function-invocation layer.
+    /// </summary>
+    private sealed class GenerateA2UIToolDeclaration : AIFunctionDeclaration
+    {
+        private static readonly JsonElement s_schema = ParseSchema();
+
+        private readonly string _name;
+        private readonly string _description;
+
+        public GenerateA2UIToolDeclaration(string name, string description)
+        {
+            this._name = name;
+            this._description = description;
+        }
+
+        private static JsonElement ParseSchema()
+        {
+            var schema = new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JsonObject
+                {
+                    ["intent"] = new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["description"] = A2UIToolDefinitions.IntentArgumentDescription,
+                    },
+                    ["target_surface_id"] = new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["description"] = A2UIToolDefinitions.TargetSurfaceIdArgumentDescription,
+                    },
+                    ["changes"] = new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["description"] = A2UIToolDefinitions.ChangesArgumentDescription,
+                    },
+                },
+            };
+            using var document = JsonDocument.Parse(schema.ToJsonString());
+            return document.RootElement.Clone();
+        }
+
+        public override string Name => this._name;
+
+        public override string Description => this._description;
+
+        public override JsonElement JsonSchema => s_schema;
     }
 
     /// <summary>

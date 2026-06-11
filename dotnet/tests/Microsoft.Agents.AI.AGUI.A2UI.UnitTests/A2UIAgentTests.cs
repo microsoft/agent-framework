@@ -58,21 +58,104 @@ public sealed class A2UIAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_InjectsGenerateA2UIToolIntoRunOptionsAsync()
+    public async Task RunStreamingAsync_InjectsGenerateA2UIDeclarationIntoRunOptionsAsync()
     {
         // Arrange
         var inner = new RecordingAgent();
         var agent = new A2UIAgent(inner, new ScriptedChatClient(_ => s_validRenderArgs));
 
-        // Act: the streaming entry point goes through the same per-run preparation.
+        // Act
         await foreach (AgentResponseUpdate _ in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "hi")]))
         {
         }
 
-        // Assert
+        // Assert: the streaming path advertises a schema-only declaration so the planner's
+        // call surfaces on the update stream instead of being auto-invoked.
         ChatClientAgentRunOptions options = Assert.IsType<ChatClientAgentRunOptions>(inner.LastOptions);
         AITool tool = Assert.Single(options.ChatOptions?.Tools ?? []);
         Assert.Equal(A2UIConstants.GenerateA2UIToolName, tool.Name);
+        Assert.IsNotType<AIFunction>(tool, exactMatch: false);
+        Assert.IsType<AIFunctionDeclaration>(tool, exactMatch: false);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_GenerateCall_StreamsSubagentAndFeedsResultBackAsync()
+    {
+        // Arrange: round 1 the planner calls generate_a2ui; round 2 it narrates. The
+        // subagent streams its forced render_a2ui call across several updates.
+        var inner = new ScriptedPlannerAgent(generateArguments: new() { ["intent"] = "create" });
+        var subagent = new ScriptedChatClient(_ => s_validRenderArgs) { StreamingChunks = 3 };
+        var agent = new A2UIAgent(inner, subagent);
+
+        // Act
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "show hotels")]))
+        {
+            updates.Add(update);
+        }
+
+        // Assert: the subagent's streamed updates were forwarded on the agent stream.
+        Assert.Equal(3, updates.Count(u => u.Contents.Any(c => c is TextContent text && text.Text == "chunk")));
+        FunctionCallContent renderCall = Assert.Single(
+            updates.SelectMany(u => u.Contents).OfType<FunctionCallContent>(),
+            c => c.Name == A2UIConstants.RenderA2UIToolName);
+
+        // The generate call's result rides the stream as a valid operations envelope.
+        FunctionResultContent result = Assert.Single(
+            updates.SelectMany(u => u.Contents).OfType<FunctionResultContent>());
+        Assert.Equal("call-g1", result.CallId);
+        JsonElement envelope = Assert.IsType<JsonElement>(result.Result);
+        Assert.True(envelope.TryGetProperty(A2UIConstants.A2UIOperationsKey, out JsonElement ops));
+        Assert.Equal(3, ops.GetArrayLength());
+
+        // The planner's second round received the tool-call/result pair and narrated.
+        Assert.Equal(2, inner.Runs.Count);
+        IReadOnlyList<ChatMessage> secondRoundMessages = inner.Runs[1];
+        Assert.Contains(secondRoundMessages, m =>
+            m.Role == ChatRole.Assistant && m.Contents.OfType<FunctionCallContent>().Any(c => c.CallId == "call-g1"));
+        Assert.Contains(secondRoundMessages, m =>
+            m.Role == ChatRole.Tool && m.Contents.OfType<FunctionResultContent>().Any(c => c.CallId == "call-g1"));
+        Assert.Contains(updates, u => u.Text == "done");
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_InvalidFirstAttempt_RetriesWithVisibleSecondSubagentCallAsync()
+    {
+        // Arrange: attempt 1 returns a dangling child reference, attempt 2 is valid.
+        int calls = 0;
+        var invalidArgs = new JsonObject
+        {
+            ["surfaceId"] = "s1",
+            ["components"] = new JsonArray(
+                new JsonObject
+                {
+                    ["id"] = "root",
+                    ["component"] = "Row",
+                    ["children"] = new JsonObject { ["componentId"] = "ghost", ["path"] = "/items" },
+                }),
+        };
+        var inner = new ScriptedPlannerAgent(generateArguments: new() { ["intent"] = "create" });
+        var subagent = new ScriptedChatClient(_ => ++calls == 1 ? invalidArgs : s_validRenderArgs) { StreamingChunks = 1 };
+        var agent = new A2UIAgent(inner, subagent);
+
+        // Act
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "show hotels")]))
+        {
+            updates.Add(update);
+        }
+
+        // Assert: both attempts streamed (two visible render calls), and the final envelope
+        // is the valid second attempt.
+        Assert.Equal(2, updates
+            .SelectMany(u => u.Contents)
+            .OfType<FunctionCallContent>()
+            .Count(c => c.Name == A2UIConstants.RenderA2UIToolName));
+        FunctionResultContent result = Assert.Single(
+            updates.SelectMany(u => u.Contents).OfType<FunctionResultContent>());
+        JsonElement envelope = Assert.IsType<JsonElement>(result.Result);
+        Assert.True(envelope.TryGetProperty(A2UIConstants.A2UIOperationsKey, out _));
+        Assert.False(envelope.TryGetProperty("code", out _));
     }
 
     [Fact]
@@ -407,13 +490,83 @@ public sealed class A2UIAgentTests
             return Task.FromResult(new ChatResponse(message));
         }
 
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        /// <summary>Text chunks streamed before the function call on the streaming path.</summary>
+        public int StreamingChunks { get; init; }
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            this.OnMessages?.Invoke(messages);
+            for (int i = 0; i < this.StreamingChunks; i++)
+            {
+                yield return new ChatResponseUpdate(ChatRole.Assistant, "chunk");
+            }
+
+            IDictionary<string, object?>? arguments = this.RawArguments;
+            if (arguments is null)
+            {
+                JsonObject? args = this._script(options);
+                arguments = args?.ToDictionary(p => p.Key, object? (p) => p.Value?.DeepClone());
+            }
+
+            // Real streaming chat clients coalesce the call's fragments and attach the
+            // typed FunctionCallContent on a trailing update.
+            yield return arguments is null
+                ? new ChatResponseUpdate(ChatRole.Assistant, "no tool call")
+                : new ChatResponseUpdate(ChatRole.Assistant,
+                [
+                    new FunctionCallContent($"render-call-{Guid.NewGuid():N}", A2UIConstants.RenderA2UIToolName, arguments),
+                ]);
+            await Task.CompletedTask.ConfigureAwait(false);
+        }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
 
         public void Dispose()
         {
+        }
+    }
+
+    /// <summary>
+    /// A planner agent scripted for the streaming invocation loop: the first run emits a
+    /// <c>generate_a2ui</c> tool call, subsequent runs emit a closing narration.
+    /// </summary>
+    private sealed class ScriptedPlannerAgent : AIAgent
+    {
+        private readonly Dictionary<string, object?> _generateArguments;
+
+        public ScriptedPlannerAgent(Dictionary<string, object?> generateArguments)
+            => this._generateArguments = generateArguments;
+
+        public List<IReadOnlyList<ChatMessage>> Runs { get; } = [];
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            this.Runs.Add(messages.ToList());
+            if (this.Runs.Count == 1)
+            {
+                yield return new AgentResponseUpdate(ChatRole.Assistant,
+                [
+                    new FunctionCallContent("call-g1", A2UIConstants.GenerateA2UIToolName, this._generateArguments),
+                ]);
+            }
+            else
+            {
+                yield return new AgentResponseUpdate(ChatRole.Assistant, "done");
+            }
+
+            await Task.CompletedTask.ConfigureAwait(false);
         }
     }
 }
