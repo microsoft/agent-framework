@@ -8,23 +8,30 @@
 
 using System.Text;
 using System.Text.Json;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 using SampleApp;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-ChatClient chatClient = new AzureOpenAIClient(
+FoundryAgent baseAgent = new(
     new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName);
+    new DefaultAzureCredential(),
+    model: model,
+    instructions: "You are a friendly assistant.");
+
+// Get the underlying IChatClient to use for the memory component.
+IChatClient? chatClient = baseAgent.GetService<IChatClient>();
+if (chatClient == null)
+{
+    throw new InvalidOperationException("Could not retrieve IChatClient from FoundryAgent.");
+}
 
 // Create the agent and provide a factory to add our custom memory component to
 // all sessions created by the agent. Here each new memory component will have its own
@@ -36,7 +43,7 @@ ChatClient chatClient = new AzureOpenAIClient(
 AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
 {
     ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
-    AIContextProviders = [new UserInfoMemory(chatClient.AsIChatClient())]
+    AIContextProviders = [new UserInfoMemory(chatClient)]
 });
 
 // Create a new session for the conversation.
