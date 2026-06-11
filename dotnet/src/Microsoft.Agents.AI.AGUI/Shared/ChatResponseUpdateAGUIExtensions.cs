@@ -453,6 +453,18 @@ internal static class ChatResponseUpdateAGUIExtensions
         string? currentReasoningBaseId = null;
         string? currentReasoningId = null;
         string? currentReasoningMessageId = null;
+#if ASPNETCORE
+        // Progressive tool-call argument streaming. MEAI chat clients yield one update
+        // per provider chunk but attach the typed FunctionCallContent only once a call's
+        // arguments are complete, so the AGUI wire would otherwise carry a single atomic
+        // TOOL_CALL_ARGS event per call — starving streaming consumers (e.g. generative-UI
+        // middlewares that paint arguments incrementally). For OpenAI-family providers the
+        // argument fragments are still observable on the update's RawRepresentation:
+        // surface them as incremental TOOL_CALL_ARGS events and suppress the duplicate
+        // atomic emission when the coalesced FunctionCallContent arrives.
+        Dictionary<int, string> rawToolCallIdsByIndex = [];
+        HashSet<string> rawStreamedToolCallIds = new(StringComparer.Ordinal);
+#endif
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             // The text-event surface (TextMessageStart/Content/End) requires a non-empty
@@ -528,6 +540,69 @@ internal static class ChatResponseUpdateAGUIExtensions
                 };
             }
 
+#if ASPNETCORE
+            // Surface OpenAI streamed tool-call argument fragments incrementally.
+            object? rawUpdate = chatResponse.RawRepresentation;
+            if (rawUpdate is ChatResponseUpdate innerUpdate)
+            {
+                // Agent pipelines (e.g. ChatClientAgent) wrap the provider update once.
+                rawUpdate = innerUpdate.RawRepresentation;
+            }
+
+            if (rawUpdate is OpenAI.Chat.StreamingChatCompletionUpdate streamingChatUpdate)
+            {
+                foreach (OpenAI.Chat.StreamingChatToolCallUpdate toolCallUpdate in streamingChatUpdate.ToolCallUpdates ?? [])
+                {
+                    if (!rawToolCallIdsByIndex.TryGetValue(toolCallUpdate.Index, out string? rawToolCallId))
+                    {
+                        // The first fragment of a call carries its id and function name;
+                        // later fragments only carry the index plus an arguments delta.
+                        if (string.IsNullOrEmpty(toolCallUpdate.ToolCallId) || string.IsNullOrEmpty(toolCallUpdate.FunctionName))
+                        {
+                            continue;
+                        }
+
+                        rawToolCallId = toolCallUpdate.ToolCallId;
+                        rawToolCallIdsByIndex[toolCallUpdate.Index] = rawToolCallId;
+                        rawStreamedToolCallIds.Add(rawToolCallId);
+
+                        // Close any open reasoning block before emitting tool events.
+                        if (currentReasoningMessageId is not null)
+                        {
+                            yield return new ReasoningMessageEndEvent
+                            {
+                                MessageId = currentReasoningMessageId
+                            };
+                            yield return new ReasoningEndEvent
+                            {
+                                MessageId = currentReasoningId!
+                            };
+                            currentReasoningBaseId = null;
+                            currentReasoningId = null;
+                            currentReasoningMessageId = null;
+                        }
+
+                        yield return new ToolCallStartEvent
+                        {
+                            ToolCallId = rawToolCallId,
+                            ToolCallName = toolCallUpdate.FunctionName,
+                            ParentMessageId = chatResponse.MessageId
+                        };
+                    }
+
+                    string argumentsDelta = toolCallUpdate.FunctionArgumentsUpdate?.ToString() ?? string.Empty;
+                    if (argumentsDelta.Length > 0)
+                    {
+                        yield return new ToolCallArgsEvent
+                        {
+                            ToolCallId = rawToolCallId,
+                            Delta = argumentsDelta
+                        };
+                    }
+                }
+            }
+#endif
+
             // Emit tool call events and tool result events
             if (chatResponse is { Contents.Count: > 0 })
             {
@@ -535,6 +610,19 @@ internal static class ChatResponseUpdateAGUIExtensions
                 {
                     if (content is FunctionCallContent functionCallContent)
                     {
+#if ASPNETCORE
+                        // This call's arguments already streamed incrementally from the raw
+                        // provider fragments above — only the closing event remains.
+                        if (rawStreamedToolCallIds.Contains(functionCallContent.CallId))
+                        {
+                            yield return new ToolCallEndEvent
+                            {
+                                ToolCallId = functionCallContent.CallId
+                            };
+                            continue;
+                        }
+#endif
+
                         // Close any open reasoning block before emitting tool events.
                         if (currentReasoningMessageId is not null)
                         {
