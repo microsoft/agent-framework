@@ -40,12 +40,12 @@ async def main() -> None:
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_response(messages, options={"tools": get_time}, stream=True):
+        async for chunk in client.get_response(messages, options={"tools": [get_time]}, stream=True):
             if str(chunk):
                 print(str(chunk), end="")
         print("")
     else:
-        response = await client.get_response(messages, options={"tools": get_time})
+        response = await client.get_response(messages, options={"tools": [get_time]})
         print(f"Assistant: {response}")
 
 
