@@ -19,3 +19,26 @@ jobs:
       - uses: actions/labeler@f27b608878404679385c85cfa523b85ccb86e213 # v6
         with:
           repo-token: "${{ secrets.GH_ACTIONS_PR_WRITE }}"
+
+      - name: "PR: add breaking change label from title"
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          script: |
+            const breakingLabel = "breaking change";
+            const title = context.payload.pull_request.title || "";
+
+            // Add the label when the title contains the "[BREAKING]" prefix.
+            // The label-title-prefix workflow handles the reverse direction
+            // (adding the "[BREAKING]" prefix when the label is applied).
+            if (/\[BREAKING\]/i.test(title)) {
+              const labels = context.payload.pull_request.labels.map(l => l.name);
+              if (!labels.includes(breakingLabel)) {
+                await github.rest.issues.addLabels({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  labels: [breakingLabel]
+                });
+              }
+            }
