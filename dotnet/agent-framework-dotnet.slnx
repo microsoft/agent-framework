@@ -196,6 +196,7 @@
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step05_BoundedChatHistory/AgentWithMemory_Step05_BoundedChatHistory.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step03_MemoryUsingValkey/AgentWithMemory_Step03_MemoryUsingValkey.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step03_MemoryUsingValkey_Bedrock/AgentWithMemory_Step03_MemoryUsingValkey_Bedrock.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step06_ResumableStreamingWithValkey/AgentWithMemory_Step06_ResumableStreamingWithValkey.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentProviders/openai/">
     <File Path="samples/02-agents/AgentProviders/openai/README.md" />
