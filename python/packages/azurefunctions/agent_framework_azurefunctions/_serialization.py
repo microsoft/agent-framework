@@ -14,6 +14,24 @@ This module adds:
 - reconstruct_to_type: for HITL responses where external data (without type markers)
   needs to be reconstructed to a known type
 - resolve_type: resolves 'module:class' type keys to Python types
+
+Security Model
+--------------
+The underlying Azure Durable Functions storage (Azure Storage account) is the
+trusted persistence layer for serialized checkpoint data.  The
+``RestrictedUnpickler`` in the core encoding module provides defense-in-depth
+type filtering, but checkpoint storage itself must be properly access-controlled:
+
+- Ensure the Azure Storage account used by Durable Functions is not publicly
+  writable and uses appropriate RBAC / shared-access policies.
+- Never route untrusted user input directly into ``deserialize_value`` without
+  first calling :func:`strip_pickle_markers` to neutralize injection of
+  pickle markers into the data path.
+- Configure your checkpoint storage with ``allowed_checkpoint_types`` (or call
+  ``decode_checkpoint_value(..., allowed_types=...)`` directly) to restrict the set of types that can be deserialized.
+
+See :mod:`agent_framework._workflows._checkpoint_encoding` for the full
+security model documentation.
 """
 
 from __future__ import annotations

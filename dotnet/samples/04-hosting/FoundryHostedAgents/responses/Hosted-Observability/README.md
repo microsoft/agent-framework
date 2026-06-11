@@ -104,6 +104,34 @@ docker run --rm -p 8088:8088 \
 
 Once deployed, telemetry flows to the Application Insights instance attached to your Foundry project. In the Foundry UI, the **Traces** tab next to **Playground** lists conversations and lets you drill into the span tree for any request.
 
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-observability && cd hosted-observability
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Observability/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-observability
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+---
+
 ## NuGet package users
 
 If consuming the Agent Framework as a NuGet package, use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented section in `HostedObservability.csproj` for the `PackageReference` alternative.

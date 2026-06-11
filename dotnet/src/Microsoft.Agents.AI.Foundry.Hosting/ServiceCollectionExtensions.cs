@@ -7,10 +7,12 @@ using System.Runtime.CompilerServices;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
 using Azure.Identity;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -49,6 +51,7 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddResponsesServer();
+        services.AddHealthChecks();
         services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
@@ -84,6 +87,7 @@ public static class FoundryHostingExtensions
         ArgumentNullException.ThrowIfNull(agent);
 
         services.AddResponsesServer();
+        services.AddHealthChecks();
         agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
@@ -109,10 +113,10 @@ public static class FoundryHostingExtensions
     /// <para>
     /// Each string in <paramref name="toolboxNames"/> is a toolbox name registered in the Foundry
     /// project. The proxy URL per toolbox is constructed as:
-    /// <c>{FOUNDRY_AGENT_TOOLSET_ENDPOINT}/{toolboxName}/mcp?api-version=2025-05-01-preview</c>
+    /// <c>{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{toolboxName}/mcp?api-version=v1</c>
     /// </para>
     /// <para>
-    /// When <c>FOUNDRY_AGENT_TOOLSET_ENDPOINT</c> is absent, startup succeeds without error and
+    /// When <c>FOUNDRY_PROJECT_ENDPOINT</c> is absent, startup succeeds without error and
     /// no tools are loaded (the container remains healthy per spec §2).
     /// </para>
     /// <para>
@@ -167,12 +171,61 @@ public static class FoundryHostingExtensions
         // multiple times will not invoke StartAsync twice on the same singleton.
         services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
 
+        // Register the toolbox health check on the same /readiness pipeline that
+        // MapFoundryResponses maps. This gates the Foundry hosted runtime's readiness
+        // probe (per container-image-spec.md §3.1) on the outcome of the pre-registered
+        // toolbox connections opened in FoundryToolboxService.StartAsync.
+        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against duplicate
+        // registration when AddFoundryToolboxes is called multiple times.
+        const string HealthCheckName = "foundry-toolbox";
+        services.AddHealthChecks();
+        services.Configure<HealthCheckServiceOptions>(opts =>
+        {
+            foreach (var existing in opts.Registrations)
+            {
+                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            opts.Registrations.Add(new HealthCheckRegistration(
+                name: HealthCheckName,
+                factory: sp => ActivatorUtilities.CreateInstance<FoundryToolboxHealthCheck>(sp),
+                failureStatus: HealthStatus.Unhealthy,
+                tags: ["foundry", "toolbox", "readiness"]));
+        });
+
         return services;
     }
 
     /// <summary>
     /// Maps the Responses API routes for the agent-framework handler to the endpoint routing pipeline.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Also maps the Foundry-required <c>GET /readiness</c> health probe to
+    /// <see cref="HealthCheckEndpointRouteBuilderExtensions.MapHealthChecks(IEndpointRouteBuilder, string)"/>
+    /// when no <c>/readiness</c> route is already registered. This makes the package
+    /// spec-compliant in the Foundry hosted runtime (which probes <c>/readiness</c>
+    /// before accepting any invocation per <c>container-image-spec.md</c> §2; without
+    /// it every request fails with HTTP 424 <c>session_not_ready</c>) regardless of the
+    /// host spine the developer chose:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><b>Tier 1/2</b> (<c>AgentHost.CreateBuilder</c>) — the Core SDK
+    ///         already maps <c>/readiness</c>. The duplicate-route guard below skips
+    ///         re-mapping it.</description></item>
+    ///   <item><description><b>Tier 3</b> (<c>WebApplication.CreateBuilder</c> +
+    ///         <c>AddFoundryResponses</c> + <c>MapFoundryResponses</c>) — the Core SDK
+    ///         does NOT map it. This call covers the gap automatically.</description></item>
+    /// </list>
+    /// <para>
+    /// Developers can still opt out by registering their own <c>/readiness</c> route
+    /// before calling <c>MapFoundryResponses</c>; the existing route is detected and
+    /// preserved.
+    /// </para>
+    /// </remarks>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="prefix">Optional route prefix (e.g., "/openai/v1"). Default: empty (routes at /responses).</param>
     /// <returns>The endpoint route builder for chaining.</returns>
@@ -180,7 +233,35 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         endpoints.MapResponsesServer(prefix);
+        MapReadinessIfMissing(endpoints);
         return endpoints;
+    }
+
+    /// <summary>
+    /// Maps <c>GET /readiness</c> to the AspNetCore HealthChecks pipeline only when no
+    /// route already serves that path. The duplicate guard scans
+    /// <see cref="EndpointDataSource"/> entries by route pattern, which catches both the
+    /// SDK-mapped <c>MapHealthChecks("/readiness")</c> path used by
+    /// <c>AgentHostBuilder</c> and any user-registered <c>app.MapGet("/readiness", ...)</c>
+    /// route. Idempotent across multiple <c>MapFoundryResponses</c> invocations.
+    /// </summary>
+    private static void MapReadinessIfMissing(IEndpointRouteBuilder endpoints)
+    {
+        const string ReadinessPath = "/readiness";
+
+        foreach (var dataSource in endpoints.DataSources)
+        {
+            foreach (var endpoint in dataSource.Endpoints)
+            {
+                if (endpoint is RouteEndpoint route &&
+                    string.Equals(route.RoutePattern.RawText, ReadinessPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+        }
+
+        endpoints.MapHealthChecks(ReadinessPath);
     }
 
     /// <summary>

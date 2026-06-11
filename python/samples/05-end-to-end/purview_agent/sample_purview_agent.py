@@ -11,8 +11,8 @@ Shows:
 Note: Caching is automatic and enabled by default.
 
 Environment variables:
-- AZURE_OPENAI_ENDPOINT (required)
-- AZURE_OPENAI_MODEL (optional, defaults to gpt-4o-mini)
+- FOUNDRY_PROJECT_ENDPOINT (required) - Azure AI Foundry project endpoint URL
+- FOUNDRY_MODEL (optional, defaults to gpt-4o-mini)
 - PURVIEW_CLIENT_APP_ID (required)
 - PURVIEW_USE_CERT_AUTH (optional, set to "true" for certificate auth)
 - PURVIEW_TENANT_ID (required if certificate auth)
@@ -44,6 +44,37 @@ load_dotenv()
 
 JOKER_NAME = "Joker"
 JOKER_INSTRUCTIONS = "You are good at telling jokes. Keep responses concise."
+
+# Sequential prompts to demonstrate good -> block -> good orchestration.
+# The sensitive prompt contains a Visa test credit card number that matches Purview's
+# built-in Credit Card sensitive information type. If the tenant has a DLP policy that
+# blocks credit card content for Microsoft 365 Copilot and AI apps, the second message
+# will be blocked and the third will verify that subsequent calls still flow normally
+# after a block.
+GOOD_PROMPT_PRIMARY = "Tell me a joke about a pirate."
+SENSITIVE_PROMPT = "My corporate credit card is 4111 1111 1111 1111. Please confirm receipt."
+GOOD_PROMPT_FOLLOWUP = "Another light joke please."
+
+
+async def run_policy_flow(
+    label: str,
+    agent: Agent,
+    user_id: str | None,
+    blocked_text: str,
+) -> None:
+    """Run a good -> block candidate -> good sequence and report each outcome."""
+    blocked_marker = blocked_text.lower()
+    prompts = [
+        ("good (cold cache)", GOOD_PROMPT_PRIMARY),
+        ("expected block", SENSITIVE_PROMPT),
+        ("good (warm cache)", GOOD_PROMPT_FOLLOWUP),
+    ]
+    for tag, text in prompts:
+        response: AgentResponse = await agent.run(
+            Message("user", [text], additional_properties={"user_id": user_id})
+        )
+        outcome = "BLOCKED" if blocked_marker in str(response).lower() else "ALLOWED"
+        print(f"[{label}] {tag}: {outcome}\n{response}\n")
 
 
 # Custom Cache Provider Implementation
@@ -138,21 +169,17 @@ def build_credential() -> Any:
 
 
 async def run_with_agent_middleware() -> None:
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not endpoint:
-        print("Skipping run: AZURE_OPENAI_ENDPOINT not set")
+        print("Skipping run: FOUNDRY_PROJECT_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
-    client = FoundryChatClient(model=deployment, endpoint=endpoint, credential=AzureCliCredential())
+    client = FoundryChatClient(model=deployment, project_endpoint=endpoint, credential=AzureCliCredential())
 
-    purview_agent_middleware = PurviewPolicyMiddleware(
-        build_credential(),
-        PurviewSettings(
-            app_name="Agent Framework Sample App",
-        ),
-    )
+    settings = PurviewSettings(app_name="Agent Framework Sample App")
+    purview_agent_middleware = PurviewPolicyMiddleware(build_credential(), settings)
 
     agent = Agent(
         client=client,
@@ -162,39 +189,26 @@ async def run_with_agent_middleware() -> None:
     )
 
     print("-- Agent MiddlewareTypes Path --")
-    first: AgentResponse = await agent.run(
-        Message("user", ["Tell me a joke about a pirate."], additional_properties={"user_id": user_id})
-    )
-    print("First response (agent middleware):\n", first)
-
-    second: AgentResponse = await agent.run(
-        Message(
-            role="user", contents=["That was funny. Tell me another one."], additional_properties={"user_id": user_id}
-        )
-    )
-    print("Second response (agent middleware):\n", second)
+    blocked_text = settings.get("blocked_prompt_message") or "Prompt blocked by policy"
+    await run_policy_flow("agent middleware", agent, user_id, blocked_text)
 
 
 async def run_with_chat_middleware() -> None:
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not endpoint:
-        print("Skipping chat middleware run: AZURE_OPENAI_ENDPOINT not set")
+        print("Skipping chat middleware run: FOUNDRY_PROJECT_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_MODEL", default="gpt-4o-mini")
+    deployment = os.environ.get("FOUNDRY_MODEL", default="gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
 
+    settings = PurviewSettings(app_name="Agent Framework Sample App (Chat)")
     client = FoundryChatClient(
         model=deployment,
-        endpoint=endpoint,
+        project_endpoint=endpoint,
         credential=AzureCliCredential(),
         middleware=[
-            PurviewChatPolicyMiddleware(
-                build_credential(),
-                PurviewSettings(
-                    app_name="Agent Framework Sample App (Chat)",
-                ),
-            )
+            PurviewChatPolicyMiddleware(build_credential(), settings)
         ],
     )
 
@@ -205,43 +219,27 @@ async def run_with_chat_middleware() -> None:
     )
 
     print("-- Chat MiddlewareTypes Path --")
-    first: AgentResponse = await agent.run(
-        Message(
-            role="user",
-            contents=["Give me a short clean joke."],
-            additional_properties={"user_id": user_id},
-        )
-    )
-    print("First response (chat middleware):\n", first)
-
-    second: AgentResponse = await agent.run(
-        Message(
-            role="user",
-            contents=["One more please."],
-            additional_properties={"user_id": user_id},
-        )
-    )
-    print("Second response (chat middleware):\n", second)
+    blocked_text = settings.get("blocked_prompt_message") or "Prompt blocked by policy"
+    await run_policy_flow("chat middleware", agent, user_id, blocked_text)
 
 
 async def run_with_custom_cache_provider() -> None:
     """Demonstrate implementing and using a custom cache provider."""
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not endpoint:
-        print("Skipping custom cache provider run: AZURE_OPENAI_ENDPOINT not set")
+        print("Skipping custom cache provider run: FOUNDRY_PROJECT_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
-    client = FoundryChatClient(model=deployment, endpoint=endpoint, credential=AzureCliCredential())
+    client = FoundryChatClient(model=deployment, project_endpoint=endpoint, credential=AzureCliCredential())
 
     custom_cache = SimpleDictCacheProvider()
 
+    settings = PurviewSettings(app_name="Agent Framework Sample App (Custom Provider)")
     purview_agent_middleware = PurviewPolicyMiddleware(
         build_credential(),
-        PurviewSettings(
-            app_name="Agent Framework Sample App (Custom Provider)",
-        ),
+        settings,
         cache_provider=custom_cache,
     )
 
@@ -254,38 +252,28 @@ async def run_with_custom_cache_provider() -> None:
 
     print("-- Custom Cache Provider Path --")
     print("Using SimpleDictCacheProvider")
+    blocked_text = settings.get("blocked_prompt_message") or "Prompt blocked by policy"
+    await run_policy_flow("custom cache", agent, user_id, blocked_text)
 
-    first: AgentResponse = await agent.run(
-        Message(
-            role="user", contents=["Tell me a joke about a programmer."], additional_properties={"user_id": user_id}
-        )
-    )
-    print("First response (custom provider):\n", first)
 
-    second: AgentResponse = await agent.run(
-        Message("user", ["That's hilarious! One more?"], additional_properties={"user_id": user_id})
-    )
-    print("Second response (custom provider):\n", second)
-
+async def run_with_default_cache() -> None:
     """Demonstrate using the default built-in cache."""
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not endpoint:
-        print("Skipping default cache run: AZURE_OPENAI_ENDPOINT not set")
+        print("Skipping default cache run: FOUNDRY_PROJECT_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
-    client = FoundryChatClient(model=deployment, endpoint=endpoint, credential=AzureCliCredential())
+    client = FoundryChatClient(model=deployment, project_endpoint=endpoint, credential=AzureCliCredential())
 
     # No cache_provider specified - uses default InMemoryCacheProvider
-    purview_agent_middleware = PurviewPolicyMiddleware(
-        build_credential(),
-        PurviewSettings(
-            app_name="Agent Framework Sample App (Default Cache)",
-            cache_ttl_seconds=3600,
-            max_cache_size_bytes=100 * 1024 * 1024,  # 100MB
-        ),
+    settings = PurviewSettings(
+        app_name="Agent Framework Sample App (Default Cache)",
+        cache_ttl_seconds=3600,
+        max_cache_size_bytes=100 * 1024 * 1024,  # 100MB
     )
+    purview_agent_middleware = PurviewPolicyMiddleware(build_credential(), settings)
 
     agent = Agent(
         client=client,
@@ -296,16 +284,8 @@ async def run_with_custom_cache_provider() -> None:
 
     print("-- Default Cache Path --")
     print("Using default InMemoryCacheProvider with settings-based configuration")
-
-    first: AgentResponse = await agent.run(
-        Message("user", ["Tell me a joke about AI."], additional_properties={"user_id": user_id})
-    )
-    print("First response (default cache):\n", first)
-
-    second: AgentResponse = await agent.run(
-        Message("user", ["Nice! Another AI joke please."], additional_properties={"user_id": user_id})
-    )
-    print("Second response (default cache):\n", second)
+    blocked_text = settings.get("blocked_prompt_message") or "Prompt blocked by policy"
+    await run_policy_flow("default cache", agent, user_id, blocked_text)
 
 
 async def main() -> None:
@@ -325,6 +305,11 @@ async def main() -> None:
         await run_with_custom_cache_provider()
     except Exception as ex:  # pragma: no cover - demo resilience
         print(f"Custom cache provider path failed: {ex}")
+
+    try:
+        await run_with_default_cache()
+    except Exception as ex:  # pragma: no cover - demo resilience
+        print(f"Default cache path failed: {ex}")
 
 
 if __name__ == "__main__":
