@@ -23,6 +23,8 @@ public sealed class StreamingToolCallArgsTests
     private const string RunId = "run1";
     private const string CallId = "call_123";
 
+    private static readonly string[] s_sequentialCallIds = ["call_a", "call_b"];
+
     private static ChatResponseUpdate FragmentUpdate(int index, string? callId, string? functionName, string argumentsDelta)
     {
         StreamingChatToolCallUpdate toolCallUpdate = OpenAIChatModelFactory.StreamingChatToolCallUpdate(
@@ -142,6 +144,60 @@ public sealed class StreamingToolCallArgsTests
         Assert.Equal(
             "{\"zone\":\"CET\"}",
             string.Concat(events.OfType<ToolCallArgsEvent>().Where(a => a.ToolCallId == "call_b").Select(a => a.Delta)));
+        // Both calls were started on the wire, so both must close — here via the
+        // end-of-stream sweep, since no coalesced content ever arrives.
+        Assert.Equal(
+            s_sequentialCallIds,
+            events.OfType<ToolCallEndEvent>().Select(e => e.ToolCallId).OrderBy(id => id, StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_IndexReusedAcrossRounds_StartsANewCallAsync()
+    {
+        // Arrange: two sequential tool-call rounds in one stream; OpenAI restarts the
+        // fragment index at 0 for the second round.
+        List<ChatResponseUpdate> updates =
+        [
+            FragmentUpdate(0, "call_a", "get_weather", "{\"city\":\"Paris\"}"),
+            CoalescedFunctionCallUpdate("call_a", "get_weather"),
+            FragmentUpdate(0, "call_b", "get_time", "{\"zone\":\"CET\"}"),
+            CoalescedFunctionCallUpdate("call_b", "get_time"),
+        ];
+
+        // Act
+        List<BaseEvent> events = await CollectAsync(updates);
+
+        // Assert: each round gets its own Start, its args land on its own call id, and
+        // each call closes exactly once (no duplicate atomic re-emission).
+        Assert.Equal(
+            s_sequentialCallIds,
+            events.OfType<ToolCallStartEvent>().Select(e => e.ToolCallId).ToArray());
+        Assert.Equal(
+            "{\"city\":\"Paris\"}",
+            string.Concat(events.OfType<ToolCallArgsEvent>().Where(a => a.ToolCallId == "call_a").Select(a => a.Delta)));
+        Assert.Equal(
+            "{\"zone\":\"CET\"}",
+            string.Concat(events.OfType<ToolCallArgsEvent>().Where(a => a.ToolCallId == "call_b").Select(a => a.Delta)));
+        Assert.Equal(
+            s_sequentialCallIds,
+            events.OfType<ToolCallEndEvent>().Select(e => e.ToolCallId).ToArray());
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_FragmentsWithoutCoalescedContent_CloseAtEndOfStreamAsync()
+    {
+        // Arrange: a raw-streamed call whose coalesced FunctionCallContent never arrives.
+        List<ChatResponseUpdate> updates = [FragmentUpdate(0, CallId, "get_weather", "{\"city\":\"Paris\"}")];
+
+        // Act
+        List<BaseEvent> events = await CollectAsync(updates);
+
+        // Assert: the end-of-stream sweep closes the call before RunFinished.
+        ToolCallEndEvent end = Assert.Single(events.OfType<ToolCallEndEvent>());
+        Assert.Equal(CallId, end.ToolCallId);
+        Assert.True(
+            events.FindIndex(e => e is ToolCallEndEvent) < events.FindIndex(e => e is RunFinishedEvent),
+            "ToolCallEnd must precede RunFinished");
     }
 
     [Fact]

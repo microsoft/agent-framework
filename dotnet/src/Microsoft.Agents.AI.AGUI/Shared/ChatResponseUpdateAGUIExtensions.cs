@@ -586,6 +586,8 @@ internal static class ChatResponseUpdateAGUIExtensions
                         {
                             ToolCallId = rawToolCallId,
                             ToolCallName = toolCallUpdate.FunctionName,
+                            // Fragment updates typically carry no MessageId, so this is
+                            // often null — schema-legal, and the inbound builder ignores it.
                             ParentMessageId = chatResponse.MessageId
                         };
                     }
@@ -612,9 +614,27 @@ internal static class ChatResponseUpdateAGUIExtensions
                     {
 #if ASPNETCORE
                         // This call's arguments already streamed incrementally from the raw
-                        // provider fragments above — only the closing event remains.
-                        if (rawStreamedToolCallIds.Contains(functionCallContent.CallId))
+                        // provider fragments above — only the closing event remains. The
+                        // per-call state is then released: OpenAI restarts tool-call indexes
+                        // at 0 for each assistant turn, so a stale index entry would silently
+                        // absorb a later round's fragments into this finished call.
+                        if (rawStreamedToolCallIds.Remove(functionCallContent.CallId))
                         {
+                            int? closedIndex = null;
+                            foreach (KeyValuePair<int, string> entry in rawToolCallIdsByIndex)
+                            {
+                                if (string.Equals(entry.Value, functionCallContent.CallId, StringComparison.Ordinal))
+                                {
+                                    closedIndex = entry.Key;
+                                    break;
+                                }
+                            }
+
+                            if (closedIndex is int index)
+                            {
+                                rawToolCallIdsByIndex.Remove(index);
+                            }
+
                             yield return new ToolCallEndEvent
                             {
                                 ToolCallId = functionCallContent.CallId
@@ -814,6 +834,23 @@ internal static class ChatResponseUpdateAGUIExtensions
                 MessageId = currentMessageId
             };
         }
+
+#if ASPNETCORE
+        // Close any raw-streamed tool call whose coalesced FunctionCallContent never
+        // arrived (stream cut short, or a pipeline that does not re-emit the typed
+        // content). Without this sweep the wire carries Start/Args with no End and
+        // streaming consumers stay in a perpetual "in progress" state.
+        foreach (string openToolCallId in rawStreamedToolCallIds)
+        {
+            yield return new ToolCallEndEvent
+            {
+                ToolCallId = openToolCallId
+            };
+        }
+
+        rawStreamedToolCallIds.Clear();
+        rawToolCallIdsByIndex.Clear();
+#endif
 
         yield return new RunFinishedEvent
         {
