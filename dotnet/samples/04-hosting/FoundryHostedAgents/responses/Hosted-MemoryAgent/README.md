@@ -139,6 +139,34 @@ The script publishes the project, builds the image, runs the container with two 
 `HOSTED_USER_ISOLATION_KEY` values, drives a multi-turn conversation per user, asserts that each
 user only sees their own memories, and exits non-zero on failure.
 
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-memory-agent && cd hosted-memory-agent
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-MemoryAgent/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-memory-agent
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+---
+
 ## NuGet package users
 
 If you are consuming the Agent Framework as a NuGet package (not building from source), use the

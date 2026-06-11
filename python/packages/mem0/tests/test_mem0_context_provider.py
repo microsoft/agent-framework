@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import AgentResponse, Message
@@ -193,39 +193,54 @@ class TestBeforeRun:
         assert call_kwargs["user_id"] == "u1"
         assert "filters" not in call_kwargs
 
-    async def test_oss_client_all_scoping_params(self, mock_oss_mem0_client: AsyncMock) -> None:
-        """OSS client with all scoping parameters passes them as direct kwargs."""
+    @pytest.mark.asyncio
+    async def test_oss_client_all_scoping_params_except_app_id(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client with all scoping parameters passes them as isolated concurrent kwargs."""
         mock_oss_mem0_client.search.return_value = []
-        provider = Mem0ContextProvider(
-            source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
+
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", agent_id="a1")
+
+        mock_context = MagicMock(spec=SessionContext)
+        mock_msg = MagicMock()
+        mock_msg.text = "hello"
+        mock_context.input_messages = [mock_msg]
+        mock_context.response = None
+
+        await provider.before_run(
+            agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
         )
-        session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
-        await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore[arg-type]
+        # Re-aligned assertion: We expect 2 separate concurrent calls instead of 1 combined call
+        assert mock_oss_mem0_client.search.call_count == 2
+        mock_oss_mem0_client.search.assert_any_call(query="hello", user_id="u1")
+        mock_oss_mem0_client.search.assert_any_call(query="hello", agent_id="a1")
 
-        call_kwargs = mock_oss_mem0_client.search.call_args.kwargs
-        assert call_kwargs["user_id"] == "u1"
-        assert call_kwargs["agent_id"] == "a1"
-        assert "filters" not in call_kwargs
-
-    async def test_platform_client_passes_filters_dict(self, mock_mem0_client: AsyncMock) -> None:
-        """Platform AsyncMemoryClient should receive scoping params in a filters dict."""
+    @pytest.mark.asyncio
+    async def test_platform_client_passes_filters_dict_except_app_id(self, mock_mem0_client: AsyncMock) -> None:
+        """Platform client passes scoping parameters concurrently inside the nested filters dictionary."""
         mock_mem0_client.search.return_value = []
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
-        session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        provider = Mem0ContextProvider(
+            source_id="mem0",
+            mem0_client=mock_mem0_client,
+            user_id="u1",
+            agent_id="a1",
+        )
+
+        mock_context = MagicMock(spec=SessionContext)
+        mock_msg = MagicMock()
+        mock_msg.text = "hello"
+        mock_context.input_messages = [mock_msg]
+        mock_context.response = None
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore[arg-type]
+            agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
+        )
 
-        call_kwargs = mock_mem0_client.search.call_args.kwargs
-        assert call_kwargs["query"] == "Hello"
-        assert "filters" in call_kwargs
-        assert call_kwargs["filters"]["user_id"] == "u1"
+        # Re-aligned assertion: Platform client isolates filters per call to bypass AND limitations
+        assert mock_mem0_client.search.call_count == 2
+        mock_mem0_client.search.assert_any_call(query="hello", filters={"user_id": "u1"})
+        mock_mem0_client.search.assert_any_call(query="hello", filters={"agent_id": "a1"})
 
 
 # -- after_run tests -----------------------------------------------------------
@@ -318,8 +333,8 @@ class TestAfterRun:
         with pytest.raises(ValueError, match="At least one of the filters"):
             await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
-    async def test_stores_with_application_id_metadata(self, mock_mem0_client: AsyncMock) -> None:
-        """application_id is passed in metadata."""
+    async def test_stores_with_application_id_filters(self, mock_mem0_client: AsyncMock) -> None:
+        """application_id is passed in filters."""
         provider = Mem0ContextProvider(
             source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", application_id="app1"
         )
@@ -331,7 +346,7 @@ class TestAfterRun:
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        assert mock_mem0_client.add.call_args.kwargs["metadata"] == {"application_id": "app1"}
+        assert mock_mem0_client.add.call_args.kwargs["filters"] == {"app_id": "app1"}
 
 
 # -- _validate_filters tests --------------------------------------------------
@@ -358,15 +373,20 @@ class TestValidateFilters:
         provider._validate_filters()
 
 
-# -- _build_filters tests -----------------------------------------------------
+# -- _build_search_kwargs tests -----------------------------------------------------
 
 
-class TestBuildFilters:
-    """Test _build_filters method."""
+class TestBuildSearchKwargs:
+    """Test _build_search_kwargs method."""
 
     def test_user_id_only(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
-        assert provider._build_filters() == {"user_id": "u1"}
+
+        # Pass the 3 required arguments
+        result = provider._build_search_kwargs("test query", "user_id", "u1")
+
+        # AsyncMock triggers the Platform client nested 'filters' structure
+        assert result == {"query": "test query", "filters": {"user_id": "u1"}}
 
     def test_all_params(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(
@@ -376,28 +396,66 @@ class TestBuildFilters:
             agent_id="a1",
             application_id="app1",
         )
-        assert provider._build_filters() == {
-            "user_id": "u1",
-            "agent_id": "a1",
-            "app_id": "app1",
+
+        # Test that app_id correctly merges with the isolated target entity
+        result = provider._build_search_kwargs("test query", "agent_id", "a1")
+
+        assert result == {
+            "query": "test query",
+            "filters": {
+                "agent_id": "a1",
+                "app_id": "app1",
+            },
         }
 
     def test_excludes_none_values(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
-        filters = provider._build_filters()
-        assert "agent_id" not in filters
-        assert "run_id" not in filters
-        assert "app_id" not in filters
+
+        # application_id is None by default, it should not appear in the dictionary
+        result = provider._build_search_kwargs("test query", "user_id", "u1")
+
+        assert "app_id" not in result.get("filters", {})
 
     def test_no_run_id_in_search_filters(self, mock_mem0_client: AsyncMock) -> None:
         """run_id is excluded from search filters so memories work across sessions."""
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
-        filters = provider._build_filters()
-        assert "run_id" not in filters
+
+        result = provider._build_search_kwargs("test query", "user_id", "u1")
+
+        assert "run_id" not in result.get("filters", {})
+        assert "run_id" not in result
 
     def test_empty_when_no_params(self, mock_mem0_client: AsyncMock) -> None:
+        # Validates base query payload generation
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
-        assert provider._build_filters() == {}
+
+        result = provider._build_search_kwargs("test query", "custom_key", "custom_val")
+
+        assert result == {"query": "test query", "filters": {"custom_key": "custom_val"}}
+
+    @pytest.mark.asyncio
+    async def test_before_run_application_only_fallback(self, mock_mem0_client: AsyncMock) -> None:
+
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, application_id="app_fallback_test"
+        )
+
+        # Mock a valid message list and session container setup
+        mock_context = MagicMock(spec=SessionContext)
+        mock_msg = MagicMock()
+        mock_msg.text = "Retrieve systemic fallback memory traces"
+        mock_context.input_messages = [mock_msg]
+        mock_context.response = None
+
+        mock_mem0_client.search = AsyncMock(return_value=[{"id": "m1", "memory": "System configuration template"}])
+
+        await provider.before_run(
+            agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
+        )
+
+        # Verify that an application-scoped search task executed successfully
+        assert mock_mem0_client.search.call_count == 1
+        mock_context.extend_messages.assert_called_once()
 
 
 # -- Context manager tests -----------------------------------------------------

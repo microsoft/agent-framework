@@ -16,7 +16,7 @@ const { enforcePrLimit } = require('../scripts/pr_limit_moderation.js');
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createContext({ author = 'community-user', labels = [], number = 123 } = {}) {
+function createContext({ author = 'community-user', authorType = 'User', labels = [], number = 123 } = {}) {
   return {
     repo: {
       owner: 'microsoft',
@@ -28,6 +28,7 @@ function createContext({ author = 'community-user', labels = [], number = 123 } 
         labels: labels.map((name) => ({ name })),
         user: {
           login: author,
+          type: authorType,
         },
       },
     },
@@ -292,6 +293,30 @@ describe('PR limit enforcement', () => {
 
     assert.equal(result.closed, false);
     assert.equal(result.exempt, true);
+    assert.equal(result.openPrCount, null);
+    assert.deepEqual(github.calls, []);
+  });
+
+  it('does not close Dependabot PRs', async () => {
+    const github = createGithub({
+      itemNumbers: [123, ...Array.from({ length: 25 }, (_, index) => index + 1)],
+      pullRequests: createPullRequestPage({
+        author: 'dependabot[bot]',
+        numbers: [123, ...Array.from({ length: 25 }, (_, index) => index + 1)],
+      }),
+    });
+
+    const result = await enforcePrLimit({
+      github,
+      context: createContext({ author: 'dependabot[bot]', authorType: 'Bot' }),
+      core: createCore(),
+      exemptLabelName: 'pr-limit-exempt',
+      maxOpenPrs: 10,
+      labelName: 'too-many-prs',
+    });
+
+    assert.equal(result.closed, false);
+    assert.equal(result.dependabotExempt, true);
     assert.equal(result.openPrCount, null);
     assert.deepEqual(github.calls, []);
   });

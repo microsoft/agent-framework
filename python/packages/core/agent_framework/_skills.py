@@ -44,6 +44,7 @@ Only use skills from trusted sources.
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import json
 import logging
@@ -60,6 +61,10 @@ from ._sessions import ContextProvider
 from ._tools import FunctionTool
 
 if TYPE_CHECKING:
+    from mcp.client.session import ClientSession
+    from mcp.types import ReadResourceResult
+    from pydantic import AnyUrl
+
     from ._agents import SupportsAgentRun
     from ._sessions import AgentSession, SessionContext
 
@@ -3283,6 +3288,439 @@ class AggregatingSkillsSource(SkillsSource):
             skills = await source.get_skills()
             result.extend(skills)
         return result
+
+
+# region MCP Skills
+
+
+def _mcp_any_url(uri: str) -> AnyUrl:
+    """Convert a string URI to a :class:`pydantic.AnyUrl` for MCP client calls."""
+    from pydantic import AnyUrl as _AnyUrl
+
+    return _AnyUrl(uri)
+
+
+def _is_mcp_resource_not_found(ex: Exception) -> bool:
+    """Return ``True`` when *ex* is an :class:`McpError` indicating a missing resource.
+
+    Two codes are treated as "not found":
+
+    * ``-32002`` — the MCP-spec "Resource not found" code returned by a
+      compliant server when the URI does not exist. Not exported as a
+      constant from ``mcp.types`` but defined by the resources subprotocol.
+    * ``METHOD_NOT_FOUND`` (``-32601``) — the server does not implement
+      ``resources/read`` at all, which for the skills source is functionally
+      equivalent to "no skills available."
+
+    All other codes — ``INVALID_PARAMS``, ``INTERNAL_ERROR``, ``PARSE_ERROR``,
+    ``CONNECTION_CLOSED``, auth rejections, and generic handler errors
+    (code ``0``) — are treated as real failures so that a misconfigured
+    token or crashing server is not silently mistaken for "the server has no
+    skills."
+    """
+    from mcp.shared.exceptions import McpError as _McpError
+
+    if not isinstance(ex, _McpError):
+        return False
+    from mcp.types import METHOD_NOT_FOUND as _METHOD_NOT_FOUND
+
+    return ex.error.code in {-32002, _METHOD_NOT_FOUND}
+
+
+def _mcp_join_text(result: ReadResourceResult) -> str:
+    """Join all :class:`TextResourceContents` items in a result into a single string."""
+    from mcp.types import TextResourceContents as _TextResourceContents
+
+    return "\n".join(c.text for c in result.contents if isinstance(c, _TextResourceContents))
+
+
+class _McpSkillIndexEntry:  # noqa: B903
+    """A single entry in the ``skill://index.json`` discovery document.
+
+    All fields are optional to support lenient deserialization; callers
+    validate required fields before use.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str | None = None,
+        type: str | None = None,
+        description: str | None = None,
+        url: str | None = None,
+        digest: str | None = None,
+    ) -> None:
+        self.name = name
+        self.type = type
+        self.description = description
+        self.url = url
+        self.digest = digest
+
+
+class _McpSkillIndex:
+    """DTO for the ``skill://index.json`` discovery document.
+
+    Represents the Agent Skills Discovery v0.2.0 schema as bound to MCP
+    by SEP-2640.
+    """
+
+    def __init__(
+        self,
+        *,
+        schema: str | None = None,
+        skills: list[_McpSkillIndexEntry] | None = None,
+    ) -> None:
+        self.schema = schema
+        self.skills: list[_McpSkillIndexEntry] = skills if skills is not None else []
+
+
+def _parse_mcp_skill_index(text: str) -> _McpSkillIndex:
+    """Parse a JSON string into a :class:`_McpSkillIndex`.
+
+    Args:
+        text: Raw JSON text from ``skill://index.json``.
+
+    Returns:
+        A populated :class:`_McpSkillIndex` instance.
+
+    Raises:
+        json.JSONDecodeError: If the text is not valid JSON.
+        ValueError: If the top-level value is not a JSON object.
+    """
+    raw: dict[str, Any] = json.loads(text)
+
+    if not isinstance(raw, dict):
+        raise ValueError("skill://index.json must be a JSON object")
+
+    entries: list[_McpSkillIndexEntry] = []
+
+    raw_skills: list[Any] = raw.get("skills") or []
+
+    for item in raw_skills:
+        if isinstance(item, dict):
+            d = cast(dict[str, Any], item)
+
+            entries.append(
+                _McpSkillIndexEntry(
+                    name=d.get("name"),
+                    type=d.get("type"),
+                    description=d.get("description"),
+                    url=d.get("url"),
+                    digest=d.get("digest"),
+                )
+            )
+
+    return _McpSkillIndex(schema=raw.get("$schema"), skills=entries)
+
+
+@experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
+class MCPSkillResource(SkillResource):
+    """A :class:`SkillResource` backed by content fetched from an MCP server.
+
+    The :class:`~mcp.types.ReadResourceResult` is fetched eagerly by
+    :meth:`MCPSkill.get_resource` at construction time; :meth:`read`
+    extracts text or binary content from the result.
+    """
+
+    def __init__(self, *, name: str, result: ReadResourceResult) -> None:
+        """Initialize an MCPSkillResource.
+
+        Args:
+            name: The resource name (e.g. a relative path or identifier).
+            result: The result returned by the MCP server's ``resources/read`` request.
+        """
+        super().__init__(name=name)
+        self._result = result
+
+    async def read(self, **kwargs: Any) -> Any:
+        """Read the resource content.
+
+        Returns:
+            A ``bytes`` object when the resource contains binary content,
+            a ``str`` when it contains text, or ``None`` when the server
+            returned no content blocks.
+        """
+        from mcp.types import BlobResourceContents, TextResourceContents
+
+        for content in self._result.contents:
+            if isinstance(content, BlobResourceContents):
+                blob = content.blob
+                # Strip data-URI prefix if present (some MCP servers send
+                # full data URIs instead of raw base64).
+                if blob.startswith("data:"):
+                    blob = blob.split(",", 1)[-1]
+                return base64.b64decode(blob)
+
+        text = "\n".join(c.text for c in self._result.contents if isinstance(c, TextResourceContents))
+        return text if text else None
+
+
+@experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
+class MCPSkill(Skill):
+    """A :class:`Skill` discovered from an MCP server exposing the Agent Skills convention.
+
+    The skill is constructed from ``skill://index.json`` discovery metadata;
+    :meth:`get_content` fetches the full ``SKILL.md`` content from the MCP
+    server on demand via ``resources/read``.
+
+    Per SEP-2640, resources referenced inside SKILL.md are fetched on demand
+     via the originating MCP server: :meth:`get_resource` resolves a relative
+    resource name against the skill's root URI, issues a ``resources/read``
+     request, and returns an :class:`MCPSkillResource` with pre-fetched content.
+    """
+
+    _SKILL_MD_SUFFIX: Final[str] = "SKILL.md"
+
+    def __init__(
+        self,
+        frontmatter: SkillFrontmatter,
+        skill_md_uri: str,
+        client: ClientSession,
+    ) -> None:
+        """Initialize an MCPSkill.
+
+        Args:
+            frontmatter: The parsed frontmatter metadata for this skill.
+            skill_md_uri: The full MCP resource URI of the ``SKILL.md`` resource
+                (e.g. ``skill://unit-converter/SKILL.md``). The skill's root URI
+                is derived by stripping the trailing ``SKILL.md`` segment.
+            client: The MCP client session used to fetch resources on demand.
+        """
+        self._frontmatter = frontmatter
+        self._skill_md_uri = skill_md_uri
+        self._skill_root_uri = self._compute_skill_root_uri(skill_md_uri)
+        self._client = client
+        self._content: str | None = None
+
+    @property
+    def frontmatter(self) -> SkillFrontmatter:
+        """The L1 discovery metadata for this skill."""
+        return self._frontmatter
+
+    async def get_content(self) -> str:
+        """Get the full SKILL.md content from the MCP server.
+
+        Fetches the content via ``resources/read`` on the first call and
+        caches the result for subsequent calls.
+
+        Returns:
+            The SKILL.md content string.
+
+        Raises:
+            ValueError: If the MCP server returned no text content for the
+                SKILL.md resource.
+        """
+        if self._content is not None:
+            return self._content
+
+        result = await self._client.read_resource(_mcp_any_url(self._skill_md_uri))
+        text = _mcp_join_text(result)
+        if not text:
+            raise ValueError(f"The MCP server returned no text content for SKILL.md resource '{self._skill_md_uri}'.")
+        self._content = text
+        return text
+
+    async def get_resource(self, name: str) -> SkillResource | None:
+        """Get a sibling resource by name from the MCP server.
+
+        Resolves *name* as a relative path against the skill's root URI,
+        issues a ``resources/read`` request to the MCP server, and returns
+        an :class:`MCPSkillResource` with the pre-fetched content.
+
+        Args:
+            name: The resource name (e.g. ``references/checklist.md``).
+
+        Returns:
+            An :class:`MCPSkillResource`, or ``None`` when the name is empty
+            or the resource does not exist on the server.
+        """
+        if not name or not name.strip():
+            return None
+
+        normalized = self._validate_resource_name(name)
+        if normalized is None:
+            return None
+
+        uri = self._skill_root_uri + normalized
+        try:
+            result = await self._client.read_resource(_mcp_any_url(uri))
+        except Exception as ex:
+            if _is_mcp_resource_not_found(ex):
+                logger.debug("MCP resource '%s' not available: %s", uri, ex)
+                return None
+            raise
+
+        return MCPSkillResource(name=name, result=result)
+
+    @staticmethod
+    def _validate_resource_name(name: str) -> str | None:
+        """Validate a resource name and return the normalized form.
+
+        Defense in depth: refuses names that could escape the skill root
+        (absolute paths, embedded URI schemes, parent-traversal segments).
+        The MCP server is the authority on URI resolution, but rejecting
+        obviously unsafe shapes client-side avoids leaking escape attempts
+        upstream.
+
+        Args:
+            name: The raw resource name to validate.
+
+        Returns:
+            The normalized name with backslashes replaced by forward slashes,
+            or ``None`` if the name is unsafe.
+        """
+        normalized = name.replace("\\", "/")
+        if normalized.startswith("/") or "://" in normalized or any(seg == ".." for seg in normalized.split("/")):
+            logger.debug("Rejecting resource name with unsafe path components: %r", name)
+            return None
+        return normalized
+
+    @staticmethod
+    def _compute_skill_root_uri(skill_md_uri: str) -> str:
+        """Strip the trailing ``SKILL.md`` from the URI to produce the skill root.
+
+        If the URI doesn't end with ``SKILL.md``, ensures it ends with a
+        trailing slash.
+        """
+        if skill_md_uri.endswith(MCPSkill._SKILL_MD_SUFFIX):
+            return skill_md_uri[: -len(MCPSkill._SKILL_MD_SUFFIX)]
+        if skill_md_uri.endswith("/"):
+            return skill_md_uri
+        return skill_md_uri + "/"
+
+
+@experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
+class MCPSkillsSource(SkillsSource):
+    """A :class:`SkillsSource` that discovers Agent Skills served over MCP.
+
+    Discovery follows the SEP-2640 recommended approach: the source reads
+    the well-known ``skill://index.json`` resource and constructs one
+    :class:`MCPSkill` per ``skill-md`` entry directly from the entry's
+    ``name``, ``description``, and ``url`` fields.
+
+    The referenced ``SKILL.md`` resource is **not** read during discovery;
+    the host fetches its body on demand via ``resources/read`` when the
+    skill content is needed.
+
+    Only index entries of type ``skill-md`` are supported; entries of any
+    other type are silently skipped.
+
+    If ``skill://index.json`` is absent, unreadable, empty, or fails to
+    parse, this source returns an empty list.
+
+    Examples:
+        .. code-block:: python
+
+            from mcp.client.session import ClientSession
+
+            source = MCPSkillsSource(client=session)
+            skills = await source.get_skills()
+    """
+
+    _INDEX_URI: Final[str] = "skill://index.json"
+    _SKILL_MD_TYPE: Final[str] = "skill-md"
+
+    def __init__(self, client: ClientSession) -> None:
+        """Initialize an MCPSkillsSource.
+
+        Args:
+            client: An MCP client session connected to a server that
+                exposes Agent Skills resources.
+        """
+        self._client = client
+
+    async def get_skills(self) -> list[Skill]:
+        """Discover and return skills from the MCP server.
+
+        Reads ``skill://index.json``, parses it, and creates an
+        :class:`MCPSkill` for each valid ``skill-md`` entry.
+
+        Returns:
+            A list of discovered :class:`MCPSkill` instances.
+        """
+        index = await self._try_read_index()
+        if index is None:
+            return []
+
+        skills: list[Skill] = []
+        for entry in index.skills:
+            result = self._try_create_skill(entry)
+            if result is not None:
+                skills.append(result)
+                logger.info("Loaded MCP skill: %s", result.frontmatter.name)
+            else:
+                logger.debug(
+                    "Skipping skill index entry '%s'",
+                    entry.name or "(unnamed)",
+                )
+
+        logger.info("Successfully loaded %d skills from MCP server", len(skills))
+        return skills
+
+    async def _try_read_index(self) -> _McpSkillIndex | None:
+        """Attempt to read and parse ``skill://index.json`` from the MCP server.
+
+        Returns:
+            A parsed :class:`_McpSkillIndex`, or ``None`` if the index is
+            absent, empty, or malformed.
+        """
+        try:
+            result = await self._client.read_resource(_mcp_any_url(self._INDEX_URI))
+        except Exception as ex:
+            if _is_mcp_resource_not_found(ex):
+                logger.debug("No skill://index.json resource available on MCP server: %s", ex)
+                return None
+            logger.warning("Failed to read skill://index.json from MCP server.", exc_info=True)
+            raise
+
+        index_text = _mcp_join_text(result)
+        if not index_text:
+            logger.debug("skill://index.json on MCP server returned empty/non-text contents")
+            return None
+
+        try:
+            return _parse_mcp_skill_index(index_text)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Failed to parse skill://index.json JSON document.", exc_info=True)
+            return None
+
+    def _try_create_skill(self, entry: _McpSkillIndexEntry) -> MCPSkill | None:
+        """Attempt to create an :class:`MCPSkill` from an index entry.
+
+        Args:
+            entry: A single entry from the skill index.
+
+        Returns:
+            An :class:`MCPSkill` if the entry is valid, or ``None`` if the
+            entry should be skipped.
+        """
+        if entry.type != self._SKILL_MD_TYPE:
+            logger.debug(
+                "Skipping entry '%s': unsupported type '%s'",
+                entry.name or "(unnamed)",
+                entry.type or "(none)",
+            )
+            return None
+
+        if not entry.name or not entry.name.strip():
+            logger.debug("Skipping entry: missing required 'name' field")
+            return None
+
+        if not entry.description or not entry.description.strip():
+            logger.debug("Skipping entry '%s': missing required 'description' field", entry.name)
+            return None
+
+        if not entry.url or not entry.url.strip():
+            logger.debug("Skipping entry '%s': missing required 'url' field", entry.name)
+            return None
+
+        try:
+            fm = SkillFrontmatter(name=entry.name, description=entry.description)
+        except ValueError as ex:
+            logger.debug("Skipping entry '%s': invalid metadata: %s", entry.name, ex)
+            return None
+
+        return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, client=self._client)
 
 
 # endregion
