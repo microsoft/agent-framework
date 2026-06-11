@@ -2,11 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -30,6 +30,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly string _description;
     private readonly SessionConfig? _sessionConfig;
     private readonly bool _ownsClient;
+    private readonly JsonSerializerOptions _jsonSerializerOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
@@ -40,13 +41,15 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
+    /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         SessionConfig? sessionConfig = null,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
-        string? description = null)
+        string? description = null,
+        JsonSerializerOptions? jsonSerializerOptions = null)
     {
         _ = Throw.IfNull(copilotClient);
 
@@ -56,6 +59,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         this._id = id;
         this._name = name ?? DefaultName;
         this._description = description ?? DefaultDescription;
+        this._jsonSerializerOptions = jsonSerializerOptions ?? GitHubCopilotJsonUtilities.DefaultOptions;
     }
 
     /// <summary>
@@ -68,6 +72,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="description">The description of the agent.</param>
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
+    /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         bool ownsClient = false,
@@ -75,14 +80,16 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? name = null,
         string? description = null,
         IList<AITool>? tools = null,
-        string? instructions = null)
+        string? instructions = null,
+        JsonSerializerOptions? jsonSerializerOptions = null)
         : this(
             copilotClient,
             GetSessionConfig(tools, instructions),
             ownsClient,
             id,
             name,
-            description)
+            description,
+            jsonSerializerOptions)
     {
     }
 
@@ -352,7 +359,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionStartEvent toolStart)
     {
-        IDictionary<string, object?>? arguments = ParseArguments(toolStart.Data?.Arguments);
+        IDictionary<string, object?>? arguments = this.ParseArguments(toolStart.Data?.Arguments);
 
         FunctionCallContent content = new(
             toolStart.Data?.ToolCallId ?? string.Empty,
@@ -389,60 +396,35 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing tool-call arguments from Copilot SDK input.")]
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing tool-call arguments from Copilot SDK input.")]
-    private static IDictionary<string, object?>? ParseArguments(object? arguments)
+    private IDictionary<string, object?>? ParseArguments(object? arguments)
     {
         if (arguments is null)
         {
             return null;
         }
 
-        if (arguments is IDictionary<string, object?> dict)
+        if (arguments is JsonElement jsonElement)
         {
-            return dict;
-        }
-
-        // Catch dictionary variants that don't match IDictionary<string, object?> due to
-        // generic invariance (e.g., IDictionary<string, object>, custom dictionary types).
-        if (arguments is System.Collections.IDictionary nonGenericDict)
-        {
-            var result = new Dictionary<string, object?>();
-            foreach (System.Collections.DictionaryEntry entry in nonGenericDict)
-            {
-                result[(string)entry.Key] = entry.Value;
-            }
-
-            return result;
-        }
-
-        if (arguments is string jsonString)
-        {
-            if (string.IsNullOrWhiteSpace(jsonString))
+            if (jsonElement.ValueKind == JsonValueKind.Null || jsonElement.ValueKind == JsonValueKind.Undefined)
             {
                 return null;
             }
 
-            try
-            {
-                return JsonSerializer.Deserialize<Dictionary<string, object?>>(jsonString);
-            }
-            catch (JsonException)
-            {
-                return new Dictionary<string, object?> { ["value"] = jsonString };
-            }
-        }
+            var typeInfo = (JsonTypeInfo<Dictionary<string, object?>>)this._jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>));
 
-        if (arguments is JsonElement jsonElement)
-        {
             try
             {
-                return JsonSerializer.Deserialize<Dictionary<string, object?>>(jsonElement.GetRawText());
+                return JsonSerializer.Deserialize(jsonElement.GetRawText(), typeInfo);
             }
             catch (JsonException)
             {
                 return new Dictionary<string, object?> { ["value"] = jsonElement.ToString() };
             }
+        }
+
+        if (arguments is IDictionary<string, object?> dict)
+        {
+            return dict;
         }
 
         return new Dictionary<string, object?> { ["value"] = arguments.ToString() };
