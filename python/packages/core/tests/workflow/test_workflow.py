@@ -20,6 +20,7 @@ from agent_framework import (
     Content,
     Executor,
     FileCheckpointStorage,
+    InMemoryCheckpointStorage,
     Message,
     ResponseStream,
     WorkflowBuilder,
@@ -1350,6 +1351,115 @@ async def test_output_executors_filtering_with_run_responses_streaming() -> None
 
     # No outputs should be yielded since approval_executor is not in output_executors
     assert len(output_events) == 0
+
+
+# endregion
+
+
+# region Workflow.create_checkpoint
+
+
+class TestWorkflowCreateCheckpoint:
+    """Tests for :meth:`Workflow.create_checkpoint`."""
+
+    async def test_returns_checkpoint_id_with_runtime_storage(self, simple_executor: Executor) -> None:
+        """Calling `create_checkpoint` with a runtime storage persists a checkpoint and returns its id."""
+        storage = InMemoryCheckpointStorage()
+        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+
+        checkpoint_id = await workflow.create_checkpoint(storage)
+
+        assert checkpoint_id
+        loaded = await storage.load(checkpoint_id)
+        assert loaded is not None
+        assert loaded.checkpoint_id == checkpoint_id
+        assert loaded.workflow_name == workflow.name
+        assert loaded.graph_signature_hash == workflow.graph_signature_hash
+
+    async def test_uses_buildtime_storage_when_none_provided(self, simple_executor: Executor) -> None:
+        """When called with `None`, the build-time storage is used."""
+        storage = InMemoryCheckpointStorage()
+        workflow = (
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
+            .add_edge(simple_executor, simple_executor)
+            .build()
+        )
+
+        checkpoint_id = await workflow.create_checkpoint(None)
+
+        loaded = await storage.load(checkpoint_id)
+        assert loaded is not None
+        assert loaded.checkpoint_id == checkpoint_id
+
+    async def test_raises_when_no_storage_available(self, simple_executor: Executor) -> None:
+        """Without build-time or runtime storage, `create_checkpoint(None)` raises."""
+        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+
+        with pytest.raises(WorkflowCheckpointException, match="Checkpoint storage must be provided"):
+            await workflow.create_checkpoint(None)
+
+    async def test_raises_while_run_active(self, simple_executor: Executor) -> None:
+        """`create_checkpoint` must reject while a workflow run is still active."""
+        storage = InMemoryCheckpointStorage()
+        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+
+        # Hold a live reference to a streaming run without iterating it so that
+        # ``_is_run_active`` remains True (the active-run weakref still resolves).
+        active_stream = workflow.run(WorkflowMessage(data="hi", source_id="test"), stream=True)
+        try:
+            with pytest.raises(WorkflowException, match="Cannot create checkpoint while a workflow run is active"):
+                await workflow.create_checkpoint(storage)
+        finally:
+            # Drain the stream so the run completes cleanly and the active-run
+            # weakref is cleared; otherwise pytest's asyncio teardown can leak
+            # the unconsumed generator.
+            async for _ in active_stream:
+                pass
+
+    async def test_clears_runtime_storage_after_call(self, simple_executor: Executor) -> None:
+        """The runtime storage override must not leak past the call."""
+        storage = InMemoryCheckpointStorage()
+        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+
+        await workflow.create_checkpoint(storage)
+
+        assert workflow._runner.context.has_checkpointing() is False
+        assert workflow._runner.context._runtime_checkpoint_storage is None  # type: ignore[attr-defined]
+
+    async def test_clears_runtime_storage_after_failure(self, simple_executor: Executor) -> None:
+        """The runtime storage override must be cleared even if checkpoint creation fails."""
+        from unittest.mock import AsyncMock
+
+        storage = InMemoryCheckpointStorage()
+        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+
+        # The runner logs-and-swallows storage save errors, so a failed save
+        # surfaces as the "Failed to create checkpoint." path when
+        # ``previous_checkpoint_id`` remains ``None``. Either way, the
+        # ``finally`` cleanup must still clear the runtime override.
+        storage.save = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+
+        with pytest.raises(WorkflowCheckpointException, match="Failed to create checkpoint"):
+            await workflow.create_checkpoint(storage)
+
+        assert workflow._runner.context._runtime_checkpoint_storage is None  # type: ignore[attr-defined]
+
+    async def test_alters_lineage_for_next_checkpoint(self, simple_executor: Executor) -> None:
+        """A manually created checkpoint becomes the parent of the next checkpoint."""
+        storage = InMemoryCheckpointStorage()
+        workflow = (
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
+            .add_edge(simple_executor, simple_executor)
+            .build()
+        )
+
+        first_id = await workflow.create_checkpoint(None)
+        second_id = await workflow.create_checkpoint(None)
+
+        assert first_id != second_id
+        second = await storage.load(second_id)
+        assert second is not None
+        assert second.previous_checkpoint_id == first_id
 
 
 # endregion

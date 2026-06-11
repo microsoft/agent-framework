@@ -3063,6 +3063,121 @@ class TestCheckpointContextPathValidation:
         assert new_turn_messages[0].text == "next turn"
         assert new_turn_call.kwargs["checkpoint_storage"].storage_path == (root / response_id).resolve()
 
+    async def test_handle_inner_workflow_restores_initial_checkpoint_when_no_context_id(self, tmp_path: Any) -> None:
+        """When neither previous_response_id nor conversation_id is supplied, the workflow
+        must be restored from the initial checkpoint to avoid context bleed between requests.
+        """
+        from agent_framework import WorkflowAgent
+        from azure.ai.agentserver.responses import ResponseContext
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        response_id = "resp_current"
+        root = tmp_path / "root"
+        root.mkdir()
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.workflow.create_checkpoint = AsyncMock(return_value="cp_initial")
+        agent.run = AsyncMock(
+            side_effect=[
+                AgentResponse(messages=[]),
+                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
+            ]
+        )
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        # No previous_response_id and no conversation_id.
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "fresh turn"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            async for _ in server._handle_inner_workflow(request, context):  # pyright: ignore[reportPrivateUsage]
+                pass
+
+        # The initial checkpoint must have been created exactly once, against the
+        # initial checkpoint storage owned by the server.
+        assert agent.workflow.create_checkpoint.await_count == 1
+        (initial_storage_arg,) = agent.workflow.create_checkpoint.await_args.args
+        assert initial_storage_arg is server._initial_checkpoint_storage  # pyright: ignore[reportPrivateUsage]
+
+        # First run() call is the restoration: no positional input, restored from
+        # the initial checkpoint id, using the initial checkpoint storage (NOT a
+        # per-context directory).
+        assert agent.run.call_count == 2
+        restore_call = agent.run.call_args_list[0]
+        assert restore_call.args == ()
+        assert restore_call.kwargs["checkpoint_id"] == "cp_initial"
+        assert restore_call.kwargs["checkpoint_storage"] is server._initial_checkpoint_storage  # pyright: ignore[reportPrivateUsage]
+
+        # Second run() call delivers the new input; checkpoints land under response_id
+        # (the write-sink directory keyed by the current response id).
+        new_turn_call = agent.run.call_args_list[1]
+        new_turn_messages = new_turn_call.args[0]
+        assert len(new_turn_messages) == 1
+        assert new_turn_messages[0].text == "fresh turn"
+        assert new_turn_call.kwargs["checkpoint_storage"].storage_path == (root / response_id).resolve()
+
+    async def test_handle_inner_workflow_creates_initial_checkpoint_once_across_requests(self, tmp_path: Any) -> None:
+        """The initial checkpoint must be created exactly once and reused across
+        subsequent requests, regardless of whether the requests carry a context id.
+        """
+        from agent_framework import WorkflowAgent
+        from azure.ai.agentserver.responses import ResponseContext
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        root = tmp_path / "root"
+        root.mkdir()
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.workflow.create_checkpoint = AsyncMock(return_value="cp_initial")
+        # Four run() calls total: restore + new turn for each of the two requests.
+        agent.run = AsyncMock(return_value=AgentResponse(messages=[]))
+
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        request1 = CreateResponse(model="m", input="hi")
+        context1 = ResponseContext(response_id="resp_first", mode_flags=MagicMock())
+        request2 = CreateResponse(model="m", input="hi again")
+        context2 = ResponseContext(response_id="resp_second", mode_flags=MagicMock())
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "turn"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            async for _ in server._handle_inner_workflow(request1, context1):  # pyright: ignore[reportPrivateUsage]
+                pass
+            async for _ in server._handle_inner_workflow(request2, context2):  # pyright: ignore[reportPrivateUsage]
+                pass
+
+        # Initial checkpoint creation must not be repeated on the second request.
+        assert agent.workflow.create_checkpoint.await_count == 1
+
+        # Both requests' restoration calls must use the same initial checkpoint id
+        # and the same initial checkpoint storage instance.
+        restore_call_1 = agent.run.call_args_list[0]
+        restore_call_2 = agent.run.call_args_list[2]
+        assert restore_call_1.kwargs["checkpoint_id"] == "cp_initial"
+        assert restore_call_2.kwargs["checkpoint_id"] == "cp_initial"
+        assert (
+            restore_call_1.kwargs["checkpoint_storage"]
+            is restore_call_2.kwargs["checkpoint_storage"]
+            is server._initial_checkpoint_storage  # pyright: ignore[reportPrivateUsage]
+        )
+
     @pytest.mark.parametrize(
         "bad_id",
         [

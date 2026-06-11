@@ -788,8 +788,7 @@ class Workflow(DictConvertible):
         # fully consumed, ``_run_core``'s finally clears the attribute. When the
         # caller drops the stream without iterating, garbage collection invalidates
         # the weakref, so a subsequent ``run`` is permitted.
-        existing_stream = self._active_run() if self._active_run is not None else None
-        if existing_stream is not None:
+        if self._is_run_active():
             raise WorkflowException(
                 "Workflow is already running; concurrent runs are not allowed on the same instance."
             )

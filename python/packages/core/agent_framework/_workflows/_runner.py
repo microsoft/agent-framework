@@ -97,7 +97,7 @@ class Runner:
                 yield event
 
         # Create a checkpoint before a run starts. Checkpoints are usually considered to be created at the
-        # end of an iteration, we can think of this checkpoint as being created at the end of a "superstep 0"
+        # end of an iteration, we can think of this checkpoint as being created at the end of "superstep 0"
         # which captures the states after which the start executor has run. Note that we execute the start
         # executor outside of the main iteration loop.
         if await self._ctx.has_messages() and not self._resumed_from_checkpoint:
