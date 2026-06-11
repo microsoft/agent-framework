@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -27,27 +28,28 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly string? _id;
     private readonly string _name;
     private readonly string _description;
-    private readonly SessionConfig? _sessionConfig;
+    private readonly SessionConfig _sessionConfig;
     private readonly bool _ownsClient;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
     /// </summary>
     /// <param name="copilotClient">The Copilot client to use for interacting with GitHub Copilot.</param>
-    /// <param name="sessionConfig">Optional session configuration for the agent.</param>
+    /// <param name="sessionConfig">Session configuration for the agent. Must include <c>SessionConfig.OnPermissionRequest</c> as required by the GitHub Copilot SDK.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
-        SessionConfig? sessionConfig = null,
+        SessionConfig sessionConfig,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
         string? description = null)
     {
         _ = Throw.IfNull(copilotClient);
+        _ = Throw.IfNull(sessionConfig);
 
         this._copilotClient = copilotClient;
         this._sessionConfig = sessionConfig;
@@ -61,6 +63,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
     /// </summary>
     /// <param name="copilotClient">The Copilot client to use for interacting with GitHub Copilot.</param>
+    /// <param name="onPermissionRequest">Handler called before each tool execution to approve or deny it. Required by the GitHub Copilot SDK.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
@@ -69,6 +72,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="instructions">Optional instructions to append as a system message.</param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
+        Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> onPermissionRequest,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
@@ -77,7 +81,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? instructions = null)
         : this(
             copilotClient,
-            GetSessionConfig(tools, instructions),
+            GetSessionConfig(onPermissionRequest, tools, instructions),
             ownsClient,
             id,
             name,
@@ -146,9 +150,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
         // Create or resume a session with streaming enabled
-        SessionConfig sessionConfig = this._sessionConfig != null
-            ? CopySessionConfig(this._sessionConfig)
-            : new SessionConfig { Streaming = true };
+        SessionConfig sessionConfig = CopySessionConfig(this._sessionConfig);
 
         CopilotSession copilotSession;
         if (typedSession.SessionId is not null)
@@ -289,24 +291,61 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     {
         return new ResumeSessionConfig
         {
-            Model = source?.Model,
-            ReasoningEffort = source?.ReasoningEffort,
-            Tools = source?.Tools,
-            SystemMessage = source?.SystemMessage,
+            Agent = source?.Agent,
             AvailableTools = source?.AvailableTools,
+            ClientName = source?.ClientName,
+            CoauthorEnabled = source?.CoauthorEnabled,
+            Commands = source?.Commands,
+            ConfigDirectory = source?.ConfigDirectory,
+            ContextTier = source?.ContextTier,
+            CreateSessionFsProvider = source?.CreateSessionFsProvider,
+            CustomAgents = source?.CustomAgents,
+            CustomAgentsLocalOnly = source?.CustomAgentsLocalOnly,
+            DefaultAgent = source?.DefaultAgent,
+            DisabledSkills = source?.DisabledSkills,
+            EmbeddingCacheStorage = source?.EmbeddingCacheStorage,
+            EnableConfigDiscovery = source?.EnableConfigDiscovery,
+            EnableFileHooks = source?.EnableFileHooks,
+            EnableHostGitOperations = source?.EnableHostGitOperations,
+            EnableOnDemandInstructionDiscovery = source?.EnableOnDemandInstructionDiscovery,
+            EnableSessionStore = source?.EnableSessionStore,
+            EnableSessionTelemetry = source?.EnableSessionTelemetry,
+            EnableSkills = source?.EnableSkills,
             ExcludedTools = source?.ExcludedTools,
-            Provider = source?.Provider,
+            ExtensionInfo = source?.ExtensionInfo,
+            ExtensionSdkPath = source?.ExtensionSdkPath,
+            GitHubToken = source?.GitHubToken,
+            Hooks = source?.Hooks,
+            IncludeSubAgentStreamingEvents = source?.IncludeSubAgentStreamingEvents ?? default,
+            InfiniteSessions = source?.InfiniteSessions,
+            InstructionDirectories = source?.InstructionDirectories,
+            LargeOutput = source?.LargeOutput,
+            ManageScheduleEnabled = source?.ManageScheduleEnabled,
+            McpOAuthTokenStorage = source?.McpOAuthTokenStorage,
+            McpServers = source?.McpServers,
+            Model = source?.Model,
+            ModelCapabilities = source?.ModelCapabilities,
+            OnAutoModeSwitchRequest = source?.OnAutoModeSwitchRequest,
+            OnElicitationRequest = source?.OnElicitationRequest,
+            OnEvent = source?.OnEvent,
+            OnExitPlanModeRequest = source?.OnExitPlanModeRequest,
             OnPermissionRequest = source?.OnPermissionRequest,
             OnUserInputRequest = source?.OnUserInputRequest,
-            Hooks = source?.Hooks,
-            WorkingDirectory = source?.WorkingDirectory,
-            ConfigDirectory = source?.ConfigDirectory,
-            McpServers = source?.McpServers,
-            CustomAgents = source?.CustomAgents,
+            OrganizationCustomInstructions = source?.OrganizationCustomInstructions,
+            PluginDirectories = source?.PluginDirectories,
+            Provider = source?.Provider,
+            ReasoningEffort = source?.ReasoningEffort,
+            ReasoningSummary = source?.ReasoningSummary,
+            RemoteSession = source?.RemoteSession,
+            RequestCanvasRenderer = source?.RequestCanvasRenderer,
+            RequestExtensions = source?.RequestExtensions,
             SkillDirectories = source?.SkillDirectories,
-            DisabledSkills = source?.DisabledSkills,
-            InfiniteSessions = source?.InfiniteSessions,
-            Streaming = true
+            SkipCustomInstructions = source?.SkipCustomInstructions,
+            SkipEmbeddingRetrieval = source?.SkipEmbeddingRetrieval,
+            Streaming = true,
+            SystemMessage = source?.SystemMessage,
+            Tools = source?.Tools,
+            WorkingDirectory = source?.WorkingDirectory,
         };
     }
 
@@ -409,17 +448,14 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    private static SessionConfig? GetSessionConfig(IList<AITool>? tools, string? instructions)
+    private static SessionConfig GetSessionConfig(Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> onPermissionRequest, IList<AITool>? tools = null, string? instructions = null)
     {
+        _ = Throw.IfNull(onPermissionRequest);
+
         List<AIFunctionDeclaration>? mappedTools = tools is { Count: > 0 } ? tools.OfType<AIFunctionDeclaration>().ToList() : null;
         SystemMessageConfig? systemMessage = instructions is not null ? new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = instructions } : null;
 
-        if (mappedTools is null && systemMessage is null)
-        {
-            return null;
-        }
-
-        return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
+        return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage, OnPermissionRequest = onPermissionRequest };
     }
 
     private static async Task<(List<AttachmentFile>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(

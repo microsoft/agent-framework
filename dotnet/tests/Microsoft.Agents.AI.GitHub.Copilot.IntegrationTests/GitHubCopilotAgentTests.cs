@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -33,7 +33,7 @@ public class GitHubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: new() { OnPermissionRequest = OnPermissionRequestAsync });
         AgentSession session = await agent.CreateSessionAsync();
 
         try
@@ -61,7 +61,7 @@ public class GitHubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: new() { OnPermissionRequest = OnPermissionRequestAsync });
         AgentSession session = await agent.CreateSessionAsync();
 
         try
@@ -142,6 +142,7 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent = new(
             client,
+            OnPermissionRequestAsync,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
         AgentSession session = await agent.CreateSessionAsync();
@@ -178,6 +179,7 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent1 = new(
             client1,
+            OnPermissionRequestAsync,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
         AgentSession session1 = await agent1.CreateSessionAsync();
@@ -195,6 +197,7 @@ public class GitHubCopilotAgentTests
 
             await using GitHubCopilotAgent agent2 = new(
                 client2,
+                OnPermissionRequestAsync,
                 instructions: "You are a helpful assistant. Keep your answers short.");
 
             AgentSession session2 = await agent2.CreateSessionAsync(sessionId);
