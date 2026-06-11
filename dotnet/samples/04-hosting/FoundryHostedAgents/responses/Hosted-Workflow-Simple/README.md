@@ -5,7 +5,7 @@ A hosted agent that demonstrates **multi-agent workflow orchestration**. Three t
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-4o`)
+- An Azure AI Foundry project with a deployed model (e.g., `hosted-workflow-simple`)
 - Azure CLI logged in (`az login`)
 
 ## Configuration
@@ -22,7 +22,7 @@ Edit `.env` and set your Azure AI Foundry project endpoint:
 AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+AZURE_AI_MODEL_DEPLOYMENT_NAME=hosted-workflow-simple
 ```
 
 > **Note:** `.env` is gitignored. The `.env.example` template is checked in as a reference.
@@ -103,6 +103,34 @@ Input text
 ```
 
 Each agent in the chain receives the output of the previous agent. The final result demonstrates how meaning is preserved (or subtly shifted) through multiple translation hops.
+
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-workflows && cd hosted-workflows
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Simple/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-workflow-simple
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME hosted-workflow-simple
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+---
 
 ## NuGet package users
 

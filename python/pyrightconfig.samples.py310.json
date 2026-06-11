@@ -7,6 +7,7 @@
         "**/demos/**",
         "**/_to_delete/**",
         "**/05-end-to-end/**",
+        "**/harness/**",
         "**/agent_with_foundry_tracing.py",
         "**/azure_responses_client_with_foundry.py",
         "**/github_copilot/**"

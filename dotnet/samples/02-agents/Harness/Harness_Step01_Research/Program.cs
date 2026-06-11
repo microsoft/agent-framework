@@ -79,8 +79,10 @@ AIAgent agent =
     .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
-    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    .AsHarnessAgent(new HarnessAgentOptions
     {
+        MaxContextWindowTokens = MaxContextWindowTokens,
+        MaxOutputTokens = MaxOutputTokens,
         Name = "ResearchAgent",
         Description = "A research assistant that plans and executes research tasks.",
         DisableFileAccess = true,                           // If enabled, this would allow the agent to read/write files in a working directory

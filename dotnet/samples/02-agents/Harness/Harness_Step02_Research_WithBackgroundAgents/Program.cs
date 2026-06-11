@@ -44,8 +44,10 @@ AIAgent webSearchAgent =
     .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
-    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    .AsHarnessAgent(new HarnessAgentOptions
     {
+        MaxContextWindowTokens = MaxContextWindowTokens,
+        MaxOutputTokens = MaxOutputTokens,
         Name = "WebSearchAgent",
         Description = "An agent that can search the web to find information.",
         OpenTelemetrySourceName = TracingSourceName,
@@ -92,8 +94,10 @@ AIAgent parentAgent =
     .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
-    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    .AsHarnessAgent(new HarnessAgentOptions
     {
+        MaxContextWindowTokens = MaxContextWindowTokens,
+        MaxOutputTokens = MaxOutputTokens,
         Name = "StockPriceResearcher",
         Description = "An agent that researches stock prices using background agents.",
         OpenTelemetrySourceName = TracingSourceName,

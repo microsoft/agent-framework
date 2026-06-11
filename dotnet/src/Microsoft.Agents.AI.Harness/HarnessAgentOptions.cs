@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Agents.AI.Compaction;
 #if NET
 using Microsoft.Agents.AI.Tools.Shell;
 #endif
@@ -30,6 +31,68 @@ public sealed class HarnessAgentOptions
     /// Gets or sets the agent description.
     /// </summary>
     public string? Description { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum number of tokens the model's context window supports (e.g., 1,050,000 for gpt-5.4).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When both <see cref="MaxContextWindowTokens"/> and <see cref="MaxOutputTokens"/> are provided (and no
+    /// custom <see cref="CompactionStrategy"/> is set), a default <see cref="ContextWindowCompactionStrategy"/>
+    /// is constructed from these values to prevent function-invocation loops from overflowing the context window.
+    /// </para>
+    /// <para>
+    /// Ignored when <see cref="CompactionStrategy"/> is provided or when <see cref="DisableCompaction"/> is
+    /// <see langword="true"/>.
+    /// </para>
+    /// </remarks>
+    public int? MaxContextWindowTokens { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum number of output tokens the model can generate per response (e.g., 128,000 for gpt-5.4).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set, this value is used as the default for <see cref="ChatOptions"/>.<see cref="ChatOptions.MaxOutputTokens"/>
+    /// when not explicitly configured.
+    /// </para>
+    /// <para>
+    /// For compaction purposes, this value is used together with <see cref="MaxContextWindowTokens"/> to construct a
+    /// default <see cref="ContextWindowCompactionStrategy"/> — but only when no custom <see cref="CompactionStrategy"/>
+    /// is provided and <see cref="DisableCompaction"/> is <see langword="false"/>.
+    /// </para>
+    /// </remarks>
+    public int? MaxOutputTokens { get; set; }
+
+    /// <summary>
+    /// Gets or sets a custom <see cref="Compaction.CompactionStrategy"/> to use for in-loop context-window compaction.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When provided, this strategy is used directly and <see cref="MaxContextWindowTokens"/> and
+    /// <see cref="MaxOutputTokens"/> are ignored for compaction purposes (<see cref="MaxOutputTokens"/> is still
+    /// used as the default for <see cref="ChatOptions"/>.<see cref="ChatOptions.MaxOutputTokens"/> if set).
+    /// </para>
+    /// <para>
+    /// When <see langword="null"/> and both <see cref="MaxContextWindowTokens"/> and <see cref="MaxOutputTokens"/>
+    /// are provided, a default <see cref="ContextWindowCompactionStrategy"/> is constructed from those values.
+    /// </para>
+    /// <para>
+    /// This property is ignored when <see cref="DisableCompaction"/> is <see langword="true"/>.
+    /// </para>
+    /// </remarks>
+    public CompactionStrategy? CompactionStrategy { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether in-loop compaction is disabled.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="true"/>, compaction is disabled regardless of <see cref="CompactionStrategy"/>,
+    /// <see cref="MaxContextWindowTokens"/>, or <see cref="MaxOutputTokens"/> settings. No
+    /// <see cref="CompactionProvider"/> is added to the chat client pipeline, and the default
+    /// <see cref="InMemoryChatHistoryProvider"/> is configured without a chat reducer.
+    /// </remarks>
+    public bool DisableCompaction { get; set; }
 
     /// <summary>
     /// Gets or sets additional chat options such as tools for the agent to use.
@@ -68,9 +131,9 @@ public sealed class HarnessAgentOptions
     /// Gets or sets the <see cref="ChatHistoryProvider"/> to use for storing chat history.
     /// </summary>
     /// <remarks>
-    /// When <see langword="null"/>, the agent defaults to an <see cref="InMemoryChatHistoryProvider"/>
-    /// configured with a compaction-based chat reducer derived from the <c>maxContextWindowTokens</c>
-    /// and <c>maxOutputTokens</c> constructor parameters of <see cref="HarnessAgent"/>.
+    /// When <see langword="null"/>, the agent defaults to an <see cref="InMemoryChatHistoryProvider"/>.
+    /// If <see cref="MaxContextWindowTokens"/> and <see cref="MaxOutputTokens"/> are both provided,
+    /// the default provider is configured with a compaction-based chat reducer; otherwise, no reducer is applied.
     /// </remarks>
     public ChatHistoryProvider? ChatHistoryProvider { get; set; }
 
@@ -109,6 +172,20 @@ public sealed class HarnessAgentOptions
     /// This property has no effect when <see cref="DisableToolApproval"/> is <see langword="true"/>.
     /// </remarks>
     public ToolApprovalAgentOptions? ToolApprovalAgentOptions { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether bypassing of approval requests for tools that do not
+    /// require approval is disabled.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), the underlying chat client pipeline includes the decorator
+    /// added by <see cref="ChatClientBuilderExtensions.UseNonApprovalRequiredFunctionBypassing"/> above the
+    /// function invocation middleware.
+    /// This stores automatically approved function calls for tools that do not require approval in the session
+    /// state when they are returned alongside tools that do, so that only tools that truly require human
+    /// approval are surfaced to the caller.
+    /// </remarks>
+    public bool DisableNonApprovalRequiredFunctionBypassing { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether the <see cref="FileMemoryProvider"/> is disabled.

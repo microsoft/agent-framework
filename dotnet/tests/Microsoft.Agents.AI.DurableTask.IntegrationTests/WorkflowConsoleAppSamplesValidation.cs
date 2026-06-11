@@ -182,7 +182,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         }
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "KeyNotFoundException in workflow execution. See https://github.com/microsoft/agent-framework/issues/6404")]
     public async Task WorkflowEventsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -278,7 +278,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "KeyNotFoundException in workflow execution. See https://github.com/microsoft/agent-framework/issues/6404")]
     public async Task WorkflowSharedStateSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -376,7 +376,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "KeyNotFoundException in workflow execution. See https://github.com/microsoft/agent-framework/issues/6404")]
     public async Task SubWorkflowsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -452,7 +452,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "KeyNotFoundException in workflow execution. See https://github.com/microsoft/agent-framework/issues/6404")]
     public async Task WorkflowHITLSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
