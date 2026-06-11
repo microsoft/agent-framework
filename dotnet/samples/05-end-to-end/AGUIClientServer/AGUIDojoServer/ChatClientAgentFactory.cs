@@ -2,6 +2,7 @@
 
 using System.ComponentModel;
 using System.Text.Json;
+using AGUIDojoServer.A2UI;
 using AGUIDojoServer.AgenticUI;
 using AGUIDojoServer.BackendToolRendering;
 using AGUIDojoServer.PredictiveStateUpdates;
@@ -9,9 +10,8 @@ using AGUIDojoServer.SharedState;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
-using AGUIDojoServer.A2UI;
 using Microsoft.Agents.AI.AGUI.A2UI;
+using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Chat;
 
@@ -233,6 +233,23 @@ internal static class ChatClientAgentFactory
             DefaultCatalogId = A2UICompositionGuides.DynamicCatalogId,
             Guidelines = new A2UIGuidelines { CompositionGuide = A2UICompositionGuides.DynamicSchema },
         });
+    }
+
+    public static AIAgent CreateA2UIChat()
+    {
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_deploymentName!);
+
+        // Zero-configuration A2UI: the AG-UI A2UI middleware injects the render_a2ui
+        // tool (auto-bound from the incoming tool list) plus its usage guidelines and
+        // component schema as context entries. AGUIContextAgent surfaces those entries
+        // to the model, so a plain chat agent renders A2UI surfaces with streamed,
+        // progressively painted tool arguments — no A2UI-specific agent code.
+        AIAgent inner = chatClient.AsAIAgent(
+            instructions: "You are a helpful assistant. When the user asks for visual content (cards, lists, comparisons, dashboards), render it with the available UI rendering tool.",
+            name: "A2UIChat",
+            description: "Zero-configuration A2UI chat demo: client-injected render tool with streamed arguments");
+
+        return new AGUIContextAgent(inner);
     }
 
     public static AIAgent CreateA2UIRecovery()

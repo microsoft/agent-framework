@@ -53,6 +53,8 @@ app.MapAGUI("/a2ui_dynamic_schema", ChatClientAgentFactory.CreateA2UIDynamicSche
 
 app.MapAGUI("/a2ui_recovery", ChatClientAgentFactory.CreateA2UIRecovery());
 
+app.MapAGUI("/a2ui_chat", ChatClientAgentFactory.CreateA2UIChat());
+
 await app.RunAsync();
 
 public partial class Program;
