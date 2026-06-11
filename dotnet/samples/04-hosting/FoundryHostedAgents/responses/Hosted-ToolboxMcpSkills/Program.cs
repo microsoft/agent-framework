@@ -7,9 +7,9 @@
 // AgentSkillsProviderBuilder.UseMcpSkills().
 //
 // Required environment variables:
-//   AZURE_AI_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
+//   FOUNDRY_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
 //   FOUNDRY_TOOLBOX_NAME              - Name of the Foundry Toolbox to connect to
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME    - Model deployment name (default: gpt-5)
+//   FOUNDRY_MODEL    - Model deployment name (default: gpt-5)
 
 using System.Net.Http.Headers;
 using Azure.AI.Projects;
@@ -24,15 +24,18 @@ using ModelContextProtocol.Client;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-var projectEndpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5";
+var projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deployment = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5";
 var toolboxName = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_NAME")
     ?? throw new InvalidOperationException("FOUNDRY_TOOLBOX_NAME is not set.");
 
 // Build the Toolbox MCP URL from the project endpoint and toolbox name.
 var toolboxMcpServerUrl = $"{projectEndpoint.TrimEnd('/')}/toolboxes/{toolboxName}/mcp?api-version=v1";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
 TokenCredential credential = new ChainedTokenCredential(

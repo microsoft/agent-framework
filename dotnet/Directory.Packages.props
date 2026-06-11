@@ -138,10 +138,15 @@
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Mcp" Version="1.0.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" />
+    <!-- Valkey -->
     <!-- Redis -->
     <PackageVersion Include="StackExchange.Redis" Version="2.10.1" />
+    <!-- Valkey -->
+    <PackageVersion Include="Valkey.Glide" Version="1.1.0" />
     <!-- Console UX -->
     <PackageVersion Include="Spectre.Console" Version="0.49.1" />
+    <!-- AWS -->
+    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.6.10" />
     <!-- Test -->
     <PackageVersion Include="FluentAssertions" Version="8.8.0" />
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Condition="'$(TargetFramework)' == 'net8.0'" Version="8.0.22" />

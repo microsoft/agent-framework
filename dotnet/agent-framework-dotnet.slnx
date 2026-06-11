@@ -24,7 +24,6 @@
     <File Path="samples/02-agents/AgentProviders/README.md" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_Anthropic/Agent_With_Anthropic.csproj" />
-    <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureAIAgentsPersistent/Agent_With_AzureAIAgentsPersistent.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureAIProject/Agent_With_AzureAIProject.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureFoundryModel/Agent_With_AzureFoundryModel.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
@@ -129,6 +128,7 @@
     <Project Path="samples/02-agents/Harness/Harness_Step02_Research_WithBackgroundAgents/Harness_Step02_Research_WithBackgroundAgents.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Step03_DataProcessing/Harness_Step03_DataProcessing.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Step04_CodeExecution/Harness_Step04_CodeExecution.csproj" />
+    <Project Path="samples/02-agents/Harness/Harness_Step05_Loop/Harness_Step05_Loop.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
@@ -194,6 +194,8 @@
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step05_BoundedChatHistory/AgentWithMemory_Step05_BoundedChatHistory.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step03_MemoryUsingValkey/AgentWithMemory_Step03_MemoryUsingValkey.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step03_MemoryUsingValkey_Bedrock/AgentWithMemory_Step03_MemoryUsingValkey_Bedrock.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentWithOpenAI/">
     <File Path="samples/02-agents/AgentWithOpenAI/README.md" />
@@ -625,6 +627,7 @@
     <Project Path="src/Microsoft.Agents.AI.Workflows.Generators/Microsoft.Agents.AI.Workflows.Generators.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Valkey/Microsoft.Agents.AI.Valkey.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
   <Folder Name="/Tests/IntegrationTests/">
@@ -678,5 +681,6 @@
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Declarative.UnitTests/Microsoft.Agents.AI.Workflows.Declarative.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/Microsoft.Agents.AI.Workflows.Generators.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.UnitTests/Microsoft.Agents.AI.Workflows.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Valkey.UnitTests/Microsoft.Agents.AI.Valkey.UnitTests.csproj" />
   </Folder>
 </Solution>

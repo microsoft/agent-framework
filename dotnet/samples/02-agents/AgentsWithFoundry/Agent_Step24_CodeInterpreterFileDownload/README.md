@@ -35,13 +35,13 @@ The container ID and file ID are available from the `ContainerFileCitationMessag
 
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
 ## Run the sample

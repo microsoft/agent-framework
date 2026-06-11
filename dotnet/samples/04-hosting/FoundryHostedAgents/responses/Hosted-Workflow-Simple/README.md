@@ -1,4 +1,4 @@
-# Hosted-Workflow-Simple
+﻿# Hosted-Workflow-Simple
 
 A hosted agent that demonstrates **multi-agent workflow orchestration**. Three translation agents are composed into a sequential pipeline: English → French → Spanish → English, showing how agents can be chained as workflow executors using `WorkflowBuilder`.
 
@@ -19,10 +19,10 @@ cp .env.example .env
 Edit `.env` and set your Azure AI Foundry project endpoint:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=hosted-workflow-simple
+FOUNDRY_MODEL=hosted-workflow-simple
 ```
 
 > **Note:** `.env` is gitignored. The `.env.example` template is checked in as a reference.
@@ -125,7 +125,7 @@ If you need to override defaults, set deployment-time environment variables in t
 
 ```bash
 azd env set AGENT_NAME hosted-workflow-simple
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME hosted-workflow-simple
+azd env set FOUNDRY_MODEL hosted-workflow-simple
 ```
 
 For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).

@@ -12,18 +12,18 @@ This sample shows how to use a Foundry Toolbox by pointing an `McpClient` at the
 ## Prerequisites
 
 - A Microsoft Foundry project with a toolbox configured (or let the sample create one for you)
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-5.4-mini"
 ```
 
 The sample creates a toolbox named `research_toolbox` in your Foundry project on
 startup, then connects to its MCP endpoint at
-`{AZURE_AI_PROJECT_ENDPOINT}/toolboxes/research_toolbox/mcp?api-version=v{version}`.
+`{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/research_toolbox/mcp?api-version=v{version}`.
 
 ## Run the sample
 

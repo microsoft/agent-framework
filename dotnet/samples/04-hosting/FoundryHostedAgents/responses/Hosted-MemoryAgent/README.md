@@ -1,4 +1,4 @@
-# Hosted-MemoryAgent
+﻿# Hosted-MemoryAgent
 
 A hosted Foundry agent that uses **FoundryMemoryProvider** to remember user-private details across
 requests and across sessions, scoped per end user via the Foundry platform's isolation keys. The
@@ -31,8 +31,8 @@ cp .env.example .env
 Required:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
+FOUNDRY_MODEL=gpt-4o
 AZURE_AI_EMBEDDING_DEPLOYMENT_NAME=text-embedding-ada-002
 AZURE_AI_MEMORY_STORE_ID=hosted-memory-sample
 AGENT_NAME=hosted-memory-agent
