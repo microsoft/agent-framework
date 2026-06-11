@@ -36,7 +36,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     SettingNotFoundError,
 )
-from openai import BadRequestError
+from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
@@ -55,7 +55,7 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_openai import OpenAIChatClient
-from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
+from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY, RawOpenAIChatClient
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -192,6 +192,26 @@ def test_init_uses_explicit_parameters() -> None:
     assert "compaction_strategy" in signature.parameters
     assert "tokenizer" in signature.parameters
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_raw_openai_chat_client_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(RawOpenAIChatClient.__init__)
+
+    assert "additional_properties" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert "timeout" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_raw_openai_chat_client_accepts_preconfigured_client_with_timeout() -> None:
+    """Test that timeout is accepted without error when async_client is pre-provided."""
+
+    mock_client = MagicMock(spec=AsyncOpenAI)
+    mock_client.timeout = 5.0
+
+    client = RawOpenAIChatClient(async_client=mock_client, timeout=30.0)
+    assert client is not None
 
 
 def test_openai_chat_client_supports_all_tool_protocols() -> None:
@@ -5646,6 +5666,79 @@ def test_prepare_messages_for_openai_coalesces_mcp_call_and_result_into_single_i
     # And no orphaned function_call_output should appear anywhere in the input.
     fco_items = [item for item in result if isinstance(item, dict) and item.get("type") == "function_call_output"]
     assert fco_items == [], f"unexpected orphan function_call_output items: {fco_items}"
+
+
+def test_prepare_messages_for_openai_drops_mcp_call_when_paired_reasoning_is_stripped() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_abc123", text="Need the MCP server."),
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_abc123",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    types = [item.get("type") for item in result if isinstance(item, dict)]
+    assert "reasoning" not in types
+    assert "mcp_call" not in types
+    assert "function_call_output" not in types
+
+
+def test_prepare_messages_for_openai_drops_mcp_call_across_reasoning_messages() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_text_reasoning(id="rs_abc123", text="Need a tool call.")],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_abc123",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    types = [item.get("type") for item in result if isinstance(item, dict)]
+    assert "reasoning" not in types
+    assert "mcp_call" not in types
+    assert "function_call_output" not in types
 
 
 def test_prepare_messages_for_openai_drops_orphan_mcp_server_tool_result() -> None:

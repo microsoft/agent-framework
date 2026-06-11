@@ -121,6 +121,34 @@ User message
 
 The triage agent receives every message and hands off to the appropriate specialist. Specialists route back to the triage agent after responding, allowing for multi-turn conversations.
 
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir triage-workflow && cd triage-workflow
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Handoff/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME triage-workflow
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+---
+
 ## NuGet package users
 
 Use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented section in `HostedWorkflowHandoff.csproj` for the `PackageReference` alternative.

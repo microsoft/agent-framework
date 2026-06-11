@@ -380,8 +380,15 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             return prepared_messages
         from ._compaction import apply_compaction
 
+        # Compact the caller's list in place when possible. A compaction operation has
+        # two halves: exclusion flags (mutated on shared Message objects) and inserted
+        # summary messages. Operating on the original list keeps both halves on the list
+        # the function-invocation tool loop reuses across iterations; otherwise inserted
+        # summaries would be lost on a throwaway copy while exclusions persisted, silently
+        # dropping older groups (issue #4991).
+        working_messages = messages if isinstance(messages, list) else prepared_messages
         return await apply_compaction(
-            prepared_messages,
+            working_messages,
             strategy=compaction_strategy,
             tokenizer=tokenizer,
         )
@@ -597,10 +604,13 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 and dict literals are accepted without specialized option typing.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            require_per_service_call_history_persistence: Whether to require per-service-call
-                chat history persistence. When enabled, history providers are invoked around
-                each model call instead of once per ``run()`` when the service is not already
-                storing history.
+            require_per_service_call_history_persistence: When enabled (and a HistoryProvider is
+                present), the provider always persists history after each model call. If the
+                client does not store history server-side, history providers are also loaded and
+                injected around each model call; if it does, provider loading is skipped and the
+                service-managed conversation is the source of truth (persistence still happens
+                after each model call). When no HistoryProvider is present, this flag has no
+                effect (no middleware is installed and nothing is persisted).
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level compaction override. When omitted,
                 client-level compaction defaults remain in effect for each call.

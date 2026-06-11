@@ -194,6 +194,63 @@ def test_create_harness_agent_returns_full_agent() -> None:
     assert isinstance(agent, FullAgent)
 
 
+def test_create_harness_agent_no_token_params_disables_compaction() -> None:
+    """When token params are omitted, compaction is automatically disabled."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+    )
+    provider_types = [type(p) for p in agent.context_providers]
+    assert CompactionProvider not in provider_types
+
+
+def test_create_harness_agent_no_token_params_skips_max_tokens_option() -> None:
+    """When max_output_tokens is omitted, max_tokens should not be set in default options."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+    )
+    assert agent.default_options.get("max_tokens") is None
+
+
+def test_create_harness_agent_custom_before_strategy_enables_compaction_without_tokens() -> None:
+    """A custom before_compaction_strategy enables compaction even when token params are omitted."""
+    from agent_framework import ToolResultCompactionStrategy
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        before_compaction_strategy=ToolResultCompactionStrategy(),
+    )
+    provider_types = [type(p) for p in agent.context_providers]
+    assert CompactionProvider in provider_types
+
+
+def test_create_harness_agent_disable_compaction_overrides_custom_before_strategy() -> None:
+    """disable_compaction=True wins even when a custom before strategy is provided."""
+    from agent_framework import ToolResultCompactionStrategy
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        before_compaction_strategy=ToolResultCompactionStrategy(),
+        disable_compaction=True,
+    )
+    provider_types = [type(p) for p in agent.context_providers]
+    assert CompactionProvider not in provider_types
+
+
+def test_create_harness_agent_custom_after_strategy_enables_compaction_without_tokens() -> None:
+    """A custom after_compaction_strategy enables compaction even when token params are omitted."""
+    from agent_framework import ToolResultCompactionStrategy
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        after_compaction_strategy=ToolResultCompactionStrategy(),
+    )
+    compaction_providers = [p for p in agent.context_providers if isinstance(p, CompactionProvider)]
+    assert len(compaction_providers) == 1
+    # Before phase is skipped (no token budget, no custom before strategy), after phase is set.
+    assert compaction_providers[0].before_strategy is None
+    assert compaction_providers[0].after_strategy is not None
+
+
 # --- Validation Tests ---
 
 
@@ -207,14 +264,15 @@ def test_create_harness_agent_rejects_invalid_context_tokens() -> None:
         )
 
 
-def test_create_harness_agent_rejects_negative_output_tokens() -> None:
-    """max_output_tokens must be non-negative."""
-    with pytest.raises(ValueError, match="max_output_tokens must be non-negative"):
-        create_harness_agent(
-            client=_FakeChatClient(),  # type: ignore[arg-type]
-            max_context_window_tokens=1000,
-            max_output_tokens=-1,
-        )
+def test_create_harness_agent_rejects_non_positive_output_tokens() -> None:
+    """max_output_tokens must be positive when provided."""
+    for invalid_value in (0, -1):
+        with pytest.raises(ValueError, match="max_output_tokens must be positive"):
+            create_harness_agent(
+                client=_FakeChatClient(),  # type: ignore[arg-type]
+                max_context_window_tokens=1000,
+                max_output_tokens=invalid_value,
+            )
 
 
 def test_create_harness_agent_rejects_output_gte_context() -> None:
@@ -394,3 +452,94 @@ def test_create_harness_agent_logs_warning_when_no_web_search(caplog: pytest.Log
             max_output_tokens=16_384,
         )
     assert any("SupportsWebSearchTool" in msg for msg in caplog.messages)
+
+
+# --- Background Agents Tests ---
+
+
+class _FakeBackgroundAgent:
+    """Minimal agent stub satisfying SupportsAgentRun for background agents tests."""
+
+    def __init__(self, name: str, description: str | None = None):
+        self.id = f"agent-{name}"
+        self.name = name
+        self.description = description
+
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id)
+
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(service_session_id=service_session_id, session_id=session_id)
+
+    async def run(self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any) -> Any:
+        from agent_framework import AgentResponse
+
+        return AgentResponse(messages=[], response_id="fake-bg-response")
+
+
+def test_create_harness_agent_no_background_agents_by_default() -> None:
+    """No BackgroundAgentsProvider should be included when background_agents is not provided."""
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_web_search=True,
+    )
+    providers = agent.context_providers or []
+    assert not any(isinstance(p, BackgroundAgentsProvider) for p in providers)
+
+
+def test_create_harness_agent_adds_background_agents_provider() -> None:
+    """BackgroundAgentsProvider should be included when background_agents are provided."""
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    bg_agent = _FakeBackgroundAgent("WebSearcher", "Searches the web")
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_web_search=True,
+        background_agents=[bg_agent],
+    )
+    providers = agent.context_providers or []
+    bg_providers = [p for p in providers if isinstance(p, BackgroundAgentsProvider)]
+    assert len(bg_providers) == 1
+
+
+def test_create_harness_agent_background_agents_custom_instructions() -> None:
+    """Custom instructions should be passed to BackgroundAgentsProvider."""
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    custom_instructions = "## Custom\n\nUse agents wisely.\n\n{background_agents}"
+    bg_agent = _FakeBackgroundAgent("Helper", "A helper agent")
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_web_search=True,
+        background_agents=[bg_agent],
+        background_agents_instructions=custom_instructions,
+    )
+    providers = agent.context_providers or []
+    bg_providers = [p for p in providers if isinstance(p, BackgroundAgentsProvider)]
+    assert len(bg_providers) == 1
+    # Verify the custom instructions were used (placeholder replaced with agent list).
+    assert "Custom" in bg_providers[0]._instructions
+    assert "Helper" in bg_providers[0]._instructions
+
+
+def test_create_harness_agent_empty_background_agents_list() -> None:
+    """An empty background_agents list should NOT add a BackgroundAgentsProvider."""
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_web_search=True,
+        background_agents=[],
+    )
+    providers = agent.context_providers or []
+    assert not any(isinstance(p, BackgroundAgentsProvider) for p in providers)

@@ -59,15 +59,15 @@ public class ToolApprovalAgentBuilderExtensionsTests
     /// Verify that UseToolApproval with custom JsonSerializerOptions works correctly.
     /// </summary>
     [Fact]
-    public void UseToolApproval_WithCustomJsonSerializerOptions_ReturnsToolApprovalAgent()
+    public void UseToolApproval_WithCustomOptions_ReturnsToolApprovalAgent()
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
         var builder = new AIAgentBuilder(mockAgent.Object);
-        var options = new JsonSerializerOptions();
+        var options = new ToolApprovalAgentOptions { JsonSerializerOptions = new JsonSerializerOptions() };
 
         // Act
-        var result = builder.UseToolApproval(jsonSerializerOptions: options).Build();
+        var result = builder.UseToolApproval(options: options).Build();
 
         // Assert
         Assert.IsType<ToolApprovalAgent>(result);

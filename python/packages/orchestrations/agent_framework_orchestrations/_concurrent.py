@@ -19,7 +19,7 @@ from typing_extensions import Never
 
 from ._orchestration_request_info import AgentApprovalExecutor
 from ._participant_output_config import (
-    _MISSING,  # pyright: ignore[reportPrivateUsage]
+    UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
     _coerce_intermediate_output_from,  # pyright: ignore[reportPrivateUsage]
     _ParticipantIntermediateOutputSelection,  # pyright: ignore[reportPrivateUsage]
@@ -213,7 +213,7 @@ class ConcurrentBuilder:
         *,
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
-        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, _MISSING),
+        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
         intermediate_output_from: _ParticipantIntermediateOutputSelection = None,
     ) -> None:
         """Initialize the ConcurrentBuilder.
