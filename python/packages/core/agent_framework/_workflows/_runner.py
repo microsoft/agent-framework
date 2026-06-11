@@ -156,11 +156,11 @@ class Runner:
             if not await self._ctx.has_messages():
                 break
 
-        if self._iteration >= self._max_iterations and await self._ctx.has_messages():
-            raise WorkflowConvergenceException(f"Runner did not converge after {self._max_iterations} iterations.")
-
         logger.info(f"Workflow completed after {self._iteration} supersteps")
         self._resumed_from_checkpoint = False  # Reset resume flag for next run
+
+        if self._iteration >= self._max_iterations and await self._ctx.has_messages():
+            raise WorkflowConvergenceException(f"Runner did not converge after {self._max_iterations} iterations.")
 
     async def _run_iteration(self) -> None:
         """Run a single iteration of the workflow.

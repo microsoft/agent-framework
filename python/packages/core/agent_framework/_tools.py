@@ -1989,9 +1989,7 @@ def _store_already_approved_approval_requests(
         return
 
     existing_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY)
-    pending_groups: list[Any] = (
-        list(cast(Iterable[Any], existing_groups)) if isinstance(existing_groups, list) else []
-    )
+    pending_groups: list[Any] = list(cast(Iterable[Any], existing_groups)) if isinstance(existing_groups, list) else []
     pending_groups.append({
         "approval_request_ids": visible_ids,
         "approval_requests": [request.to_dict() for request in already_approved_requests],
