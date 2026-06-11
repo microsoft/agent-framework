@@ -625,6 +625,32 @@ def test_prepare_messages_for_anthropic_without_system(
     assert result[2]["content"] == "Continue"
 
 
+def test_prepare_messages_for_anthropic_does_not_append_after_tool_use(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Do not append plain user text after assistant tool_use blocks."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(role="user", contents=["What's the weather?"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call_123",
+                    name="get_weather",
+                    arguments={"location": "Seattle"},
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert len(result) == 2
+    assert result[1]["role"] == "assistant"
+    assert result[1]["content"][0]["type"] == "tool_use"
+
+
 # Tool Conversion Tests
 
 

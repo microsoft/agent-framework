@@ -699,7 +699,7 @@ class RawAnthropicClient(
 
         Anthropic's API requires that the conversation ends with a user message.
         If the last message is from the assistant, a synthetic user turn is
-        appended to satisfy this constraint.
+        appended when it will not break Anthropic tool_use/tool_result pairing.
         """
         # first system message is passed as instructions
         if messages and isinstance(messages[0], Message) and messages[0].role == "system":
@@ -712,10 +712,18 @@ class RawAnthropicClient(
         # Anthropic requires the conversation to end with a user message.
         # Append a synthetic user turn so chained agent outputs work as
         # valid context for the next agent without rewriting the assistant message.
-        if result and result[-1].get("role") == "assistant":
+        if result and result[-1].get("role") == "assistant" and not self._message_has_tool_use(result[-1]):
             result.append({"role": "user", "content": "Continue"})
 
         return result
+
+    def _message_has_tool_use(self, message: dict[str, Any]) -> bool:
+        """Return whether an Anthropic message contains tool_use blocks."""
+        content = message.get("content")
+        return isinstance(content, list) and any(
+            isinstance(item, dict) and item.get("type") in {"tool_use", "mcp_tool_use", "server_tool_use"}
+            for item in content
+        )
 
     def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
