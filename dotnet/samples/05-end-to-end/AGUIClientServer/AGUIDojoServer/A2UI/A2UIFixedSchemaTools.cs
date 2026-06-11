@@ -116,6 +116,8 @@ internal static class A2UIFixedSchemaTools
             ["name"] = new JsonObject { ["path"] = "name" },
             ["location"] = new JsonObject { ["path"] = "location" },
             ["rating"] = new JsonObject { ["path"] = "rating" },
+            // Deliberate cross-name: the HotelCard prop is "pricePerNight" but the
+            // agent-supplied data field (per the search_hotels description) is "price".
             ["pricePerNight"] = new JsonObject { ["path"] = "price" },
             ["action"] = new JsonObject
             {

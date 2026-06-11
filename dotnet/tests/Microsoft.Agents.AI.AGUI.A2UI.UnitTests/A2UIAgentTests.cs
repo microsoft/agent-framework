@@ -41,7 +41,7 @@ public sealed class A2UIAgentTests
     };
 
     [Fact]
-    public async Task RunStreamingAsync_InjectsGenerateA2UIToolIntoRunOptionsAsync()
+    public async Task RunAsync_InjectsGenerateA2UIToolIntoRunOptionsAsync()
     {
         // Arrange
         var inner = new RecordingAgent();
@@ -58,7 +58,25 @@ public sealed class A2UIAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_CustomToolName_IsHonoredAsync()
+    public async Task RunStreamingAsync_InjectsGenerateA2UIToolIntoRunOptionsAsync()
+    {
+        // Arrange
+        var inner = new RecordingAgent();
+        var agent = new A2UIAgent(inner, new ScriptedChatClient(_ => s_validRenderArgs));
+
+        // Act: the streaming entry point goes through the same per-run preparation.
+        await foreach (AgentResponseUpdate _ in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "hi")]))
+        {
+        }
+
+        // Assert
+        ChatClientAgentRunOptions options = Assert.IsType<ChatClientAgentRunOptions>(inner.LastOptions);
+        AITool tool = Assert.Single(options.ChatOptions?.Tools ?? []);
+        Assert.Equal(A2UIConstants.GenerateA2UIToolName, tool.Name);
+    }
+
+    [Fact]
+    public async Task RunAsync_CustomToolName_IsHonoredAsync()
     {
         // Arrange
         var inner = new RecordingAgent();
@@ -73,6 +91,70 @@ public sealed class A2UIAgentTests
         // Assert
         ChatClientAgentRunOptions options = Assert.IsType<ChatClientAgentRunOptions>(inner.LastOptions);
         Assert.Contains(options.ChatOptions?.Tools ?? [], t => t.Name == "custom_a2ui");
+    }
+
+    [Fact]
+    public async Task RunAsync_PreservesCallerToolsAndRunOptionsAsync()
+    {
+        // Arrange: a caller-supplied options object carrying chat tools and base
+        // AgentRunOptions members, plus a stale generate_a2ui entry that must be
+        // replaced rather than duplicated.
+        var inner = new RecordingAgent();
+        var agent = new A2UIAgent(inner, new ScriptedChatClient(_ => s_validRenderArgs));
+        AIFunction callerTool = AIFunctionFactory.Create(() => "weather", "get_weather");
+        AIFunction staleGenerateTool = AIFunctionFactory.Create(() => "stale", A2UIConstants.GenerateA2UIToolName);
+        Func<IChatClient, IChatClient> factory = client => client;
+        var callerOptions = new ChatClientAgentRunOptions
+        {
+            ChatOptions = new ChatOptions { Tools = [callerTool, staleGenerateTool] },
+            ChatClientFactory = factory,
+            AllowBackgroundResponses = true,
+            ResponseFormat = ChatResponseFormat.Json,
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["run-key"] = "run-value" },
+        };
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "hi")], options: callerOptions);
+
+        // Assert: caller tool retained, generate tool replaced (no duplicate), base
+        // run-option members and the chat client factory all survive.
+        ChatClientAgentRunOptions forwarded = Assert.IsType<ChatClientAgentRunOptions>(inner.LastOptions);
+        IList<AITool> tools = forwarded.ChatOptions?.Tools ?? [];
+        Assert.Contains(tools, t => t.Name == "get_weather");
+        AITool generateTool = Assert.Single(tools, t => t.Name == A2UIConstants.GenerateA2UIToolName);
+        Assert.NotSame(staleGenerateTool, generateTool);
+        Assert.Same(factory, forwarded.ChatClientFactory);
+        Assert.True(forwarded.AllowBackgroundResponses);
+        Assert.Same(ChatResponseFormat.Json, forwarded.ResponseFormat);
+        Assert.Equal("run-value", forwarded.AdditionalProperties?["run-key"]);
+
+        // The caller's options object is not mutated.
+        Assert.Equal(2, callerOptions.ChatOptions!.Tools!.Count);
+        Assert.Same(staleGenerateTool, callerOptions.ChatOptions.Tools[1]);
+    }
+
+    [Fact]
+    public async Task RunAsync_PlainAgentRunOptions_BaseMembersSurviveAsync()
+    {
+        // Arrange: a caller passing the base options type still gets its members forwarded.
+        var inner = new RecordingAgent();
+        var agent = new A2UIAgent(inner, new ScriptedChatClient(_ => s_validRenderArgs));
+        var callerOptions = new AgentRunOptions
+        {
+            AllowBackgroundResponses = true,
+            ResponseFormat = ChatResponseFormat.Json,
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["run-key"] = "run-value" },
+        };
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "hi")], options: callerOptions);
+
+        // Assert
+        ChatClientAgentRunOptions forwarded = Assert.IsType<ChatClientAgentRunOptions>(inner.LastOptions);
+        Assert.True(forwarded.AllowBackgroundResponses);
+        Assert.Same(ChatResponseFormat.Json, forwarded.ResponseFormat);
+        Assert.Equal("run-value", forwarded.AdditionalProperties?["run-key"]);
+        Assert.Contains(forwarded.ChatOptions?.Tools ?? [], t => t.Name == A2UIConstants.GenerateA2UIToolName);
     }
 
     [Fact]
@@ -119,6 +201,40 @@ public sealed class A2UIAgentTests
         // Assert
         JsonObject parsed = Assert.IsType<JsonObject>(JsonNode.Parse(envelope));
         Assert.Contains("no prior render", (string?)parsed["error"]);
+    }
+
+    [Fact]
+    public async Task GenerateA2UITool_UpdateWithPriorRenderInHistory_ReturnsUpdateOpsAsync()
+    {
+        // Arrange: a prior render envelope rides in a tool-result message, the way a real
+        // conversation history carries it. The update intent must find it through
+        // ToHistoryMessage + FindPriorSurface and emit in-place update operations.
+        string priorEnvelope = A2UIToolkit.WrapAsOperationsEnvelope(
+        [
+            A2UIOperationBuilder.CreateSurface("s1", "https://example.test/catalog.json"),
+            A2UIOperationBuilder.UpdateComponents("s1", s_validRenderArgs["components"]!.AsArray()),
+        ]);
+        using JsonDocument priorDocument = JsonDocument.Parse(priorEnvelope);
+        var inner = new RecordingAgent();
+        var agent = new A2UIAgent(inner, new ScriptedChatClient(_ => s_validRenderArgs));
+        await agent.RunAsync(
+        [
+            new ChatMessage(ChatRole.User, "show hotels"),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call-0", priorDocument.RootElement.Clone())]),
+            new ChatMessage(ChatRole.User, "make the cards bigger"),
+        ]);
+
+        // Act
+        string envelope = await InvokeGenerateToolAsync(
+            inner, new() { ["intent"] = "update", ["target_surface_id"] = "s1" });
+
+        // Assert: no createSurface for an in-place update; the ops target the prior surface.
+        JsonObject parsed = Assert.IsType<JsonObject>(JsonNode.Parse(envelope));
+        JsonArray ops = Assert.IsType<JsonArray>(parsed[A2UIConstants.A2UIOperationsKey]);
+        Assert.Equal(2, ops.Count);
+        Assert.DoesNotContain(ops, op => op is JsonObject obj && obj.ContainsKey("createSurface"));
+        JsonObject updateComponents = Assert.IsType<JsonObject>(ops[0]?["updateComponents"]);
+        Assert.Equal("s1", (string?)updateComponents["surfaceId"]);
     }
 
     [Fact]

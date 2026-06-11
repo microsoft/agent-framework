@@ -88,8 +88,9 @@ public sealed class A2UIAgent : DelegatingAIAgent
     {
         List<ChatMessage> messageList = messages.ToList();
 
-        ChatClientAgentRunOptions? original = options as ChatClientAgentRunOptions;
-        ChatOptions chatOptions = original?.ChatOptions?.Clone() ?? new ChatOptions();
+        ChatClientAgentRunOptions runOptions = CloneRunOptions(options);
+        ChatOptions chatOptions = runOptions.ChatOptions ?? new ChatOptions();
+        runOptions.ChatOptions = chatOptions;
 
         AIFunction generateTool = this.CreateGenerateA2UIFunction(messageList, ReadAgentState(chatOptions.AdditionalProperties));
         chatOptions.Tools = (chatOptions.Tools ?? Enumerable.Empty<AITool>())
@@ -97,14 +98,28 @@ public sealed class A2UIAgent : DelegatingAIAgent
             .Append(generateTool)
             .ToList();
 
-        var runOptions = new ChatClientAgentRunOptions
-        {
-            ChatOptions = chatOptions,
-            ChatClientFactory = original?.ChatClientFactory,
-        };
-
         return (messageList, runOptions);
     }
+
+    /// <summary>
+    /// Clones the caller's run options into a <see cref="ChatClientAgentRunOptions"/> so the
+    /// base <see cref="AgentRunOptions"/> members (continuation token, background-response
+    /// opt-in, additional properties, response format) survive the per-run
+    /// <see cref="ChatOptions"/> augmentation rather than being dropped.
+    /// </summary>
+    private static ChatClientAgentRunOptions CloneRunOptions(AgentRunOptions? options) =>
+        options switch
+        {
+            ChatClientAgentRunOptions chatRunOptions => (ChatClientAgentRunOptions)chatRunOptions.Clone(),
+            not null => new ChatClientAgentRunOptions
+            {
+                ContinuationToken = options.ContinuationToken,
+                AllowBackgroundResponses = options.AllowBackgroundResponses,
+                AdditionalProperties = options.AdditionalProperties?.Clone(),
+                ResponseFormat = options.ResponseFormat,
+            },
+            null => new ChatClientAgentRunOptions(),
+        };
 
     /// <summary>
     /// Builds the per-run <c>generate_a2ui</c> tool with the run's conversation history and
@@ -281,21 +296,21 @@ public sealed class A2UIAgent : DelegatingAIAgent
     /// </summary>
     private sealed class RenderA2UIToolDeclaration : AIFunctionDeclaration
     {
-        private static readonly JsonElement s_schema = ParseSchema();
+        // Name, description, and schema all derive from the canonical tool definition so
+        // the declaration cannot drift from what other A2UI hosts advertise.
+        private static readonly (string Description, JsonElement Schema) s_definition = ParseDefinition();
 
-        private static JsonElement ParseSchema()
+        private static (string Description, JsonElement Schema) ParseDefinition()
         {
-            using var document = JsonDocument.Parse(
-                A2UIToolDefinitions.CreateRenderA2UIToolDefinition()["function"]!["parameters"]!.ToJsonString());
-            return document.RootElement.Clone();
+            JsonNode function = A2UIToolDefinitions.CreateRenderA2UIToolDefinition()["function"]!;
+            using var document = JsonDocument.Parse(function["parameters"]!.ToJsonString());
+            return (function["description"]!.GetValue<string>(), document.RootElement.Clone());
         }
 
         public override string Name => A2UIConstants.RenderA2UIToolName;
 
-        public override string Description =>
-            "Render a dynamic A2UI v0.9 surface. The root component must have " +
-            "id 'root'. Use components from the available catalog only.";
+        public override string Description => s_definition.Description;
 
-        public override JsonElement JsonSchema => s_schema;
+        public override JsonElement JsonSchema => s_definition.Schema;
     }
 }

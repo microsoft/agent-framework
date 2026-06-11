@@ -275,7 +275,10 @@ internal static class ChatClientAgentFactory
         {
             DefaultCatalogId = A2UICompositionGuides.DynamicCatalogId,
             Guidelines = new A2UIGuidelines { CompositionGuide = A2UICompositionGuides.Recovery },
-            // The recovery loop runs by default; set the cap explicitly for the showcase.
+            // No Catalog is supplied, so the loop exercises structural validation (missing
+            // root, dangling child references, duplicate ids) like the sibling demos. The
+            // recovery loop runs by default; the cap is set explicitly to show where the
+            // knob lives and equals the default (A2UIConstants.MaxA2UIAttempts).
             Recovery = new A2UIRecoveryConfig { MaxAttempts = 3 },
         });
     }

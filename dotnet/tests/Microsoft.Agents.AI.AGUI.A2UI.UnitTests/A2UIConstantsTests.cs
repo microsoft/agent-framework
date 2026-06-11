@@ -39,4 +39,30 @@ public sealed class A2UIConstantsTests
         Assert.Equal(3, A2UIConstants.MaxA2UIAttempts);
         Assert.Equal("a2ui_recovery", A2UIConstants.A2UIRecoveryActivityType);
     }
+
+    [Fact]
+    public void ProtocolVersion_MatchesCrossLanguageContract()
+    {
+        // Assert
+        Assert.Equal("v0.9", A2UIConstants.ProtocolVersion);
+    }
+
+    [Fact]
+    public void ToolNames_MatchCrossLanguageContract()
+    {
+        // Assert
+        Assert.Equal("generate_a2ui", A2UIConstants.GenerateA2UIToolName);
+        Assert.Equal("render_a2ui", A2UIConstants.RenderA2UIToolName);
+    }
+
+    [Fact]
+    public void A2UISchemaContextDescription_MatchesMiddlewareContract()
+    {
+        // The AG-UI A2UI middleware emits the catalog schema context entry under exactly
+        // this description; adapters match it byte-for-byte to route the catalog.
+        Assert.Equal(
+            "A2UI Component Schema — available components for generating UI surfaces. " +
+            "Use these component names and properties when creating A2UI operations.",
+            A2UIConstants.A2UISchemaContextDescription);
+    }
 }

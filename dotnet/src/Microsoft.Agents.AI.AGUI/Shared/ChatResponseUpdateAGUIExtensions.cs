@@ -635,6 +635,22 @@ internal static class ChatResponseUpdateAGUIExtensions
                                 rawToolCallIdsByIndex.Remove(index);
                             }
 
+                            // Close any open reasoning block before emitting tool events.
+                            if (currentReasoningMessageId is not null)
+                            {
+                                yield return new ReasoningMessageEndEvent
+                                {
+                                    MessageId = currentReasoningMessageId
+                                };
+                                yield return new ReasoningEndEvent
+                                {
+                                    MessageId = currentReasoningId!
+                                };
+                                currentReasoningBaseId = null;
+                                currentReasoningId = null;
+                                currentReasoningMessageId = null;
+                            }
+
                             yield return new ToolCallEndEvent
                             {
                                 ToolCallId = functionCallContent.CallId
@@ -839,13 +855,19 @@ internal static class ChatResponseUpdateAGUIExtensions
         // Close any raw-streamed tool call whose coalesced FunctionCallContent never
         // arrived (stream cut short, or a pipeline that does not re-emit the typed
         // content). Without this sweep the wire carries Start/Args with no End and
-        // streaming consumers stay in a perpetual "in progress" state.
-        foreach (string openToolCallId in rawStreamedToolCallIds)
+        // streaming consumers stay in a perpetual "in progress" state. Sweep in
+        // tool-call index order so the close events are deterministic.
+        List<int> openToolCallIndexes = new(rawToolCallIdsByIndex.Keys);
+        openToolCallIndexes.Sort();
+        foreach (int openToolCallIndex in openToolCallIndexes)
         {
-            yield return new ToolCallEndEvent
+            if (rawStreamedToolCallIds.Remove(rawToolCallIdsByIndex[openToolCallIndex]))
             {
-                ToolCallId = openToolCallId
-            };
+                yield return new ToolCallEndEvent
+                {
+                    ToolCallId = rawToolCallIdsByIndex[openToolCallIndex]
+                };
+            }
         }
 
         rawStreamedToolCallIds.Clear();

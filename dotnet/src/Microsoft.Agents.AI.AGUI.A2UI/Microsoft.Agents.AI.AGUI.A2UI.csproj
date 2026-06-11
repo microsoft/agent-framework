@@ -6,6 +6,8 @@
     <Description>Framework-agnostic helpers for building A2UI (Agent-to-UI) generation tools on top of the AG-UI protocol.</Description>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <!-- MEAI001: experimental AgentRunOptions.ContinuationToken is copied when cloning caller run options. -->
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
