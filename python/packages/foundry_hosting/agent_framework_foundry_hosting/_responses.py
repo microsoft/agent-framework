@@ -616,10 +616,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         latest_checkpoint_id: str = self._initial_checkpoint_id
         restore_storage: FileCheckpointStorage = self._initial_checkpoint_storage
         if context_id is not None:
-            restore_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
-            latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
+            context_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
+            latest_checkpoint = await context_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
+                # Only switch the restore storage when a checkpoint was actually
+                # found under the per-context directory. Otherwise the initial
+                # checkpoint id would not resolve in `context_storage` and the
+                # restore call below would fail.
                 latest_checkpoint_id = latest_checkpoint.checkpoint_id
+                restore_storage = context_storage
 
         # Restore the workflow to the latest checkpoint and run it with the
         # new input. Events (including request info events) will not be emitted

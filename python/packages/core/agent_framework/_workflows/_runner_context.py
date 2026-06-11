@@ -403,8 +403,9 @@ class InProcRunnerContext:
     def reset_for_new_run(self) -> None:
         """Reset the context for a new workflow run.
 
-        This clears messages, events, and resets streaming flag.
-        Runtime checkpoint storage is NOT cleared here as it's managed at the workflow level.
+        Clears messages, the pending event queue, the pending request_info
+        correlation map, and the streaming flag. Runtime checkpoint storage is
+        NOT cleared here as it's managed at the workflow level.
         """
         self._messages.clear()
         # Clear any pending events (best-effort) by recreating the queue

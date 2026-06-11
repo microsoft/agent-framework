@@ -1461,5 +1461,36 @@ class TestWorkflowCreateCheckpoint:
         assert second is not None
         assert second.previous_checkpoint_id == first_id
 
+    async def test_raises_when_save_fails_after_prior_success(self, simple_executor: Executor) -> None:
+        """A failed save after an earlier successful checkpoint must not return the stale id.
+
+        The runner log-and-swallows storage save errors and only updates
+        ``previous_checkpoint_id`` on success. Without an explicit transition check,
+        ``create_checkpoint`` would silently return the previously stored id as if a
+        new checkpoint had been created.
+        """
+        from unittest.mock import AsyncMock
+
+        storage = InMemoryCheckpointStorage()
+        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+
+        # First call succeeds and seeds ``previous_checkpoint_id``.
+        first_id = await workflow.create_checkpoint(storage)
+        assert first_id
+
+        # Second call fails to save, so the runner leaves ``previous_checkpoint_id``
+        # pointing at ``first_id``. The method must detect that the id did not
+        # transition and raise instead of returning the stale value.
+        original_save = storage.save
+        storage.save = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+        try:
+            with pytest.raises(WorkflowCheckpointException, match="Failed to create checkpoint"):
+                await workflow.create_checkpoint(storage)
+        finally:
+            storage.save = original_save  # type: ignore[method-assign]
+
+        # The runner's bookkeeping is unchanged after the failed call.
+        assert workflow._runner.previous_checkpoint_id == first_id  # type: ignore[attr-defined]
+
 
 # endregion

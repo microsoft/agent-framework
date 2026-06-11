@@ -503,11 +503,18 @@ class Workflow(DictConvertible):
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
 
+        # Capture the runner's checkpoint id before attempting to save. The runner
+        # log-and-swallows storage save errors and only updates
+        # ``previous_checkpoint_id`` on success, so a failed save would otherwise
+        # leave the prior id in place and we'd return it as if a fresh checkpoint
+        # had been created.
+        previous_id_before = self._runner.previous_checkpoint_id
         try:
             await self._runner.create_checkpoint_if_enabled()
-            if self._runner.previous_checkpoint_id is None:
+            new_id = self._runner.previous_checkpoint_id
+            if new_id is None or new_id == previous_id_before:
                 raise WorkflowCheckpointException("Failed to create checkpoint.")
-            return self._runner.previous_checkpoint_id
+            return new_id
         finally:
             self._runner.context.clear_runtime_checkpoint_storage()
 

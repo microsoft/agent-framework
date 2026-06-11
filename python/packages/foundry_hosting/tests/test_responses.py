@@ -3178,6 +3178,66 @@ class TestCheckpointContextPathValidation:
             is server._initial_checkpoint_storage  # pyright: ignore[reportPrivateUsage]
         )
 
+    async def test_handle_inner_workflow_falls_back_to_initial_storage_when_context_dir_is_empty(
+        self, tmp_path: Any
+    ) -> None:
+        """When ``previous_response_id`` is supplied but its checkpoint directory has no
+        checkpoints, the restoration must fall back to BOTH the initial checkpoint id
+        and the initial checkpoint storage. Otherwise the initial id would be looked up
+        inside the per-context storage where it does not exist, and the restore would
+        fail.
+        """
+        from agent_framework import WorkflowAgent
+        from azure.ai.agentserver.responses import ResponseContext
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        previous_response_id = "resp_previous"
+        response_id = "resp_current"
+        root = tmp_path / "root"
+        root.mkdir()
+        # The per-context storage exists but contains no checkpoints.
+        (root / previous_response_id).mkdir()
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.workflow.create_checkpoint = AsyncMock(return_value="cp_initial")
+        agent.run = AsyncMock(
+            side_effect=[
+                AgentResponse(messages=[]),
+                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
+            ]
+        )
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
+        context = ResponseContext(
+            response_id=response_id, previous_response_id=previous_response_id, mode_flags=MagicMock()
+        )
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            async for _ in server._handle_inner_workflow(request, context):  # pyright: ignore[reportPrivateUsage]
+                pass
+
+        # The restoration call must use the initial id AND the initial storage,
+        # not the empty per-context storage. Mismatching the two would attempt
+        # to load ``cp_initial`` from a directory that doesn't contain it.
+        assert agent.run.call_count == 2
+        restore_call = agent.run.call_args_list[0]
+        assert restore_call.kwargs["checkpoint_id"] == "cp_initial"
+        assert restore_call.kwargs["checkpoint_storage"] is server._initial_checkpoint_storage  # pyright: ignore[reportPrivateUsage]
+
+        # The new turn still writes checkpoints under the current response id.
+        new_turn_call = agent.run.call_args_list[1]
+        assert new_turn_call.kwargs["checkpoint_storage"].storage_path == (root / response_id).resolve()
+
     @pytest.mark.parametrize(
         "bad_id",
         [
