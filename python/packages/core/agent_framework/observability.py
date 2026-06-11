@@ -227,9 +227,6 @@ class OtelAttr(str, Enum):
     LLM_OPERATION_DURATION = "gen_ai.client.operation.duration"
     LLM_TOKEN_USAGE = "gen_ai.client.token.usage"  # nosec B105 # noqa: S105 - OpenTelemetry metric name, not a secret.
 
-    # Usage field to standard OTel attribute name mapping is in
-    # _USAGE_FIELD_TO_OTEL_ATTR (module-level, defined below).
-
     # Agent attributes
     AGENT_NAME = "gen_ai.agent.name"
     AGENT_DESCRIPTION = "gen_ai.agent.description"

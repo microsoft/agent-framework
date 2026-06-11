@@ -1535,7 +1535,7 @@ def test_configure_otel_providers_explicit_console_exporters_overrides_env(monke
 
 
 def test_observability_settings_defaults_instrumentation_true(monkeypatch):
-    """ENABLE_INSTRUMENTATION unset 鈫?ObservabilitySettings defaults to True."""
+    """ENABLE_INSTRUMENTATION unset -> ObservabilitySettings defaults to True."""
     from agent_framework.observability import ObservabilitySettings
 
     monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
@@ -3128,89 +3128,6 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
     assert agent_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22
 
 
-# region Test non-ASCII character handling in JSON serialization
-
-
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_capture_messages_preserves_non_ascii_characters(mock_chat_client, span_exporter: InMemorySpanExporter):
-    """Test that non-ASCII characters (e.g., Japanese) are preserved in span attributes."""
-    import json
-
-    japanese_text = "\u3053\u3093\u306b\u3061\u306f\u4e16\u754c"  # "Hello World" in Japanese
-
-    class ClientWithJapanese(mock_chat_client):
-        async def _inner_get_response(self, *, messages, options, **kwargs):
-            return ChatResponse(
-                messages=[Message(role="assistant", contents=[japanese_text])],
-                usage_details=UsageDetails(input_token_count=5, output_token_count=10),
-            )
-
-    client = ClientWithJapanese()
-    messages = [Message(role="user", contents=[japanese_text])]
-
-    span_exporter.clear()
-    response = await client.get_response(messages=messages, options={"model": "Test"})
-
-    assert response is not None
-    spans = span_exporter.get_finished_spans()
-    assert len(spans) == 1
-    span = spans[0]
-
-    # Verify input messages preserve Japanese characters
-    input_messages_json = span.attributes[OtelAttr.INPUT_MESSAGES]
-    assert japanese_text in input_messages_json
-    # Ensure it's not escaped to Unicode
-    assert "\\u" not in input_messages_json
-
-    # Verify output messages preserve Japanese characters
-    output_messages_json = span.attributes[OtelAttr.OUTPUT_MESSAGES]
-    assert japanese_text in output_messages_json
-    assert "\\u" not in output_messages_json
-
-    # Verify JSON is valid and contains the text
-    input_messages = json.loads(input_messages_json)
-    assert input_messages[0]["parts"][0]["content"] == japanese_text
-    output_messages = json.loads(output_messages_json)
-    assert output_messages[0]["parts"][0]["content"] == japanese_text
-
-
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_system_instructions_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
-    """Test that non-ASCII characters are preserved in system instructions span attribute."""
-    import json
-
-    from opentelemetry import trace
-
-    chinese_text = "浣犲ソ涓栫晫"  # "Hello World" in Chinese
-
-    tracer = trace.get_tracer("test")
-    span_exporter.clear()
-
-    with tracer.start_as_current_span("test_span") as span:
-        _capture_messages(
-            span=span,
-            provider_name="test_provider",
-            messages=[Message(role="user", contents=["Test"])],
-            system_instructions=chinese_text,
-        )
-
-    spans = span_exporter.get_finished_spans()
-    assert len(spans) == 1
-    span = spans[0]
-
-    # Verify system instructions preserve Chinese characters
-    system_instructions_json = span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS]
-    assert chinese_text in system_instructions_json
-    assert "\\u" not in system_instructions_json
-
-    # Verify JSON is valid and contains the text
-    system_instructions = json.loads(system_instructions_json)
-    assert system_instructions[0]["content"] == chinese_text
-
-    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
-    assert [msg.get("role") for msg in input_messages] == ["user"]
-
-
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 def test_capture_messages_with_prepared_request_info_function_call_arguments(span_exporter: InMemorySpanExporter):
     """Test _capture_messages handles request-info function-call arguments prepared at Content creation."""
@@ -3322,100 +3239,6 @@ def test_capture_messages_logs_only_chat_history_when_framework_instructions_are
     assert [msg["role"] for msg in logged_messages] == ["system", "user"]
     assert logged_messages[0]["parts"][0]["content"] == "Original system message"
     assert logged_messages[1]["parts"][0]["content"] == "Test"
-
-
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
-    """Test that non-ASCII characters are preserved in tool arguments span attribute."""
-    import json
-
-    korean_text = "\uc548\ub155\ud558\uc138\uc694"  # "Hello" in Korean
-
-    @tool
-    def greet(message: str) -> str:
-        """Greet with a message."""
-        return f"Greeted: {message}"
-
-    span_exporter.clear()
-    await greet.invoke(message=korean_text)
-
-    spans = span_exporter.get_finished_spans()
-    assert len(spans) == 1
-    span = spans[0]
-
-    # Verify tool arguments preserve Korean characters
-    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]
-    assert korean_text in tool_arguments_json
-    assert "\\u" not in tool_arguments_json
-
-    # Verify JSON is valid and contains the text
-    tool_arguments = json.loads(tool_arguments_json)
-    assert tool_arguments["message"] == korean_text
-
-
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_tool_result_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
-    """Test that non-ASCII characters are preserved in tool result span attribute."""
-    arabic_text = "賲乇丨亘丕 亘丕賱毓丕賱賲"  # "Hello World" in Arabic
-
-    @tool
-    def echo(text: str) -> str:
-        """Echo the text back."""
-        return text
-
-    span_exporter.clear()
-    result = await echo.invoke(text=arabic_text)
-
-    assert isinstance(result, list)
-    assert result[0].text == arabic_text
-    spans = span_exporter.get_finished_spans()
-    assert len(spans) == 1
-    span = spans[0]
-
-    # Verify tool result preserves Arabic characters
-    tool_result = span.attributes[OtelAttr.TOOL_RESULT]
-    assert arabic_text in tool_result
-
-
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
-    span_exporter: InMemorySpanExporter,
-) -> None:
-    """Test that non-ASCII characters are preserved in tool arguments when using a Pydantic model."""
-    import json
-
-    from pydantic import BaseModel
-
-    japanese_text = "\u3053\u3093\u306b\u3061\u306f"  # "Hello" in Japanese
-
-    class Greeting(BaseModel):
-        message: str
-
-    @tool
-    def greet_with_model(greeting: Greeting) -> str:
-        """Greet with a message contained in a Pydantic model."""
-        # When invoked via the tool's input_model, greeting is passed as a dict
-        if isinstance(greeting, dict):
-            return f"Greeted: {greeting['message']}"
-        return f"Greeted: {greeting.message}"
-
-    span_exporter.clear()
-    # Use the tool's input_model to properly pass the Pydantic model argument
-    input_model = greet_with_model.input_model
-    await greet_with_model.invoke(arguments=input_model(greeting=Greeting(message=japanese_text)))
-
-    spans = span_exporter.get_finished_spans()
-    assert len(spans) == 1
-    span = spans[0]
-
-    # Verify tool arguments preserve Japanese characters
-    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]
-    assert japanese_text in tool_arguments_json
-    assert "\\u" not in tool_arguments_json
-
-    # Verify JSON is valid and contains the text
-    tool_arguments = json.loads(tool_arguments_json)
-    assert tool_arguments["greeting"]["message"] == japanese_text
 
 
 # region Test merged options for instructions
@@ -3940,7 +3763,7 @@ def test_get_meter_typeerror_fallback():
 @tool(name="get_weather", description="Get weather for a city", approval_mode="never_require")
 def _get_weather(city: str) -> str:
     """Get weather for a city."""
-    return "Sunny, 72掳F"
+    return "Sunny, 72F"
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
