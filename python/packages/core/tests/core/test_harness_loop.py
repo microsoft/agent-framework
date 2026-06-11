@@ -741,7 +741,7 @@ async def test_resolve_next_message_injects_latest_entry_with_session() -> None:
 
 async def test_judge_stops_when_answered_on_first_pass() -> None:
     agent_client = RecordingChatClient()
-    judge_client = RecordingChatClient(texts=["ANSWERED"])
+    judge_client = RecordingChatClient(texts=["VERDICT: DONE"])
 
     agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
 
@@ -753,7 +753,7 @@ async def test_judge_stops_when_answered_on_first_pass() -> None:
 
 async def test_judge_continues_until_answered() -> None:
     agent_client = RecordingChatClient()
-    judge_client = RecordingChatClient(texts=["NOT_ANSWERED", "ANSWERED"])
+    judge_client = RecordingChatClient(texts=["VERDICT: MORE", "VERDICT: DONE"])
 
     agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
 
@@ -763,9 +763,41 @@ async def test_judge_continues_until_answered() -> None:
     assert judge_client.call_count == 2
 
 
+async def test_judge_text_fallback_negative_verdict_keeps_looping() -> None:
+    """Regression: a negative verdict in the text fallback must not be read as success.
+
+    ``{"answered": false}`` upper-cases to contain the substring ``ANSWERED`` and not
+    ``NOT_ANSWERED``; the non-overlapping ``VERDICT: MORE`` marker keeps the loop running rather
+    than stopping on the incomplete answer.
+    """
+    agent_client = RecordingChatClient()
+    judge_client = RecordingChatClient(
+        texts=['{"answered": false}\nVERDICT: MORE', '{"answered": true}\nVERDICT: DONE'],
+    )
+
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
+
+    await agent.run("solve it")
+
+    assert agent_client.call_count == 2
+    assert judge_client.call_count == 2
+
+
+async def test_judge_text_fallback_without_marker_keeps_looping() -> None:
+    """A fallback reply with no recognizable verdict marker keeps the loop running until the cap."""
+    agent_client = RecordingChatClient()
+    judge_client = RecordingChatClient(texts=["The response looks reasonable."] * 20)
+
+    agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
+
+    await agent.run("solve it")
+
+    assert agent_client.call_count == DEFAULT_JUDGE_MAX_ITERATIONS
+
+
 async def test_judge_respects_default_max_iterations() -> None:
     agent_client = RecordingChatClient()
-    judge_client = RecordingChatClient(texts=["NOT_ANSWERED"] * 20)
+    judge_client = RecordingChatClient(texts=["VERDICT: MORE"] * 20)
 
     agent = Agent(client=agent_client, middleware=[AgentLoopMiddleware.with_judge(judge_client)])
 

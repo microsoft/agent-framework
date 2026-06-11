@@ -63,11 +63,21 @@ DEFAULT_NEXT_MESSAGE = "Continue working on the task. If it is complete, say so.
 # where the criteria are inserted; if absent, the criteria are not added to the judge instructions.
 CRITERIA_PLACEHOLDER = "{{criteria}}"
 
+# Verdict markers the judge is asked to emit for clients that do not honor structured output. They
+# are deliberately non-overlapping: neither marker is a substring of the other, nor of the JSON
+# field name ``answered``, so the text fallback in :func:`_build_judge_condition` cannot misclassify
+# a negative verdict (e.g. ``{"answered": false}``) as a positive one.
+JUDGE_VERDICT_DONE = "VERDICT: DONE"
+JUDGE_VERDICT_MORE = "VERDICT: MORE"
+
 DEFAULT_JUDGE_INSTRUCTIONS = (
     "You are an evaluator. You are given a user's original request and an agent's latest response. "
     "Decide whether the agent has fully addressed the original request. "
     "Set 'answered' to true if the request has been fully addressed, or false if more work is still "
-    "required, and use 'reasoning' to briefly justify your decision."
+    "required, and use 'reasoning' to briefly justify your decision. "
+    f"If you cannot return structured output, end your reply with a line reading exactly "
+    f"'{JUDGE_VERDICT_DONE}' when the request has been fully addressed or '{JUDGE_VERDICT_MORE}' "
+    f"when more work is still required."
     "{{criteria}}"
 )
 
@@ -145,7 +155,9 @@ def _build_judge_condition(
     the loop's evaluation cannot recurse back through the agent pipeline. The original input messages
     are forwarded verbatim (rather than collapsed to text) so multi-modal requests are preserved. The
     judge is asked for a :class:`JudgeVerdict` structured output; if the client does not honor
-    structured output the verdict falls back to parsing ``ANSWERED``/``NOT_ANSWERED`` from the raw text.
+    structured output the verdict falls back to the explicit, non-overlapping ``VERDICT: DONE`` /
+    ``VERDICT: MORE`` markers (``MORE`` wins, keeping the loop running, when the marker is ambiguous
+    or absent).
 
     The predicate returns a ``(continue, reasoning)`` tuple; the loop surfaces that ``reasoning`` to
     the next-message callable as the ``feedback`` keyword argument, which feeds it back to the agent
@@ -172,10 +184,14 @@ def _build_judge_condition(
             answered = verdict.answered
             reasoning = verdict.reasoning
         else:
-            # Fallback for clients that do not honor structured output: parse the raw text.
-            text = response.text.strip().upper()
-            answered = "NOT_ANSWERED" not in text and "ANSWERED" in text
-            reasoning = ""
+            # Fallback for clients that do not honor structured output: look for the explicit,
+            # non-overlapping verdict markers. ``FAIL`` (more work needed) takes precedence so an
+            # ambiguous or marker-less reply keeps looping rather than stopping on an incomplete
+            # answer.
+            text = response.text.upper()
+            # ``MORE`` (more work needed) takes precedence so an ambiguous reply keeps looping.
+            answered = False if JUDGE_VERDICT_MORE in text else JUDGE_VERDICT_DONE in text
+            reasoning = response.text.strip()
         # Continue looping while the request is not yet answered, surfacing the reasoning as feedback.
         return (not answered), (reasoning or None)
 
@@ -257,7 +273,10 @@ class AgentLoopMiddleware(AgentMiddleware):
 
         Args:
             should_continue: Predicate that decides whether to run the agent again. May be sync or
-                async and is called with the loop keyword arguments. Return ``True``/``False`` to
+                async and is called with the loop keyword arguments (``iteration``, ``last_result``,
+                ``messages``, ``original_messages``, ``session``, ``agent``, ``progress``, and
+                ``feedback`` -- see the class docstring for what each one carries; declare only the
+                ones you need plus ``**kwargs``). Return ``True``/``False`` to
                 continue/stop, or a ``(bool, str | None)`` tuple to also provide feedback; the
                 feedback string is surfaced to the ``next_message`` and ``record_feedback`` callables
                 via the ``feedback`` keyword argument. To loop on a chat-client judge instead, build
