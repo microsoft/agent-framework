@@ -9,6 +9,8 @@ The demonstration has two components:
 1. **AGUIServer** - An ASP.NET Core web server that hosts an AI agent and exposes it via the AG-UI protocol
 2. **AGUIClient** - A console application that connects to the AG-UI server and displays streaming updates
 
+A third project, **[AGUIDojoServer](./AGUIDojoServer/README.md)**, hosts one AG-UI endpoint per protocol feature (agentic chat, generative UI, shared state, A2UI, and more) for use with the AG-UI Dojo demo viewer. See its [README](./AGUIDojoServer/README.md) for the endpoint list and configuration.
+
 > **Warning**
 > The AG-UI protocol is still under development and changing.
 > We will try to keep these samples updated as the protocol evolves.
