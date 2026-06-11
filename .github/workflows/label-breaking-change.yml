@@ -1,0 +1,36 @@
+name: Label breaking change
+on:
+  pull_request_target:
+    types: [opened, edited]
+
+jobs:
+  add_breaking_label:
+    name: "PR: add breaking change label"
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        name: "PR: add breaking change label"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const breakingLabel = "breaking change";
+            const title = context.payload.pull_request.title || "";
+
+            // Add the label when the title contains the "[BREAKING]" prefix.
+            // The label-title-prefix workflow handles the reverse direction
+            // (adding the "[BREAKING]" prefix when the label is applied).
+            if (/\[BREAKING\]/i.test(title)) {
+              const labels = context.payload.pull_request.labels.map(l => l.name);
+              if (!labels.includes(breakingLabel)) {
+                await github.rest.issues.addLabels({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  labels: [breakingLabel]
+                });
+              }
+            }

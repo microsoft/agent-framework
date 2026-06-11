@@ -25,6 +25,11 @@ jobs:
               ".NET": ".NET"
             };
 
+            // Labels that prepend a bracketed prefix to the title (e.g. "[BREAKING] ...").
+            let bracketPrefixLabels = {
+              "breaking change": "[BREAKING]"
+            };
+
             function addTitlePrefix(title, prefix)
             {
               // Update the title based on the label and prefix
@@ -43,18 +48,42 @@ jobs:
               return title;
             }
 
+            function addBracketPrefix(title, prefix)
+            {
+              // Prepend a bracketed prefix (e.g. "[BREAKING]") if it is not already present.
+              if (title.includes(prefix)) {
+                return title;
+              }
+
+              return prefix + " " + title;
+            }
+
             labelAdded = context.payload.label.name
 
-            // Check if the issue or PR has the label
+            // Determine the new title based on which kind of label was added.
+            let newTitle = null;
             if (labelAdded in prefixLabels) {
               let prefix = prefixLabels[labelAdded];
+              let currentTitle = context.eventName === 'issues'
+                ? context.payload.issue.title
+                : context.payload.pull_request.title;
+              newTitle = addTitlePrefix(currentTitle, prefix);
+            } else if (labelAdded in bracketPrefixLabels) {
+              let prefix = bracketPrefixLabels[labelAdded];
+              let currentTitle = context.eventName === 'issues'
+                ? context.payload.issue.title
+                : context.payload.pull_request.title;
+              newTitle = addBracketPrefix(currentTitle, prefix);
+            }
+
+            if (newTitle !== null) {
               switch(context.eventName) {
                 case 'issues':
                   github.rest.issues.update({
                     issue_number: context.issue.number,
                     owner: context.repo.owner,
                     repo: context.repo.repo,
-                    title: addTitlePrefix(context.payload.issue.title, prefix)
+                    title: newTitle
                   });
                   break
 
@@ -63,7 +92,7 @@ jobs:
                     pull_number: context.issue.number,
                     owner: context.repo.owner,
                     repo: context.repo.repo,
-                    title: addTitlePrefix(context.payload.pull_request.title, prefix)
+                    title: newTitle
                   });
                   break
                 default:
