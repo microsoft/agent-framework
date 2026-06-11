@@ -15,12 +15,11 @@ Security notes:
   matches the security posture of :mod:`._executors_http` (which never logs
   request headers either) and prevents secrets from leaking through workflow
   events that are typically observable to operators / UIs.
-- ``_MCPToolApprovalState`` snapshots the EVALUATED values for non-secret
-  fields (server URL, tool name, arguments) at approval-request time so that
-  subsequent state mutations cannot make the executor "approve X then call
-  Y". Headers are stored as the raw expression strings (not evaluated values)
-  so secrets are not persisted in the workflow's checkpoint state. They are
-  re-evaluated on resume.
+- The :class:`MCPToolApprovalRequest` payload is the source of truth for the
+  resumed invocation: ``tool_name``, ``server_url``, ``server_label``,
+  ``arguments``, and ``connection_name`` come from the request the reviewer
+  approved. Headers are re-evaluated from the action definition on resume so
+  that secret values are not persisted in the workflow's checkpoint state.
 - Tool outputs flow back into agent conversations through ``conversationId``
   and through Tool-role messages emitted to ``output.messages``. They share
   the same prompt-injection risk surface as ``HttpRequestAction``: workflow
@@ -60,8 +59,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-_MCP_APPROVAL_STATE_KEY = "_mcp_tool_approval_state"
-
 
 # ---------------------------------------------------------------------------
 # Request / state types
@@ -86,6 +83,9 @@ class MCPToolApprovalRequest:
         arguments: Evaluated arguments to be forwarded to the tool.
         header_names: Sorted list of outbound header names (no values). Empty
             when no headers are configured.
+        connection_name: Optional connection identifier the invocation will
+            use. Surfaced so the reviewer can see which connection is bound
+            to the approved call.
     """
 
     request_id: str
@@ -94,28 +94,7 @@ class MCPToolApprovalRequest:
     server_label: str | None
     arguments: dict[str, Any]
     header_names: list[str] = field(default_factory=lambda: [])
-
-
-@dataclass
-class _MCPToolApprovalState:
-    """Internal state saved during the approval yield for resumption.
-
-    Stores **evaluated** values for non-secret fields to prevent
-    "approve X / execute Y" attacks. Stores the raw expression string for
-    ``headers`` so that secret values are NOT persisted in checkpoint state;
-    the expressions are re-evaluated against current state on resume.
-    """
-
-    server_url: str
-    tool_name: str
-    server_label: str | None
-    arguments: dict[str, Any]
-    connection_name: str | None
-    headers_def: Any
-    auto_send: bool
-    conversation_id_expr: str | None
-    output_messages_path: str | None
-    output_result_path: str | None
+    connection_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -260,20 +239,6 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
 
         if require_approval:
             request_id = str(uuid.uuid4())
-            approval_state = _MCPToolApprovalState(
-                server_url=server_url,
-                tool_name=tool_name,
-                server_label=server_label,
-                arguments=arguments,
-                connection_name=connection_name,
-                headers_def=self._action_def.get("headers"),
-                auto_send=auto_send,
-                conversation_id_expr=conversation_id_expr if isinstance(conversation_id_expr, str) else None,
-                output_messages_path=output_messages_path,
-                output_result_path=output_result_path,
-            )
-            ctx.state.set(self._approval_key(), approval_state)
-
             request = MCPToolApprovalRequest(
                 request_id=request_id,
                 tool_name=tool_name,
@@ -281,6 +246,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
                 server_label=server_label,
                 arguments=arguments,
                 header_names=sorted(headers.keys()),
+                connection_name=connection_name,
             )
             logger.info(
                 "%s: requesting approval for MCP tool '%s' on '%s'",
@@ -322,54 +288,59 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         response: ToolApprovalResponse,
         ctx: WorkflowContext[ActionComplete, str],
     ) -> None:
-        """Resume after the workflow yielded for an approval request."""
-        state = self._get_state(ctx.state)
-        approval_key = self._approval_key()
+        """Resume after the workflow yielded for an approval request.
 
-        try:
-            approval_state: _MCPToolApprovalState = ctx.state.get(approval_key)
-        except KeyError:
-            logger.error("%s: approval state missing for executor '%s'", self.__class__.__name__, self.id)
-            await ctx.send_message(ActionComplete())
-            return
-        try:
-            ctx.state.delete(approval_key)
-        except KeyError:
-            logger.warning("%s: approval state already deleted for '%s'", self.__class__.__name__, self.id)
+        Invocation fields (``tool_name``, ``server_url``, ``server_label``,
+        ``arguments``, ``connection_name``) are sourced from
+        ``original_request``. Output configuration is re-derived from the
+        action definition; header values are re-evaluated from the action
+        definition so secrets remain out of checkpoint state.
+        """
+        state = self._get_state(ctx.state)
+
+        tool_name = original_request.tool_name
+        server_url = original_request.server_url
+        server_label = original_request.server_label
+        arguments = original_request.arguments
+        connection_name = original_request.connection_name
+
+        auto_send = self._get_auto_send(state)
+        conversation_id_value = self._action_def.get("conversationId")
+        conversation_id_expr = conversation_id_value if isinstance(conversation_id_value, str) else None
+        output_messages_path = _get_output_path(self._action_def, "messages")
+        output_result_path = _get_output_path(self._action_def, "result")
 
         if not response.approved:
             logger.info(
                 "%s: MCP tool '%s' rejected: %s",
                 self.__class__.__name__,
-                approval_state.tool_name,
+                tool_name,
                 response.reason,
             )
-            self._assign_error(
-                state, approval_state.output_result_path, "MCP tool invocation was not approved by user."
-            )
+            self._assign_error(state, output_result_path, "MCP tool invocation was not approved by user.")
             await ctx.send_message(ActionComplete())
             return
 
-        # Approved — re-evaluate headers (not stored at approval time for security).
-        headers = self._evaluate_headers(state, approval_state.headers_def)
+        # Approved — re-evaluate headers (not surfaced at approval time for security).
+        headers = self._evaluate_headers(state, self._action_def.get("headers"))
 
         invocation = MCPToolInvocation(
-            server_url=approval_state.server_url,
-            tool_name=approval_state.tool_name,
-            server_label=approval_state.server_label,
-            arguments=approval_state.arguments,
+            server_url=server_url,
+            tool_name=tool_name,
+            server_label=server_label,
+            arguments=arguments,
             headers=headers,
-            connection_name=approval_state.connection_name,
+            connection_name=connection_name,
         )
         result = await self._invoke_with_narrow_catch(invocation)
         await self._process_result(
             ctx=ctx,
             state=state,
             result=result,
-            auto_send=approval_state.auto_send,
-            conversation_id_expr=approval_state.conversation_id_expr,
-            output_messages_path=approval_state.output_messages_path,
-            output_result_path=approval_state.output_result_path,
+            auto_send=auto_send,
+            conversation_id_expr=conversation_id_expr,
+            output_messages_path=output_messages_path,
+            output_result_path=output_result_path,
         )
         await ctx.send_message(ActionComplete())
 
@@ -576,9 +547,6 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         if output_result_path is None:
             return
         state.set(output_result_path, f"Error: {error_message}")
-
-    def _approval_key(self) -> str:
-        return f"{_MCP_APPROVAL_STATE_KEY}_{self.id}"
 
 
 def _parse_outputs(outputs: list[Content]) -> list[Any]:
