@@ -74,32 +74,35 @@ dotnet/samples/
 
 ## Default provider
 
-All canonical samples (01-get-started) use **Azure OpenAI** via `AzureOpenAIClient`
-with `DefaultAzureCredential`:
+All canonical samples (01-get-started) use **Microsoft Foundry** with the Foundry Responses API via `FoundryAgent` or `AIProjectClient.AsAIAgent()` with `DefaultAzureCredential`:
 
 ```csharp
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsAIAgent(instructions: "...", name: "...");
+FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    model: model,
+    instructions: "...",
+    name: "...");
 ```
 
 Environment variables:
-- `AZURE_OPENAI_ENDPOINT` — Your Azure OpenAI endpoint
-- `AZURE_OPENAI_DEPLOYMENT_NAME` — Model deployment name (defaults to `gpt-5.4-mini`)
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Foundry project endpoint
+- `FOUNDRY_MODEL` — Model name (defaults to `gpt-5.4-mini`)
 
 For authentication, run `az login` before running samples.
+
+**Note:** For samples demonstrating other providers (Azure OpenAI, OpenAI, Anthropic, etc.), see `02-agents/AgentProviders/`.
+
 
 ## Snippet tags for docs integration
 
