@@ -66,6 +66,7 @@ _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
 # Allowed identifier shape for object-attribute steps in declarative state paths
 _SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
+
 @dataclass(frozen=True)
 class DeclarativeEnvConfig:
     """Configuration that populates the PowerFx ``Env`` symbol for a workflow.
@@ -408,12 +409,14 @@ class DeclarativeWorkflowState:
             value: The value to set
 
         Raises:
-            ValueError: If attempting to set Workflow.Inputs (which is read-only).
+            ValueError: If ``path`` is empty or contains empty segments
+                (e.g. ``"Local."``, ``"Local..foo"``), or if attempting to set
+                ``Workflow.Inputs`` (which is read-only).
         """
         state_data = self.get_state_data()
         parts = path.split(".")
-        if not parts:
-            return
+        if not parts or any(not p for p in parts):
+            raise ValueError(f"Invalid path {path!r}: empty segments are not allowed")
 
         namespace = parts[0]
         remaining = parts[1:]
@@ -469,7 +472,16 @@ class DeclarativeWorkflowState:
         Args:
             path: Dot-notated path to a list
             value: The value to append
+
+        Raises:
+            ValueError: If ``path`` is empty or contains empty segments
+                (e.g. ``"Local."``, ``"Local..foo"``), or if the existing
+                value at ``path`` is not a list.
         """
+        parts = path.split(".")
+        if not parts or any(not p for p in parts):
+            raise ValueError(f"Invalid path {path!r}: empty segments are not allowed")
+
         existing = self.get(path)
         if existing is None:
             self.set(path, [value])

@@ -7,9 +7,20 @@
 """Path-segment validation tests for DeclarativeWorkflowState.
 
 Path segments handed to ``get``/``set``/``append`` and ``{Variable.Path}``
-placeholders in ``interpolate_string`` must be valid declarative identifiers
-(``[A-Za-z][A-Za-z0-9_]*``). These tests pin that contract and the related
-behavior across legitimate and invalid inputs.
+placeholders in ``interpolate_string`` are subject to three distinct rules
+that this module pins:
+
+- **Empty segments** (e.g. ``""``, ``"Local."``, ``"Local..foo"``) are rejected
+  by all of ``get``/``set``/``append`` and ``interpolate_string``. ``get`` and
+  ``interpolate_string`` return their default / leave the placeholder literal;
+  ``set`` and ``append`` raise ``ValueError``.
+- **Object-attribute segments** — segments that ``get`` would resolve via
+  ``getattr`` because the parent is a non-dict object — must match the safe
+  identifier shape ``[A-Za-z][A-Za-z0-9_]*``. Other shapes are rejected with a
+  warning log and the default is returned.
+- **Dict-keyed segments** — segments that resolve via dict lookup because the
+  parent is a ``dict`` — may use arbitrary non-empty string keys (e.g. UUIDs
+  or hyphenated identifiers like ``System.conversations.<uuid>.messages``).
 """
 
 import logging
@@ -177,6 +188,43 @@ class TestSetAndAppend:
     def test_workflow_inputs_still_read_only(self, state: DeclarativeWorkflowState) -> None:
         with pytest.raises(ValueError, match="read-only"):
             state.set("Workflow.Inputs.x", 1)
+
+
+# ---------------------------------------------------------------------------
+# set() / append(): malformed paths (empty segments) raise ValueError
+# ---------------------------------------------------------------------------
+
+
+class TestSetRejectsInvalidPaths:
+    @pytest.mark.parametrize("bad_path", ["", "Local.", "Local..foo", ".Local"])
+    def test_set_rejects_empty_segment(self, state: DeclarativeWorkflowState, bad_path: str) -> None:
+        with pytest.raises(ValueError, match="empty segments are not allowed"):
+            state.set(bad_path, "x")
+
+    @pytest.mark.parametrize("bad_path", ["", "Local.", "Local..foo", ".Local"])
+    def test_append_rejects_empty_segment(self, state: DeclarativeWorkflowState, bad_path: str) -> None:
+        with pytest.raises(ValueError, match="empty segments are not allowed"):
+            state.append(bad_path, "x")
+
+    def test_set_rejection_makes_no_partial_write(self, state: DeclarativeWorkflowState) -> None:
+        """Rejected set() must not create an unreachable entry in the state."""
+        state.set("Local.user_input", "pre")
+        with pytest.raises(ValueError):
+            state.set("Local.", "leak")
+        local = state.get_state_data().get("Local", {})
+        assert "" not in local
+        assert local == {"user_input": "pre"}
+        assert state.get("Local.") is None
+        assert state.get("Local.user_input") == "pre"
+
+    def test_append_rejection_makes_no_partial_write(self, state: DeclarativeWorkflowState) -> None:
+        """Rejected append() must not create an unreachable entry in the state."""
+        state.set("Local.items", ["a"])
+        with pytest.raises(ValueError):
+            state.append("Local.", "leak")
+        local = state.get_state_data().get("Local", {})
+        assert "" not in local
+        assert local == {"items": ["a"]}
 
 
 # ---------------------------------------------------------------------------
