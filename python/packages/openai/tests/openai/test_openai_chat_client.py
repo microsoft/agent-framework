@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import (
     Agent,
+    Annotation,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -3618,9 +3619,17 @@ def _make_mcp_call_done_event(output: str) -> MagicMock:
     return event
 
 
-def _make_azure_ai_search_output_event(output: Any, *, event_type: str = "response.output_item.done") -> MagicMock:
+def _make_azure_ai_search_output_event(
+    output: Any,
+    *,
+    event_type: str = "response.output_item.done",
+    top_level_output: bool = False,
+) -> MagicMock:
     event = MagicMock()
     event.type = event_type
+    if top_level_output:
+        event.output = output
+        return event
     event.item = MagicMock()
     event.item.type = "azure_ai_search_call_output"
     event.item.output = output
@@ -3717,6 +3726,81 @@ def test_streaming_azure_ai_search_output_does_not_overwrite_existing_get_url() 
 
     annotation = response.messages[0].contents[0].annotations[0]
     assert annotation["additional_properties"]["get_url"] == existing_get_url
+
+
+def test_streaming_azure_ai_search_output_normalizes_non_dict_additional_properties() -> None:
+    """Existing non-dict additional_properties should be normalized before enriching get_url."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+    get_url = "https://example.search.windows.net/indexes/my-index/docs/doc-123?api-version=2024-07-01"
+
+    citation_update = client._parse_chunk_from_openai(
+        _make_url_citation_event(title="doc_0"),
+        chat_options,
+        function_call_ids,
+    )
+    citation_update.contents[0].annotations[0]["additional_properties"] = None
+    search_update = client._parse_chunk_from_openai(
+        _make_azure_ai_search_output_event(json.dumps({"get_urls": [get_url]})),
+        chat_options,
+        function_call_ids,
+    )
+
+    response = client._finalize_response_updates([citation_update, search_update])
+
+    annotation = response.messages[0].contents[0].annotations[0]
+    assert annotation["additional_properties"] == {"get_url": get_url}
+
+
+def test_streaming_azure_ai_search_output_does_not_create_additional_properties_for_unusable_citation() -> None:
+    """Unenrichable Azure AI Search citations should keep their original annotation shape."""
+    update = ChatResponseUpdate(
+        contents=[
+            Content.from_text(
+                text="hello",
+                annotations=[Annotation(type="citation", title="source_0", url="https://example.invalid")],
+            )
+        ],
+        raw_representation=_make_azure_ai_search_output_event(
+            json.dumps({"get_urls": ["https://example.search.windows.net/indexes/my-index/docs/doc-0"]})
+        ),
+    )
+
+    RawOpenAIChatClient._enrich_streamed_azure_ai_search_citations([update])
+
+    annotation = update.contents[0].annotations[0]
+    assert annotation.get("additional_properties") is None
+
+
+def test_extract_azure_ai_search_get_urls_accepts_dedicated_output_event() -> None:
+    """Dedicated response.azure_ai_search_call_output.* events should yield get_urls too."""
+    get_url = "https://example.search.windows.net/indexes/my-index/docs/doc-123?api-version=2024-07-01"
+    event = _make_azure_ai_search_output_event(
+        json.dumps({"get_urls": [get_url]}),
+        event_type="response.azure_ai_search_call_output.done",
+        top_level_output=True,
+    )
+
+    assert RawOpenAIChatClient._extract_azure_ai_search_get_urls(event) == [get_url]
+
+
+def test_parse_chunk_from_openai_ignores_dedicated_azure_ai_search_events() -> None:
+    """Dedicated Azure AI Search events should be treated as intentional no-op updates."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+    event = _make_azure_ai_search_output_event(
+        json.dumps({"get_urls": ["https://example.search.windows.net/indexes/my-index/docs/doc-0"]}),
+        event_type="response.azure_ai_search_call_output.done",
+        top_level_output=True,
+    )
+
+    with patch("agent_framework_openai._chat_client.logger.debug") as mock_debug:
+        update = client._parse_chunk_from_openai(event, chat_options, function_call_ids)
+
+    assert update.contents == []
+    mock_debug.assert_not_called()
 
 
 @pytest.mark.parametrize(

@@ -57,7 +57,6 @@ def _get_foundry_azure_ai_search_model() -> str | None:
 
 skip_if_foundry_azure_ai_search_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.services.ai.azure.com/")
-    or os.getenv("AZURE_SEARCH_ENDPOINT", "") == ""
     or os.getenv("AZURE_SEARCH_INDEX_NAME", "") == ""
     or _get_foundry_azure_ai_search_model() is None,
     reason="No live Foundry project, Azure Search index, or model provided for Azure AI Search integration tests.",

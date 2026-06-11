@@ -122,6 +122,7 @@ OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL = "shell_call_output"
 OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL = "local_shell_call_output"
 _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE = "azure_ai_search_call_output"
 _AZURE_AI_SEARCH_OUTPUT_EVENT_TYPES = {"response.output_item.added", "response.output_item.done"}
+_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
 
 # Internal marker emitted by `_prepare_content_for_openai` for an
 # `mcp_server_tool_result` Content. The Responses API expects an `mcp_call`
@@ -1978,16 +1979,27 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         return None
 
     @staticmethod
-    def _extract_azure_ai_search_get_urls(event: Any) -> list[str]:
-        """Extract per-document Azure AI Search REST URLs from a streamed Responses event."""
-        if getattr(event, "type", None) not in _AZURE_AI_SEARCH_OUTPUT_EVENT_TYPES:
-            return []
+    def _extract_azure_ai_search_output_payload(event: Any) -> Mapping[str, Any] | None:
+        """Return Azure AI Search output payload from either a top-level event or its nested item."""
+        payload = RawOpenAIChatClient._parse_azure_ai_search_output_payload(getattr(event, "output", None))
+        if payload is not None:
+            return payload
 
         item = getattr(event, "item", None)
-        if getattr(item, "type", None) != _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
+        if getattr(item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
+            return RawOpenAIChatClient._parse_azure_ai_search_output_payload(getattr(item, "output", None))
+        return None
+
+    @staticmethod
+    def _extract_azure_ai_search_get_urls(event: Any) -> list[str]:
+        """Extract per-document Azure AI Search REST URLs from a streamed Responses event."""
+        event_type = getattr(event, "type", None)
+        if event_type not in _AZURE_AI_SEARCH_OUTPUT_EVENT_TYPES and not (
+            isinstance(event_type, str) and event_type.startswith(_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX)
+        ):
             return []
 
-        payload = RawOpenAIChatClient._parse_azure_ai_search_output_payload(getattr(item, "output", None))
+        payload = RawOpenAIChatClient._extract_azure_ai_search_output_payload(event)
         if payload is None:
             return []
 
@@ -2028,12 +2040,18 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 for annotation in content.annotations:
                     if annotation.get("type") != "citation" or annotation.get("file_id"):
                         continue
-                    additional_properties = annotation.setdefault("additional_properties", {})
-                    if "get_url" in additional_properties:
-                        continue
+
                     doc_index = cls._azure_ai_search_doc_index(annotation)
                     if doc_index is None or doc_index >= len(get_urls):
                         continue
+
+                    additional_properties = annotation.get("additional_properties")
+                    if not isinstance(additional_properties, dict):
+                        additional_properties = {}
+                        annotation["additional_properties"] = additional_properties
+                    if "get_url" in additional_properties:
+                        continue
+
                     additional_properties["get_url"] = get_urls[doc_index]
 
     @staticmethod
@@ -3136,7 +3154,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                     pass
             case _:
-                logger.debug("Unparsed event of type: %s: %s", event.type, event)
+                if not isinstance(event.type, str) or not event.type.startswith(_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX):
+                    logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
         return ChatResponseUpdate(
             contents=contents,
