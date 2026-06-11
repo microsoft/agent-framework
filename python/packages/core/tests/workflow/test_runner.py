@@ -921,7 +921,7 @@ async def test_runner_mark_resumed_sets_previous_checkpoint_id():
     )
 
     # Pre-condition: nothing to chain back to
-    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+    assert runner.previous_checkpoint_id is None
 
     resumed_checkpoint = WorkflowCheckpoint(
         checkpoint_id="resumed-cp-id",
@@ -933,7 +933,7 @@ async def test_runner_mark_resumed_sets_previous_checkpoint_id():
 
     assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
     assert runner._iteration == 3  # pyright: ignore[reportPrivateUsage]
-    assert runner._previous_checkpoint_id == "resumed-cp-id"  # pyright: ignore[reportPrivateUsage]
+    assert runner.previous_checkpoint_id == "resumed-cp-id"
 
 
 async def test_runner_post_resume_checkpoint_chains_to_resumed_checkpoint():

@@ -17,6 +17,7 @@ from typing import Protocol, cast
 
 from agent_framework import (
     ChatOptions,
+    CheckpointID,
     Content,
     ContextProvider,
     FileCheckpointStorage,
@@ -343,6 +344,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
     # TODO(@taochen): Allow a different checkpoint storage that stores checkpoints externally
     CHECKPOINT_STORAGE_PATH = "/.checkpoints"
+    INITIAL_CHECKPOINT_STORAGE_NAME = "initial"
     FUNCTION_APPROVAL_STORAGE_PATH = "/.function_approvals/approval_requests.json"
 
     def __init__(
@@ -386,7 +388,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
 
         self._is_workflow_agent = False
-        self._checkpoint_storage_path = None
         if isinstance(agent, WorkflowAgent):
             if agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
                 raise RuntimeError(
@@ -399,6 +400,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 else os.path.join(os.getcwd(), self.CHECKPOINT_STORAGE_PATH.lstrip("/"))
             )
             self._is_workflow_agent = True
+            # The initial checkpoint storage that stores the workflow's initial state. We will use this checkpoint
+            # to restore the workflow when no conversation_id or previous_response_id is supplied in a request.
+            self._initial_checkpoint_storage = _checkpoint_storage_for_context(
+                self._checkpoint_storage_path, self.INITIAL_CHECKPOINT_STORAGE_NAME
+            )
+            self._initial_checkpoint_id: CheckpointID | None = None
 
         self._agent = agent
         self._approval_storage = (
@@ -580,8 +587,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         # The following should never happen due to the checks above.
         # This is for type safety and defensive programming.
-        if self._checkpoint_storage_path is None:
-            raise RuntimeError("Checkpoint storage path is not configured for workflow agent.")
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
 
@@ -589,6 +594,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # but call _ensure_agent_ready for symmetry with the regular path so
         # any future async resources owned by the workflow are entered here.
         await self._ensure_agent_ready()
+
+        # Create a checkpoint to store the initial state of the workflow, if it doesn't already exist.
+        # This allows us to restore to a clean slate when no conversation_id or previous_response_id
+        # is supplied in a request.
+        if self._initial_checkpoint_id is None:
+            self._initial_checkpoint_id = await self._agent.workflow.create_checkpoint(self._initial_checkpoint_storage)
 
         # Determine the latest checkpoint (if any) so we can resume the
         # workflow's prior state for this turn. The directory is keyed by
@@ -599,14 +610,35 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # the only place that state lives is the workflow checkpoint, so
         # on every turn we restore the latest checkpoint and feed the new
         # input back into the start executor as a continuation rather than
-        # a fresh run.
-        latest_checkpoint_id: str | None = None
-        restore_storage: FileCheckpointStorage | None = None
+        # a fresh run. If no conversation_id or previous_response_id is
+        # supplied, the workflow will be restored to the initial checkpoint
+        # to avoid context bleed between requests.
+        latest_checkpoint_id: str = self._initial_checkpoint_id
+        restore_storage: FileCheckpointStorage = self._initial_checkpoint_storage
         if context_id is not None:
             restore_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
             latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
                 latest_checkpoint_id = latest_checkpoint.checkpoint_id
+
+        # Restore the workflow to the latest checkpoint and run it with the
+        # new input. Events (including request info events) will not be emitted
+        # during restoration (in streaming) or after restoration (in non-streaming)
+        # since we assume the client had already seen those events and we don't want
+        # to emit duplicates.
+        if is_streaming_request:
+            async for _ in self._agent.run(
+                stream=True,
+                checkpoint_id=latest_checkpoint_id,
+                checkpoint_storage=restore_storage,
+            ):
+                pass
+        else:
+            await self._agent.run(
+                stream=False,
+                checkpoint_id=latest_checkpoint_id,
+                checkpoint_storage=restore_storage,
+            )
 
         # Storage that will receive checkpoints written during this turn.
         # When the caller chains with previous_response_id, the next turn
@@ -618,43 +650,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # directory and write_storage points at the *current* response's.
         write_context_id = context.conversation_id or context.response_id
         write_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, write_context_id)
-
-        # Multi-turn pattern: when we have a prior checkpoint, restore it
-        # first (drive the workflow back to idle with prior state intact),
-        # then make a separate call that delivers the new user input. This
-        # depends on Workflow.run preserving shared state across calls. The
-        # restore-only call may yield events from any pending in-flight
-        # work in the checkpoint; we consume those internally here so they
-        # don't surface to the response stream as duplicates.
-        #
-        # If the restored checkpoint had pending request_info events, the
-        # restore-only call replays them through
-        # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-        # and populates ``self._agent.pending_requests``. That is the correct
-        # state: those requests are genuinely outstanding, and the next
-        # ``run(input_messages, ...)`` call may contain ``function_call_output``
-        # items (carried as FunctionResult/FunctionApprovalResponse content)
-        # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-        if latest_checkpoint_id is not None:
-            if is_streaming_request:
-                async for _ in self._agent.run(
-                    stream=True,
-                    checkpoint_id=latest_checkpoint_id,
-                    checkpoint_storage=restore_storage,
-                ):
-                    pass
-            else:
-                await self._agent.run(
-                    stream=False,
-                    checkpoint_id=latest_checkpoint_id,
-                    checkpoint_storage=restore_storage,
-                )
-        else:
-            # We reset the workflow if neither conversation_id nor previous_response_id
-            # was supplied, because this implies there's no prior state to restore and
-            # we want to ensure a clean slate. Workflow may contain in-memory state that
-            # needs to be cleared on new conversations.
-            await self._agent.workflow.reset_for_new_run()
 
         # Now run the agent with the latest input
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)

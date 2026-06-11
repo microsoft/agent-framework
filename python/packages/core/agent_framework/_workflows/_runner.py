@@ -65,7 +65,7 @@ class Runner:
 
         # Checkpointing related attributes
         self._resumed_from_checkpoint = False
-        self._previous_checkpoint_id: CheckpointID | None = None
+        self.previous_checkpoint_id: CheckpointID | None = None
 
     @property
     def context(self) -> RunnerContext:
@@ -113,12 +113,12 @@ class Runner:
             for event in await self._ctx.drain_events():
                 yield event
 
-        # Create the first checkpoint. Checkpoints are usually considered to be created at the end of an iteration,
-        # we can think of the first checkpoint as being created at the end of a "superstep 0" which captures the
-        # states after which the start executor has run.  Note that we execute the start executor outside of the
-        # main iteration loop.
+        # Create a checkpoint before a run starts. Checkpoints are usually considered to be created at the
+        # end of an iteration, we can think of this checkpoint as being created at the end of a "superstep 0"
+        # which captures the states after which the start executor has run. Note that we execute the start
+        # executor outside of the main iteration loop.
         if await self._ctx.has_messages() and not self._resumed_from_checkpoint:
-            await self._create_checkpoint_if_enabled()
+            await self.create_checkpoint_if_enabled()
 
         while self._iteration < self._max_iterations:
             logger.info(f"Starting superstep {self._iteration + 1}")
@@ -165,7 +165,7 @@ class Runner:
             self._state.commit()
 
             # Create checkpoint after each superstep iteration
-            await self._create_checkpoint_if_enabled()
+            await self.create_checkpoint_if_enabled()
 
             yield WorkflowEvent.superstep_completed(iteration=self._iteration)
 
@@ -231,7 +231,7 @@ class Runner:
         ]
         await asyncio.gather(*tasks)
 
-    async def _create_checkpoint_if_enabled(self) -> None:
+    async def create_checkpoint_if_enabled(self) -> None:
         """Create a checkpoint if checkpointing is enabled and attach a label and metadata."""
         if not self._ctx.has_checkpointing():
             return
@@ -249,7 +249,7 @@ class Runner:
                 self._workflow_name,
                 self._graph_signature_hash,
                 self._state,
-                self._previous_checkpoint_id,
+                self.previous_checkpoint_id,
                 self._iteration,
             )
 
@@ -257,9 +257,9 @@ class Runner:
                 "Created checkpoint: %s with parent checkpoint at iteration %d: %s",
                 checkpoint_id,
                 self._iteration,
-                self._previous_checkpoint_id,
+                self.previous_checkpoint_id,
             )
-            self._previous_checkpoint_id = checkpoint_id
+            self.previous_checkpoint_id = checkpoint_id
         except Exception as e:
             logger.warning(
                 "Failed to create checkpoint at iteration %d: %s. "
@@ -267,7 +267,7 @@ class Runner:
                 "The next successfully-created checkpoint will be parented to the last successful checkpoint: %s",
                 self._iteration,
                 e,
-                self._previous_checkpoint_id,
+                self.previous_checkpoint_id,
             )
 
     async def restore_from_checkpoint(
@@ -396,7 +396,7 @@ class Runner:
         """
         self._resumed_from_checkpoint = True
         self._iteration = checkpoint.iteration_count
-        self._previous_checkpoint_id = checkpoint.checkpoint_id
+        self.previous_checkpoint_id = checkpoint.checkpoint_id
 
     async def _set_executor_state(self, executor_id: str, state: dict[str, Any]) -> None:
         """Store executor state in state under a reserved key.

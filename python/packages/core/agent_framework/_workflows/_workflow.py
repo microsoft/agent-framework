@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sessions import ContextProvider
 from .._types import ResponseStream
-from ..exceptions import WorkflowException, WorkflowRunnerException
+from ..exceptions import WorkflowCheckpointException, WorkflowException, WorkflowRunnerException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
-from ._checkpoint import CheckpointStorage
+from ._checkpoint import CheckpointID, CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
     EdgeGroup,
@@ -473,6 +473,43 @@ class Workflow(DictConvertible):
     def get_executors_list(self) -> list[Executor]:
         """Get the list of executors in the workflow."""
         return list(self.executors.values())
+
+    async def create_checkpoint(self, checkpoint_storage: CheckpointStorage | None) -> CheckpointID:
+        """Create a checkpoint of the current workflow state in the provided storage.
+
+        Args:
+            checkpoint_storage: The CheckpointStorage instance where the checkpoint will be stored.
+                If None, will use the workflow's default checkpoint storage if configured, or raise
+                if checkpointing is not enabled.
+
+        Notes:
+            - Checkpoints can only be created when the workflow is idle (not actively running).
+            - Checkpoints are automatically created at the end of each superstep if a checkpoint storage is configured.
+              Use this method only when necessary, for example to capture the initial state of the workflow prior to the
+              first run.
+            - Creating a checkpoint manually will alter the checkpoint lineage. The new checkpoint will become the
+              parent of the next checkpoint created automatically (if checkpointing is enabled by providing a storage).
+        """
+        if self._is_run_active():
+            raise WorkflowException(
+                "Cannot create checkpoint while a workflow run is active. "
+                "Checkpointing is only allowed between runs when the workflow is idle."
+            )
+
+        if checkpoint_storage is None and not self._runner.context.has_checkpointing():
+            raise WorkflowCheckpointException(
+                "Checkpoint storage must be provided to create a checkpoint when checkpointing is not enabled."
+            )
+        if checkpoint_storage is not None:
+            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+
+        try:
+            await self._runner.create_checkpoint_if_enabled()
+            if self._runner.previous_checkpoint_id is None:
+                raise WorkflowCheckpointException("Failed to create checkpoint.")
+            return self._runner.previous_checkpoint_id
+        finally:
+            self._runner.context.clear_runtime_checkpoint_storage()
 
     async def _run_workflow_with_tracing(
         self,
@@ -1164,6 +1201,15 @@ class Workflow(DictConvertible):
             context_providers=context_providers,
             **kwargs,
         )
+
+    def _is_run_active(self) -> bool:
+        """Check if a workflow run is currently active.
+
+        Returns:
+            True if a run is active, False otherwise.
+        """
+        existing_stream = self._active_run() if self._active_run is not None else None
+        return existing_stream is not None
 
     async def reset_for_new_run(self) -> None:
         """Reset the workflow for a new run that is independent from prior runs.
