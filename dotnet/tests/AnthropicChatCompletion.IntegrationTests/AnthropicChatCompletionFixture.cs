@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,10 +17,6 @@ namespace AnthropicChatCompletion.IntegrationTests;
 
 public class AnthropicChatCompletionFixture : IChatClientAgentFixture
 {
-    // All tests for Anthropic are intended to be ran locally as the CI pipeline for Anthropic is not setup.
-    internal const string SkipReason = "Integrations tests for local execution only";
-
-    private static readonly AnthropicConfiguration s_config = TestConfiguration.LoadSection<AnthropicConfiguration>();
     private readonly bool _useReasoningModel;
     private readonly bool _useBeta;
 
@@ -52,7 +49,9 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        var anthropicClient = new AnthropicClient() { ApiKey = s_config.ApiKey };
+        var anthropicClient = new AnthropicClient() { ApiKey = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey) };
+        var chatModelName = TestConfiguration.GetRequiredValue(TestSettings.AnthropicChatModelName);
+        var reasoningModelName = TestConfiguration.GetRequiredValue(TestSettings.AnthropicReasoningModelName);
 
         IChatClient? chatClient = this._useBeta
             ? anthropicClient
@@ -63,7 +62,7 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
                      => options.RawRepresentationFactory = _
                      => new Anthropic.Models.Beta.Messages.MessageCreateParams()
                      {
-                         Model = options.ModelId ?? (this._useReasoningModel ? s_config.ChatReasoningModelId : s_config.ChatModelId),
+                         Model = options.ModelId ?? (this._useReasoningModel ? reasoningModelName : chatModelName),
                          MaxTokens = options.MaxOutputTokens ?? 4096,
                          Messages = [],
                          Thinking = this._useReasoningModel
@@ -78,7 +77,7 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
                      => options.RawRepresentationFactory = _
                      => new Anthropic.Models.Messages.MessageCreateParams()
                      {
-                         Model = options.ModelId ?? (this._useReasoningModel ? s_config.ChatReasoningModelId : s_config.ChatModelId),
+                         Model = options.ModelId ?? (this._useReasoningModel ? reasoningModelName : chatModelName),
                          MaxTokens = options.MaxOutputTokens ?? 4096,
                          Messages = [],
                          Thinking = this._useReasoningModel
@@ -101,9 +100,25 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         // Chat Completion does not require/support deleting sessions, so this is a no-op.
         Task.CompletedTask;
 
-    public async Task InitializeAsync() =>
-        this._agent = await this.CreateChatClientAgentAsync();
+    public async ValueTask InitializeAsync()
+    {
+        try
+        {
+            _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey);
+            _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicChatModelName);
+            _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicReasoningModelName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Assert.Skip("Anthropic configuration could not be loaded. Error:" + ex.Message);
+        }
 
-    public Task DisposeAsync() =>
-        Task.CompletedTask;
+        this._agent = await this.CreateChatClientAgentAsync();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

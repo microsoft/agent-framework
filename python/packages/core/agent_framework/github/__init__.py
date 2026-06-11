@@ -1,5 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""GitHub integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-github-copilot``
+
+Supported classes:
+- GitHubCopilotAgent
+- GitHubCopilotOptions
+- GitHubCopilotSettings
+- RawGitHubCopilotAgent
+"""
+
 import importlib
 from typing import Any
 
@@ -7,7 +19,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "GitHubCopilotAgent": ("agent_framework_github_copilot", "agent-framework-github-copilot"),
     "GitHubCopilotOptions": ("agent_framework_github_copilot", "agent-framework-github-copilot"),
     "GitHubCopilotSettings": ("agent_framework_github_copilot", "agent-framework-github-copilot"),
-    "__version__": ("agent_framework_github_copilot", "agent-framework-github-copilot"),
+    "RawGitHubCopilotAgent": ("agent_framework_github_copilot", "agent-framework-github-copilot"),
 }
 
 

@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// Uses value-equatable types to support incremental generator caching.
 /// </summary>
 /// <remarks>
-/// Class-level validation (IsPartialClass, DerivesFromExecutor, HasManualConfigureRoutes)
+/// Class-level validation (IsPartialClass, DerivesFromExecutor, HasManualConfigureProtocol)
 /// is extracted here but validated once per class in CombineMethodResults to avoid
 /// redundant validation work when a class has multiple handlers.
 /// </remarks>
@@ -22,14 +22,14 @@ internal sealed record MethodAnalysisResult(
     string? GenericParameters,
     bool IsNested,
     string ContainingTypeChain,
-    bool BaseHasConfigureRoutes,
+    bool BaseHasConfigureProtocol,
     ImmutableEquatableArray<string> ClassSendTypes,
     ImmutableEquatableArray<string> ClassYieldTypes,
 
     // Class-level facts (used for validation in CombineMethodResults)
     bool IsPartialClass,
     bool DerivesFromExecutor,
-    bool HasManualConfigureRoutes,
+    bool HasManualConfigureProtocol,
 
     // Class location for diagnostics (value-equatable)
     DiagnosticLocationInfo? ClassLocation,

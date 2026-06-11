@@ -20,45 +20,54 @@ Key concepts:
 - These are complementary: sessions track conversation, checkpoints track workflow state
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured for AzureOpenAIResponsesClient
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 import asyncio
 import os
 
 from agent_framework import (
+    Agent,
     InMemoryCheckpointStorage,
+    InMemoryHistoryProvider,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def basic_checkpointing() -> None:
     """Demonstrate basic checkpoint storage with workflow-as-agent."""
+
     print("=" * 60)
     print("Basic Checkpointing with Workflow as Agent")
     print("=" * 60)
 
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    assistant = client.as_agent(
+    assistant = Agent(
+        client=client,
         name="assistant",
         instructions="You are a helpful assistant. Keep responses brief.",
     )
 
-    reviewer = client.as_agent(
+    reviewer = Agent(
+        client=client,
         name="reviewer",
         instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
     )
 
     workflow = SequentialBuilder(participants=[assistant, reviewer]).build()
-    agent = workflow.as_agent(name="CheckpointedAgent")
+    agent = workflow.as_agent()
 
     # Create checkpoint storage
     checkpoint_storage = InMemoryCheckpointStorage()
@@ -86,19 +95,20 @@ async def checkpointing_with_thread() -> None:
     print("Checkpointing with Thread Conversation History")
     print("=" * 60)
 
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    assistant = client.as_agent(
+    assistant = Agent(
+        client=client,
         name="memory_assistant",
         instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
     )
 
     workflow = SequentialBuilder(participants=[assistant]).build()
-    agent = workflow.as_agent(name="MemoryAgent")
+    agent = workflow.as_agent()
 
     # Create both session (for conversation) and checkpoint storage (for workflow state)
     session = agent.create_session()
@@ -122,7 +132,7 @@ async def checkpointing_with_thread() -> None:
     checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
     print(f"\nTotal checkpoints across both turns: {len(checkpoints)}")
 
-    memory_state = session.state.get("memory", {})
+    memory_state = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
     history = memory_state.get("messages", [])
     print(f"Messages in session history: {len(history)}")
 
@@ -133,19 +143,20 @@ async def streaming_with_checkpoints() -> None:
     print("Streaming with Checkpointing")
     print("=" * 60)
 
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    assistant = client.as_agent(
+    assistant = Agent(
+        client=client,
         name="streaming_assistant",
         instructions="You are a helpful assistant.",
     )
 
     workflow = SequentialBuilder(participants=[assistant]).build()
-    agent = workflow.as_agent(name="StreamingCheckpointAgent")
+    agent = workflow.as_agent()
 
     checkpoint_storage = InMemoryCheckpointStorage()
 

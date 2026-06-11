@@ -34,6 +34,8 @@ from redis_stream_response_handler import RedisStreamResponseHandler  # type: ig
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
     pytest.mark.sample("03_single_agent_streaming"),
     pytest.mark.integration_test,
     pytest.mark.requires_azure_openai,

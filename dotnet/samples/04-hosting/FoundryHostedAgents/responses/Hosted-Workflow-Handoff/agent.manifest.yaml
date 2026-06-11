@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: triage-workflow
+displayName: "Triage Handoff Workflow Agent"
+
+description: >
+  A hosted agent demonstrating two patterns in a single server: a tool-equipped agent
+  with local tools and remote MCP tools, and a triage workflow that routes conversations
+  to specialist agents (code expert or creative writer) via handoff orchestration.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Workflows
+    - Handoff
+    - Agent Framework
+
+template:
+  name: triage-workflow
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+parameters:
+  properties: []
+resources: []

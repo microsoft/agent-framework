@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -60,6 +61,7 @@ public class AgentResponse
 
         this.AdditionalProperties = response.AdditionalProperties;
         this.CreatedAt = response.CreatedAt;
+        this.FinishReason = response.FinishReason;
         this.Messages = response.Messages;
         this.RawRepresentation = response;
         this.ResponseId = response.ResponseId;
@@ -83,6 +85,7 @@ public class AgentResponse
 
         this.AdditionalProperties = response.AdditionalProperties;
         this.CreatedAt = response.CreatedAt;
+        this.FinishReason = response.FinishReason;
         this.Messages = response.Messages;
         this.RawRepresentation = response;
         this.ResponseId = response.ResponseId;
@@ -173,6 +176,7 @@ public class AgentResponse
     /// to poll for completion.
     /// </para>
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
     public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <summary>
@@ -187,6 +191,21 @@ public class AgentResponse
     /// the chronology of agentic interactions.
     /// </remarks>
     public DateTimeOffset? CreatedAt { get; set; }
+
+    /// <summary>
+    /// Gets or sets the reason for the agent response finishing.
+    /// </summary>
+    /// <value>
+    /// A <see cref="ChatFinishReason"/> value indicating why the response finished (e.g., stop, length, content filter, tool calls),
+    /// or <see langword="null"/> if the finish reason is not available.
+    /// </value>
+    /// <remarks>
+    /// <para>
+    /// This property is particularly useful for detecting non-normal completions, such as content filtering
+    /// or token limit truncation, which may require special handling by the caller.
+    /// </para>
+    /// </remarks>
+    public ChatFinishReason? FinishReason { get; set; }
 
     /// <summary>
     /// Gets or sets the resource usage information for generating this response.
@@ -274,10 +293,11 @@ public class AgentResponse
                 RawRepresentation = message.RawRepresentation,
                 Role = message.Role,
 
+                FinishReason = this.FinishReason,
                 AgentId = this.AgentId,
                 ResponseId = this.ResponseId,
                 MessageId = message.MessageId,
-                CreatedAt = this.CreatedAt,
+                CreatedAt = message.CreatedAt ?? this.CreatedAt,
             };
         }
 

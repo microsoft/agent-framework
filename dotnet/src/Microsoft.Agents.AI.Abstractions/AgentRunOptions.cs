@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -50,6 +52,7 @@ public class AgentRunOptions
     /// can be polled for completion by obtaining the token from the <see cref="AgentResponse.ContinuationToken"/> property
     /// and passing it via this property on subsequent calls to <see cref="AIAgent.RunAsync(AgentSession?, AgentRunOptions?, System.Threading.CancellationToken)"/>.
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
     public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <summary>

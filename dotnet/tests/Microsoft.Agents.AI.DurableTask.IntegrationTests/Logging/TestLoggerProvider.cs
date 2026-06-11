@@ -2,7 +2,6 @@
 
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests.Logging;
 

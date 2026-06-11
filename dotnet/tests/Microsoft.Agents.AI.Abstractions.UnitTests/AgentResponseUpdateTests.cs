@@ -24,6 +24,7 @@ public class AgentResponseUpdateTests
         Assert.Null(update.CreatedAt);
         Assert.Equal(string.Empty, update.ToString());
         Assert.Null(update.ContinuationToken);
+        Assert.Null(update.FinishReason);
     }
 
     [Fact]
@@ -50,6 +51,7 @@ public class AgentResponseUpdateTests
         Assert.Equal(chatResponseUpdate.AuthorName, response.AuthorName);
         Assert.Same(chatResponseUpdate.Contents, response.Contents);
         Assert.Equal(chatResponseUpdate.CreatedAt, response.CreatedAt);
+        Assert.Equal(chatResponseUpdate.FinishReason, response.FinishReason);
         Assert.Equal(chatResponseUpdate.MessageId, response.MessageId);
         Assert.Same(chatResponseUpdate, response.RawRepresentation as ChatResponseUpdate);
         Assert.Equal(chatResponseUpdate.ResponseId, response.ResponseId);
@@ -109,6 +111,10 @@ public class AgentResponseUpdateTests
         Assert.Null(update.ContinuationToken);
         update.ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
         Assert.Equivalent(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }), update.ContinuationToken);
+
+        Assert.Null(update.FinishReason);
+        update.FinishReason = ChatFinishReason.ToolCalls;
+        Assert.Equal(ChatFinishReason.ToolCalls, update.FinishReason);
     }
 
     [Fact]

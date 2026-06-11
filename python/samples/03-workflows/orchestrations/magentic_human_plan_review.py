@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterable
 from typing import cast
 
@@ -11,8 +12,13 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import MagenticBuilder, MagenticPlanReviewRequest, MagenticPlanReviewResponse
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Magentic Orchestration with Human Plan Review
@@ -31,7 +37,9 @@ Plan review options:
 - revise(feedback): Provide textual feedback to modify the plan
 
 Prerequisites:
-- OpenAI credentials configured for `OpenAIChatClient`.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 # Keep track of the last response to format output nicely in streaming mode
@@ -47,7 +55,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
         if event.type == "request_info" and event.request_type is MagenticPlanReviewRequest:
             requests[event.request_id] = cast(MagenticPlanReviewRequest, event.data)
 
-        if event.type == "output":
+        if event.type in ("intermediate", "output"):
             data = event.data
             if isinstance(data, AgentResponseUpdate):
                 rid = data.response_id
@@ -92,36 +100,43 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
+
     researcher_agent = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions="You are a Researcher. You find information and gather facts.",
-        client=OpenAIChatClient(model_id="gpt-4o"),
+        client=client,
     )
 
     analyst_agent = Agent(
         name="AnalystAgent",
         description="Data analyst who processes and summarizes research findings",
         instructions="You are an Analyst. You analyze findings and create summaries.",
-        client=OpenAIChatClient(model_id="gpt-4o"),
+        client=client,
     )
 
     manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the workflow",
         instructions="You coordinate a team to complete tasks efficiently.",
-        client=OpenAIChatClient(model_id="gpt-4o"),
+        client=client,
     )
 
     print("\nBuilding Magentic Workflow with Human Plan Review...")
 
-    # enable_plan_review=True: Request human input for plan review
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # enable_plan_review=True: Request human input for plan review.
+    # Mark participant responses as intermediate so the stream shows the
+    # conversation as it unfolds while the manager's final answer remains the
+    # terminal workflow output.
     workflow = MagenticBuilder(
         participants=[researcher_agent, analyst_agent],
         enable_plan_review=True,
-        intermediate_outputs=True,
+        intermediate_output_from=[researcher_agent, analyst_agent],
         manager_agent=manager_agent,
         max_round_count=10,
         max_stall_count=1,

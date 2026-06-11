@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import sys
 import traceback as _traceback
+import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -106,8 +107,9 @@ WorkflowEventType = Literal[
     "status",  # Workflow state changed (use .state)
     "failed",  # Workflow terminated with error (use .details)
     # Data events
-    "output",  # Executor yielded final output (use .executor_id, .data)
-    "data",  # Executor emitted data during execution (use .executor_id, .data)
+    "output",  # Executor yielded final terminal output (use .executor_id, .data)
+    "intermediate",  # Executor emitted intermediate (non-terminal) output (use .executor_id, .data)
+    "data",  # DEPRECATED — compatibility alias for intermediate emissions; use type='intermediate' instead.
     # Request events (human-in-the-loop)
     "request_info",  # Executor requests external info (use .request_id, .source_executor_id)
     # Diagnostic events (warnings/errors from user code)
@@ -120,11 +122,25 @@ WorkflowEventType = Literal[
     "executor_invoked",  # Executor handler was called (use .executor_id, .data)
     "executor_completed",  # Executor handler completed (use .executor_id, .data)
     "executor_failed",  # Executor handler raised error (use .executor_id, .details)
+    "executor_bypassed",  # Executor skipped via cache hit during replay (use .executor_id, .data)
     # Orchestration event types (use .data for typed payload)
-    "group_chat",  # Group chat orchestrator events (use .data as GroupChatRequestSentEvent | GroupChatResponseReceivedEvent)  # noqa: E501
+    "group_chat",  # Group chat orchestrator events (use .data as GroupChatRequestSentEvent | GroupChatResponseReceivedEvent) # noqa: E501
     "handoff_sent",  # Handoff routing events (use .data as HandoffSentEvent)
     "magentic_orchestrator",  # Magentic orchestrator events (use .data as MagenticOrchestratorEvent)
 ]
+
+
+# Event types forwarded across the ``workflow.as_agent()`` boundary. Anything not
+# in this set — lifecycle events, diagnostics, executor bookkeeping, and
+# orchestration-internal events (``group_chat``, ``handoff_sent``,
+# ``magentic_orchestrator``) — stays inside the workflow and is not surfaced to
+# agent callers. Internal to the ``_workflows`` package.
+AGENT_FORWARDED_EVENT_TYPES: frozenset[str] = frozenset({
+    "output",
+    "intermediate",
+    "data",  # deprecated alias for intermediate; retained for backward compat
+    "request_info",
+})
 
 
 class WorkflowEvent(Generic[DataT]):
@@ -133,21 +149,22 @@ class WorkflowEvent(Generic[DataT]):
     This single generic class handles all workflow events through a `type` discriminator,
     following the same pattern as the `Content` class.
 
-    Use factory methods for convenient construction:
+    Use factory methods for convenient construction of lifecycle, diagnostic, request,
+    and executor bookkeeping events. Workflow ``output`` and ``intermediate`` events
+    are emitted by ``ctx.yield_output(...)`` based on workflow output selection.
 
     - `WorkflowEvent.started()` - workflow run began
     - `WorkflowEvent.status(state)` - workflow state changed
     - `WorkflowEvent.failed(details)` - workflow terminated with error
     - `WorkflowEvent.warning(message)` - warning from user code
     - `WorkflowEvent.error(exception)` - error from user code
-    - `WorkflowEvent.output(executor_id, data)` - executor yielded final output
-    - `WorkflowEvent.data(executor_id, data)` - executor emitted data (e.g., AgentResponse)
     - `WorkflowEvent.request_info(...)` - executor requests external info
     - `WorkflowEvent.superstep_started(iteration)` - superstep began
     - `WorkflowEvent.superstep_completed(iteration)` - superstep ended
     - `WorkflowEvent.executor_invoked(executor_id)` - executor handler called
     - `WorkflowEvent.executor_completed(executor_id)` - executor handler completed
     - `WorkflowEvent.executor_failed(executor_id, details)` - executor handler failed
+    - `WorkflowEvent.executor_bypassed(executor_id)` - executor skipped via cache hit
 
     The generic parameter DataT represents the type of the event's data payload:
     - Lifecycle events: `WorkflowEvent[None]` (data is None)
@@ -156,14 +173,13 @@ class WorkflowEvent(Generic[DataT]):
     Examples:
         .. code-block:: python
 
-            # Create events via factory methods
+            # Create lifecycle events via factory methods
             started = WorkflowEvent.started()
             status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
-            output = WorkflowEvent.output("agent1", result_data)
 
-            # Emit typed data from executor
-            event: WorkflowEvent[AgentResponse] = WorkflowEvent.data("agent1", response)
-            data: AgentResponse = event.data  # Type-safe access
+            # Type-safe access to event data
+            event: WorkflowEvent[AgentResponse] = WorkflowEvent("data", executor_id="agent1", data=response)
+            data: AgentResponse = event.data
 
             # Check event type
             if event.type == "status":
@@ -262,17 +278,19 @@ class WorkflowEvent(Generic[DataT]):
         return WorkflowEvent("error", data=exception)
 
     @classmethod
-    def output(cls, executor_id: str, data: DataT) -> WorkflowEvent[DataT]:
-        """Create an 'output' event when an executor yields final output."""
-        return cls("output", executor_id=executor_id, data=data)
-
-    @classmethod
     def emit(cls, executor_id: str, data: DataT) -> WorkflowEvent[DataT]:
-        """Create a 'data' event when an executor emits data during execution.
+        """Create a 'data' event (deprecated alias for intermediate emissions).
 
-        This is the primary method for executors to emit typed data
-        (e.g., AgentResponse, AgentResponseUpdate, custom data).
+        .. deprecated::
+            Use ``ctx.yield_output(...)`` and configure ``intermediate_output_from`` instead.
+            Will be removed in a future major release along with the ``type='data'`` event variant.
         """
+        warnings.warn(
+            "WorkflowEvent.emit() / type='data' are deprecated; use ctx.yield_output() from an "
+            "intermediate-designated executor. Will be removed in a future major release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return cls("data", executor_id=executor_id, data=data)
 
     @classmethod
@@ -317,6 +335,11 @@ class WorkflowEvent(Generic[DataT]):
     def executor_failed(cls, executor_id: str, details: WorkflowErrorDetails) -> WorkflowEvent[WorkflowErrorDetails]:
         """Create an 'executor_failed' event when an executor handler raises an error."""
         return WorkflowEvent("executor_failed", executor_id=executor_id, data=details, details=details)
+
+    @classmethod
+    def executor_bypassed(cls, executor_id: str, data: DataT | None = None) -> WorkflowEvent[DataT]:
+        """Create an 'executor_bypassed' event when a step is skipped via cache hit during replay."""
+        return cls("executor_bypassed", executor_id=executor_id, data=data)
 
     # ==========================================================================
     # Property for type-safe access

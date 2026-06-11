@@ -5,12 +5,18 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentContext,
+    InMemoryHistoryProvider,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Thread Behavior MiddlewareTypes Example
@@ -31,7 +37,9 @@ Key behaviors demonstrated:
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -50,7 +58,7 @@ async def thread_tracking_middleware(
     """MiddlewareTypes that tracks and logs session behavior across runs."""
     session_message_count = 0
     if context.session:
-        memory_state = context.session.state.get("memory", {})
+        memory_state = context.session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
         session_message_count = len(memory_state.get("messages", []))
 
     print(f"[MiddlewareTypes pre-execution] Current input messages: {len(context.messages)}")
@@ -62,7 +70,7 @@ async def thread_tracking_middleware(
     # Check session state after agent execution
     updated_session_message_count = 0
     if context.session:
-        memory_state = context.session.state.get("memory", {})
+        memory_state = context.session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
         updated_session_message_count = len(memory_state.get("messages", []))
 
     print(f"[MiddlewareTypes post-execution] Updated session messages: {updated_session_message_count}")
@@ -74,7 +82,8 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    agent = Agent(
+        client=FoundryChatClient(credential=AzureCliCredential()),
         name="WeatherAgent",
         instructions="You are a helpful weather assistant.",
         tools=get_weather,

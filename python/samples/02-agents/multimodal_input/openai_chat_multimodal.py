@@ -6,9 +6,20 @@ import struct
 from pathlib import Path
 
 from agent_framework import Content, Message
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "shared" / "sample_assets"
+
+"""
+Leverage multimodel capabilities of different models.
+
+Uses the OpenAIChatClient and OpenAIChatCompletionClient to demonstrate multimodal input handling with the gpt-4o and gpt-4o-audio-preview models, respectively. The sample includes demonstrations for image, audio, and PDF inputs, showcasing how to create appropriate Content objects and send them in messages to the chat clients.
+
+"""
 
 
 def load_sample_pdf() -> bytes:
@@ -19,7 +30,7 @@ def load_sample_pdf() -> bytes:
 
 def create_sample_image() -> str:
     """Create a simple 1x1 pixel PNG image for testing."""
-    # This is a tiny red pixel in PNG format
+    # This is a tiny yellow pixel in PNG format
     png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
     return f"data:image/png;base64,{png_data}"
 
@@ -42,7 +53,7 @@ def create_sample_audio() -> str:
 
 async def test_image() -> None:
     """Test image analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o")
+    client = OpenAIChatClient(model="gpt-4o")
 
     image_uri = create_sample_image()
     message = Message(
@@ -53,13 +64,13 @@ async def test_image() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Image Response: {response}")
 
 
 async def test_audio() -> None:
     """Test audio analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o-audio-preview")
+    client = OpenAIChatCompletionClient(model="gpt-4o-audio-preview-2025-06-03")
 
     audio_uri = create_sample_audio()
     message = Message(
@@ -70,13 +81,13 @@ async def test_audio() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Audio Response: {response}")
 
 
 async def test_pdf() -> None:
     """Test PDF document analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o")
+    client = OpenAIChatClient(model="gpt-4o")
 
     pdf_bytes = load_sample_pdf()
     message = Message(
@@ -89,7 +100,7 @@ async def test_pdf() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"PDF Response: {response}")
 
 

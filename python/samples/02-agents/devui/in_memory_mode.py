@@ -10,15 +10,27 @@ import logging
 import os
 from typing import Annotated
 
-from agent_framework import Agent, Executor, WorkflowBuilder, WorkflowContext, handler, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import (
+    Agent,
+    Executor,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
+    tool,
+)
 from agent_framework.devui import serve
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from typing_extensions import Never
 
+# Load environment variables from .env file
+load_dotenv()
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
-@tool(approval_mode="never_require")
-# Tool functions for the agent
+
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
@@ -68,15 +80,14 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Create Azure OpenAI chat client
-    client = AzureOpenAIChatClient(
-        api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-        azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-        model_id=os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "gpt-4o"),
+    client = FoundryChatClient(
+        model=os.environ["FOUNDRY_MODEL"],
+        project_endpoint=os.environ.get("FOUNDRY_PROJECT_ENDPOINT"),
+        credential=AzureCliCredential(),
     )
 
     # Create agents
-    weather_agent = Agent(
+    weather_assistant = Agent(
         name="weather-assistant",
         description="Provides weather information and time",
         instructions=(
@@ -109,7 +120,7 @@ def main():
     )
 
     # Collect entities for serving
-    entities = [weather_agent, simple_agent, basic_workflow]
+    entities = [weather_assistant, simple_agent, basic_workflow]
 
     logger.info("Starting DevUI on http://localhost:8090")
     logger.info("Entities available:")

@@ -52,7 +52,7 @@ internal class A2AContinuationToken : ResponseContinuationToken
             {
                 case "taskId":
                     reader.Read();
-                    taskId = reader.GetString()!;
+                    taskId = reader.GetString() ?? throw new JsonException("The 'taskId' property must contain a non-null string value.");
                     break;
                 default:
                     throw new JsonException($"Unrecognized property '{propertyName}'.");

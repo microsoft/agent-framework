@@ -19,6 +19,8 @@ from agent_framework_durabletask import THREAD_ID_HEADER
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
     pytest.mark.sample("01_single_agent"),
     pytest.mark.usefixtures("function_app_for_test"),
 ]

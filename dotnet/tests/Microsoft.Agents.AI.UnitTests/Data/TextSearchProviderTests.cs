@@ -39,17 +39,18 @@ public sealed class TextSearchProviderTests
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new TextSearchProvider((_, _) => Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]));
 
         // Assert
-        Assert.Equal("TextSearchProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("TextSearchProvider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new TextSearchProvider(
@@ -57,7 +58,8 @@ public sealed class TextSearchProviderTests
             new TextSearchProviderOptions { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Theory]
@@ -83,7 +85,8 @@ public sealed class TextSearchProviderTests
         {
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             ContextPrompt = overrideContextPrompt,
-            CitationsPrompt = overrideCitationsPrompt
+            CitationsPrompt = overrideCitationsPrompt,
+            EnableSensitiveTelemetryData = true
         };
         var provider = new TextSearchProvider(SearchDelegateAsync, options, withLogging ? this._loggerFactoryMock.Object : null);
 
@@ -159,6 +162,65 @@ public sealed class TextSearchProviderTests
                     It.IsAny<Exception?>(),
                     It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
                 Times.AtLeastOnce);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task InvokingAsync_RedactsLogDataBasedOnOptionsAsync(bool enableSensitiveTelemetryData, bool useCustomRedactor)
+    {
+        // Arrange
+        List<TextSearchProvider.TextSearchResult> results =
+        [
+            new() { SourceName = "Doc1", SourceLink = "http://example.com/doc1", Text = "Content of Doc1" }
+        ];
+
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        {
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
+        }
+
+        var options = new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
+            EnableSensitiveTelemetryData = enableSensitiveTelemetryData,
+            Redactor = useCustomRedactor ? new ReplacingRedactor("***") : null
+        };
+        var provider = new TextSearchProvider(SearchDelegateAsync, options, this._loggerFactoryMock.Object);
+
+        var invokingContext = new AIContextProvider.InvokingContext(
+            s_mockAgent,
+            new TestAgentSession(),
+            new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Sample user question?") } });
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — EnableSensitiveTelemetryData takes precedence over Redactor
+        var traceInvocation = this._loggerMock.Invocations
+            .Where(i => i.Method.Name == nameof(ILogger.Log))
+            .FirstOrDefault(i => (LogLevel)i.Arguments[0]! == LogLevel.Trace);
+        Assert.NotNull(traceInvocation);
+
+        var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(traceInvocation.Arguments[2], exactMatch: false);
+        var inputValue = state.First(kvp => kvp.Key == "Input").Value;
+        var messageTextValue = state.First(kvp => kvp.Key == "MessageText").Value;
+
+        if (enableSensitiveTelemetryData)
+        {
+            // EnableSensitiveTelemetryData=true: raw data passes through regardless of Redactor
+            Assert.Equal("Sample user question?", inputValue);
+            Assert.Contains("Content of Doc1", messageTextValue?.ToString()!);
+        }
+        else
+        {
+            // EnableSensitiveTelemetryData=false: custom redactor or default placeholder
+            string expectedRedaction = useCustomRedactor ? "***" : "<redacted>";
+            Assert.Equal(expectedRedaction, inputValue);
+            Assert.Equal(expectedRedaction, messageTextValue);
         }
     }
 
@@ -467,7 +529,7 @@ public sealed class TextSearchProviderTests
         {
             RecentMessageMemoryLimit = 10,
             RecentMessageRolesIncluded = [ChatRole.User, ChatRole.System],
-            StorageInputMessageFilter = messages => messages // No filtering - store everything
+            StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
         };
         string? capturedInput = null;
         Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
@@ -743,7 +805,7 @@ public sealed class TextSearchProviderTests
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 4
         });
-        await newProvider.InvokingAsync(new(s_mockAgent, restoredSession, new AIContext()), CancellationToken.None); // Trigger search to read memory.
+        await newProvider.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, restoredSession, new AIContext()), CancellationToken.None); // Trigger search to read memory.
 
         // Assert
         Assert.NotNull(capturedInput);
@@ -769,11 +831,106 @@ public sealed class TextSearchProviderTests
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 3
         });
-        await provider.InvokingAsync(new(s_mockAgent, session, new AIContext()), CancellationToken.None);
+        await provider.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, session, new AIContext()), CancellationToken.None);
 
         // Assert
         Assert.NotNull(capturedInput);
         Assert.Equal(string.Empty, capturedInput); // No recent messages in StateBag => empty input.
+    }
+
+    #endregion
+
+    #region MessageAIContextProvider.InvokingAsync Tests
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_SearchesAndReturnsMergedMessagesAsync()
+    {
+        // Arrange
+        List<TextSearchProvider.TextSearchResult> results =
+        [
+            new() { SourceName = "Doc1", Text = "Content of Doc1" }
+        ];
+
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+            => Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
+
+        var provider = new TextSearchProvider(SearchDelegateAsync, new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke
+        });
+
+        var inputMsg = new ChatMessage(ChatRole.User, "Question?");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [inputMsg]);
+
+        // Act
+        var messages = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert - input message + search result message, with stamping
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("Question?", messages[0].Text);
+        Assert.Contains("Content of Doc1", messages[1].Text);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, messages[1].GetAgentRequestMessageSourceType());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_OnDemand_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling,
+        });
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Q?")]);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.InvokingAsync(context).AsTask());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_NoResults_ReturnsOnlyInputMessagesAsync()
+    {
+        // Arrange
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke
+        });
+        var inputMsg = new ChatMessage(ChatRole.User, "Hello");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [inputMsg]);
+
+        // Act
+        var messages = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert
+        Assert.Single(messages);
+        Assert.Equal("Hello", messages[0].Text);
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_DefaultFilter_ExcludesNonExternalMessagesAsync()
+    {
+        // Arrange
+        string? capturedInput = null;
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        {
+            capturedInput = input;
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
+        }
+
+        var provider = new TextSearchProvider(SearchDelegateAsync, new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke
+        });
+
+        var externalMsg = new ChatMessage(ChatRole.User, "External message");
+        var historyMsg = new ChatMessage(ChatRole.System, "From history")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "src");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [externalMsg, historyMsg]);
+
+        // Act
+        await provider.InvokingAsync(context);
+
+        // Assert - Only External message used for search query
+        Assert.Equal("External message", capturedInput);
     }
 
     #endregion

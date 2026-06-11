@@ -3,7 +3,9 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
@@ -65,7 +67,7 @@ internal sealed class EdgeMap
         this._stepTracer = stepTracer;
     }
 
-    public ValueTask<DeliveryMapping?> PrepareDeliveryForEdgeAsync(Edge edge, MessageEnvelope message)
+    public ValueTask<DeliveryMapping?> PrepareDeliveryForEdgeAsync(Edge edge, MessageEnvelope message, CancellationToken cancellationToken = default)
     {
         EdgeId id = edge.Data.Id;
         if (!this._edgeRunners.TryGetValue(id, out EdgeRunner? edgeRunner))
@@ -73,25 +75,37 @@ internal sealed class EdgeMap
             throw new InvalidOperationException($"Edge {edge} not found in the edge map.");
         }
 
-        return edgeRunner.ChaseEdgeAsync(message, this._stepTracer);
+        return edgeRunner.ChaseEdgeAsync(message, this._stepTracer, cancellationToken);
     }
 
     public bool TryRegisterPort(IRunnerContext runContext, string executorId, RequestPort port)
         => this._portEdgeRunners.TryAdd(port.Id, ResponseEdgeRunner.ForPort(runContext, executorId, port));
 
-    public ValueTask<DeliveryMapping?> PrepareDeliveryForInputAsync(MessageEnvelope message)
+    public ValueTask<DeliveryMapping?> PrepareDeliveryForInputAsync(MessageEnvelope message, CancellationToken cancellationToken = default)
     {
-        return this._inputRunner.ChaseEdgeAsync(message, this._stepTracer);
+        return this._inputRunner.ChaseEdgeAsync(message, this._stepTracer, cancellationToken);
     }
 
-    public ValueTask<DeliveryMapping?> PrepareDeliveryForResponseAsync(ExternalResponse response)
+    public ValueTask<DeliveryMapping?> PrepareDeliveryForResponseAsync(ExternalResponse response, CancellationToken cancellationToken = default)
     {
         if (!this._portEdgeRunners.TryGetValue(response.PortInfo.PortId, out ResponseEdgeRunner? portRunner))
         {
             throw new InvalidOperationException($"Port {response.PortInfo.PortId} not found in the edge map.");
         }
 
-        return portRunner.ChaseEdgeAsync(new MessageEnvelope(response, ExecutorIdentity.None), this._stepTracer);
+        return portRunner.ChaseEdgeAsync(new MessageEnvelope(response, ExecutorIdentity.None), this._stepTracer, cancellationToken);
+    }
+
+    internal bool TryGetResponsePortExecutorId(string portId, [NotNullWhen(true)] out string? executorId)
+    {
+        if (this._portEdgeRunners.TryGetValue(portId, out ResponseEdgeRunner? portRunner))
+        {
+            executorId = portRunner.ExecutorId;
+            return true;
+        }
+
+        executorId = null;
+        return false;
     }
 
     internal async ValueTask<Dictionary<EdgeId, PortableValue>> ExportStateAsync()

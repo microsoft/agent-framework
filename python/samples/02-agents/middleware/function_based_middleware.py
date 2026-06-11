@@ -7,13 +7,18 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentContext,
     FunctionInvocationContext,
     tool,
 )
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Function-based MiddlewareTypes Example
@@ -31,7 +36,9 @@ can be implemented as async functions that accept context and call_next paramete
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -86,7 +93,8 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,

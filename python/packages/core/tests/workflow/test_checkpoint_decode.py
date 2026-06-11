@@ -6,9 +6,9 @@ from typing import Any, cast
 
 import pytest
 
+from agent_framework import WorkflowCheckpointException
 from agent_framework._workflows._checkpoint_encoding import (
     _TYPE_MARKER,  # type: ignore
-    CheckpointDecodingError,
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
@@ -178,13 +178,13 @@ def test_decode_plain_list() -> None:
 
 
 def test_decode_raises_on_type_mismatch() -> None:
-    """Test that decoding raises CheckpointDecodingError when type doesn't match."""
+    """Test that decoding raises WorkflowCheckpointException when type doesn't match."""
     # Encode a SampleRequest but tamper with the type marker
     encoded = encode_checkpoint_value(SampleRequest(request_id="r1", prompt="p1"))
     assert isinstance(encoded, dict)
     encoded[_TYPE_MARKER] = "nonexistent.module:FakeClass"
 
-    with pytest.raises(CheckpointDecodingError, match="Type mismatch"):
+    with pytest.raises(WorkflowCheckpointException, match="Type mismatch"):
         decode_checkpoint_value(encoded)
 
 

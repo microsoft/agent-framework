@@ -14,10 +14,10 @@ In a production scenario, you would integrate with a real UI or chat interface.
 
 import asyncio
 from pathlib import Path
+from typing import cast
 
 from agent_framework import Workflow
 from agent_framework.declarative import ExternalInputRequest, WorkflowFactory
-from agent_framework_declarative._workflows._handlers import TextOutputEvent
 
 
 async def run_with_streaming(workflow: Workflow) -> None:
@@ -29,29 +29,20 @@ async def run_with_streaming(workflow: Workflow) -> None:
         # WorkflowOutputEvent wraps the actual output data
         if event.type == "output":
             data = event.data
-            if isinstance(data, TextOutputEvent):
-                print(f"[Bot]: {data.text}")
-            elif isinstance(data, ExternalInputRequest):
-                # In a real scenario, you would:
-                # 1. Display the prompt to the user
-                # 2. Wait for their response
-                # 3. Use the response to continue the workflow
-                output_property = data.metadata.get("output_property", "unknown")
-                print(f"[System] Input requested for: {output_property}")
-                if data.message:
-                    print(f"[System] Prompt: {data.message}")
+            if isinstance(data, str):
+                print(f"[Bot]: {data}")
             else:
                 print(f"[Output]: {data}")
-
-
-async def run_with_result(workflow: Workflow) -> None:
-    """Demonstrate batch workflow execution with run()."""
-    print("\n=== Batch Execution (run) ===")
-    print("-" * 40)
-
-    result = await workflow.run({})
-    for output in result.get_outputs():
-        print(f"  Output: {output}")
+        elif event.type == "request_info":
+            request = cast(ExternalInputRequest, event.data)
+            # In a real scenario, you would:
+            # 1. Display the prompt to the user
+            # 2. Wait for their response
+            # 3. Use the response to continue the workflow
+            output_property = request.metadata.get("output_property", "unknown")
+            print(f"[System] Input requested for: {output_property}")
+            if request.message:
+                print(f"[System] Prompt: {request.message}")
 
 
 async def main() -> None:
@@ -69,9 +60,6 @@ async def main() -> None:
 
     # Demonstrate streaming execution
     await run_with_streaming(workflow)
-
-    # Demonstrate batch execution
-    # await run_with_result(workflow)
 
     print("\n" + "-" * 40)
     print("=== Workflow Complete ===")

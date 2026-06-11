@@ -1,14 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Worker process for hosting multiple agents with different tools using Durable Task.
+"""Worker process for hosting multiple Azure OpenAI agents with different tools using Durable Task.
 
 This worker registers two agents - a weather assistant and a math assistant - each
 with their own specialized tools. This demonstrates how to host multiple agents
 with different capabilities in a single worker process.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
 
@@ -17,10 +17,16 @@ import logging
 import os
 from typing import Any
 
-from agent_framework import tool
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
-from azure.identity import AzureCliCredential, DefaultAzureCredential
+from agent_framework import Agent, tool
+from agent_framework.azure import DurableAIAgentWorker
+from agent_framework.openai import OpenAIChatCompletionClient
+from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -67,7 +73,10 @@ def create_weather_agent():
     Returns:
         Agent: The configured Weather agent with weather tool
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return Agent(
+        client=OpenAIChatCompletionClient(
+            credential=AsyncAzureCliCredential(),
+        ),
         name=WEATHER_AGENT_NAME,
         instructions="You are a helpful weather assistant. Provide current weather information.",
         tools=[get_weather],
@@ -80,7 +89,10 @@ def create_math_agent():
     Returns:
         Agent: The configured Math agent with calculation tools
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return Agent(
+        client=OpenAIChatCompletionClient(
+            credential=AsyncAzureCliCredential(),
+        ),
         name=MATH_AGENT_NAME,
         instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
         tools=[calculate_tip],
@@ -106,7 +118,7 @@ def get_worker(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,

@@ -2,7 +2,6 @@
 
 using Azure;
 using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI.DurableTask.IntegrationTests.Logging;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
@@ -14,7 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenAI.Chat;
-using Xunit.Abstractions;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
@@ -157,16 +156,16 @@ internal sealed class TestHelper : IDisposable
     {
         string azureOpenAiEndpoint = configuration["AZURE_OPENAI_ENDPOINT"] ??
             throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string azureOpenAiDeploymentName = configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
-            throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
+        string azureOpenAiDeploymentName = configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT_NAME env variable is not set.");
 
-        // Check if AZURE_OPENAI_KEY is provided for key-based authentication.
+        // Check if AZURE_OPENAI_API_KEY is provided for key-based authentication.
         // NOTE: This is not used for automated tests, but can be useful for local development.
-        string? azureOpenAiKey = configuration["AZURE_OPENAI_KEY"];
+        string? azureOpenAiKey = configuration["AZURE_OPENAI_API_KEY"];
 
         AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
             ? new AzureOpenAIClient(new Uri(azureOpenAiEndpoint), new AzureKeyCredential(azureOpenAiKey))
-            : new AzureOpenAIClient(new Uri(azureOpenAiEndpoint), new AzureCliCredential());
+            : new AzureOpenAIClient(new Uri(azureOpenAiEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
 
         return client.GetChatClient(azureOpenAiDeploymentName);
     }

@@ -12,14 +12,26 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal record AIAgentHostState(JsonElement? ThreadState, bool? CurrentTurnEmitEvents);
 
-internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
+internal static class TurnExtensions
+{
+    public static bool ShouldEmitStreamingEvents(this TurnToken token, bool? agentSetting)
+        => token.EmitEvents ?? agentSetting ?? false;
+
+    public static bool ShouldEmitStreamingEvents(bool? turnTokenSetting, bool? agentSetting)
+        => turnTokenSetting ?? agentSetting ?? false;
+
+    public static bool ShouldEmitStreamingEvents(this HandoffState handoffState, bool? agentSetting)
+        => handoffState.TurnToken.ShouldEmitStreamingEvents(agentSetting);
+}
+
+internal class AIAgentHostExecutor : ChatProtocolExecutor
 {
     private readonly AIAgent _agent;
     private readonly AIAgentHostOptions _options;
     private AgentSession? _session;
     private bool? _currentTurnEmitEvents;
 
-    private AIContentExternalHandler<UserInputRequestContent, UserInputResponseContent>? _userInputHandler;
+    private AIContentExternalHandler<ToolApprovalRequestContent, ToolApprovalResponseContent>? _userInputHandler;
     private AIContentExternalHandler<FunctionCallContent, FunctionResultContent>? _functionCallHandler;
 
     private static readonly ChatProtocolExecutorOptions s_defaultChatProtocolOptions = new()
@@ -28,7 +40,9 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         StringMessageChatRole = ChatRole.User
     };
 
-    public AIAgentHostExecutor(AIAgent agent, AIAgentHostOptions options) : base(id: agent.GetDescriptiveId(),
+    public static string IdFor(AIAgent agent) => agent.GetDescriptiveId();
+
+    public AIAgentHostExecutor(AIAgent agent, AIAgentHostOptions options) : base(id: IdFor(agent),
                                                                                  s_defaultChatProtocolOptions,
                                                                                  declareCrossRunShareable: false) // Explicitly false, because we maintain turn state on the instance
     {
@@ -36,43 +50,60 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         this._options = options;
     }
 
-    private RouteBuilder ConfigureUserInputRoutes(RouteBuilder routeBuilder)
+    private ProtocolBuilder ConfigureUserInputHandling(ProtocolBuilder protocolBuilder)
     {
-        this._userInputHandler = new AIContentExternalHandler<UserInputRequestContent, UserInputResponseContent>(
-            ref routeBuilder,
+        this._userInputHandler = new AIContentExternalHandler<ToolApprovalRequestContent, ToolApprovalResponseContent>(
+            ref protocolBuilder,
             portId: $"{this.Id}_UserInput",
             intercepted: this._options.InterceptUserInputRequests,
             handler: this.HandleUserInputResponseAsync);
 
         this._functionCallHandler = new AIContentExternalHandler<FunctionCallContent, FunctionResultContent>(
-            ref routeBuilder,
+            ref protocolBuilder,
             portId: $"{this.Id}_FunctionCall",
             intercepted: this._options.InterceptUnterminatedFunctionCalls,
             handler: this.HandleFunctionResultAsync);
 
-        return routeBuilder;
+        return protocolBuilder;
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        routeBuilder = base.ConfigureRoutes(routeBuilder);
-        return this.ConfigureUserInputRoutes(routeBuilder);
+        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder))
+                   .ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<ResetChatSignal>(this.ResetChat));
+    }
+
+    internal void ResetChat(ResetChatSignal signal, IWorkflowContext context)
+    {
+        this._session = null;
+        this._currentTurnEmitEvents = null;
     }
 
     private ValueTask HandleUserInputResponseAsync(
-        UserInputResponseContent response,
+        ToolApprovalResponseContent response,
         IWorkflowContext context,
         CancellationToken cancellationToken)
     {
-        if (!this._userInputHandler!.MarkRequestAsHandled(response.Id))
+        if (!this._userInputHandler!.MarkRequestAsHandled(response.RequestId))
         {
-            throw new InvalidOperationException($"No pending UserInputRequest found with id '{response.Id}'.");
+            throw new InvalidOperationException($"No pending ToolApprovalRequest found with id '{response.RequestId}'.");
         }
 
-        List<ChatMessage> implicitTurnMessages = [new ChatMessage(ChatRole.User, [response])];
+        // Merge the external response with any already-buffered regular messages so mixed-content
+        // resumes can be processed in one invocation.
+        return this.ProcessTurnMessagesAsync(async (pendingMessages, ctx, ct) =>
+        {
+            pendingMessages.Add(new ChatMessage(ChatRole.User, [response])
+            {
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+            });
 
-        // ContinueTurnAsync owns failing to emit a TurnToken if this response does not clear up all remaining outstanding requests.
-        return this.ContinueTurnAsync(implicitTurnMessages, context, this._currentTurnEmitEvents ?? false, cancellationToken);
+            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct).ConfigureAwait(false);
+
+            // Clear the buffered turn messages because they were consumed by ContinueTurnAsync.
+            return null;
+        }, context, cancellationToken);
     }
 
     private ValueTask HandleFunctionResultAsync(
@@ -85,12 +116,23 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             throw new InvalidOperationException($"No pending FunctionCall found with id '{result.CallId}'.");
         }
 
-        List<ChatMessage> implicitTurnMessages = [new ChatMessage(ChatRole.Tool, [result])];
-        return this.ContinueTurnAsync(implicitTurnMessages, context, this._currentTurnEmitEvents ?? false, cancellationToken);
-    }
+        // Merge the external response with any already-buffered regular messages so mixed-content
+        // resumes can be processed in one invocation.
+        return this.ProcessTurnMessagesAsync(async (pendingMessages, ctx, ct) =>
+        {
+            pendingMessages.Add(new ChatMessage(ChatRole.Tool, [result])
+            {
+                AuthorName = this._agent.Name ?? this._agent.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+            });
 
-    public bool ShouldEmitStreamingEvents(bool? emitEvents)
-        => emitEvents ?? this._options.EmitAgentUpdateEvents ?? false;
+            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct).ConfigureAwait(false);
+
+            // Clear the buffered turn messages because they were consumed by ContinueTurnAsync.
+            return null;
+        }, context, cancellationToken);
+    }
 
     private async ValueTask<AgentSession> EnsureSessionAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
         this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
@@ -148,8 +190,16 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
         AgentResponse response = await this.InvokeAgentAsync(filteredMessages, context, emitEvents, cancellationToken).ConfigureAwait(false);
 
-        await context.SendMessageAsync(response.Messages is List<ChatMessage> list ? list : response.Messages.ToList(), cancellationToken)
-                     .ConfigureAwait(false);
+        // Filter out server-side artifacts (reasoning tokens, web search calls, etc.)
+        // that are internal to this agent. Forwarding them to other agents in the workflow
+        // causes invalid request errors when the receiving agent uses the Responses API,
+        // because these item types are not valid as input items.
+        List<ChatMessage> forwardableMessages = FilterForwardableMessages(response.Messages).ToList();
+        if (forwardableMessages.Count > 0)
+        {
+            await context.SendMessageAsync(forwardableMessages, cancellationToken)
+                         .ConfigureAwait(false);
+        }
 
         // If we have no outstanding requests, we can yield a turn token back to the workflow.
         if (!this.HasOutstandingRequests)
@@ -160,18 +210,18 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
     }
 
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
-        => this.ContinueTurnAsync(messages, context, this.ShouldEmitStreamingEvents(emitEvents), cancellationToken);
+        => this.ContinueTurnAsync(messages,
+                                  context,
+                                  TurnExtensions.ShouldEmitStreamingEvents(turnTokenSetting: emitEvents, this._options.EmitAgentUpdateEvents),
+                                  cancellationToken);
 
-    private async ValueTask<AgentResponse> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitEvents, CancellationToken cancellationToken = default)
+    private async ValueTask<AgentResponse> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitUpdateEvents, CancellationToken cancellationToken = default)
     {
-#pragma warning disable MEAI001
-        Dictionary<string, UserInputRequestContent> userInputRequests = new();
-        Dictionary<string, FunctionCallContent> functionCalls = new();
         AgentResponse response;
+        AIAgentUnservicedRequestsCollector collector = new(this._userInputHandler, this._functionCallHandler);
 
-        if (emitEvents)
+        if (emitUpdateEvents)
         {
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
             // Run the agent in streaming mode only when agent run update events are to be emitted.
             IAsyncEnumerable<AgentResponseUpdate> agentStream = this._agent.RunStreamingAsync(
                 messages,
@@ -181,8 +231,8 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             List<AgentResponseUpdate> updates = [];
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
-                await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
-                ExtractUnservicedRequests(update.Contents);
+                await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
+                collector.ProcessAgentResponseUpdate(update);
                 updates.Add(update);
             }
 
@@ -196,53 +246,72 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
                                                   cancellationToken: cancellationToken)
                                         .ConfigureAwait(false);
 
-            ExtractUnservicedRequests(response.Messages.SelectMany(message => message.Contents));
+            collector.ProcessAgentResponse(response);
         }
 
-        if (this._options.EmitAgentResponseEvents == true)
+        if (this._options.EmitAgentResponseEvents)
         {
-            await context.AddEventAsync(new AgentResponseEvent(this.Id, response), cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
-        if (userInputRequests.Count > 0 || functionCalls.Count > 0)
-        {
-            Task userInputTask = this._userInputHandler?.ProcessRequestContentsAsync(userInputRequests, context, cancellationToken) ?? Task.CompletedTask;
-            Task functionCallTask = this._functionCallHandler?.ProcessRequestContentsAsync(functionCalls, context, cancellationToken) ?? Task.CompletedTask;
-
-            await Task.WhenAll(userInputTask, functionCallTask)
-                      .ConfigureAwait(false);
-        }
+        await collector.SubmitAsync(context, cancellationToken).ConfigureAwait(false);
 
         return response;
+    }
 
-        void ExtractUnservicedRequests(IEnumerable<AIContent> contents)
+    /// <summary>
+    /// Content types that represent meaningful conversational content portable across agents.
+    /// Messages containing only content types not in this set (e.g. reasoning tokens, web search
+    /// calls) are filtered out before forwarding, as they are output-only items that cause
+    /// schema validation errors when sent as input to the Responses API.
+    /// </summary>
+    private static readonly HashSet<Type> s_forwardableContentTypes =
+    [
+        typeof(TextContent),
+        typeof(DataContent),
+        typeof(UriContent),
+        typeof(FunctionCallContent),
+        typeof(FunctionResultContent),
+        typeof(ToolApprovalRequestContent),
+        typeof(ToolApprovalResponseContent),
+        typeof(HostedFileContent),
+        typeof(ErrorContent),
+    ];
+
+    /// <summary>
+    /// Filters response messages to only include those with portable conversational content,
+    /// and strips <see cref="ChatMessage.RawRepresentation"/> so that provider-specific output
+    /// items (e.g. <c>mcp_list_tools</c>, <c>reasoning</c>, <c>fabric_dataagent_preview_call</c>)
+    /// are not round-tripped by the M.E.AI library when the messages are sent to another agent.
+    /// </summary>
+    private static List<ChatMessage> FilterForwardableMessages(IList<ChatMessage> messages)
+    {
+        List<ChatMessage> result = [];
+
+        foreach (ChatMessage message in messages)
         {
-            foreach (AIContent content in contents)
+            // Extract only the content items that are portable across agents.
+            List<AIContent> forwardableContents = message.Contents
+                .Where(c => s_forwardableContentTypes.Any(t => t.IsAssignableFrom(c.GetType())))
+                .ToList();
+
+            if (forwardableContents.Count == 0)
             {
-                if (content is UserInputRequestContent userInputRequest)
-                {
-                    // It is an error to simultaneously have multiple outstanding user input requests with the same ID.
-                    userInputRequests.Add(userInputRequest.Id, userInputRequest);
-                }
-                else if (content is UserInputResponseContent userInputResponse)
-                {
-                    // If the set of messages somehow already has a corresponding user input response, remove it.
-                    _ = userInputRequests.Remove(userInputResponse.Id);
-                }
-                else if (content is FunctionCallContent functionCall)
-                {
-                    // For function calls, we emit an event to notify the workflow.
-                    //
-                    // possibility 1: this will be handled inline by the agent abstraction
-                    // possibility 2: this will not be handled inline by the agent abstraction
-                    functionCalls.Add(functionCall.CallId, functionCall);
-                }
-                else if (content is FunctionResultContent functionResult)
-                {
-                    _ = functionCalls.Remove(functionResult.CallId);
-                }
+                continue;
             }
+
+            // Build a clean message without the provider-specific RawRepresentation,
+            // which would otherwise cause the M.E.AI library to round-trip the original
+            // output-only items (e.g. mcp_list_tools) as input to the next agent.
+            result.Add(new ChatMessage(message.Role, forwardableContents)
+            {
+                AuthorName = message.AuthorName,
+                MessageId = message.MessageId,
+                CreatedAt = message.CreatedAt,
+                AdditionalProperties = message.AdditionalProperties is null ? null : new(message.AdditionalProperties),
+            });
         }
-#pragma warning restore MEAI001
+
+        return result;
     }
 }

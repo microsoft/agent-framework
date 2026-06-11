@@ -7,8 +7,8 @@ orchestration function that routes execution based on spam detection results. Ac
 handle side effects (spam handling and email sending).
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
 
@@ -19,11 +19,18 @@ from collections.abc import Generator
 from typing import Any, cast
 
 from agent_framework import Agent, AgentResponse
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
-from azure.identity import AzureCliCredential, DefaultAzureCredential
+from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.openai import OpenAIChatCompletionClient
+from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from azure.identity.aio import get_bearer_token_provider as get_async_bearer_token_provider
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import ActivityContext, OrchestrationContext, Task
 from pydantic import BaseModel, ValidationError
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,17 +43,20 @@ EMAIL_AGENT_NAME = "EmailAssistantAgent"
 
 class SpamDetectionResult(BaseModel):
     """Result from spam detection agent."""
+
     is_spam: bool
     reason: str
 
 
 class EmailResponse(BaseModel):
     """Result from email assistant agent."""
+
     response: str
 
 
 class EmailPayload(BaseModel):
     """Input payload for the orchestration."""
+
     email_id: str
     email_content: str
 
@@ -57,7 +67,13 @@ def create_spam_agent() -> "Agent":
     Returns:
         Agent: The configured Spam Detection agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return Agent(
+        client=OpenAIChatCompletionClient(
+            model=os.environ["AZURE_OPENAI_MODEL"],
+            credential=get_async_bearer_token_provider(
+                AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
+            ),
+        ),
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
@@ -69,7 +85,13 @@ def create_email_agent() -> "Agent":
     Returns:
         Agent: The configured Email Assistant agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return Agent(
+        client=OpenAIChatCompletionClient(
+            model=os.environ["AZURE_OPENAI_MODEL"],
+            credential=get_async_bearer_token_provider(
+                AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
+            ),
+        ),
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )
@@ -195,9 +217,7 @@ def spam_detection_orchestration(context: OrchestrationContext, payload_raw: Any
 
 
 def get_worker(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
 
@@ -215,14 +235,14 @@ def get_worker(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
@@ -257,7 +277,7 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
 
     # Register the orchestration function
     logger.debug("Registering orchestration function...")
-    worker.add_orchestrator(spam_detection_orchestration)   # type: ignore[arg-type]
+    worker.add_orchestrator(spam_detection_orchestration)  # type: ignore[arg-type]
     logger.debug(f"✓ Registered orchestration: {spam_detection_orchestration.__name__}")
 
     return agent_worker

@@ -4,6 +4,10 @@ import asyncio
 
 from agent_framework import Content, Message
 from agent_framework.ollama import OllamaChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Ollama Agent Multimodal Example
@@ -12,7 +16,7 @@ This sample demonstrates implementing a Ollama agent with multimodal input capab
 
 Ensure to install Ollama and have a model running locally before running the sample
 Not all Models support multimodal input, to test multimodal input try gemma3:4b
-Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the code below.
+Set the model to use via the OLLAMA_MODEL environment variable or modify the code below.
 https://ollama.com/
 
 """
@@ -40,7 +44,7 @@ async def test_image() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Image Response: {response}")
 
 

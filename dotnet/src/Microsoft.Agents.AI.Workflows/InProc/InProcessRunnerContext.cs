@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Workflows.InProc;
 internal sealed class InProcessRunnerContext : IRunnerContext
 {
     private int _runEnded;
-    private readonly string _runId;
+    private readonly string _sessionId;
     private readonly Workflow _workflow;
     private readonly object? _previousOwnership;
     private bool _ownsWorkflow;
@@ -40,8 +40,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     public InProcessRunnerContext(
         Workflow workflow,
-        string runId,
-        bool withCheckpointing,
+        string sessionId,
+        bool checkpointingEnabled,
         IEventSink outgoingEvents,
         IStepTracer? stepTracer,
         object? existingOwnershipSignoff = null,
@@ -61,12 +61,12 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
 
         this._workflow = workflow;
-        this._runId = runId;
+        this._sessionId = sessionId;
 
         this._edgeMap = new(this, this._workflow, stepTracer);
         this._outputFilter = new(workflow);
 
-        this.WithCheckpointing = withCheckpointing;
+        this.IsCheckpointingEnabled = checkpointingEnabled;
         this.ConcurrentRunsEnabled = enableConcurrentRuns;
         this.OutgoingEvents = outgoingEvents;
     }
@@ -94,8 +94,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                 throw new InvalidOperationException($"Executor with ID '{executorId}' is not registered.");
             }
 
-            Executor executor = await registration.CreateInstanceAsync(this._runId).ConfigureAwait(false);
-            executor.Configure(this.BindExternalRequestContext(executorId));
+            Executor executor = await registration.CreateInstanceAsync(this._sessionId).ConfigureAwait(false);
+            executor.AttachRequestContext(this.BindExternalRequestContext(executorId));
 
             await executor.InitializeAsync(this.BindWorkflowContext(executorId), cancellationToken: cancellationToken)
                           .ConfigureAwait(false);
@@ -182,7 +182,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         while (this._queuedExternalDeliveries.TryDequeue(out var deliveryPrep))
         {
-            // It's important we do not try to run these in parallel, because they make be modifying
+            // It's important we do not try to run these in parallel, because they may be modifying
             // inner edge state, etc.
             await deliveryPrep().ConfigureAwait(false);
         }
@@ -212,14 +212,23 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
 
         this.CheckEnded();
-        MessageEnvelope envelope = new(message, sourceId, targetId: targetId, traceContext: traceContext);
+
+        Debug.Assert(this._executors.ContainsKey(sourceId));
+        Executor source = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
+        TypeId? declaredType = source.Protocol.SendTypeTranslator.GetDeclaredType(message.GetType());
+        if (declaredType is null)
+        {
+            throw new InvalidOperationException($"Executor '{sourceId}' cannot send messages of type '{message.GetType().FullName}'.");
+        }
+
+        MessageEnvelope envelope = new(message, sourceId, declaredType, targetId: targetId, traceContext: traceContext);
 
         if (this._workflow.Edges.TryGetValue(sourceId, out HashSet<Edge>? edges))
         {
             foreach (Edge edge in edges)
             {
                 DeliveryMapping? maybeMapping =
-                    await this._edgeMap.PrepareDeliveryForEdgeAsync(edge, envelope)
+                    await this._edgeMap.PrepareDeliveryForEdgeAsync(edge, envelope, cancellationToken)
                                        .ConfigureAwait(false);
 
                 maybeMapping?.MapInto(this._nextStep);
@@ -232,16 +241,47 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.CheckEnded();
         Throw.IfNull(output);
 
-        Executor sourceExecutor = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
-        if (!sourceExecutor.CanOutput(output.GetType()))
+        bool isAgentResponseShaped = output is AgentResponse or AgentResponseUpdate;
+
+        if (isAgentResponseShaped && !Futures.EnableAgentResponseOutputTaggingAndFiltering)
         {
+            // Legacy bypass: AgentResponse/AgentResponseUpdate skip the output filter and are
+            // emitted as their typed event subclasses with no tags. Preserved verbatim for
+            // back-compat; once Futures.EnableAgentResponseOutputTaggingAndFiltering becomes the
+            // default in v2.0.0, this branch goes away.
+            WorkflowEvent typedEvent = output switch
+            {
+                AgentResponseUpdate u => new AgentResponseUpdateEvent(sourceId, u),
+                AgentResponse r => new AgentResponseEvent(sourceId, r),
+                _ => throw new InvalidOperationException("Unexpected AIAgent-shaped payload type."),
+            };
+            await this.AddEventAsync(typedEvent, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        Executor sourceExecutor = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
+        if (!isAgentResponseShaped && !sourceExecutor.CanOutput(output.GetType()))
+        {
+            // AIAgent-shaped payloads bypass the per-executor declared-yield check (matching the
+            // legacy bypass branch above). The AIAgent host executor relays the agent's output
+            // without declaring AgentResponse(Update) in its Yields set, so a CanOutput probe
+            // here would always reject — but those payloads are always a valid output shape.
             throw new InvalidOperationException($"Cannot output object of type {output.GetType().Name}. Expecting one of [{string.Join(", ", sourceExecutor.OutputTypes)}].");
         }
 
-        if (this._outputFilter.CanOutput(sourceId, output))
+        if (!this._outputFilter.TryGetTags(sourceId, out HashSet<OutputTag>? tags))
         {
-            await this.AddEventAsync(new WorkflowOutputEvent(output, sourceId), cancellationToken).ConfigureAwait(false);
+            // Not designated as an output source — drop silently.
+            return;
         }
+
+        WorkflowOutputEvent evt = output switch
+        {
+            AgentResponseUpdate u => new AgentResponseUpdateEvent(sourceId, u, tags),
+            AgentResponse r => new AgentResponseEvent(sourceId, r, tags),
+            _ => new WorkflowOutputEvent(output, sourceId, tags),
+        };
+        await this.AddEventAsync(evt, cancellationToken).ConfigureAwait(false);
     }
 
     public IExternalRequestContext BindExternalRequestContext(string executorId)
@@ -273,6 +313,9 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return this._externalRequests.TryRemove(requestId, out _);
     }
 
+    internal bool TryGetResponsePortExecutorId(string portId, [NotNullWhen(true)] out string? executorId)
+        => this._edgeMap.TryGetResponsePortExecutorId(portId, out executorId);
+
     private IEventSink OutgoingEvents { get; }
 
     internal StateManager StateManager { get; } = new();
@@ -296,12 +339,12 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         {
-            return RunnerContext.SendMessageAsync(ExecutorId, message, targetId, cancellationToken);
+            return RunnerContext.SendMessageAsync(ExecutorId, Throw.IfNull(message), targetId, cancellationToken);
         }
 
         public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
         {
-            return RunnerContext.YieldOutputAsync(ExecutorId, output, cancellationToken);
+            return RunnerContext.YieldOutputAsync(ExecutorId, Throw.IfNull(output), cancellationToken);
         }
 
         public ValueTask RequestHaltAsync() => this.AddEventAsync(new RequestHaltEvent());
@@ -327,7 +370,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         public bool ConcurrentRunsEnabled => RunnerContext.ConcurrentRunsEnabled;
     }
 
-    public bool WithCheckpointing { get; }
+    public bool IsCheckpointingEnabled { get; }
     public bool ConcurrentRunsEnabled { get; }
 
     internal Task PrepareForCheckpointAsync(CancellationToken cancellationToken = default)
@@ -393,6 +436,12 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                                                       .Select(id => this.EnsureExecutorAsync(id, tracer: null).AsTask())
                                                       .ToArray();
 
+        // Discard queued external deliveries from the superseded timeline so a runtime
+        // restore cannot apply stale responses after importing the checkpoint state.
+        while (this._queuedExternalDeliveries.TryDequeue(out _))
+        {
+        }
+
         this._nextStep = new StepContext();
         this._nextStep.ImportMessages(importedState.QueuedMessages);
 
@@ -415,7 +464,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     {
         if (Volatile.Read(ref this._runEnded) == 1)
         {
-            throw new InvalidOperationException($"Workflow run '{this._runId}' has been ended. Please start a new Run or StreamingRun.");
+            throw new InvalidOperationException($"Workflow run for session '{this._sessionId}' has been ended. Please start a new Run or StreamingRun.");
         }
     }
 

@@ -2,8 +2,7 @@
 
 import importlib.metadata
 
-from ._agent import ClaudeAgent, ClaudeAgentOptions
-from ._settings import ClaudeAgentSettings
+from ._agent import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings, RawClaudeAgent
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -14,5 +13,6 @@ __all__ = [
     "ClaudeAgent",
     "ClaudeAgentOptions",
     "ClaudeAgentSettings",
+    "RawClaudeAgent",
     "__version__",
 ]

@@ -16,6 +16,12 @@ for the second turn.
 
 import asyncio
 
+from agent_framework import Agent
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 async def run_semantic_kernel() -> None:
     from semantic_kernel.agents import ChatCompletionAgent, ChatHistoryAgentThread
@@ -49,7 +55,8 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
 
     # AF session objects are requested explicitly from the agent.
-    chat_agent = OpenAIChatClient().as_agent(
+    chat_agent = Agent(
+        client=OpenAIChatClient(),
         name="Writer",
         instructions="Keep answers short and friendly.",
     )

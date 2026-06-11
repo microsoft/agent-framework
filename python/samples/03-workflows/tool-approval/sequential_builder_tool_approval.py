@@ -6,14 +6,19 @@ from collections.abc import AsyncIterable
 from typing import Annotated, cast
 
 from agent_framework import (
+    Agent,
     Content,
     Message,
     WorkflowEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Sequential Workflow with Tool Approval Requests
@@ -40,8 +45,8 @@ Demonstrate:
 - Resuming workflow execution after approval via run(responses=..., stream=True).
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI or Azure OpenAI configured with the required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Basic familiarity with SequentialBuilder and streaming workflow events.
 """
 
@@ -89,11 +94,11 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
     responses: dict[str, Content] = {}
     if requests:
         for request_id, request in requests.items():
-            if request.type == "function_approval_request":
+            if request.type == "function_approval_request" and request.function_call is not None:
                 print("\n[APPROVAL REQUIRED]")
-                print(f"  Tool: {request.function_call.name}")  # type: ignore
-                print(f"  Arguments: {request.function_call.arguments}")  # type: ignore
-                print(f"Simulating human approval for: {request.function_call.name}")  # type: ignore
+                print(f"  Tool: {request.function_call.name}")
+                print(f"  Arguments: {request.function_call.arguments}")
+                print(f"Simulating human approval for: {request.function_call.name}")
                 # Create approval response
                 responses[request_id] = request.to_function_approval_response(approved=True)
 
@@ -102,12 +107,13 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 2. Create the agent with tools (approval mode is set per-tool via decorator)
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
-    database_agent = client.as_agent(
+    database_agent = Agent(
+        client=client,
         name="DatabaseAgent",
         instructions=(
             "You are a database assistant. You can view the database schema and execute "

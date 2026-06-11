@@ -1,0 +1,425 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
+
+namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
+
+/// <summary>
+/// Executor for the <see cref="InvokeMcpTool"/> action.
+/// This executor invokes MCP tools on remote servers and handles approval flows.
+/// </summary>
+internal sealed class InvokeMcpToolExecutor(
+    InvokeMcpTool model,
+    IMcpToolHandler mcpToolHandler,
+    ResponseAgentProvider agentProvider,
+    WorkflowFormulaState state) :
+    DeclarativeActionExecutor<InvokeMcpTool>(model, state)
+{
+    private const string ApprovalSnapshotStateKey = nameof(_approvalSnapshot);
+
+    /// <summary>
+    /// Snapshot of evaluated parameters at approval-request time.
+    /// Used to prevent TOCTOU attacks where state mutates during the approval window.
+    /// </summary>
+    private ApprovalSnapshot? _approvalSnapshot;
+
+    /// <summary>
+    /// Step identifiers for the MCP tool invocation workflow.
+    /// </summary>
+    public static class Steps
+    {
+        /// <summary>
+        /// Step for waiting for external input (approval or direct response).
+        /// </summary>
+        public static string ExternalInput(string id) => $"{id}_{nameof(ExternalInput)}";
+
+        /// <summary>
+        /// Step for resuming after receiving external input.
+        /// </summary>
+        public static string Resume(string id) => $"{id}_{nameof(Resume)}";
+    }
+
+    /// <summary>
+    /// Determines if the message indicates external input is required.
+    /// </summary>
+    public static bool RequiresInput(object? message) =>
+        message is ExternalInputRequest || (message is PortableValue pv && pv.IsType(out ExternalInputRequest? _));
+
+    /// <summary>
+    /// Determines if the message indicates no external input is required.
+    /// </summary>
+    public static bool RequiresNothing(object? message) =>
+        message is ActionExecutorResult || (message is PortableValue pv && pv.IsType(out ActionExecutorResult? _));
+
+    /// <inheritdoc/>
+    protected override bool EmitResultEvent => false;
+
+    /// <inheritdoc/>
+    protected override bool IsDiscreteAction => false;
+
+    /// <inheritdoc/>
+    [SendsMessage(typeof(ExternalInputRequest))]
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        string serverUrl = this.GetServerUrl();
+        string? serverLabel = this.GetServerLabel();
+        string toolName = this.GetToolName();
+        bool requireApproval = this.GetRequireApproval();
+        Dictionary<string, object?>? arguments = this.GetArguments();
+        Dictionary<string, string>? headers = this.GetHeaders();
+        string? connectionName = this.GetConnectionName();
+
+        if (requireApproval)
+        {
+            // Snapshot the evaluated parameters to prevent TOCTOU attacks.
+            // If state mutates during the approval window, the approved values are used on resume.
+            this._approvalSnapshot = new ApprovalSnapshot(serverUrl, serverLabel, toolName, arguments, connectionName);
+
+            // Create tool call content for approval request.
+            // Transport headers (e.g. Authorization) are intentionally excluded from the
+            // approval event: they must not cross into the externally-surfaced approval request.
+            McpServerToolCallContent toolCall = new(this.Id, toolName, serverLabel ?? serverUrl)
+            {
+                Arguments = arguments
+            };
+
+            ToolApprovalRequestContent approvalRequest = new(this.Id, toolCall);
+
+            ChatMessage requestMessage = new(ChatRole.Assistant, [approvalRequest]);
+            AgentResponse agentResponse = new([requestMessage]);
+
+            // Yield to the caller for approval
+            ExternalInputRequest inputRequest = new(agentResponse);
+            await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
+
+            return default;
+        }
+
+        // No approval required - invoke the tool directly
+        McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
+            serverUrl,
+            serverLabel,
+            toolName,
+            arguments,
+            headers,
+            connectionName,
+            cancellationToken).ConfigureAwait(false);
+
+        await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+
+        // Signal completion so the workflow routes via RequiresNothing
+        await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+
+        return default;
+    }
+
+    /// <summary>
+    /// Captures the external input response and processes the MCP tool result.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <param name="response">The external input response.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    public async ValueTask CaptureResponseAsync(
+        IWorkflowContext context,
+        ExternalInputResponse response,
+        CancellationToken cancellationToken)
+    {
+        ToolApprovalResponseContent? approvalResponse = response.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalResponseContent>()
+            .FirstOrDefault(r => r.RequestId == this.Id);
+
+        if (approvalResponse?.Approved != true)
+        {
+            // Tool call was rejected
+            await this.AssignErrorAsync(context, "MCP tool invocation was not approved by user.").ConfigureAwait(false);
+            return;
+        }
+
+        // Approved - use the snapshot from approval-request time to prevent TOCTOU attacks.
+        // Headers are re-evaluated (they may contain auth secrets that should not be persisted).
+        string serverUrl = this._approvalSnapshot?.ServerUrl ?? this.GetServerUrl();
+        string? serverLabel = this._approvalSnapshot?.ServerLabel ?? this.GetServerLabel();
+        string toolName = this._approvalSnapshot?.ToolName ?? this.GetToolName();
+        Dictionary<string, object?>? arguments = this._approvalSnapshot?.Arguments ?? this.GetArguments();
+        Dictionary<string, string>? headers = this.GetHeaders();
+        string? connectionName = this._approvalSnapshot?.ConnectionName ?? this.GetConnectionName();
+
+        McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
+            serverUrl,
+            serverLabel,
+            toolName,
+            arguments,
+            headers,
+            connectionName,
+            cancellationToken).ConfigureAwait(false);
+
+        await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Completes the MCP tool invocation by raising the completion event.
+    /// </summary>
+    public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
+    {
+        // Clear the approval snapshot after successful completion.
+        this._approvalSnapshot = null;
+        await ClearSnapshotStateAsync(context, cancellationToken).ConfigureAwait(false);
+
+        await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Persists the approval snapshot to workflow state so it survives checkpoint/restore cycles.
+    /// </remarks>
+    protected override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        await context.QueueStateUpdateAsync(ApprovalSnapshotStateKey, this._approvalSnapshot, null, cancellationToken).ConfigureAwait(false);
+        await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Restores the approval snapshot from workflow state after a checkpoint restore.
+    /// </remarks>
+    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+        this._approvalSnapshot = await context.ReadStateAsync<ApprovalSnapshot>(ApprovalSnapshotStateKey, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask ProcessResultAsync(IWorkflowContext context, McpServerToolResultContent resultContent, CancellationToken cancellationToken)
+    {
+        bool autoSend = this.GetAutoSendValue();
+        string? conversationId = this.GetConversationId();
+
+        await this.AssignResultAsync(context, resultContent).ConfigureAwait(false);
+        ChatMessage resultMessage = new(ChatRole.Tool, resultContent.Outputs);
+
+        // Store messages if output path is configured
+        if (this.Model.Output?.Messages is not null)
+        {
+            await this.AssignAsync(this.Model.Output.Messages?.Path, resultMessage.ToFormula(), context).ConfigureAwait(false);
+        }
+
+        // Auto-send the result if configured
+        if (autoSend)
+        {
+            AgentResponse resultResponse = new([resultMessage]);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, resultResponse), cancellationToken).ConfigureAwait(false);
+        }
+
+        // Add messages to conversation if conversationId is provided
+        if (conversationId is not null)
+        {
+            ChatMessage assistantMessage = new(ChatRole.Assistant, resultContent.Outputs);
+            await agentProvider.CreateMessageAsync(conversationId, assistantMessage, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask AssignResultAsync(IWorkflowContext context, McpServerToolResultContent toolResult)
+    {
+        if (this.Model.Output?.Result is null || toolResult.Outputs is null || toolResult.Outputs.Count == 0)
+        {
+            return;
+        }
+
+        List<object?> parsedResults = [];
+        foreach (AIContent resultContent in toolResult.Outputs)
+        {
+            object? resultValue = resultContent switch
+            {
+                TextContent text => text.Text,
+                DataContent data => data.Uri,
+                _ => resultContent.ToString(),
+            };
+
+            // Convert JsonElement to its raw JSON string for processing
+            if (resultValue is JsonElement jsonElement)
+            {
+                resultValue = jsonElement.GetRawText();
+            }
+
+            // Attempt to parse as JSON if it's a string (or was converted from JsonElement)
+            if (resultValue is string jsonString)
+            {
+                try
+                {
+                    using JsonDocument jsonDocument = JsonDocument.Parse(jsonString);
+
+                    // Handle different JSON value kinds
+                    object? parsedValue = jsonDocument.RootElement.ValueKind switch
+                    {
+                        JsonValueKind.Object => jsonDocument.ParseRecord(VariableType.RecordType),
+                        JsonValueKind.Array => jsonDocument.ParseList(jsonDocument.RootElement.GetListTypeFromJson()),
+                        JsonValueKind.String => jsonDocument.RootElement.GetString(),
+                        JsonValueKind.Number => jsonDocument.RootElement.TryGetInt64(out long l) ? l : jsonDocument.RootElement.GetDouble(),
+                        JsonValueKind.True => true,
+                        JsonValueKind.False => false,
+                        JsonValueKind.Null => null,
+                        _ => jsonString,
+                    };
+
+                    parsedResults.Add(parsedValue);
+                    continue;
+                }
+                catch (JsonException)
+                {
+                    // Not a valid JSON
+                }
+            }
+
+            parsedResults.Add(resultValue);
+        }
+
+        await this.AssignAsync(this.Model.Output.Result?.Path, parsedResults.ToFormula(), context).ConfigureAwait(false);
+    }
+
+    private async ValueTask AssignErrorAsync(IWorkflowContext context, string errorMessage)
+    {
+        // Store error in result if configured (as a simple string)
+        if (this.Model.Output?.Result is not null)
+        {
+            await this.AssignAsync(this.Model.Output.Result?.Path, $"Error: {errorMessage}".ToFormula(), context).ConfigureAwait(false);
+        }
+    }
+
+    private string GetServerUrl() =>
+        this.Evaluator.GetValue(
+            Throw.IfNull(
+                this.Model.ServerUrl,
+                $"{nameof(this.Model)}.{nameof(this.Model.ServerUrl)}")).Value;
+
+    private string? GetServerLabel()
+    {
+        if (this.Model.ServerLabel is null)
+        {
+            return null;
+        }
+
+        string value = this.Evaluator.GetValue(this.Model.ServerLabel).Value;
+        return value.Length == 0 ? null : value;
+    }
+
+    private string GetToolName() =>
+        this.Evaluator.GetValue(
+            Throw.IfNull(
+                this.Model.ToolName,
+                $"{nameof(this.Model)}.{nameof(this.Model.ToolName)}")).Value;
+
+    private string? GetConversationId()
+    {
+        if (this.Model.ConversationId is null)
+        {
+            return null;
+        }
+
+        string value = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        return value.Length == 0 ? null : value;
+    }
+
+    private bool GetRequireApproval()
+    {
+        if (this.Model.RequireApproval is null)
+        {
+            return false;
+        }
+
+        return this.Evaluator.GetValue(this.Model.RequireApproval).Value;
+    }
+
+    private bool GetAutoSendValue()
+    {
+        // InvokeToolOutput.AutoSend is never null — it returns a literal-false default
+        // when the YAML omits the field. Use AutoSendIsDefaultValue to distinguish an
+        // explicit autoSend value from the implicit default, and treat the implicit
+        // default as autoSend = true (the historical behavior).
+        if (this.Model.Output is { AutoSendIsDefaultValue: false } output)
+        {
+            return this.Evaluator.GetValue(output.AutoSend).Value;
+        }
+
+        return true;
+    }
+
+    private string? GetConnectionName()
+    {
+        if (this.Model.Connection?.Name is null)
+        {
+            return null;
+        }
+
+        string value = this.Evaluator.GetValue(this.Model.Connection.Name).Value;
+        return value.Length == 0 ? null : value;
+    }
+
+    private Dictionary<string, object?>? GetArguments()
+    {
+        if (this.Model.Arguments is null)
+        {
+            return null;
+        }
+
+        Dictionary<string, object?> result = [];
+        foreach (KeyValuePair<string, ValueExpression> argument in this.Model.Arguments)
+        {
+            result[argument.Key] = this.Evaluator.GetValue(argument.Value).Value.ToObject();
+        }
+
+        return result;
+    }
+
+    private Dictionary<string, string>? GetHeaders()
+    {
+        if (this.Model.Headers is null)
+        {
+            return null;
+        }
+
+        Dictionary<string, string> result = [];
+        foreach (KeyValuePair<string, StringExpression> header in this.Model.Headers)
+        {
+            string value = this.Evaluator.GetValue(header.Value).Value;
+            if (!string.IsNullOrEmpty(value))
+            {
+                result[header.Key] = value;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Clears the persisted approval snapshot state after a successful tool invocation.
+    /// </summary>
+    private static async ValueTask ClearSnapshotStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        await context.QueueStateUpdateAsync<ApprovalSnapshot?>(ApprovalSnapshotStateKey, null, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Stores the evaluated parameters at approval-request time so that
+    /// <see cref="CaptureResponseAsync"/> uses the values the user reviewed,
+    /// even if <see cref="WorkflowFormulaState"/> mutates during the approval window.
+    /// </summary>
+    internal sealed record ApprovalSnapshot(
+        string ServerUrl,
+        string? ServerLabel,
+        string ToolName,
+        Dictionary<string, object?>? Arguments,
+        string? ConnectionName);
+}

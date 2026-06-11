@@ -7,7 +7,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent_framework_declarative._workflows import (
+try:
+    import powerfx  # noqa: F401
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
+_requires_powerfx = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
+
+from agent_framework_declarative._workflows import (  # noqa: E402
     ALL_ACTION_EXECUTORS,
     DECLARATIVE_STATE_KEY,
     ActionComplete,
@@ -99,6 +108,7 @@ class TestDeclarativeWorkflowState:
         result = state.get("Local.items")
         assert result == ["first", "second"]
 
+    @_requires_powerfx
     @pytest.mark.asyncio
     async def test_eval_expression(self, mock_state):
         """Test evaluating expressions."""
@@ -196,16 +206,17 @@ class TestDeclarativeActionExecutor:
 
     # Note: ConditionEvaluatorExecutor tests removed - conditions are now evaluated on edges
 
-    async def test_foreach_init_with_items(self, mock_context, mock_state):
-        """Test ForeachInitExecutor with items."""
+    @_requires_powerfx
+    async def test_foreach_init_with_source(self, mock_context, mock_state):
+        """Test ForeachInitExecutor with the 'source' field."""
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
         state.set("Local.items", ["a", "b", "c"])
 
         action_def = {
             "kind": "Foreach",
-            "itemsSource": "=Local.items",
-            "iteratorVariable": "Local.item",
+            "source": "=Local.items",
+            "itemName": "item",
         }
         executor = ForeachInitExecutor(action_def)
 
@@ -229,8 +240,8 @@ class TestDeclarativeActionExecutor:
         # Use a literal empty list - no expression evaluation needed
         action_def = {
             "kind": "Foreach",
-            "itemsSource": [],  # Direct empty list, not an expression
-            "iteratorVariable": "Local.item",
+            "source": [],  # Direct empty list, not an expression
+            "itemName": "item",
         }
         executor = ForeachInitExecutor(action_def)
 
@@ -253,7 +264,6 @@ class TestDeclarativeWorkflowBuilder:
             "SetValue",
             "SetVariable",
             "SendActivity",
-            "EmitEvent",
             "EndWorkflow",
             "InvokeAzureAgent",
             "Question",
@@ -324,8 +334,8 @@ class TestDeclarativeWorkflowBuilder:
                 {
                     "kind": "Foreach",
                     "id": "process_items",
-                    "itemsSource": "=Local.items",
-                    "iteratorVariable": "Local.item",
+                    "source": "=Local.items",
+                    "itemName": "item",
                     "actions": [
                         {"kind": "SendActivity", "id": "show_item", "activity": {"text": "=Local.item"}},
                     ],
@@ -342,13 +352,13 @@ class TestDeclarativeWorkflowBuilder:
         assert "process_items_exit" in builder._executors
         assert "show_item" in builder._executors
 
-    def test_build_workflow_with_switch(self):
-        """Test building a workflow with Switch control flow."""
+    def test_build_workflow_with_condition_group(self):
+        """Test building a workflow with ConditionGroup control flow."""
         yaml_def = {
-            "name": "switch_workflow",
+            "name": "condition_group_workflow",
             "actions": [
                 {
-                    "kind": "Switch",
+                    "kind": "ConditionGroup",
                     "id": "check_status",
                     "conditions": [
                         {
@@ -364,7 +374,7 @@ class TestDeclarativeWorkflowBuilder:
                             ],
                         },
                     ],
-                    "else": [
+                    "elseActions": [
                         {"kind": "SendActivity", "id": "say_unknown", "activity": {"text": "Unknown"}},
                     ],
                 },
@@ -374,12 +384,12 @@ class TestDeclarativeWorkflowBuilder:
         workflow = builder.build()
 
         assert workflow is not None
-        # Verify switch executors were created
+        # Verify ConditionGroup branch executors were created
         # Note: No join executors - branches wire directly to successor
         assert "say_active" in builder._executors
         assert "say_pending" in builder._executors
         assert "say_unknown" in builder._executors
-        # Entry node is created when Switch is first action
+        # Entry node is created when ConditionGroup is first action
         assert "_workflow_entry" in builder._executors
 
 
@@ -415,8 +425,9 @@ class TestAgentExecutors:
     @pytest.mark.asyncio
     async def test_invoke_agent_not_found(self, mock_context, mock_state):
         """Test InvokeAzureAgentExecutor raises error when agent not found."""
+        from agent_framework.exceptions import AgentInvalidRequestException
+
         from agent_framework_declarative._workflows import (
-            AgentInvocationError,
             InvokeAzureAgentExecutor,
         )
 
@@ -430,8 +441,8 @@ class TestAgentExecutors:
         }
         executor = InvokeAzureAgentExecutor(action_def)
 
-        # Execute - should raise AgentInvocationError
-        with pytest.raises(AgentInvocationError) as exc_info:
+        # Execute - should raise AgentInvalidRequestException
+        with pytest.raises(AgentInvalidRequestException) as exc_info:
             await executor.handle_action(ActionTrigger(), mock_context)
 
         assert "non_existent_agent" in str(exc_info.value)
@@ -481,9 +492,9 @@ class TestHumanInputExecutors:
 
         action_def = {
             "kind": "Question",
-            "text": "What is your name?",
-            "property": "Local.name",
-            "defaultValue": "Anonymous",
+            "question": {"text": "What is your name?"},
+            "variable": "Local.name",
+            "default": "Anonymous",
         }
         executor = QuestionExecutor(action_def)
 
@@ -497,37 +508,8 @@ class TestHumanInputExecutors:
         assert request.request_type == "question"
         assert "What is your name?" in request.message
 
-    @pytest.mark.asyncio
-    async def test_confirmation_executor(self, mock_context, mock_state):
-        """Test ConfirmationExecutor."""
-        from agent_framework_declarative._workflows import (
-            ConfirmationExecutor,
-            ExternalInputRequest,
-        )
 
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "Confirmation",
-            "text": "Do you want to continue?",
-            "property": "Local.confirmed",
-            "yesLabel": "Yes, continue",
-            "noLabel": "No, stop",
-        }
-        executor = ConfirmationExecutor(action_def)
-
-        # Execute
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        # Verify request_info was called with ExternalInputRequest
-        mock_context.request_info.assert_called_once()
-        request = mock_context.request_info.call_args[0][0]
-        assert isinstance(request, ExternalInputRequest)
-        assert request.request_type == "confirmation"
-        assert "continue" in request.message.lower()
-
-
+@_requires_powerfx
 class TestParseValueExecutor:
     """Tests for the ParseValue action executor."""
 

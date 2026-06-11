@@ -30,6 +30,20 @@ Once comfortable with these, explore the rest of the samples below.
 
 ## Samples Overview (by directory)
 
+### functional
+
+Write workflows as plain Python async functions — no graph concepts, no executor classes, no edges. Use native control flow (`if`/`else`, loops, `asyncio.gather`) for branching and parallelism.
+
+| Sample | File | Concepts |
+|---|---|---|
+| Basic Pipeline | [functional/basic_pipeline.py](./functional/basic_pipeline.py) | Sequential steps as plain async functions |
+| Basic Streaming Pipeline | [functional/basic_streaming_pipeline.py](./functional/basic_streaming_pipeline.py) | Stream workflow events in real time with `run(stream=True)` |
+| Parallel Pipeline | [functional/parallel_pipeline.py](./functional/parallel_pipeline.py) | Fan-out/fan-in with `asyncio.gather` |
+| Steps and Checkpointing | [functional/steps_and_checkpointing.py](./functional/steps_and_checkpointing.py) | `@step` decorator for per-step checkpointing and observability |
+| Human-in-the-Loop Review | [functional/hitl_review.py](./functional/hitl_review.py) | HITL with `ctx.request_info()` and replay |
+| Agent Integration | [functional/agent_integration.py](./functional/agent_integration.py) | Calling agents inside workflow steps |
+| Naive Group Chat | [functional/naive_group_chat.py](./functional/naive_group_chat.py) | Simple round-robin group chat as a plain loop |
+
 ### agents
 
 | Sample                                 | File                                                                                                           | Concepts                                                                                             |
@@ -41,7 +55,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py)             | Wrap a workflow so it can behave like an agent (reflection pattern)                                  |
 | Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
 | Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
-| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
+| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @tool tools |
 
 ### checkpoint
 
@@ -52,6 +66,8 @@ Once comfortable with these, explore the rest of the samples below.
 | Checkpointed Sub-Workflow      | [checkpoint/sub_workflow_checkpoint.py](./checkpoint/sub_workflow_checkpoint.py)                                           | Save and resume a sub-workflow that pauses for human approval                                      |
 | Handoff + Tool Approval Resume | [orchestrations/handoff_with_tool_approval_checkpoint_resume.py](./orchestrations/handoff_with_tool_approval_checkpoint_resume.py) | Handoff workflow that captures tool-call approvals in checkpoints and resumes with human decisions |
 | Workflow as Agent Checkpoint   | [checkpoint/workflow_as_agent_checkpoint.py](./checkpoint/workflow_as_agent_checkpoint.py)                                 | Enable checkpointing when using workflow.as_agent() with checkpoint_storage parameter              |
+| Cosmos DB Checkpoint Storage   | [checkpoint/cosmos_workflow_checkpointing.py](./checkpoint/cosmos_workflow_checkpointing.py)                               | Use `CosmosCheckpointStorage` for durable workflow checkpointing backed by Azure Cosmos DB NoSQL   |
+| Cosmos DB + Foundry Checkpoint | [checkpoint/cosmos_workflow_checkpointing_foundry.py](./checkpoint/cosmos_workflow_checkpointing_foundry.py)               | Multi-agent workflow using `FoundryChatClient` with `CosmosCheckpointStorage` for durable pause/resume |
 
 ### composition
 
@@ -73,6 +89,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Multi-Selection Edge Group | [control-flow/multi_selection_edge_group.py](./control-flow/multi_selection_edge_group.py) | Select one or many targets dynamically (subset fan-out) |
 | Simple Loop                | [control-flow/simple_loop.py](./control-flow/simple_loop.py)                               | Feedback loop where an agent judges ABOVE/BELOW/MATCHED |
 | Workflow Cancellation      | [control-flow/workflow_cancellation.py](./control-flow/workflow_cancellation.py)           | Cancel a running workflow using asyncio tasks           |
+| Workflow and Intermediate Outputs | [control-flow/intermediate_vs_terminal_outputs.py](./control-flow/intermediate_vs_terminal_outputs.py) | Select Workflow Output and Intermediate Output executors; hide unselected yields; map Intermediate Output events to `text_reasoning` content via `as_agent` |
 
 ### human-in-the-loop
 
@@ -102,6 +119,43 @@ For additional observability samples in Agent Framework, see the [observability 
 Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magentic), including builder-based
 `workflow.as_agent(...)` variants, are documented in the [orchestrations](./orchestrations/README.md) directory.
 
+### output selection
+
+Workflow Output selection controls which `ctx.yield_output(...)` calls are visible to callers as `type='output'`
+events and through `WorkflowRunResult.get_outputs()`. The core rule is that `output_from` is an allow-list for
+Workflow Output, not a routing rule for every other executor output. Unselected executor payloads are hidden unless
+`intermediate_output_from` explicitly selects them as Intermediate Output.
+
+Use `output_from` and `intermediate_output_from` as the canonical API:
+
+| Selection | Workflow Output | Intermediate Output | Hidden payloads |
+| --- | --- | --- | --- |
+| Omit both selections | Every executor `yield_output`; emits a deprecation warning | None | None |
+| `output_from="all"` | Every executor `yield_output`; no warning | None | None |
+| `output_from=[answerer]` | Only `answerer` | None | All other executor payloads |
+| `output_from=[answerer], intermediate_output_from="all_other"` | Only `answerer` | Every output-capable executor not selected by `output_from` | None |
+| `intermediate_output_from="all_other"` | None | Every output-capable executor | None |
+| `output_from=[], intermediate_output_from="all_other"` | None | Every output-capable executor | None |
+| `output_from=[answerer], intermediate_output_from=[planner, researcher]` | Only `answerer` | `planner` and `researcher` | Any other executor payloads |
+
+Invalid selections fail at construction or build time:
+
+| Invalid selection | Why it fails |
+| --- | --- |
+| `output_from="all_other"` | `"all_other"` is only valid for `intermediate_output_from` |
+| `intermediate_output_from="all"` | `"all"` is only valid for `output_from` |
+| The same executor in both selections | One payload cannot be both Workflow Output and Intermediate Output |
+| Duplicate executor selections | Duplicates are treated as configuration errors |
+| Unknown executor selections | Typos and missing participants are rejected |
+| `output_from=[], intermediate_output_from=[]` | Both explicit selections are empty |
+
+Compatibility aliases such as `output_executors` emit deprecation warnings where supported. New samples and
+applications should use `output_from` and `intermediate_output_from`.
+
+When a workflow is wrapped with `workflow.as_agent()`, Workflow Output becomes normal agent text content. Intermediate
+Output becomes `text_reasoning` content, so `AgentResponse.text` remains focused on the caller-facing answer while
+callers can still inspect progress or supporting work from the response messages.
+
 ### parallelism
 
 | Sample                               | File                                                                                                         | Concepts                                                             |
@@ -115,7 +169,9 @@ Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magen
 | Sample                           | File                                                                                             | Concepts                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
 | State with Agents                | [state-management/state_with_agents.py](./state-management/state_with_agents.py) | Store in state once and later reuse across agents                 |
-| Workflow Kwargs (Custom Context) | [state-management/workflow_kwargs.py](./state-management/workflow_kwargs.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools |
+| Workflow Kwargs - Global Context | [state-management/workflow_kwargs_global.py](./state-management/workflow_kwargs_global.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in all agents |
+| Workflow Kwargs - Per Agent | [state-management/workflow_kwargs_per_agent.py](./state-management/workflow_kwargs_per_agent.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in individual agents |
+
 
 ### visualization
 
@@ -127,16 +183,18 @@ Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magen
 
 YAML-based declarative workflows allow you to define multi-agent orchestration patterns without writing Python code. See the [declarative workflows README](./declarative/README.md) for more details on YAML workflow syntax and available actions.
 
-| Sample               | File                                                                     | Concepts                                                      |
-| -------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| Conditional Workflow | [declarative/conditional_workflow/](./declarative/conditional_workflow/) | Nested conditional branching based on user input              |
-| Customer Support     | [declarative/customer_support/](./declarative/customer_support/)         | Multi-agent customer support with routing                     |
-| Deep Research        | [declarative/deep_research/](./declarative/deep_research/)               | Research workflow with planning, searching, and synthesis     |
-| Function Tools       | [declarative/function_tools/](./declarative/function_tools/)             | Invoking Python functions from declarative workflows          |
-| Human-in-Loop        | [declarative/human_in_loop/](./declarative/human_in_loop/)               | Interactive workflows that request user input                 |
-| Marketing            | [declarative/marketing/](./declarative/marketing/)                       | Marketing content generation workflow                         |
-| Simple Workflow      | [declarative/simple_workflow/](./declarative/simple_workflow/)           | Basic workflow with variable setting, conditionals, and loops |
-| Student Teacher      | [declarative/student_teacher/](./declarative/student_teacher/)           | Student-teacher interaction pattern                           |
+| Sample | File | Concepts |
+|---|---|---|
+| Agent to Function Tool | [declarative/agent_to_function_tool/](./declarative/agent_to_function_tool/) | Chain agent output to InvokeFunctionTool actions |
+| Conditional Workflow | [declarative/conditional_workflow/](./declarative/conditional_workflow/) | Nested conditional branching based on user input |
+| Customer Support | [declarative/customer_support/](./declarative/customer_support/) | Multi-agent customer support with routing |
+| Deep Research | [declarative/deep_research/](./declarative/deep_research/) | Research workflow with planning, searching, and synthesis |
+| Function Tools | [declarative/function_tools/](./declarative/function_tools/) | Invoking Python functions from declarative workflows |
+| Human-in-Loop | [declarative/human_in_loop/](./declarative/human_in_loop/) | Interactive workflows that request user input |
+| Invoke Function Tool | [declarative/invoke_function_tool/](./declarative/invoke_function_tool/) | Call registered Python functions with InvokeFunctionTool |
+| Marketing | [declarative/marketing/](./declarative/marketing/) | Marketing content generation workflow |
+| Simple Workflow | [declarative/simple_workflow/](./declarative/simple_workflow/) | Basic workflow with variable setting, conditionals, and loops |
+| Student Teacher | [declarative/student_teacher/](./declarative/student_teacher/) | Student-teacher interaction pattern |
 
 ### resources
 
@@ -154,15 +212,23 @@ Sequential orchestration uses a few small adapter nodes for plumbing:
 
 - "input-conversation" normalizes input to `list[Message]`
 - "to-conversation:<participant>" converts agent responses into the shared conversation
-- "complete" publishes the final output event (type='output')
+- "complete" publishes the Workflow Output event (`type='output'`)
   These may appear in event streams (executor_invoked/executor_completed). They're analogous to
   concurrent’s dispatcher and aggregator and can be ignored if you only care about agent activity.
 
+### Why FoundryChatClient?
+
+Workflow and orchestration samples use `FoundryChatClient` because they create agents locally and do not need
+server-managed agent resources. This lightweight, project-backed chat client is a good fit for orchestration
+patterns such as Sequential, Concurrent, Handoff, GroupChat, and Magentic.
+
+If you need persistent server-side agent resources, use the hosted-agent flows rather than these workflow samples.
+
 ### Environment Variables
 
-Workflow samples that use `AzureOpenAIResponsesClient` expect:
+Workflow samples that use `FoundryChatClient` expect:
 
-- `AZURE_AI_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME` (model deployment name)
+- `FOUNDRY_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
+- `FOUNDRY_MODEL` (model deployment name)
 
 These values are passed directly into the client constructor via `os.getenv()` in sample code.

@@ -3,9 +3,18 @@
 """Tests for FastAPI endpoint creation (_endpoint.py)."""
 
 import json
+from typing import Any
 
 import pytest
-from agent_framework import Agent, ChatResponseUpdate, Content
+from ag_ui.core import RunStartedEvent
+from agent_framework import (
+    Agent,
+    ChatResponseUpdate,
+    Content,
+    WorkflowBuilder,
+    WorkflowContext,
+    executor,
+)
 from agent_framework.orchestrations import SequentialBuilder
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
@@ -13,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
+from agent_framework_ag_ui._workflow import AgentFrameworkWorkflow
 
 
 @pytest.fixture
@@ -53,6 +63,32 @@ async def test_add_endpoint_with_wrapped_agent(build_chat_client):
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+
+async def test_add_endpoint_with_workflow_protocol():
+    """Test adding endpoint with native Workflow support."""
+
+    @executor(id="start")
+    async def start(message: Any, ctx: WorkflowContext) -> None:
+        await ctx.yield_output("Workflow response")
+
+    app = FastAPI()
+    workflow = WorkflowBuilder(start_executor=start).build()
+
+    add_agent_framework_fastapi_endpoint(app, workflow, path="/workflow")
+
+    client = TestClient(app)
+    response = client.post("/workflow", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+    content = response.content.decode("utf-8")
+    lines = [line for line in content.split("\n") if line.startswith("data: ")]
+    event_types = [json.loads(line[6:]).get("type") for line in lines]
+    assert "RUN_STARTED" in event_types
+    assert "TEXT_MESSAGE_CONTENT" in event_types
+    assert "RUN_FINISHED" in event_types
 
 
 async def test_endpoint_with_state_schema(build_chat_client):
@@ -403,8 +439,32 @@ async def test_endpoint_internal_error_handling(build_chat_client):
         mock_deepcopy.side_effect = Exception("Simulated internal error")
         response = client.post("/error-test", json={"messages": [{"role": "user", "content": "Hello"}]})
 
+    assert response.status_code == 500
+    assert response.json() == {"detail": "An internal error has occurred."}
+
+
+async def test_endpoint_streaming_error_emits_run_error_event():
+    """Streaming exceptions should emit RUN_ERROR instead of terminating silently."""
+
+    class FailingStreamWorkflow(AgentFrameworkWorkflow):
+        async def run(self, input_data: dict[str, Any]):
+            del input_data
+            yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
+            raise RuntimeError("stream exploded")
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, FailingStreamWorkflow(), path="/stream-error")
+    client = TestClient(app)
+
+    response = client.post("/stream-error", json={"messages": [{"role": "user", "content": "Hello"}]})
     assert response.status_code == 200
-    assert response.json() == {"error": "An internal error has occurred."}
+
+    content = response.content.decode("utf-8")
+    lines = [line for line in content.split("\n") if line.startswith("data: ")]
+    event_types = [json.loads(line[6:]).get("type") for line in lines]
+
+    assert "RUN_STARTED" in event_types
+    assert "RUN_ERROR" in event_types
 
 
 async def test_endpoint_with_dependencies_blocks_unauthorized(build_chat_client):
@@ -490,3 +550,56 @@ async def test_endpoint_without_dependencies_is_accessible(build_chat_client):
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+
+async def test_endpoint_invalid_agent_type_raises_typeerror():
+    """Passing an invalid agent type raises TypeError."""
+    app = FastAPI()
+
+    with pytest.raises(TypeError, match="must be SupportsAgentRun"):
+        add_agent_framework_fastapi_endpoint(app, agent="not_an_agent")  # type: ignore[arg-type]
+
+
+async def test_endpoint_encoding_failure_emits_run_error():
+    """Event encoding failure emits RUN_ERROR event in the SSE stream."""
+    from unittest.mock import patch
+
+    class SimpleWorkflow(AgentFrameworkWorkflow):
+        async def run(self, input_data: dict[str, Any]):
+            del input_data
+            yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, SimpleWorkflow(), path="/encode-fail")
+    client = TestClient(app)
+
+    with patch("ag_ui.encoder.EventEncoder.encode") as mock_encode:
+        # First call fails (the RUN_STARTED event), second call succeeds (the error event)
+        mock_encode.side_effect = [ValueError("encode boom"), 'data: {"type":"RUN_ERROR"}\n\n']
+        response = client.post("/encode-fail", json={"messages": [{"role": "user", "content": "go"}]})
+
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    assert "RUN_ERROR" in content
+
+
+async def test_endpoint_double_encoding_failure_terminates():
+    """When both event and error encoding fail, stream terminates gracefully."""
+    from unittest.mock import patch
+
+    class SimpleWorkflow(AgentFrameworkWorkflow):
+        async def run(self, input_data: dict[str, Any]):
+            del input_data
+            yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, SimpleWorkflow(), path="/double-fail")
+    client = TestClient(app)
+
+    with patch("ag_ui.encoder.EventEncoder.encode") as mock_encode:
+        # Both calls fail - event encode and error event encode
+        mock_encode.side_effect = ValueError("always fails")
+        response = client.post("/double-fail", json={"messages": [{"role": "user", "content": "go"}]})
+
+    # Should still get 200 (SSE stream), just with no events
+    assert response.status_code == 200

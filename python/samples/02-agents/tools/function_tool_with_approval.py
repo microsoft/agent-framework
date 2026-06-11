@@ -5,7 +5,8 @@ from random import randrange
 from typing import TYPE_CHECKING, Annotated, Any
 
 from agent_framework import Agent, AgentResponse, Message, tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
 
 if TYPE_CHECKING:
     from agent_framework import SupportsAgentRun
@@ -17,10 +18,15 @@ This sample demonstrates using AI functions with user approval workflows.
 It shows how to handle function call approvals without using threads.
 """
 
+# Load environment variables from .env file
+load_dotenv()
+
 conditions = ["sunny", "cloudy", "raining", "snowing", "clear"]
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(location: Annotated[str, "The city and state, e.g. San Francisco, CA"]) -> str:
     """Get the current weather for a given location."""
@@ -128,7 +134,7 @@ async def run_weather_agent_with_approval(stream: bool) -> None:
     print(f"\n=== Weather Agent with Approval Required ({'Streaming' if stream else 'Non-Streaming'}) ===\n")
 
     async with Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         name="WeatherAgent",
         instructions=("You are a helpful weather assistant. Use the get_weather tool to provide weather information."),
         tools=[get_weather, get_weather_detail],

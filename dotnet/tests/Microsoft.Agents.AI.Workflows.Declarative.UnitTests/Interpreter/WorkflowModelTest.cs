@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Interpreter;
 

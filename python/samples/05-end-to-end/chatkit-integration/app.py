@@ -29,7 +29,7 @@ import uvicorn
 
 # Agent Framework imports
 from agent_framework import Agent, AgentResponseUpdate, FunctionResultContent, Message, Role, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 
 # Agent Framework ChatKit integration
 from agent_framework_chatkit import ThreadItemConverter, stream_agent_response
@@ -51,6 +51,7 @@ from chatkit.types import (
     WidgetItem,
 )
 from chatkit.widgets import WidgetRoot
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -63,6 +64,9 @@ from weather_widget import (
     render_weather_widget,
     weather_widget_copy_text,
 )
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ============================================================================
 # Configuration Constants
@@ -218,7 +222,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         # For authentication, run `az login` command in terminal
         try:
             self.weather_agent = Agent(
-                client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+                client=FoundryChatClient(credential=AzureCliCredential()),
                 instructions=(
                     "You are a helpful weather assistant with image analysis capabilities. "
                     "You can provide weather information for any location, tell the current time, "
@@ -292,11 +296,13 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             title_prompt = [
                 Message(
                     role=Role.USER,
-                    text=(
-                        f"Generate a very short, concise title (max 40 characters) for a conversation "
-                        f"that starts with:\n\n{conversation_context}\n\n"
-                        "Respond with ONLY the title, nothing else."
-                    ),
+                    contents=[
+                        (
+                            f"Generate a very short, concise title (max 40 characters) for a conversation "
+                            f"that starts with:\n\n{conversation_context}\n\n"
+                            "Respond with ONLY the title, nothing else."
+                        )
+                    ],
                 )
             ]
 
@@ -468,7 +474,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
-            agent_messages = [Message(role=Role.USER, text=f"What's the weather in {city_label}?")]
+            agent_messages = [Message(role=Role.USER, contents=[f"What's the weather in {city_label}?"])]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 

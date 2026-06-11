@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import cast
 
 from agent_framework import (
@@ -8,9 +9,13 @@ from agent_framework import (
     AgentResponseUpdate,
     Message,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Group Chat with a round-robin speaker selector
@@ -20,7 +25,9 @@ What it does:
 - Uses a pure Python function to control speaker selection based on conversation state
 
 Prerequisites:
-- OpenAI environment variables configured for OpenAIChatClient
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 
@@ -32,8 +39,12 @@ def round_robin_selector(state: GroupChatState) -> str:
 
 
 async def main() -> None:
-    # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    # Create a Responses client using Azure OpenAI and Azure CLI credentials for all agents
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
     # Participant agents
     expert = Agent(
@@ -85,13 +96,14 @@ async def main() -> None:
     # This will end the conversation after the expert has spoken 2 times (one iteration loop)
     # Note: it's possible that the expert gets it right the first time and the other participants
     # have nothing to add, but for demo purposes we want to see at least one full round of interaction.
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # Mark participant responses as intermediate so the stream shows the
+    # conversation as it unfolds while the orchestrator's transcript remains the
+    # terminal workflow output.
     workflow = (
         GroupChatBuilder(
             participants=[expert, verifier, clarifier, skeptic],
             termination_condition=lambda conversation: len(conversation) >= 6,
-            intermediate_outputs=True,
+            intermediate_output_from=[expert, verifier, clarifier, skeptic],
             selection_func=round_robin_selector,
         )
         # Set a hard termination condition: stop after 6 messages (user task + one full rounds + 1)
@@ -112,7 +124,7 @@ async def main() -> None:
     # Keep track of the last response to format output nicely in streaming mode
     last_response_id: str | None = None
     async for event in workflow.run(task, stream=True):
-        if event.type == "output":
+        if event.type in ("intermediate", "output"):
             data = event.data
             if isinstance(data, AgentResponseUpdate):
                 rid = data.response_id

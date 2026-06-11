@@ -3,8 +3,12 @@
 import asyncio
 from datetime import datetime
 
-from agent_framework import tool
+from agent_framework import Message, tool
 from agent_framework.ollama import OllamaChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Ollama Chat Client Example
@@ -13,13 +17,15 @@ This sample demonstrates using the native Ollama Chat Client directly.
 
 Ensure to install Ollama and have a model running locally before running the sample.
 Not all Models support function calling, to test function calling try llama3.2
-Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the code below.
+Set the model to use via the OLLAMA_MODEL environment variable or modify the code below.
 https://ollama.com/
 
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_time():
     """Get the current time."""
@@ -29,16 +35,17 @@ def get_time():
 async def main() -> None:
     client = OllamaChatClient()
     message = "What time is it? Use a tool call"
+    messages = [Message(role="user", contents=[message])]
     stream = False
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_response(message, tools=get_time, stream=True):
+        async for chunk in client.get_response(messages, tools=get_time, stream=True):
             if str(chunk):
                 print(str(chunk), end="")
         print("")
     else:
-        response = await client.get_response(message, tools=get_time)
+        response = await client.get_response(messages, tools=get_time)
         print(f"Assistant: {response}")
 
 

@@ -4,7 +4,7 @@
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
-    "AZURE_OPENAI_ENDPOINT": "<AZURE_OPENAI_ENDPOINT>",
-    "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "<AZURE_OPENAI_CHAT_DEPLOYMENT_NAME>"
+    "FOUNDRY_PROJECT_ENDPOINT": "<FOUNDRY_PROJECT_ENDPOINT>",
+    "FOUNDRY_MODEL": "<FOUNDRY_MODEL>"
   }
 }

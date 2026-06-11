@@ -22,11 +22,12 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
             {
                 return conditionItem.Id;
             }
+
             int index = model.Conditions.IndexOf(conditionItem);
             return $"{model.Id}_Items{index}";
         }
 
-        public static string Else(ConditionGroup model) => model.ElseActions.Id.Value ?? $"{model.Id}_Else";
+        public static string Else(ConditionGroup model) => model.ElseActions.Id.Value;
     }
 
     public ConditionGroupExecutor(ConditionGroup model, WorkflowFormulaState state)

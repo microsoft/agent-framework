@@ -1,25 +1,22 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/single_agent/04_agent_as_tool.py
-
 # Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+
+from dotenv import load_dotenv
+
 """AutoGen vs Agent Framework: Agent-as-a-Tool pattern.
 
 Demonstrates hierarchical agent architectures where one agent delegates
 work to specialized sub-agents wrapped as tools.
 """
 
-import asyncio
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def run_autogen() -> None:
     """AutoGen's AgentTool for hierarchical agents with streaming."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.tools import AgentTool
     from autogen_agentchat.ui import Console
@@ -53,18 +50,19 @@ async def run_autogen() -> None:
 
     # Run coordinator with streaming - it will delegate to writer
     print("[AutoGen]")
-    await Console(coordinator.run(task="Create a tagline for a coffee shop", stream=True))
+    await Console(coordinator.run_stream(task="Create a tagline for a coffee shop"))
 
 
 async def run_agent_framework() -> None:
     """Agent Framework's as_tool() for hierarchical agents with streaming."""
-    from agent_framework import Content
+    from agent_framework import Agent, Content
     from agent_framework.openai import OpenAIChatClient
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create specialized writer agent
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         name="writer",
         instructions="You are a creative writer. Write short, engaging content.",
     )
@@ -78,7 +76,8 @@ async def run_agent_framework() -> None:
     )
 
     # Create coordinator agent with writer tool
-    coordinator = client.as_agent(
+    coordinator = Agent(
+        client=client,
         name="coordinator",
         instructions="You coordinate with specialized agents. Delegate writing tasks to the writer agent.",
         tools=[writer_tool],
@@ -101,6 +100,7 @@ async def run_agent_framework() -> None:
                 if content.type == "function_call":
                     # Accumulate function call content as it streams in
                     call_id = content.call_id
+                    assert call_id is not None, "Function call content must have a call_id"
                     if call_id in accumulated_calls:
                         # Add to existing call (arguments stream in gradually)
                         accumulated_calls[call_id] = accumulated_calls[call_id] + content

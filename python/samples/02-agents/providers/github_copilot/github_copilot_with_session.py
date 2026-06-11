@@ -14,10 +14,13 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.github import GitHubCopilotAgent
+from copilot.session import PermissionHandler
 from pydantic import Field
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -34,6 +37,7 @@ async def example_with_automatic_session_creation() -> None:
     agent = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
     )
 
     async with agent:
@@ -48,7 +52,7 @@ async def example_with_automatic_session_creation() -> None:
         print(f"\nUser: {query2}")
         result2 = await agent.run(query2)
         print(f"Agent: {result2}")
-        print("Note: Each call creates a separate session, so the agent doesn't remember previous context.\n")
+        print("Note: Each call creates a separate session, so the agent may not remember previous context.\n")
 
 
 async def example_with_session_persistence() -> None:
@@ -58,6 +62,7 @@ async def example_with_session_persistence() -> None:
     agent = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
     )
 
     async with agent:
@@ -94,6 +99,7 @@ async def example_with_existing_session_id() -> None:
     agent1 = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
     )
 
     async with agent1:
@@ -115,11 +121,12 @@ async def example_with_existing_session_id() -> None:
         agent2 = GitHubCopilotAgent(
             instructions="You are a helpful weather agent.",
             tools=[get_weather],
+            default_options={"on_permission_request": PermissionHandler.approve_all},
         )
 
         async with agent2:
-            # Create session with existing session ID
-            session = agent2.create_session(service_session_id=existing_session_id)
+            # Get session with existing session ID
+            session = agent2.get_session(service_session_id=existing_session_id)
 
             query2 = "What was the last city I asked about?"
             print(f"User: {query2}")

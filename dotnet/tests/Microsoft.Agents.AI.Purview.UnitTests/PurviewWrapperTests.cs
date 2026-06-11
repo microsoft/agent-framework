@@ -51,7 +51,7 @@ public sealed class PurviewWrapperTests : IDisposable
         this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
             It.IsAny<IEnumerable<ChatMessage>>(),
             It.IsAny<string>(),
-            It.IsAny<Activity>(),
+            Activity.UploadText,
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
@@ -88,15 +88,24 @@ public sealed class PurviewWrapperTests : IDisposable
             It.IsAny<CancellationToken>()))
             .ReturnsAsync(innerResponse);
 
-        this._mockProcessor.SetupSequence(x => x.ProcessMessagesAsync(
+        // Prompt check uses UploadText, response check uses DownloadText
+        this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
             It.IsAny<IEnumerable<ChatMessage>>(),
             It.IsAny<string>(),
-            It.IsAny<Activity>(),
+            Activity.UploadText,
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
-            .ReturnsAsync((false, "user-123")) // Prompt allowed
-            .ReturnsAsync((true, "user-123"));  // Response blocked
+            .ReturnsAsync((false, "user-123")); // Prompt allowed
+
+        this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<string>(),
+            Activity.DownloadText,
+            It.IsAny<PurviewSettings>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync((true, "user-123")); // Response blocked
 
         // Act
         var result = await this._wrapper.ProcessChatContentAsync(messages, null, mockChatClient.Object, CancellationToken.None);
@@ -237,14 +246,21 @@ public sealed class PurviewWrapperTests : IDisposable
         // Act
         await this._wrapper.ProcessChatContentAsync(messages, options, mockChatClient.Object, CancellationToken.None);
 
-        // Assert
+        // Assert - verify prompt uses UploadText and response uses DownloadText
         this._mockProcessor.Verify(x => x.ProcessMessagesAsync(
             It.IsAny<IEnumerable<ChatMessage>>(),
             "conversation-123",
-            It.IsAny<Activity>(),
+            Activity.UploadText,
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Exactly(2));
+            It.IsAny<CancellationToken>()), Times.Once);
+        this._mockProcessor.Verify(x => x.ProcessMessagesAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            "conversation-123",
+            Activity.DownloadText,
+            It.IsAny<PurviewSettings>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
@@ -264,7 +280,7 @@ public sealed class PurviewWrapperTests : IDisposable
         this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
             It.IsAny<IEnumerable<ChatMessage>>(),
             It.IsAny<string>(),
-            It.IsAny<Activity>(),
+            Activity.UploadText,
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
@@ -306,15 +322,24 @@ public sealed class PurviewWrapperTests : IDisposable
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(innerResponse);
 
-        this._mockProcessor.SetupSequence(x => x.ProcessMessagesAsync(
+        // Prompt check uses UploadText, response check uses DownloadText
+        this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
             It.IsAny<IEnumerable<ChatMessage>>(),
             It.IsAny<string>(),
-            It.IsAny<Activity>(),
+            Activity.UploadText,
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
-            .ReturnsAsync((false, "user-123")) // Prompt allowed
-            .ReturnsAsync((true, "user-123"));  // Response blocked
+            .ReturnsAsync((false, "user-123")); // Prompt allowed
+
+        this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<string>(),
+            Activity.DownloadText,
+            It.IsAny<PurviewSettings>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync((true, "user-123")); // Response blocked
 
         // Act
         var result = await this._wrapper.ProcessAgentContentAsync(messages, null, null, mockAgent.Object, CancellationToken.None);
@@ -472,10 +497,17 @@ public sealed class PurviewWrapperTests : IDisposable
         this._mockProcessor.Verify(x => x.ProcessMessagesAsync(
             It.IsAny<IEnumerable<ChatMessage>>(),
             "conversation-from-props",
-            It.IsAny<Activity>(),
+            Activity.UploadText,
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Exactly(2));
+            It.IsAny<CancellationToken>()), Times.Once);
+        this._mockProcessor.Verify(x => x.ProcessMessagesAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            "conversation-from-props",
+            Activity.DownloadText,
+            It.IsAny<PurviewSettings>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

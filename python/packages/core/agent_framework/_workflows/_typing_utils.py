@@ -193,36 +193,40 @@ def try_coerce_to_type(data: Any, target_type: type | UnionType | Any) -> Any:
     Returns:
         The coerced value, or the original value if coercion fails.
     """
+    original_data = data
+
     # If already the right type, return as-is
     if is_instance_of(data, target_type):
         return data
 
     # Can't coerce to non-concrete targets (Union, generic, etc.)
     if not isinstance(target_type, type):
-        return data
+        return original_data
+
+    target_cls: type[Any] = target_type
 
     # int -> float (JSON integers for float fields)
-    if isinstance(data, int) and target_type is float:
+    if isinstance(data, int) and target_cls is float:
         return float(data)
 
-    # dict -> dataclass
+    # dict -> dataclass or pydantic model
     if isinstance(data, dict):
         from dataclasses import is_dataclass
 
-        if is_dataclass(target_type):
+        if is_dataclass(target_cls):
             try:
-                return target_type(**data)
+                return target_cls(**data)
             except (TypeError, ValueError):
-                return data
+                return original_data
 
-        # dict -> Pydantic model
-        if hasattr(target_type, "model_validate"):
+        model_validate = getattr(target_cls, "model_validate", None)
+        if callable(model_validate):
             try:
-                return target_type.model_validate(data)
+                return model_validate(data)
             except Exception:
-                return data
+                return original_data
 
-    return data
+    return original_data
 
 
 def serialize_type(t: type) -> str:

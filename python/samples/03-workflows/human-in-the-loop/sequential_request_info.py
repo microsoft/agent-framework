@@ -17,8 +17,8 @@ Demonstrate:
 - Injecting responses back into the workflow via run(responses=..., stream=True)
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity (run az login before executing)
 """
 
@@ -28,18 +28,22 @@ from collections.abc import AsyncIterable
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, SequentialBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, AgentRequestInfoResponse] | None:
     """Process events from the workflow stream to capture human feedback requests."""
-
     requests: dict[str, AgentExecutorResponse] = {}
     async for event in stream:
         if event.type == "request_info" and isinstance(event.data, AgentExecutorResponse):
@@ -90,19 +94,21 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
     # Create agents for a sequential document review workflow
-    drafter = client.as_agent(
+    drafter = Agent(
+        client=client,
         name="drafter",
         instructions=("You are a document drafter. When given a topic, create a brief draft (2-3 sentences)."),
     )
 
-    editor = client.as_agent(
+    editor = Agent(
+        client=client,
         name="editor",
         instructions=(
             "You are an editor. Review the draft and make improvements. "
@@ -110,7 +116,8 @@ async def main() -> None:
         ),
     )
 
-    finalizer = client.as_agent(
+    finalizer = Agent(
+        client=client,
         name="finalizer",
         instructions=(
             "You are a finalizer. Take the edited content and create a polished final version. "

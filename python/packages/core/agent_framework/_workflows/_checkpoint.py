@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
-from ._exceptions import WorkflowCheckpointException
+from ..exceptions import WorkflowCheckpointException
 
 logger = logging.getLogger(__name__)
 
@@ -244,14 +244,39 @@ class FileCheckpointStorage:
     is serialized using pickle and embedded as base64-encoded strings within the JSON. This allows
     for human-readable checkpoint files while preserving the ability to store complex Python objects.
 
-    SECURITY WARNING: Checkpoints use pickle for data serialization. Only load checkpoints
-    from trusted sources. Loading a malicious checkpoint file can execute arbitrary code.
+    By default, checkpoint deserialization is restricted to a built-in set of safe Python types
+    (primitives, datetime, uuid, ...), all ``agent_framework`` internal types, and OpenAI SDK types
+    (``openai.types``). To allow additional application-specific types, pass them via the
+    ``allowed_checkpoint_types`` parameter using ``"module:qualname"`` format.
+
+    Example::
+
+        storage = FileCheckpointStorage(
+            "/tmp/checkpoints",
+            allowed_checkpoint_types=[
+                "my_app.models:MyState",
+            ],
+        )
     """
 
-    def __init__(self, storage_path: str | Path):
-        """Initialize the file storage."""
+    def __init__(
+        self,
+        storage_path: str | Path,
+        *,
+        allowed_checkpoint_types: list[str] | None = None,
+    ) -> None:
+        """Initialize the file storage.
+
+        Args:
+            storage_path: Directory path where checkpoint files will be stored.
+            allowed_checkpoint_types: Additional types (beyond the built-in safe set
+                and framework types) that are permitted during checkpoint
+                deserialization.  Each entry should be a ``"module:qualname"``
+                string (e.g., ``"my_app.models:MyState"``).
+        """
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
+        self._allowed_types: frozenset[str] = frozenset(allowed_checkpoint_types or [])
         logger.info(f"Initialized file checkpoint storage at {self.storage_path}")
 
     def _validate_file_path(self, checkpoint_id: CheckpointID) -> Path:
@@ -324,12 +349,12 @@ class FileCheckpointStorage:
 
         encoded_checkpoint = await asyncio.to_thread(_read)
 
-        from ._checkpoint_encoding import CheckpointDecodingError, decode_checkpoint_value
+        from ._checkpoint_encoding import decode_checkpoint_value
 
         try:
-            decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint)
-        except CheckpointDecodingError as exc:
-            raise WorkflowCheckpointException(f"Failed to decode checkpoint {checkpoint_id}: {exc}") from exc
+            decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint, allowed_types=self._allowed_types)
+        except WorkflowCheckpointException:
+            raise
         checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
         logger.info(f"Loaded checkpoint {checkpoint_id} from {file_path}")
         return checkpoint
@@ -352,7 +377,9 @@ class FileCheckpointStorage:
                         encoded_checkpoint = json.load(f)
                         from ._checkpoint_encoding import decode_checkpoint_value
 
-                        decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint)
+                        decoded_checkpoint_dict = decode_checkpoint_value(
+                            encoded_checkpoint, allowed_types=self._allowed_types
+                        )
                         checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
                     if checkpoint.workflow_name == workflow_name:
                         checkpoints.append(checkpoint)

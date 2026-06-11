@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.Sample;
 /// Tests for shared state preservation across subworkflow boundaries.
 /// Validates fix for issue #2419: ".NET: Shared State is not preserved in Subworkflows"
 /// </summary>
-internal static class Step14EntryPoint
+internal static partial class Step14EntryPoint
 {
     public const string WordStateScope = "WordStateScope";
 
@@ -106,12 +106,10 @@ internal static class Step14EntryPoint
     /// <summary>
     /// Executor that reads text and stores it in shared state with a generated key.
     /// </summary>
-    internal sealed class TextReadExecutor() : Executor("TextReadExecutor")
+    internal sealed partial class TextReadExecutor() : Executor("TextReadExecutor")
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-            => routeBuilder.AddHandler<string, string>(this.HandleAsync);
-
-        private async ValueTask<string> HandleAsync(string text, IWorkflowContext context, CancellationToken cancellationToken = default)
+        [MessageHandler]
+        public async ValueTask<string> HandleAsync(string text, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             string key = Guid.NewGuid().ToString();
             await context.QueueStateUpdateAsync(key, text, scopeName: WordStateScope, cancellationToken);
@@ -122,12 +120,10 @@ internal static class Step14EntryPoint
     /// <summary>
     /// Executor that reads text from shared state, trims it, and updates the state.
     /// </summary>
-    internal sealed class TextTrimExecutor() : Executor("TextTrimExecutor")
+    internal sealed partial class TextTrimExecutor() : Executor("TextTrimExecutor")
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-            => routeBuilder.AddHandler<string, string>(this.HandleAsync);
-
-        private async ValueTask<string> HandleAsync(string key, IWorkflowContext context, CancellationToken cancellationToken = default)
+        [MessageHandler]
+        public async ValueTask<string> HandleAsync(string key, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             string? content = await context.ReadStateAsync<string>(key, scopeName: WordStateScope, cancellationToken);
             if (content is null)
@@ -144,12 +140,10 @@ internal static class Step14EntryPoint
     /// <summary>
     /// Executor that reads text from shared state and returns its character count.
     /// </summary>
-    internal sealed class CharCountingExecutor() : Executor("CharCountingExecutor")
+    internal sealed partial class CharCountingExecutor() : Executor("CharCountingExecutor")
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-            => routeBuilder.AddHandler<string, int>(this.HandleAsync);
-
-        private async ValueTask<int> HandleAsync(string key, IWorkflowContext context, CancellationToken cancellationToken = default)
+        [MessageHandler]
+        public async ValueTask<int> HandleAsync(string key, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             string? content = await context.ReadStateAsync<string>(key, scopeName: WordStateScope, cancellationToken);
             return content?.Length ?? 0;

@@ -4,6 +4,7 @@
 
 In a real application, these would call actual weather and events APIs.
 """
+
 from typing import Annotated
 
 from agent_framework import tool

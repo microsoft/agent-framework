@@ -3,14 +3,20 @@
 import asyncio
 import uuid
 
-from agent_framework import tool
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import Agent, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.mem0 import Mem0ContextProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from mem0 import AsyncMemory
 
+# Load environment variables from .env file
+load_dotenv()
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def retrieve_company_report(company_code: str, detailed: bool) -> str:
     if company_code != "CNTS":
@@ -26,11 +32,9 @@ def retrieve_company_report(company_code: str, detailed: bool) -> str:
 async def main() -> None:
     """Example of memory usage with local Mem0 OSS context provider."""
     print("=== Mem0 Context Provider Example ===")
-
-    # Each record in Mem0 should be associated with agent_id or user_id or application_id or thread_id.
+    # Each record in Mem0 should be associated with agent_id or user_id or application_id.
     # In this example, we associate Mem0 records with user_id.
     user_id = str(uuid.uuid4())
-
     # For Azure authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     # By default, local Mem0 authenticates to your OpenAI using the OPENAI_API_KEY environment variable.
@@ -38,11 +42,12 @@ async def main() -> None:
     local_mem0_client = AsyncMemory()
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
-            context_providers=[Mem0ContextProvider(user_id=user_id, mem0_client=local_mem0_client)],
+            context_providers=[Mem0ContextProvider(source_id="mem0", user_id=user_id, mem0_client=local_mem0_client)],
         ) as agent,
     ):
         # First ask the agent to retrieve a company report with no previous context.
@@ -52,27 +57,17 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result}\n")
-
         # Now tell the agent the company code and the report format that you want to use
         # and it should be able to invoke the tool and return the report.
         query = "I always work with CNTS and I always want a detailed report format. Please remember and retrieve it."
-        print(f"User: {query}")
-        result = await agent.run(query)
-        print(f"Agent: {result}\n")
-
         print("\nRequest within a new session:")
-
         # Create a new session for the agent.
         # The new session has no context of the previous conversation.
         session = agent.create_session()
-
         # Since we have the mem0 component in the session, the agent should be able to
         # retrieve the company report without asking for clarification, as it will
         # be able to remember the user preferences from Mem0 component.
-        query = "Please retrieve my company report"
-        print(f"User: {query}")
         result = await agent.run(query, session=session)
-        print(f"Agent: {result}\n")
 
 
 if __name__ == "__main__":

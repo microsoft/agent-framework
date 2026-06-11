@@ -24,7 +24,7 @@ public class Workflow
     internal Dictionary<string, ExecutorBinding> ExecutorBindings { get; init; } = [];
 
     internal Dictionary<string, HashSet<Edge>> Edges { get; init; } = [];
-    internal HashSet<string> OutputExecutors { get; init; } = [];
+    internal Dictionary<string, HashSet<OutputTag>> OutputExecutors { get; init; } = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Gets the collection of edges grouped by their source node identifier.
@@ -218,8 +218,14 @@ public class Workflow
         ExecutorBinding startExecutorRegistration = this.ExecutorBindings[this.StartExecutorId];
         Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
                                                                 .ConfigureAwait(false);
-        startExecutor.Configure(new NoOpExternalRequestContext());
+        startExecutor.AttachRequestContext(new NoOpExternalRequestContext());
 
-        return startExecutor.DescribeProtocol();
+        ProtocolDescriptor inputProtocol = startExecutor.DescribeProtocol();
+        IEnumerable<Task<Executor>> outputExecutorTasks = this.OutputExecutors.Keys.Select(executorId => this.ExecutorBindings[executorId].CreateInstanceAsync(string.Empty).AsTask());
+
+        Executor[] outputExecutors = await Task.WhenAll(outputExecutorTasks).ConfigureAwait(false);
+        IEnumerable<Type> yieldedTypes = outputExecutors.SelectMany(executor => executor.DescribeProtocol().Yields);
+
+        return new(inputProtocol.Accepts, yieldedTypes, [], inputProtocol.AcceptsAll);
     }
 }

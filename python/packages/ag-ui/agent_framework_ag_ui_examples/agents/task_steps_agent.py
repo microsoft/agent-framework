@@ -24,6 +24,8 @@ from agent_framework import Agent, Content, Message, SupportsChatGetResponse, to
 from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
 
+from agent_framework_ag_ui import AgentFrameworkWorkflow
+
 
 class StepStatus(str, Enum):
     """Status of a task step."""
@@ -105,38 +107,29 @@ def _create_task_steps_agent(client: SupportsChatGetResponse[Any]) -> AgentFrame
 
 
 # Wrap the agent's run method to add step execution simulation
-class TaskStepsAgentWithExecution:
+class TaskStepsAgentWithExecution(AgentFrameworkWorkflow):
     """Wrapper that adds step execution simulation after plan generation.
 
     This wrapper delegates to AgentFrameworkAgent but is recognized as compatible
-    by add_agent_framework_fastapi_endpoint since it implements run_agent().
+    by add_agent_framework_fastapi_endpoint since it implements run().
     """
 
     def __init__(self, base_agent: AgentFrameworkAgent):
         """Initialize wrapper with base agent."""
+        super().__init__(name=base_agent.name, description=base_agent.description)
         self._base_agent = base_agent
-
-    @property
-    def name(self) -> str:
-        """Delegate to base agent."""
-        return self._base_agent.name
-
-    @property
-    def description(self) -> str:
-        """Delegate to base agent."""
-        return self._base_agent.description
 
     def __getattr__(self, name: str) -> Any:
         """Delegate all other attribute access to base agent."""
         return getattr(self._base_agent, name)
 
-    async def run_agent(self, input_data: dict[str, Any]) -> AsyncGenerator[Any]:
+    async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[Any]:
         """Run the agent and then simulate step execution."""
         import logging
         import uuid
 
         logger = logging.getLogger(__name__)
-        logger.info("TaskStepsAgentWithExecution.run_agent() called - wrapper is active")
+        logger.info("TaskStepsAgentWithExecution.run() called - wrapper is active")
 
         # First, run the base agent to generate the plan - buffer text messages
         final_state: dict[str, Any] = {}
@@ -144,7 +137,7 @@ class TaskStepsAgentWithExecution:
         tool_call_id: str | None = None
         buffered_text_events: list[Any] = []  # Buffer text from first LLM call
 
-        async for event in self._base_agent.run_agent(input_data):
+        async for event in self._base_agent.run(input_data):
             event_type_str = str(event.type) if hasattr(event, "type") else type(event).__name__
             logger.info(f"Processing event: {event_type_str}")
 

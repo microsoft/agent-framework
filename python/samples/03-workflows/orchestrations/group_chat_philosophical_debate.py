@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from typing import cast
 
 from agent_framework import (
@@ -9,9 +10,10 @@ from agent_framework import (
     AgentResponseUpdate,
     Message,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -37,12 +39,21 @@ Participants represent:
 - Doctor from Scandinavia (public health, equity, societal support)
 
 Prerequisites:
-- OpenAI environment variables configured for OpenAIChatClient
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
+# Load environment variables from .env file
+load_dotenv()
 
-def _get_chat_client() -> AzureOpenAIChatClient:
-    return AzureOpenAIChatClient(credential=AzureCliCredential())
+
+def _get_chat_client() -> FoundryChatClient:
+    return FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
 
 async def main() -> None:
@@ -208,13 +219,16 @@ Share your perspective authentically. Feel free to:
     )
 
     # termination_condition: stop after 10 assistant messages
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # Mark participant responses as intermediate so the stream shows the
+    # conversation as it unfolds while the orchestrator's transcript remains the
+    # terminal workflow output.
     workflow = (
         GroupChatBuilder(
             participants=[farmer, developer, teacher, activist, spiritual_leader, artist, immigrant, doctor],
             termination_condition=lambda messages: sum(1 for msg in messages if msg.role == "assistant") >= 10,
-            intermediate_outputs=True,
+            intermediate_output_from=[
+                "all",
+            ],
             orchestrator_agent=moderator,
         )
         .with_termination_condition(lambda messages: sum(1 for msg in messages if msg.role == "assistant") >= 10)
@@ -243,7 +257,7 @@ Share your perspective authentically. Feel free to:
     # Keep track of the last response to format output nicely in streaming mode
     last_response_id: str | None = None
     async for event in workflow.run(f"Please begin the discussion on: {topic}", stream=True):
-        if event.type == "output":
+        if event.type in ("intermediate", "output"):
             data = event.data
             if isinstance(data, AgentResponseUpdate):
                 rid = data.response_id

@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Default": {
+      "commandName": "Project"
+    },
+    "Soup": {
+      "commandName": "Project",
+      "commandLineArgs": "\"What is the soup of the day?\""
+    }
+  }
+}

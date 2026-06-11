@@ -1,20 +1,25 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import cast
 
-from agent_framework import Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent, AgentResponse, Message
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Sequential workflow (agent-focused API) with shared conversation context
 
 Build a high-level sequential workflow using SequentialBuilder and two domain agents.
-The shared conversation (list[Message]) flows through each participant. Each agent
-appends its assistant message to the context. The workflow outputs the final conversation
-list when complete.
+The shared conversation flows through each participant. Each agent appends its
+assistant message to the context. The sample prints the original user message plus
+the visible outputs from both agents.
 
 Note on internal adapters:
 - Sequential orchestration includes small adapter nodes for input normalization
@@ -24,36 +29,46 @@ Note on internal adapters:
   You can safely ignore them when focusing on agent progress.
 
 Prerequisites:
-- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 
 async def main() -> None:
     # 1) Create agents
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 
-    reviewer = client.as_agent(
+    reviewer = Agent(
+        client=client,
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
     )
 
     # 2) Build sequential workflow: writer -> reviewer
-    workflow = SequentialBuilder(participants=[writer, reviewer]).build()
+    workflow = SequentialBuilder(participants=[writer, reviewer], output_from="all").build()
 
     # 3) Run and collect outputs
-    outputs: list[list[Message]] = []
-    async for event in workflow.run("Write a tagline for a budget-friendly eBike.", stream=True):
-        if event.type == "output":
-            outputs.append(cast(list[Message], event.data))
+    prompt = "Write a tagline for a budget-friendly eBike."
+    result = await workflow.run(prompt)
+    conversation = [Message(role="user", contents=[prompt])]
+    for output in result.get_outputs():
+        response = cast(AgentResponse, output)
+        conversation.extend(response.messages)
 
-    if outputs:
+    if conversation:
         print("===== Final Conversation =====")
-        for i, msg in enumerate(outputs[-1], start=1):
+        for i, msg in enumerate(conversation, start=1):
             name = msg.author_name or ("assistant" if msg.role == "assistant" else "user")
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
 

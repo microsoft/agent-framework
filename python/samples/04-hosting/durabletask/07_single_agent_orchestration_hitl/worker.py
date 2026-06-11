@@ -7,8 +7,8 @@ a human-in-the-loop review workflow. The orchestration pauses for external event
 (human approval/rejection) with timeout handling, and iterates based on feedback.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
 
@@ -20,11 +20,17 @@ from datetime import timedelta
 from typing import Any, cast
 
 from agent_framework import Agent, AgentResponse
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
-from azure.identity import AzureCliCredential, DefaultAzureCredential
+from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import ActivityContext, OrchestrationContext, Task, when_any  # type: ignore
 from pydantic import BaseModel, ValidationError
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +43,7 @@ HUMAN_APPROVAL_EVENT = "HumanApproval"
 
 class ContentGenerationInput(BaseModel):
     """Input for content generation orchestration."""
+
     topic: str
     max_review_attempts: int = 3
     approval_timeout_seconds: float = 300  # 5 minutes for demo (72 hours in production)
@@ -44,12 +51,14 @@ class ContentGenerationInput(BaseModel):
 
 class GeneratedContent(BaseModel):
     """Structured output from writer agent."""
+
     title: str
     content: str
 
 
 class HumanApproval(BaseModel):
     """Human approval decision."""
+
     approved: bool
     feedback: str = ""
 
@@ -67,7 +76,13 @@ def create_writer_agent() -> "Agent":
         "Limit response to 300 words or less."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AsyncAzureCliCredential(),
+    )
+    return Agent(
+        client=_client,
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )
@@ -103,8 +118,7 @@ def publish_content(context: ActivityContext, content: dict[str, str]) -> str:
 
 
 def content_generation_hitl_orchestration(
-    context: OrchestrationContext,
-    payload_raw: Any
+    context: OrchestrationContext, payload_raw: Any
 ) -> Generator[Task[Any], Any, dict[str, str]]:
     """Human-in-the-loop orchestration for content generation with approval workflow.
 
@@ -160,7 +174,7 @@ def content_generation_hitl_orchestration(
     initial_response: AgentResponse = yield writer.run(
         messages=f"Write a short article about '{payload.topic}'.",
         session=writer_session,
-            options={"response_format": GeneratedContent},
+        options={"response_format": GeneratedContent},
     )
     content = cast(GeneratedContent, initial_response.value)
 
@@ -175,13 +189,12 @@ def content_generation_hitl_orchestration(
         attempt += 1
         logger.debug(f"[Orchestration] Review iteration #{attempt}/{payload.max_review_attempts}")
 
-        context.set_custom_status(f"Requesting human feedback (Attempt {attempt}, timeout {payload.approval_timeout_seconds}s)")
+        context.set_custom_status(
+            f"Requesting human feedback (Attempt {attempt}, timeout {payload.approval_timeout_seconds}s)"
+        )
 
         # Notify user for approval
-        yield context.call_activity(
-            "notify_user_for_approval",
-            input=content.model_dump()
-        )
+        yield context.call_activity("notify_user_for_approval", input=content.model_dump())
 
         logger.debug("[Orchestration] Waiting for human approval or timeout...")
 
@@ -217,16 +230,13 @@ def content_generation_hitl_orchestration(
                 else:
                     approval = HumanApproval(approved=False, feedback=approval_data)
             else:
-                approval = HumanApproval(approved=False, feedback=str(approval_data))   # type: ignore
+                approval = HumanApproval(approved=False, feedback=str(approval_data))  # type: ignore
 
             if approval.approved:
                 # Content approved - publish and return
                 logger.debug("[Orchestration] Content approved! Publishing...")
                 context.set_custom_status("Content approved by human reviewer. Publishing...")
-                publish_task: Task[Any] = context.call_activity(
-                    "publish_content",
-                    input=content.model_dump()
-                )
+                publish_task: Task[Any] = context.call_activity("publish_content", input=content.model_dump())
                 yield publish_task
 
                 logger.debug("[Orchestration] Content published successfully")
@@ -256,7 +266,7 @@ def content_generation_hitl_orchestration(
             rewrite_response: AgentResponse = yield writer.run(
                 messages=rewrite_prompt,
                 session=writer_session,
-                    options={"response_format": GeneratedContent},
+                options={"response_format": GeneratedContent},
             )
             rewritten_content = cast(GeneratedContent, rewrite_response.value)
 
@@ -270,21 +280,15 @@ def content_generation_hitl_orchestration(
             # Timeout occurred
             logger.error(f"[Orchestration] Approval timeout after {payload.approval_timeout_seconds}s")
 
-            raise TimeoutError(
-                f"Human approval timed out after {payload.approval_timeout_seconds} second(s)."
-            )
+            raise TimeoutError(f"Human approval timed out after {payload.approval_timeout_seconds} second(s).")
 
     # If we exit the loop without returning, max attempts were exhausted
     context.set_custom_status("Max review attempts exhausted.")
-    raise RuntimeError(
-        f"Content could not be approved after {payload.max_review_attempts} iteration(s)."
-    )
+    raise RuntimeError(f"Content could not be approved after {payload.max_review_attempts} iteration(s).")
 
 
 def get_worker(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
 
@@ -302,14 +306,14 @@ def get_worker(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 

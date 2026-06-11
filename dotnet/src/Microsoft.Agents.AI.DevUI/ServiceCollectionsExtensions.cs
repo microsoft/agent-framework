@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Shared.Diagnostics;
 
@@ -17,8 +18,25 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
     /// <param name="services">The <see cref="IServiceCollection"/> to configure.</param>
     /// <returns>The <see cref="IServiceCollection"/> for method chaining.</returns>
     public static IServiceCollection AddDevUI(this IServiceCollection services)
+        => AddDevUI(services, configure: null);
+
+    /// <summary>
+    /// Adds services required for DevUI integration.
+    /// </summary>
+    /// <param name="services">The <see cref="IServiceCollection"/> to configure.</param>
+    /// <param name="configure">Optional callback used to configure <see cref="DevUIOptions"/>.</param>
+    /// <returns>The <see cref="IServiceCollection"/> for method chaining.</returns>
+    public static IServiceCollection AddDevUI(this IServiceCollection services, Action<DevUIOptions>? configure)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        var optionsBuilder = services.AddOptions<DevUIOptions>();
+        if (configure is not null)
+        {
+            optionsBuilder.Configure(configure);
+        }
+
+        services.AddSingleton<DevUIAuthFilter>();
 
         // a factory that tries to construct an AIAgent from Workflow,
         // even if workflow was not explicitly registered as an AIAgent.
@@ -32,7 +50,7 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
             var workflow = sp.GetKeyedService<Workflow>(keyAsStr);
             if (workflow is not null)
             {
-                return workflow.AsAgent(name: workflow.Name);
+                return workflow.AsAIAgent(name: workflow.Name);
             }
 
             // another thing we can do is resolve a non-keyed workflow.
@@ -41,7 +59,7 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
             workflow = sp.GetService<Workflow>();
             if (workflow is not null && workflow.Name?.Equals(keyAsStr, StringComparison.Ordinal) == true)
             {
-                return workflow.AsAgent(name: workflow.Name);
+                return workflow.AsAIAgent(name: workflow.Name);
             }
 
             // and it's possible to lookup at the default-registered AIAgent

@@ -19,7 +19,7 @@ internal static class Step10EntryPoint
 
     public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment executionEnvironment, IEnumerable<string> inputs)
     {
-        AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: executionEnvironment);
+        AIAgent hostAgent = WorkflowInstance.AsAIAgent("echo-workflow", "EchoW", executionEnvironment: executionEnvironment);
 
         AgentSession session = await hostAgent.CreateSessionAsync();
         foreach (string input in inputs)

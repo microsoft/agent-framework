@@ -32,7 +32,13 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     {
         if (options is null || options.GetType() == typeof(AgentRunOptions))
         {
-            options = new ChatClientAgentRunOptions();
+            options = new ChatClientAgentRunOptions()
+            {
+                ResponseFormat = options?.ResponseFormat,
+                AllowBackgroundResponses = options?.AllowBackgroundResponses,
+                ContinuationToken = options?.ContinuationToken,
+                AdditionalProperties = options?.AdditionalProperties,
+            };
         }
 
         if (options is not ChatClientAgentRunOptions aco)

@@ -15,18 +15,11 @@ of MCP-related actions.
 import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
-from copilot.types import MCPServerConfig, PermissionRequest, PermissionRequestResult
+from copilot.session import MCPServerConfig, PermissionHandler
+from dotenv import load_dotenv
 
-
-def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
-    """Permission handler that prompts the user for approval."""
-    kind = request.get("kind", "unknown")
-    print(f"\n[Permission Request: {kind}]")
-
-    response = input("Approve? (y/n): ").strip().lower()
-    if response in ("y", "yes"):
-        return PermissionRequestResult(kind="approved")
-    return PermissionRequestResult(kind="denied-interactively-by-user")
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:
@@ -52,7 +45,7 @@ async def main() -> None:
     agent = GitHubCopilotAgent(
         instructions="You are a helpful assistant with access to the local filesystem and Microsoft Learn.",
         default_options={
-            "on_permission_request": prompt_permission,
+            "on_permission_request": PermissionHandler.approve_all,
             "mcp_servers": mcp_servers,
         },
     )
@@ -65,9 +58,10 @@ async def main() -> None:
         print(f"Agent: {result1}\n")
 
         # Query that exercises the remote Microsoft Learn MCP server
+        # Remote MCP calls may take longer, so increase the timeout
         query2 = "Search Microsoft Learn for 'Azure Functions Python' and summarize the top result"
         print(f"User: {query2}")
-        result2 = await agent.run(query2)
+        result2 = await agent.run(query2, options={"timeout": 120})
         print(f"Agent: {result2}\n")
 
 

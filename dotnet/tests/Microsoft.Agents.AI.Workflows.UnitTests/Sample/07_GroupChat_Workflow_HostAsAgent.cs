@@ -15,7 +15,7 @@ internal static class Step7EntryPoint
     {
         Workflow workflow = Step6EntryPoint.CreateWorkflow(maxSteps);
 
-        AIAgent agent = workflow.AsAgent("group-chat-agent", "Group Chat Agent");
+        AIAgent agent = workflow.AsAIAgent("group-chat-agent", "Group Chat Agent");
 
         for (int i = 0; i < numIterations; i++)
         {

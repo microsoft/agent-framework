@@ -4,12 +4,17 @@ import asyncio
 import datetime
 
 from agent_framework import (
+    Agent,
     agent_middleware,
     function_middleware,
     tool,
 )
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Decorator MiddlewareTypes Example
@@ -42,7 +47,9 @@ Key benefits of decorator approach:
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_current_time() -> str:
     """Get the current time."""
@@ -73,7 +80,8 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="TimeAgent",
             instructions="You are a helpful time assistant. Call get_current_time when asked about time.",
             tools=get_current_time,

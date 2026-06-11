@@ -3,13 +3,12 @@
 import asyncio
 import os
 import sys
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
 # Ensure local package can be imported when running as a script.
 _SAMPLES_ROOT = Path(__file__).resolve().parents[3]
@@ -47,13 +46,16 @@ to a human, receives the human response, and then forwards that response back
 to the Worker. The workflow completes when idle.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI account configured and accessible for AzureOpenAIResponsesClient.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with WorkflowBuilder, Executor, and WorkflowContext from agent_framework.
 - Understanding of request-response message handling in executors.
 - (Optional) Review of reflection and escalation patterns, such as those in
   workflow_as_agent_reflection.py.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass
@@ -106,20 +108,16 @@ async def main() -> None:
     # and escalation paths for human review.
     worker = Worker(
         id="worker",
-        chat_client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
     reviewer = ReviewerWithHumanInTheLoop(worker_id="worker")
 
     agent = (
-        WorkflowBuilder(start_executor=worker)
-        .add_edge(worker, reviewer)  # Worker sends requests to Reviewer
-        .add_edge(reviewer, worker)  # Reviewer sends feedback to Worker
-        .build()
-        .as_agent()  # Convert workflow into an agent interface
+        WorkflowBuilder(start_executor=worker).add_edge(worker, reviewer).add_edge(reviewer, worker).build().as_agent()
     )
 
     print("Running workflow agent with user query...")
@@ -141,30 +139,17 @@ async def main() -> None:
     # Handle the human review if required.
     if human_review_function_call:
         # Parse the human review request arguments.
-        human_request_args = human_review_function_call.arguments
-        if isinstance(human_request_args, str):
-            request: WorkflowAgent.RequestInfoFunctionArgs = WorkflowAgent.RequestInfoFunctionArgs.from_json(
-                human_request_args
-            )
-        elif isinstance(human_request_args, Mapping):
-            request = WorkflowAgent.RequestInfoFunctionArgs.from_dict(dict(human_request_args))
-        else:
-            raise TypeError("Unexpected argument type for human review function call.")
-
-        request_payload: Any = request.data
+        human_request_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(human_review_function_call.arguments)  # type: ignore
+        request_payload = human_request_args.request_event.data
         if not isinstance(request_payload, HumanReviewRequest):
             raise ValueError("Human review request payload must be a HumanReviewRequest.")
-
-        agent_request = request_payload.agent_request
-        if agent_request is None:
-            raise ValueError("Human review request must include agent_request.")
-
-        request_id = agent_request.request_id
+        if not request_payload.agent_request:
+            raise ValueError("Human review request must contain an agent_request.")
         # Mock a human response approval for demonstration purposes.
-        human_response = ReviewResponse(request_id=request_id, feedback="Approved", approved=True)
-
+        human_response = ReviewResponse(request_id=request_payload.agent_request.request_id, feedback="", approved=True)
         # Create the function call result object to send back to the agent.
-        human_review_function_result = Content.from_function_result(
+        human_review_function_result = Content(
+            "function_result",
             call_id=human_review_function_call.call_id,  # type: ignore
             result=human_response,
         )

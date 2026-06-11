@@ -3,7 +3,11 @@
 """Azure Managed Redis History Provider with Azure AD Authentication
 
 This example demonstrates how to use Azure Managed Redis with Azure AD authentication
-to persist conversational details using RedisHistoryProvider.
+to persist conversation history using RedisHistoryProvider.
+
+Key concepts:
+  - RedisHistoryProvider = durable storage (where messages are persisted)
+  - AgentSession = conversation identity (which conversation the messages belong to)
 
 Requirements:
   - Azure Managed Redis instance with Azure AD authentication enabled
@@ -13,24 +17,29 @@ Requirements:
 
 Environment Variables:
   - AZURE_REDIS_HOST: Your Azure Managed Redis host (e.g., myredis.redis.cache.windows.net)
-  - OPENAI_API_KEY: Your OpenAI API key
-  - OPENAI_CHAT_MODEL_ID: OpenAI model (e.g., gpt-4o-mini)
+  - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+  - FOUNDRY_MODEL: Azure OpenAI Responses deployment name
   - AZURE_USER_OBJECT_ID: Your Azure AD User Object ID for authentication
 """
 
 import asyncio
 import os
 
-from agent_framework.openai import OpenAIChatClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.redis import RedisHistoryProvider
-from azure.identity.aio import AzureCliCredential
+from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from dotenv import load_dotenv
 from redis.credentials import CredentialProvider
+
+load_dotenv()
 
 
 class AzureCredentialProvider(CredentialProvider):
     """Credential provider for Azure AD authentication with Redis Enterprise."""
 
-    def __init__(self, azure_credential: AzureCliCredential, user_object_id: str):
+    def __init__(self, azure_credential: AsyncAzureCliCredential, user_object_id: str):
         self.azure_credential = azure_credential
         self.user_object_id = user_object_id
 
@@ -56,62 +65,70 @@ async def main() -> None:
         print("Get your Object ID from the Azure Portal")
         return
 
-    # Create Azure CLI credential provider (uses 'az login' credentials)
-    azure_credential = AzureCliCredential()
+    # 1. Create Azure CLI credential provider (uses 'az login' credentials)
+    azure_credential = AsyncAzureCliCredential()
     credential_provider = AzureCredentialProvider(azure_credential, user_object_id)
 
-    session_id = "azure_test_session"
-
-    # Create Azure Redis history provider
+    # 2. Create Azure Redis history provider (the durable storage backend)
     history_provider = RedisHistoryProvider(
+        source_id="redis_memory",
         credential_provider=credential_provider,
         host=redis_host,
         port=10000,
         ssl=True,
-        thread_id=session_id,
         key_prefix="chat_messages",
         max_messages=100,
     )
 
-    # Create chat client
-    client = OpenAIChatClient()
+    # 3. Create chat client
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
-    # Create agent with Azure Redis history provider
-    agent = client.as_agent(
+    # 4. Create agent with Azure Redis history provider
+    agent = Agent(
+        client=client,
         name="AzureRedisAssistant",
         instructions="You are a helpful assistant.",
         context_providers=[history_provider],
     )
 
-    # Conversation
+    # 5. Create a session to provide conversation identity.
+    # The session ID is used as the Redis key — all runs sharing the same session
+    # will read/write the same conversation history in Redis.
+    session = agent.create_session()
+
+    # 6. Conversation — each run passes the same session for continuity
     query = "Remember that I enjoy gumbo"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     # Ask the agent to recall the stored preference; it should retrieve from memory
     query = "What do I enjoy?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "What did I say to you just now?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "Remember that I have a meeting at 3pm tomorrow"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "Tulips are red"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "What was the first thing I said to you this conversation?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 

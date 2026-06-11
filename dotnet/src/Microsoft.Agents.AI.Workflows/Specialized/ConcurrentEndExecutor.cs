@@ -36,8 +36,9 @@ internal sealed class ConcurrentEndExecutor : Executor, IResettableExecutor
         this._remaining = this._expectedInputs;
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<List<ChatMessage>>(async (messages, context, cancellationToken) =>
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        protocolBuilder.RouteBuilder.AddHandler<List<ChatMessage>>(async (messages, context, cancellationToken) =>
         {
             // TODO: https://github.com/microsoft/agent-framework/issues/784
             // This locking should not be necessary.
@@ -57,6 +58,9 @@ internal sealed class ConcurrentEndExecutor : Executor, IResettableExecutor
                 await context.YieldOutputAsync(this._aggregator(results), cancellationToken).ConfigureAwait(false);
             }
         });
+
+        return protocolBuilder.YieldsOutput<List<ChatMessage>>();
+    }
 
     public ValueTask ResetAsync()
     {

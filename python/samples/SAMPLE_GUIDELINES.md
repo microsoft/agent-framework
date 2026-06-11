@@ -8,11 +8,12 @@ Every sample file should follow this order:
 
 1. PEP 723 inline script metadata (if external dependencies are needed)
 2. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
-3. Required imports
-4. Module docstring: `"""This sample demonstrates..."""`
-5. Helper functions
-6. Main function(s) demonstrating functionality
-7. Entry point: `if __name__ == "__main__": asyncio.run(main())`
+3. Required imports (including `from dotenv import load_dotenv`)
+4. Environment variable loading: `load_dotenv()`
+5. Module docstring: `"""This sample demonstrates..."""`
+6. Helper functions
+7. Main function(s) demonstrating functionality
+8. Entry point: `if __name__ == "__main__": asyncio.run(main())`
 
 When modifying samples, update associated README files in the same or parent folders.
 
@@ -35,9 +36,81 @@ When samples depend on external packages not included in the dev environment (e.
 
 This makes samples self-contained and runnable without installing extra packages into the dev environment. Do not add sample-only dependencies to the root `pyproject.toml` dev group.
 
+## Azure Credentials
+
+**Always use `AzureCliCredential`** in samples — never `DefaultAzureCredential`. `AzureCliCredential` is explicit about the authentication method (requires `az login`) and avoids unexpected credential resolution that can confuse newcomers.
+
+```python
+from azure.identity import AzureCliCredential
+
+credential = AzureCliCredential()
+```
+
+## Environment Variables
+
+### Basic / Getting Started Samples
+
+For getting started samples (`01-get-started/`) and `basic` samples, use **explicit placeholder values** for non-sensitive parameters to make the code immediately readable:
+
+```python
+# Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+
+"""
+Sample docstring explaining what the sample does.
+"""
+
+
+async def main() -> None:
+    client = FoundryChatClient(
+        project_endpoint="https://your-project.services.ai.azure.com",
+        model="gpt-4o",
+        credential=AzureCliCredential(),
+    )
+    agent = Agent(client=client, name="MyAgent", instructions="You are helpful.")
+    result = await agent.run("Hello!")
+    print(result)
+```
+
+Basic samples should NOT use `os.environ`, `load_dotenv()`, or `.env` files. The placeholder values make the code self-documenting.
+
+### Advanced Samples
+
+For advanced samples that require real credentials or multiple configuration values, use environment variables with `os.environ` and document the required variables in the module docstring:
+
+```python
+# Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+import os
+
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+
+"""
+Advanced sample demonstrating feature X.
+
+Environment variables:
+    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
+    FOUNDRY_MODEL            — Model deployment name (e.g. gpt-4o)
+"""
+```
+
+### Default Client for Samples
+
+Unless a sample is specifically demonstrating a particular provider (OpenAI direct, Anthropic, Ollama, etc.), use `FoundryChatClient` from `agent_framework.azure` as the default client. This is the recommended client for Azure AI Foundry deployments.
+
+Provider-specific samples belong in `02-agents/providers/<provider>/` and should use the provider's native client (e.g., `OpenAIChatClient` for OpenAI, `AnthropicClient` for Anthropic).
+
 ## Syntax Checking
 
-Run `uv run poe samples-syntax` to check samples for syntax errors and missing imports from `agent_framework`. This uses a relaxed pyright configuration that validates imports without strict type checking.
+Run `uv run poe pyright -S` to check samples for syntax errors and missing imports from `agent_framework`. This uses a relaxed pyright configuration that validates imports without strict type checking.
 
 Some samples depend on external packages (e.g., `azure.ai.agentserver.agentframework`, `microsoft_agents`) that are not installed in the dev environment. These are excluded in `pyrightconfig.samples.json`. When adding or modifying these excluded samples, add them to the exclude list and manually verify they have no import errors from `agent_framework` packages by temporarily removing them from the exclude list and running the check.
 
@@ -75,12 +148,12 @@ For the getting started samples and the concept samples, we should have the foll
 2. A summary should be included underneath the imports that explains the purpose of the sample and required components/concepts to understand the sample. For example:
 
     ```python
-    '''
+    """
     This sample shows how to create a chatbot. This sample uses the following two main components:
     - a ChatCompletionService: This component is responsible for generating responses to user messages.
     - a ChatHistory: This component is responsible for keeping track of the chat history.
     The chatbot in this sample is called Mosscap, who responds to user messages with long flowery prose.
-    '''
+    """
     ```
 
 3. Mark the code with comments to explain the purpose of each section of the code. For example:
@@ -98,13 +171,13 @@ For the getting started samples and the concept samples, we should have the foll
 4. At the end of the sample, include a section that explains the expected output of the sample. For example:
 
     ```python
-    '''
+    """
     Sample output:
     User:> Why is the sky blue in one sentence?
     Mosscap:> The sky is blue due to the scattering of sunlight by the molecules in the Earth's atmosphere,
     a phenomenon known as Rayleigh scattering, which causes shorter blue wavelengths to become more
     prominent in our visual perception.
-    '''
+    """
     ```
 
 For the demos, a README.md file must be included that explains the purpose of the demo and how to run it. The README.md file should include the following:

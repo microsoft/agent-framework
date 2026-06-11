@@ -43,15 +43,16 @@ public sealed class ObservabilityTests : IDisposable
     /// Create a sample workflow for testing.
     /// </summary>
     /// <remarks>
-    /// This workflow is expected to create 8 activities that will be captured by the tests
+    /// This workflow is expected to create 9 activities that will be captured by the tests
     /// - ActivityNames.WorkflowBuild
-    /// - ActivityNames.WorkflowRun
-    /// -- ActivityNames.EdgeGroupProcess
-    /// -- ActivityNames.ExecutorProcess (UppercaseExecutor)
-    /// --- ActivityNames.MessageSend
-    /// ---- ActivityNames.EdgeGroupProcess
-    /// -- ActivityNames.ExecutorProcess (ReverseTextExecutor)
-    /// --- ActivityNames.MessageSend
+    /// - ActivityNames.WorkflowSession
+    /// -- ActivityNames.WorkflowInvoke
+    /// --- ActivityNames.EdgeGroupProcess
+    /// --- ActivityNames.ExecutorProcess (UppercaseExecutor)
+    /// ---- ActivityNames.MessageSend
+    /// ----- ActivityNames.EdgeGroupProcess
+    /// --- ActivityNames.ExecutorProcess (ReverseTextExecutor)
+    /// ---- ActivityNames.MessageSend
     /// </remarks>
     /// <returns>The created workflow.</returns>
     private static Workflow CreateWorkflow()
@@ -74,7 +75,8 @@ public sealed class ObservabilityTests : IDisposable
         new()
         {
             { ActivityNames.WorkflowBuild, 1 },
-            { ActivityNames.WorkflowRun, 1 },
+            { ActivityNames.WorkflowSession, 1 },
+            { ActivityNames.WorkflowInvoke, 1 },
             { ActivityNames.EdgeGroupProcess, 2 },
             { ActivityNames.ExecutorProcess, 2 },
             { ActivityNames.MessageSend, 2 }
@@ -113,7 +115,7 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().HaveCount(8, "Exactly 8 activities should be created.");
+        capturedActivities.Should().HaveCount(9, "Exactly 9 activities should be created.");
 
         // Make sure all expected activities exist and have the correct count
         foreach (var kvp in GetExpectedActivityNameCounts())
@@ -125,7 +127,7 @@ public sealed class ObservabilityTests : IDisposable
         }
 
         // Verify WorkflowRun activity events include workflow lifecycle events
-        var workflowRunActivity = capturedActivities.First(a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal));
+        var workflowRunActivity = capturedActivities.First(a => a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal));
         var activityEvents = workflowRunActivity.Events.ToList();
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowStarted, "activity should have workflow started event");
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowCompleted, "activity should have workflow completed event");
@@ -273,8 +275,11 @@ public sealed class ObservabilityTests : IDisposable
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().NotContain(
-            a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal),
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal),
             "WorkflowRun activity should be disabled.");
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal),
+            "WorkflowSession activity should also be disabled when DisableWorkflowRun is true.");
         capturedActivities.Should().Contain(
             a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal),
             "Other activities should still be created.");
@@ -303,7 +308,7 @@ public sealed class ObservabilityTests : IDisposable
             a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
             "ExecutorProcess activity should be disabled.");
         capturedActivities.Should().Contain(
-            a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal),
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal),
             "Other activities should still be created.");
     }
 

@@ -379,8 +379,8 @@ class TestClaudeAgentRunStream:
             assert updates[1].text == "response"
 
     async def test_run_stream_raises_on_assistant_message_error(self) -> None:
-        """Test run raises ServiceException when AssistantMessage has an error."""
-        from agent_framework.exceptions import ServiceException
+        """Test run raises AgentException when AssistantMessage has an error."""
+        from agent_framework.exceptions import AgentException
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
         messages = [
@@ -402,15 +402,15 @@ class TestClaudeAgentRunStream:
 
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            with pytest.raises(ServiceException) as exc_info:
+            with pytest.raises(AgentException) as exc_info:
                 async for _ in agent.run("Hello", stream=True):
                     pass
             assert "Invalid request to Claude API" in str(exc_info.value)
             assert "Error details from API" in str(exc_info.value)
 
     async def test_run_stream_raises_on_result_message_error(self) -> None:
-        """Test run raises ServiceException when ResultMessage.is_error is True."""
-        from agent_framework.exceptions import ServiceException
+        """Test run raises AgentException when ResultMessage.is_error is True."""
+        from agent_framework.exceptions import AgentException
         from claude_agent_sdk import ResultMessage
 
         messages = [
@@ -428,7 +428,7 @@ class TestClaudeAgentRunStream:
 
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            with pytest.raises(ServiceException) as exc_info:
+            with pytest.raises(AgentException) as exc_info:
                 async for _ in agent.run("Hello", stream=True):
                     pass
             assert "Model 'claude-sonnet-4.5' not found" in str(exc_info.value)
@@ -600,6 +600,141 @@ class TestClaudeAgentToolConversion:
         result = await sdk_tool.handler({})
         assert "Error:" in result["content"][0]["text"]
         assert "Something went wrong" in result["content"][0]["text"]
+
+
+# region Test ClaudeAgent Function Approval Enforcement
+
+
+class TestClaudeAgentFunctionApproval:
+    """Tests that ``approval_mode='always_require'`` is enforced at the agent boundary."""
+
+    async def test_handler_denies_when_no_callback_configured(self) -> None:
+        """Approval-required tool must be denied without executing when no callback is set."""
+        invocations: list[Any] = []
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"path": "/critical"})
+
+        assert invocations == []
+        text = result["content"][0]["text"]
+        assert "requires human approval" in text
+        assert "no on_function_approval callback is configured" in text
+
+    async def test_handler_denies_when_callback_returns_false(self) -> None:
+        """Falsy callback return value must deny the call and skip execution."""
+        invocations: list[Any] = []
+        seen: list[Content] = []
+
+        def deny(call: Content) -> bool:
+            seen.append(call)
+            return False
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": deny})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"path": "/critical"})
+
+        assert invocations == []
+        assert len(seen) == 1
+        assert seen[0].type == "function_call"
+        assert seen[0].name == "dangerous"  # type: ignore[attr-defined]
+        assert seen[0].arguments == {"path": "/critical"}  # type: ignore[attr-defined]
+        assert "denied" in result["content"][0]["text"].lower()
+
+    async def test_handler_executes_when_callback_returns_true(self) -> None:
+        """Truthy callback return value must allow the tool to execute normally."""
+
+        def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"result={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": approve})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 42})
+
+        assert result["content"][0]["text"] == "result=42"
+
+    async def test_handler_supports_async_callback(self) -> None:
+        """Async callback must be awaited and respected."""
+
+        async def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"async={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": approve})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 7})
+
+        assert result["content"][0]["text"] == "async=7"
+
+    async def test_callback_failure_denies_safely(self) -> None:
+        """A callback that raises must result in denial, not in tool execution."""
+        invocations: list[Any] = []
+
+        def boom(call: Content) -> bool:
+            raise RuntimeError("nope")
+
+        @tool(approval_mode="always_require")
+        def dangerous(x: int) -> str:
+            """A tool that requires human approval."""
+            invocations.append(x)
+            return f"x={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": boom})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 1})
+
+        assert invocations == []
+        assert "denied" in result["content"][0]["text"].lower()
+
+    async def test_handler_does_not_invoke_callback_for_never_require(self) -> None:
+        """Tools without approval_mode='always_require' must not trigger the callback."""
+        callback_calls: list[Any] = []
+
+        def approve(call: Content) -> bool:
+            callback_calls.append(call)
+            return True
+
+        @tool
+        def safe(x: int) -> str:
+            """A tool that does not require approval."""
+            return f"safe={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": approve})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(safe)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 5})
+
+        assert callback_calls == []
+        assert result["content"][0]["text"] == "safe=5"
+
+
+# endregion
 
 
 # region Test ClaudeAgent Permissions
@@ -785,3 +920,365 @@ class TestApplyRuntimeOptions:
         await agent._apply_runtime_options(None)  # type: ignore[reportPrivateUsage]
         mock_client.set_model.assert_not_called()
         mock_client.set_permission_mode.assert_not_called()
+
+    async def test_apply_runtime_on_function_approval_rejected(self) -> None:
+        """on_function_approval cannot be overridden per run."""
+        mock_client = MagicMock()
+        mock_client.set_model = AsyncMock()
+        mock_client.set_permission_mode = AsyncMock()
+
+        agent = ClaudeAgent()
+        agent._client = mock_client  # type: ignore[reportPrivateUsage]
+
+        with pytest.raises(ValueError, match="on_function_approval"):
+            await agent._apply_runtime_options({"on_function_approval": lambda _c: True})  # type: ignore[reportPrivateUsage]
+        mock_client.set_model.assert_not_called()
+        mock_client.set_permission_mode.assert_not_called()
+
+
+# region Test ClaudeAgent Structured Output
+
+
+class TestClaudeAgentStructuredOutput:
+    """Tests for ClaudeAgent structured output propagation."""
+
+    @staticmethod
+    async def _create_async_generator(items: list[Any]) -> Any:
+        """Helper to create async generator from list."""
+        for item in items:
+            yield item
+
+    def _create_mock_client(self, messages: list[Any]) -> MagicMock:
+        """Create a mock ClaudeSDKClient that yields given messages."""
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock()
+        mock_client.disconnect = AsyncMock()
+        mock_client.query = AsyncMock()
+        mock_client.set_model = AsyncMock()
+        mock_client.set_permission_mode = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=self._create_async_generator(messages))
+        return mock_client
+
+    async def test_structured_output_propagated_to_response(self) -> None:
+        """Test that structured_output from ResultMessage is propagated to response.value."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        structured_data = {"name": "Alice", "age": 30}
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": '{"name": "Alice", "age": 30}'},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text='{"name": "Alice", "age": 30}')],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+                structured_output=structured_data,
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            response = await agent.run("Return structured data")
+            assert response.value == structured_data
+
+    async def test_structured_output_none_when_not_present(self) -> None:
+        """Test that response.value is None when structured_output is not present."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Hello!"},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Hello!")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            response = await agent.run("Hello")
+            assert response.value is None
+
+    async def test_structured_output_with_streaming(self) -> None:
+        """Test that structured_output is available via get_final_response after streaming."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        structured_data = {"key": "value"}
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": '{"key": "value"}'},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text='{"key": "value"}')],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+                structured_output=structured_data,
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            stream = agent.run("Return structured data", stream=True)
+            # Consume the stream
+            async for _ in stream:
+                pass
+            # Structured output should be available via get_final_response
+            response = await stream.get_final_response()
+            assert response.value == structured_data
+
+    async def test_structured_output_with_error_does_not_propagate(self) -> None:
+        """Test that structured_output is not propagated when ResultMessage is an error."""
+        from agent_framework.exceptions import AgentException
+        from claude_agent_sdk import ResultMessage
+
+        messages = [
+            ResultMessage(
+                subtype="error",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=True,
+                num_turns=0,
+                session_id="error-session",
+                result="Something went wrong",
+                structured_output={"some": "data"},
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            with pytest.raises(AgentException) as exc_info:
+                await agent.run("Hello")
+            assert "Something went wrong" in str(exc_info.value)
+
+
+# region Test ClaudeAgent Telemetry
+
+
+class TestClaudeAgentTelemetry:
+    """Tests for ClaudeAgent OpenTelemetry instrumentation."""
+
+    @staticmethod
+    async def _create_async_generator(items: list[Any]) -> Any:
+        """Helper to create async generator from list."""
+        for item in items:
+            yield item
+
+    def _create_mock_client(self, messages: list[Any]) -> MagicMock:
+        """Create a mock ClaudeSDKClient that yields given messages."""
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock()
+        mock_client.disconnect = AsyncMock()
+        mock_client.query = AsyncMock()
+        mock_client.set_model = AsyncMock()
+        mock_client.set_permission_mode = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=self._create_async_generator(messages))
+        return mock_client
+
+    def _create_standard_messages(self) -> list[Any]:
+        """Create a standard set of mock messages for testing."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        return [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Hello!"},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Hello!")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+            ),
+        ]
+
+    async def test_run_emits_span_when_instrumentation_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that run() creates an OpenTelemetry span when instrumentation is enabled."""
+        from agent_framework.observability import OBSERVABILITY_SETTINGS
+
+        messages = self._create_standard_messages()
+        mock_client = self._create_mock_client(messages)
+
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework.observability._get_span") as mock_get_span,
+        ):
+            mock_span = MagicMock()
+            mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+            mock_get_span.return_value.__exit__ = MagicMock(return_value=False)
+
+            agent = ClaudeAgent(name="test-agent")
+            response = await agent.run("Hello")
+
+            assert response.text == "Hello!"
+            mock_get_span.assert_called_once()
+            call_kwargs = mock_get_span.call_args[1]
+            assert call_kwargs["attributes"]["gen_ai.agent.name"] == "test-agent"
+            assert call_kwargs["attributes"]["gen_ai.operation.name"] == "invoke_agent"
+
+    async def test_run_skips_telemetry_when_instrumentation_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that run() skips telemetry when instrumentation is disabled."""
+        from agent_framework.observability import OBSERVABILITY_SETTINGS
+
+        messages = self._create_standard_messages()
+        mock_client = self._create_mock_client(messages)
+
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", False)
+
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework.observability._get_span") as mock_get_span,
+        ):
+            agent = ClaudeAgent(name="test-agent")
+            response = await agent.run("Hello")
+
+            assert response.text == "Hello!"
+            mock_get_span.assert_not_called()
+
+    async def test_run_stream_emits_span_when_instrumentation_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that run(stream=True) creates a span when instrumentation is enabled."""
+        from agent_framework.observability import OBSERVABILITY_SETTINGS
+
+        messages = self._create_standard_messages()
+        mock_client = self._create_mock_client(messages)
+
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework.observability.get_tracer") as mock_get_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_tracer = MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+            mock_get_tracer.return_value = mock_tracer
+
+            agent = ClaudeAgent(name="stream-agent")
+            updates: list[AgentResponseUpdate] = []
+            async for update in agent.run("Hello", stream=True):
+                updates.append(update)
+
+            assert len(updates) == 1
+            mock_tracer.start_span.assert_called_once()
+            span_name = mock_tracer.start_span.call_args[0][0]
+            assert "stream-agent" in span_name
+            assert "invoke_agent" in span_name
+
+    async def test_run_captures_exception_in_span(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that exceptions during run() are captured in the telemetry span."""
+        from agent_framework.exceptions import AgentException
+        from agent_framework.observability import OBSERVABILITY_SETTINGS
+        from claude_agent_sdk import ResultMessage
+
+        error_messages = [
+            ResultMessage(
+                subtype="error",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=True,
+                num_turns=0,
+                session_id="error-session",
+                result="Model not found",
+            ),
+        ]
+        mock_client = self._create_mock_client(error_messages)
+
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework.observability._get_span") as mock_get_span,
+            patch("agent_framework.observability.capture_exception") as mock_capture_exc,
+        ):
+            mock_span = MagicMock()
+            mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+            mock_get_span.return_value.__exit__ = MagicMock(return_value=False)
+
+            agent = ClaudeAgent(name="error-agent")
+            with pytest.raises(AgentException):
+                await agent.run("Hello")
+
+            mock_capture_exc.assert_called_once()
+            exc_kwargs = mock_capture_exc.call_args[1]
+            assert exc_kwargs["span"] is mock_span
+            assert isinstance(exc_kwargs["exception"], AgentException)
+
+    async def test_telemetry_uses_correct_provider_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that telemetry uses AGENT_PROVIDER_NAME as provider."""
+        from agent_framework.observability import OBSERVABILITY_SETTINGS
+
+        messages = self._create_standard_messages()
+        mock_client = self._create_mock_client(messages)
+
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework.observability._get_span") as mock_get_span,
+        ):
+            mock_span = MagicMock()
+            mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+            mock_get_span.return_value.__exit__ = MagicMock(return_value=False)
+
+            agent = ClaudeAgent(name="test-agent")
+            await agent.run("Hello")
+
+            call_kwargs = mock_get_span.call_args[1]
+            assert call_kwargs["attributes"]["gen_ai.provider.name"] == "anthropic.claude"

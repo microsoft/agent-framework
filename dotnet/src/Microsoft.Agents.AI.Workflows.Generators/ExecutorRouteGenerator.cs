@@ -120,7 +120,7 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
         {
             if (!processedClasses.Contains(kvp.Key))
             {
-                yield return SemanticAnalyzer.CombineProtocolOnlyResults(kvp.Value);
+                yield return SemanticAnalyzer.CombineOutputOnlyResults(kvp.Value);
             }
         }
     }

@@ -7,8 +7,8 @@ that uses conditional logic to either handle spam emails or draft professional r
 
 Prerequisites:
 - The worker must be running with both agents, orchestration, and activities registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running
 """
 
@@ -16,7 +16,7 @@ import asyncio
 import logging
 import os
 
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 
 # Configure logging
@@ -25,9 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_client(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerClient:
     """Create a configured DurableTaskSchedulerClient.
 
@@ -45,21 +43,21 @@ def get_client(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerClient(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
 def run_client(
     client: DurableTaskSchedulerClient,
     email_id: str = "email-001",
-    email_content: str = "Hello! I wanted to reach out about our upcoming project meeting."
+    email_content: str = "Hello! I wanted to reach out about our upcoming project meeting.",
 ) -> None:
     """Run client to start and monitor the spam detection orchestration.
 
@@ -76,7 +74,7 @@ def run_client(
     logger.debug("Starting spam detection orchestration...")
 
     # Start the orchestration with the email payload
-    instance_id = client.schedule_new_orchestration(    # type: ignore
+    instance_id = client.schedule_new_orchestration(  # type: ignore
         orchestrator="spam_detection_orchestration",
         input=payload,
     )
@@ -85,10 +83,7 @@ def run_client(
     logger.debug("Waiting for orchestration to complete...")
 
     # Retrieve the final state
-    metadata = client.wait_for_orchestration_completion(
-        instance_id=instance_id,
-        timeout=300
-    )
+    metadata = client.wait_for_orchestration_completion(instance_id=instance_id, timeout=300)
 
     if metadata and metadata.runtime_status.name == "COMPLETED":
         result = metadata.serialized_output
@@ -124,7 +119,7 @@ async def main() -> None:
         run_client(
             client,
             email_id="email-001",
-            email_content="Hello! I wanted to reach out about our upcoming project meeting scheduled for next week."
+            email_content="Hello! I wanted to reach out about our upcoming project meeting scheduled for next week.",
         )
 
         # Test with a spam email
@@ -133,7 +128,7 @@ async def main() -> None:
         run_client(
             client,
             email_id="email-002",
-            email_content="URGENT! You've won $1,000,000! Click here now to claim your prize! Limited time offer! Don't miss out!"
+            email_content="URGENT! You've won $1,000,000! Click here now to claim your prize! Limited time offer! Don't miss out!",
         )
 
     except Exception as e:

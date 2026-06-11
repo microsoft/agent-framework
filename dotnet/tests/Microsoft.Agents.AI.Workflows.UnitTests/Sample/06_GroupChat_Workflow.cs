@@ -29,7 +29,7 @@ internal static class Step6EntryPoint
     {
         Workflow workflow = CreateWorkflow(maxSteps);
 
-        StreamingRun run = await environment.StreamAsync(workflow, Array.Empty<ChatMessage>())
+        StreamingRun run = await environment.RunStreamingAsync(workflow, Array.Empty<ChatMessage>())
                                     .ConfigureAwait(false);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 

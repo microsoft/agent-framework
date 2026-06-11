@@ -3,23 +3,28 @@
 """Fan out concurrent runs across two agents inside a Durable Functions orchestration.
 
 Components used in this sample:
-- AzureOpenAIChatClient to create domain-specific agents hosted by Agent Framework.
+- FoundryChatClient to create domain-specific agents hosted by Agent Framework.
 - AgentFunctionApp to expose orchestration and HTTP triggers.
 - Durable Functions orchestration that executes agent calls in parallel and aggregates results.
 
-Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and either
-`AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
+Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before starting the Functions host."""
 
 import json
 import logging
+import os
 from collections.abc import Generator
 from typing import Any, cast
 
 import azure.functions as func
-from agent_framework import AgentResponse
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework import Agent, AgentResponse
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.foundry import FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +35,22 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 
 # 2. Instantiate both agents that the orchestration will run concurrently.
 def _create_agents() -> list[Any]:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    physicist = client.as_agent(
+    physicist = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
 
-    chemist = client.as_agent(
+    chemist = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )
@@ -56,7 +69,6 @@ app.add_agent(agents[1])
 @app.orchestration_trigger(context_name="context")
 def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext) -> Generator[Any, Any, dict[str, str]]:
     """Fan out to two domain-specific agents and aggregate their responses."""
-
     prompt = context.get_input()
     if not prompt or not str(prompt).strip():
         raise ValueError("Prompt is required")

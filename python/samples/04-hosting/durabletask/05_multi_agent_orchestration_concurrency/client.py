@@ -8,8 +8,8 @@ displays the aggregated results.
 
 Prerequisites:
 - The worker must be running with both agents and orchestration registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running
 """
 
@@ -18,7 +18,7 @@ import json
 import logging
 import os
 
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 
 # Configure logging
@@ -27,9 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_client(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerClient:
     """Create a configured DurableTaskSchedulerClient.
 
@@ -47,14 +45,14 @@ def get_client(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerClient(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
@@ -66,7 +64,7 @@ def run_client(client: DurableTaskSchedulerClient, prompt: str = "What is temper
         prompt: The prompt to send to both agents
     """
     # Start the orchestration with the prompt as input
-    instance_id = client.schedule_new_orchestration(    # type: ignore
+    instance_id = client.schedule_new_orchestration(  # type: ignore
         orchestrator="multi_agent_concurrent_orchestration",
         input=prompt,
     )

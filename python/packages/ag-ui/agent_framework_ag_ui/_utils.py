@@ -27,7 +27,7 @@ FRAMEWORK_TO_AGUI_ROLE: dict[str, str] = {
     "system": "system",
 }
 
-ALLOWED_AGUI_ROLES: set[str] = {"user", "assistant", "system", "tool"}
+ALLOWED_AGUI_ROLES: set[str] = {"user", "assistant", "system", "tool", "reasoning"}
 
 
 def generate_event_id() -> str:
@@ -56,6 +56,22 @@ def safe_json_parse(value: Any) -> dict[str, Any] | None:
     return None
 
 
+def canonical_function_arguments(function_call: Any) -> str | None:
+    """Return a stable representation of function-call arguments."""
+    if function_call is None:
+        return None
+
+    try:
+        parsed_arguments = function_call.parse_arguments()
+    except Exception:
+        parsed_arguments = getattr(function_call, "arguments", None)
+
+    if parsed_arguments is None:
+        parsed_arguments = {}
+
+    return json.dumps(make_json_safe(parsed_arguments), sort_keys=True, separators=(",", ":"))
+
+
 def get_role_value(message: Any) -> str:
     """Extract role string from a message object.
 
@@ -82,7 +98,7 @@ def normalize_agui_role(raw_role: Any) -> str:
         raw_role: Raw role value from AG-UI message
 
     Returns:
-        Normalized role string (user, assistant, system, or tool)
+        Normalized role string (user, assistant, system, tool, or reasoning)
     """
     if not isinstance(raw_role, str):
         return "user"
@@ -162,7 +178,7 @@ def make_json_safe(obj: Any) -> Any:  # noqa: ANN401
 
 def convert_agui_tools_to_agent_framework(
     agui_tools: list[dict[str, Any]] | None,
-) -> list[FunctionTool[Any]] | None:
+) -> list[FunctionTool] | None:
     """Convert AG-UI tool definitions to Agent Framework FunctionTool declarations.
 
     Creates declaration-only FunctionTool instances (no executable implementation).
@@ -181,13 +197,13 @@ def convert_agui_tools_to_agent_framework(
     if not agui_tools:
         return None
 
-    result: list[FunctionTool[Any]] = []
+    result: list[FunctionTool] = []
     for tool_def in agui_tools:
         # Create declaration-only FunctionTool (func=None means no implementation)
         # When func=None, the declaration_only property returns True,
         # which tells the function invocation mixin to return the function call
         # without executing it (so it can be sent back to the client)
-        func: FunctionTool[Any] = FunctionTool(
+        func: FunctionTool = FunctionTool(
             name=tool_def.get("name", ""),
             description=tool_def.get("description", ""),
             func=None,  # CRITICAL: Makes declaration_only=True

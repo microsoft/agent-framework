@@ -12,14 +12,14 @@ Integration with AWS Bedrock for LLM inference.
 ## Usage
 
 ```python
-from agent_framework_bedrock import BedrockChatClient
+from agent_framework.amazon import BedrockChatClient
 
-client = BedrockChatClient(model_id="anthropic.claude-3-sonnet-20240229-v1:0")
+client = BedrockChatClient(model="anthropic.claude-3-sonnet-20240229-v1:0")
 response = await client.get_response("Hello")
 ```
 
 ## Import Path
 
 ```python
-from agent_framework_bedrock import BedrockChatClient
+from agent_framework.amazon import BedrockChatClient
 ```

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Observability;
 
@@ -11,7 +12,7 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData edgeData) :
     EdgeRunner<FanOutEdgeData>(runContext, edgeData)
 {
-    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
+    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer, CancellationToken cancellationToken)
     {
         using var activity = this.StartActivity();
         activity?
@@ -39,7 +40,10 @@ internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData
                 return null;
             }
 
-            IEnumerable<Executor> validTargets = result.Where(t => t.CanHandle(envelope.MessageType));
+            Type? runtimeType = await this.GetMessageRuntimeTypeAsync(envelope, stepTracer, cancellationToken)
+                                          .ConfigureAwait(false);
+
+            IEnumerable<Executor> validTargets = result.Where(t => CanHandle(t, runtimeType));
 
             if (!validTargets.Any())
             {

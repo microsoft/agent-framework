@@ -3,8 +3,12 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Tool exceptions handled by returning the error for the agent to recover from.
@@ -14,7 +18,9 @@ The LLM decides whether to retry the call or to respond with something else, bas
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def greet(name: Annotated[str, "Name to greet"]) -> str:
     """Greet someone."""
@@ -39,7 +45,8 @@ def safe_divide(
 
 async def main():
     # tools = Tools()
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="ToolAgent",
         instructions="Use the provided tools.",
         tools=[greet, safe_divide],

@@ -1,27 +1,24 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/orchestrations/01_round_robin_group_chat.py
-
 # Copyright (c) Microsoft. All rights reserved.
+
+
+import asyncio
+
+from agent_framework import Agent, Message
+from dotenv import load_dotenv
+
 """AutoGen RoundRobinGroupChat vs Agent Framework GroupChatBuilder/SequentialBuilder.
 
 Demonstrates sequential agent orchestration where agents take turns processing
 the task in a round-robin fashion.
 """
 
-import asyncio
-
-from agent_framework import AgentResponseUpdate
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def run_autogen() -> None:
     """AutoGen's RoundRobinGroupChat for sequential agent orchestration."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.conditions import TextMentionTermination
     from autogen_agentchat.teams import RoundRobinGroupChat
@@ -68,20 +65,23 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
     from agent_framework.orchestrations import SequentialBuilder
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create specialized agents
-    researcher = client.as_agent(
+    researcher = Agent(
+        client=client,
         name="researcher",
         instructions="You are a researcher. Provide facts and data about the topic.",
     )
 
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         name="writer",
         instructions="You are a writer. Turn research into engaging content.",
     )
 
-    editor = client.as_agent(
+    editor = Agent(
+        client=client,
         name="editor",
         instructions="You are an editor. Review and finalize the content.",
     )
@@ -91,22 +91,18 @@ async def run_agent_framework() -> None:
 
     # Run the workflow
     print("[Agent Framework] Sequential conversation:")
-    current_executor = None
     async for event in workflow.run("Create a brief summary about electric vehicles", stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
-            # Print executor name header when switching to a new agent
-            if current_executor != event.executor_id:
-                if current_executor is not None:
-                    print()  # Newline after previous agent's message
-                print(f"---------- {event.executor_id} ----------")
-                current_executor = event.executor_id
-            print(event.data.text, end="", flush=True)
-    print()  # Final newline after conversation
+        if event.type == "output" and isinstance(event.data, list):
+            for message in event.data:  # type: ignore
+                if isinstance(message, Message) and message.role == "assistant" and message.text:
+                    print(f"---------- {message.author_name} ----------")
+                    print(message.text)
 
 
 async def run_agent_framework_with_cycle() -> None:
     """Agent Framework's WorkflowBuilder with cyclic edges and conditional exit."""
     from agent_framework import (
+        Agent,
         AgentExecutorRequest,
         AgentExecutorResponse,
         AgentResponseUpdate,
@@ -116,20 +112,23 @@ async def run_agent_framework_with_cycle() -> None:
     )
     from agent_framework.openai import OpenAIChatClient
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create specialized agents
-    researcher = client.as_agent(
+    researcher = Agent(
+        client=client,
         name="researcher",
         instructions="You are a researcher. Provide facts and data about the topic.",
     )
 
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         name="writer",
         instructions="You are a writer. Turn research into engaging content.",
     )
 
-    editor = client.as_agent(
+    editor = Agent(
+        client=client,
         name="editor",
         instructions="You are an editor. Review and finalize the content. End with APPROVED if satisfied.",
     )

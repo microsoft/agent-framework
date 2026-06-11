@@ -10,13 +10,14 @@ and are injected into the shim.
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
-from agent_framework import AgentResponse, AgentSession, Content, Message, get_logger
+from agent_framework import AgentResponse, AgentSession, Content, Message
 from durabletask.client import TaskHubGrpcClient
 from durabletask.entities import EntityInstanceId
 from durabletask.task import CompletableTask, CompositeTask, OrchestrationContext, Task
@@ -27,7 +28,7 @@ from ._durable_agent_state import DurableAgentState
 from ._models import AgentSessionId, DurableAgentSession, RunRequest
 from ._response_utils import ensure_response_format, load_agent_response
 
-logger = get_logger("agent_framework.durabletask.executors")
+logger = logging.getLogger("agent_framework.durabletask")
 
 # TypeVar for the task type returned by executors
 TaskT = TypeVar("TaskT")
@@ -123,10 +124,20 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
         """
         raise NotImplementedError
 
-    def get_new_session(self, agent_name: str, **kwargs: Any) -> DurableAgentSession:
+    def get_new_session(
+        self,
+        agent_name: str,
+        *,
+        session_id: str | None = None,
+        service_session_id: str | None = None,
+    ) -> DurableAgentSession:
         """Create a new DurableAgentSession with random session ID."""
-        session_id = self._create_session_id(agent_name)
-        return DurableAgentSession.from_session_id(session_id, **kwargs)
+        durable_session_id = self._create_session_id(agent_name)
+        return DurableAgentSession(
+            durable_session_id=durable_session_id,
+            session_id=session_id,
+            service_session_id=service_session_id,
+        )
 
     def _create_session_id(
         self,

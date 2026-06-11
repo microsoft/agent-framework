@@ -3,22 +3,24 @@
 """Chain two runs of a single agent inside a Durable Functions orchestration.
 
 Components used in this sample:
-- AzureOpenAIChatClient to construct the writer agent hosted by Agent Framework.
+- FoundryChatClient to construct the writer agent hosted by Agent Framework.
 - AgentFunctionApp to surface HTTP and orchestration triggers via the Azure Functions extension.
 - Durable Functions orchestration to run sequential agent invocations on the same conversation session.
 
-Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and either
-`AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
+Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before starting the Functions host."""
 
 import json
 import logging
+import os
 from collections.abc import Generator
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework import Agent
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.foundry import FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +31,18 @@ WRITER_AGENT_NAME = "WriterAgent"
 # 2. Create the writer agent that will be invoked twice within the orchestration.
 def _create_writer_agent() -> Any:
     """Create the writer agent with the same persona as the C# sample."""
-
     instructions = (
         "You refine short pieces of text. When given an initial sentence you enhance it;\n"
         "when given an improved sentence you polish it further."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
+    return Agent(
+        client=_client,
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )
@@ -58,10 +65,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext) -> Generato
         session=writer_session,
     )
 
-    improved_prompt = (
-        "Improve this further while keeping it under 25 words: "
-        f"{initial.text}"
-    )
+    improved_prompt = f"Improve this further while keeping it under 25 words: {initial.text}"
 
     refined = yield writer.run(
         messages=improved_prompt,

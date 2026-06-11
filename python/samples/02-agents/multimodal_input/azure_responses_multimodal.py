@@ -4,8 +4,12 @@ import asyncio
 from pathlib import Path
 
 from agent_framework import Content, Message
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "shared" / "sample_assets"
 
@@ -18,7 +22,7 @@ def load_sample_pdf() -> bytes:
 
 def create_sample_image() -> str:
     """Create a simple 1x1 pixel PNG image for testing."""
-    # This is a tiny red pixel in PNG format
+    # This is a tiny yellow pixel in PNG format
     png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
     return f"data:image/png;base64,{png_data}"
 
@@ -26,11 +30,11 @@ def create_sample_image() -> str:
 async def test_image() -> None:
     """Test image analysis with Azure OpenAI Responses API."""
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option. Requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME
+    # authentication option. Requires AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
     # environment variables to be set.
-    # Alternatively, you can pass deployment_name explicitly:
-    # client = AzureOpenAIResponsesClient(credential=AzureCliCredential(), deployment_name="your-deployment-name")
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    # Alternatively, you can pass model explicitly:
+    # client = FoundryChatClient(credential=AzureCliCredential(), model="your-deployment-name")
+    client = FoundryChatClient(credential=AzureCliCredential())
 
     image_uri = create_sample_image()
     message = Message(
@@ -41,13 +45,13 @@ async def test_image() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Image Response: {response}")
 
 
 async def test_pdf() -> None:
     """Test PDF document analysis with Azure OpenAI Responses API."""
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=AzureCliCredential())
 
     pdf_bytes = load_sample_pdf()
     message = Message(
@@ -62,7 +66,7 @@ async def test_pdf() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"PDF Response: {response}")
 
 

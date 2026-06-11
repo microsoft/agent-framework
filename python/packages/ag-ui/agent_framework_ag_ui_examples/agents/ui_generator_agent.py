@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from agent_framework import Agent, FunctionTool, SupportsChatGetResponse
 from agent_framework.ag_ui import AgentFrameworkAgent
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from agent_framework import ChatOptions
 
 # Declaration-only tools (func=None) - actual rendering happens on the client side
-generate_haiku = FunctionTool[Any](
+generate_haiku = FunctionTool(
     name="generate_haiku",
     description="""Generate a haiku with image and gradient background (FRONTEND_RENDER).
 
@@ -71,7 +71,7 @@ generate_haiku = FunctionTool[Any](
     },
 )
 
-create_chart = FunctionTool[Any](
+create_chart = FunctionTool(
     name="create_chart",
     description="""Create an interactive chart (FRONTEND_RENDER).
 
@@ -99,7 +99,7 @@ create_chart = FunctionTool[Any](
     },
 )
 
-display_timeline = FunctionTool[Any](
+display_timeline = FunctionTool(
     name="display_timeline",
     description="""Display an interactive timeline (FRONTEND_RENDER).
 
@@ -127,7 +127,7 @@ display_timeline = FunctionTool[Any](
     },
 )
 
-show_comparison_table = FunctionTool[Any](
+show_comparison_table = FunctionTool(
     name="show_comparison_table",
     description="""Show a comparison table (FRONTEND_RENDER).
 

@@ -14,6 +14,8 @@ import pytest
 
 # Module-level markers - applied to all tests in this module
 pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
     pytest.mark.sample("01_single_agent"),
     pytest.mark.integration_test,
     pytest.mark.requires_azure_openai,

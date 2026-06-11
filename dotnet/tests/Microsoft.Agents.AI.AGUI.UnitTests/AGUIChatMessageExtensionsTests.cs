@@ -102,18 +102,20 @@ public sealed class AGUIChatMessageExtensionsTests
             new AGUISystemMessage { Id = "msg1", Content = "System message" },
             new AGUIUserMessage { Id = "msg2", Content = "User message" },
             new AGUIAssistantMessage { Id = "msg3", Content = "Assistant message" },
-            new AGUIDeveloperMessage { Id = "msg4", Content = "Developer message" }
+            new AGUIDeveloperMessage { Id = "msg4", Content = "Developer message" },
+            new AGUIReasoningMessage { Id = "msg5", Content = "Reasoning message" }
         ];
 
         // Act
         List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
 
         // Assert
-        Assert.Equal(4, chatMessages.Count);
+        Assert.Equal(5, chatMessages.Count);
         Assert.Equal(ChatRole.System, chatMessages[0].Role);
         Assert.Equal(ChatRole.User, chatMessages[1].Role);
         Assert.Equal(ChatRole.Assistant, chatMessages[2].Role);
         Assert.Equal("developer", chatMessages[3].Role.Value);
+        Assert.Equal(ChatRole.Assistant, chatMessages[4].Role);
     }
 
     [Fact]
@@ -365,6 +367,277 @@ public sealed class AGUIChatMessageExtensionsTests
 
         // Assert
         Assert.Equal(ChatRole.Tool, role);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithReasoningMessage_ConvertsToTextReasoningContent()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIReasoningMessage
+            {
+                Id = "reason1",
+                Content = "I need to consider the user's request.",
+                EncryptedValue = "ErgDCkgIDB..."
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Equal("reason1", message.MessageId);
+        var reasoningContent = Assert.IsType<TextReasoningContent>(message.Contents[0]);
+        Assert.Equal("I need to consider the user's request.", reasoningContent.Text);
+        Assert.Equal("ErgDCkgIDB...", reasoningContent.ProtectedData);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithReasoningMessageWithoutEncryptedValue_ConvertsToTextReasoningContent()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIReasoningMessage
+            {
+                Id = "reason1",
+                Content = "Thinking about this problem."
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        var reasoningContent = Assert.IsType<TextReasoningContent>(message.Contents[0]);
+        Assert.Equal("Thinking about this problem.", reasoningContent.Text);
+        Assert.Null(reasoningContent.ProtectedData);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithReasoningMessageWithOnlyEncryptedValue_ConvertsToTextReasoningContent()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIReasoningMessage
+            {
+                Id = "reason1",
+                Content = string.Empty,
+                EncryptedValue = "ErgDCkgIDB..."
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        var reasoningContent = Assert.IsType<TextReasoningContent>(message.Contents[0]);
+        Assert.Equal("", reasoningContent.Text);
+        Assert.Equal("ErgDCkgIDB...", reasoningContent.ProtectedData);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithEmptyReasoningMessage_ProducesEmptyContents()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIReasoningMessage
+            {
+                Id = "reason1",
+                Content = string.Empty
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Empty(message.Contents);
+    }
+
+    [Fact]
+    public void MapChatRole_WithReasoningRole_ReturnsAssistantChatRole()
+    {
+        // Arrange & Act
+        ChatRole role = AGUIChatMessageExtensions.MapChatRole(AGUIRoles.Reasoning);
+
+        // Assert
+        Assert.Equal(ChatRole.Assistant, role);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithMixedMessagesIncludingReasoning_PreservesOrder()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage { Id = "msg1", Content = "What is 2+2?" },
+            new AGUIReasoningMessage { Id = "msg2", Content = "I need to add 2 and 2.", EncryptedValue = "tok-123" },
+            new AGUIAssistantMessage { Id = "msg3", Content = "The answer is 4." }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        Assert.Equal(3, chatMessages.Count);
+        Assert.Equal(ChatRole.User, chatMessages[0].Role);
+        Assert.Equal(ChatRole.Assistant, chatMessages[1].Role);
+        Assert.IsType<TextReasoningContent>(chatMessages[1].Contents[0]);
+        Assert.Equal(ChatRole.Assistant, chatMessages[2].Role);
+        Assert.Equal("The answer is 4.", chatMessages[2].Text);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithReasoningContent_ProducesReasoningMessage()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("I need to think about this.") { ProtectedData = "encrypted-tok-1" }
+            ]) { MessageId = "reason-1" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        AGUIMessage message = Assert.Single(aguiMessages);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(message);
+        Assert.Equal("reason-1", reasoningMessage.Id);
+        Assert.Equal(AGUIRoles.Reasoning, reasoningMessage.Role);
+        Assert.Equal("I need to think about this.", reasoningMessage.Content);
+        Assert.Equal("encrypted-tok-1", reasoningMessage.EncryptedValue);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithReasoningContentWithoutProtectedData_ProducesReasoningMessage()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("Just thinking.")
+            ]) { MessageId = "reason-2" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        AGUIMessage message = Assert.Single(aguiMessages);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(message);
+        Assert.Equal("Just thinking.", reasoningMessage.Content);
+        Assert.Null(reasoningMessage.EncryptedValue);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithMultipleReasoningChunksInOneMessage_ConcatenatesText()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("First part. "),
+                new TextReasoningContent("Second part.") { ProtectedData = "final-token" }
+            ]) { MessageId = "reason-3" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        AGUIMessage message = Assert.Single(aguiMessages);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(message);
+        Assert.Equal("First part. Second part.", reasoningMessage.Content);
+        Assert.Equal("final-token", reasoningMessage.EncryptedValue);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithMixedReasoningAndTextContent_EmitsBothMessages()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("Thinking about the answer.") { ProtectedData = "enc-tok" },
+                new TextContent("The answer is 42.")
+            ]) { MessageId = "msg-mixed" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        Assert.Equal(2, aguiMessages.Count);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(aguiMessages[0]);
+        Assert.Equal("msg-mixed", reasoningMessage.Id);
+        Assert.Equal("Thinking about the answer.", reasoningMessage.Content);
+        Assert.Equal("enc-tok", reasoningMessage.EncryptedValue);
+        var assistantMessage = Assert.IsType<AGUIAssistantMessage>(aguiMessages[1]);
+        Assert.Equal("msg-mixed", assistantMessage.Id);
+        Assert.Equal("The answer is 42.", assistantMessage.Content);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithReasoningAndToolCallInSameMessage_EmitsBothMessages()
+    {
+        // Arrange
+        var arguments = new Dictionary<string, object?> { ["location"] = "Seattle" };
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("I should look up the weather."),
+                new FunctionCallContent("call-1", "GetWeather", arguments)
+            ]) { MessageId = "msg-toolcall" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        Assert.Equal(2, aguiMessages.Count);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(aguiMessages[0]);
+        Assert.Equal("I should look up the weather.", reasoningMessage.Content);
+        var assistantMessage = Assert.IsType<AGUIAssistantMessage>(aguiMessages[1]);
+        Assert.NotNull(assistantMessage.ToolCalls);
+        var toolCall = Assert.Single(assistantMessage.ToolCalls);
+        Assert.Equal("call-1", toolCall.Id);
+        Assert.Equal("GetWeather", toolCall.Function.Name);
+    }
+
+    [Fact]
+    public void RoundTrip_ReasoningMessage_PreservesData()
+    {
+        // Arrange
+        List<ChatMessage> originalMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("Thinking about the problem.") { ProtectedData = "ErgDCkgIDB..." }
+            ]) { MessageId = "reason-rt" }
+        ];
+
+        // Act - Convert to AGUI and back
+        AGUIMessage aguiMessage = originalMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).Single();
+        List<AGUIMessage> aguiList = [aguiMessage];
+        ChatMessage reconstructed = aguiList.AsChatMessages(AGUIJsonSerializerContext.Default.Options).Single();
+
+        // Assert
+        Assert.Equal(ChatRole.Assistant, reconstructed.Role);
+        var reasoningContent = Assert.IsType<TextReasoningContent>(reconstructed.Contents[0]);
+        Assert.Equal("Thinking about the problem.", reasoningContent.Text);
+        Assert.Equal("ErgDCkgIDB...", reasoningContent.ProtectedData);
     }
 
     #region Custom Type Serialization Tests
@@ -638,6 +911,149 @@ public sealed class AGUIChatMessageExtensionsTests
         // Verify simple types
         Assert.Equal("test", deserializedArgs["simpleString"].GetString());
         Assert.Equal(42, deserializedArgs["simpleNumber"].GetInt32());
+    }
+
+    #endregion
+
+    #region Consecutive Assistant-Tool-Call Coalescing
+
+    /// <summary>
+    /// Bug #3 reproduction: consecutive AGUIAssistantMessages with ToolCalls should
+    /// be coalesced into a single ChatMessage with multiple FunctionCallContent
+    /// entries. Without coalescing, Azure OpenAI rejects the history with HTTP 400.
+    /// </summary>
+    [Fact]
+    public void AsChatMessages_ConsecutiveAssistantToolCallMessages_CoalesceIntoOneChatMessage()
+    {
+        // Arrange — 3 consecutive assistant messages with tool calls (no intervening tool msg)
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage { Id = "user-1", Content = "Run 3 queries" },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-1",
+                Content = "",
+                ToolCalls =
+                [
+                    new AGUIToolCall { Id = "call_A", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{\"q\":\"1\"}" } }
+                ]
+            },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-2",
+                Content = "",
+                ToolCalls =
+                [
+                    new AGUIToolCall { Id = "call_B", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{\"q\":\"2\"}" } }
+                ]
+            },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-3",
+                Content = "",
+                ToolCalls =
+                [
+                    new AGUIToolCall { Id = "call_C", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{\"q\":\"3\"}" } }
+                ]
+            },
+            new AGUIToolMessage { Id = "tool-1", ToolCallId = "call_A", Content = "\"result1\"" },
+            new AGUIToolMessage { Id = "tool-2", ToolCallId = "call_B", Content = "\"result2\"" },
+            new AGUIToolMessage { Id = "tool-3", ToolCallId = "call_C", Content = "\"result3\"" },
+            new AGUIUserMessage { Id = "user-2", Content = "Run it again" },
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert — the 3 consecutive assistant-tool-call messages should coalesce into 1
+        List<ChatMessage> assistantWithToolCalls = chatMessages
+            .Where(m => m.Role == ChatRole.Assistant && m.Contents.OfType<FunctionCallContent>().Any())
+            .ToList();
+
+        Assert.Single(assistantWithToolCalls);
+
+        // The single coalesced message should contain all 3 FunctionCallContent entries
+        List<FunctionCallContent> functionCalls = assistantWithToolCalls[0].Contents
+            .OfType<FunctionCallContent>().ToList();
+        Assert.Equal(3, functionCalls.Count);
+        Assert.Equal("call_A", functionCalls[0].CallId);
+        Assert.Equal("call_B", functionCalls[1].CallId);
+        Assert.Equal("call_C", functionCalls[2].CallId);
+
+        // MessageId should be from the first message in the coalesced group
+        Assert.Equal("asst-1", assistantWithToolCalls[0].MessageId);
+
+        // Total messages: user + coalesced assistant + 3 tools + user = 6
+        Assert.Equal(6, chatMessages.Count);
+    }
+
+    /// <summary>
+    /// A single assistant message with tool calls (not consecutive) should still
+    /// produce one ChatMessage — no behavior change from coalescing logic.
+    /// </summary>
+    [Fact]
+    public void AsChatMessages_SingleAssistantToolCallMessage_ProducesOneChatMessage()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIAssistantMessage
+            {
+                Id = "asst-1",
+                Content = "Here are the results",
+                ToolCalls =
+                [
+                    new AGUIToolCall { Id = "call_A", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{}" } },
+                    new AGUIToolCall { Id = "call_B", Type = "function", Function = new AGUIFunctionCall { Name = "query", Arguments = "{}" } },
+                ]
+            },
+            new AGUIToolMessage { Id = "tool-1", ToolCallId = "call_A", Content = "\"r1\"" },
+            new AGUIToolMessage { Id = "tool-2", ToolCallId = "call_B", Content = "\"r2\"" },
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert — single assistant message, not coalesced from multiple
+        Assert.Equal(3, chatMessages.Count);
+        Assert.Equal(ChatRole.Assistant, chatMessages[0].Role);
+        List<FunctionCallContent> calls = chatMessages[0].Contents.OfType<FunctionCallContent>().ToList();
+        Assert.Equal(2, calls.Count);
+        Assert.Equal("asst-1", chatMessages[0].MessageId);
+    }
+
+    /// <summary>
+    /// When consecutive assistant-tool-call messages are at the END of the stream
+    /// (no subsequent non-tool-call message to trigger flush), they should still
+    /// be coalesced and flushed.
+    /// </summary>
+    [Fact]
+    public void AsChatMessages_ConsecutiveAssistantToolCallsAtEndOfStream_FlushesCorrectly()
+    {
+        // Arrange — stream ends with consecutive assistant tool-call messages
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage { Id = "user-1", Content = "Do things" },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-1",
+                ToolCalls = [new AGUIToolCall { Id = "call_X", Type = "function", Function = new AGUIFunctionCall { Name = "fn", Arguments = "{}" } }]
+            },
+            new AGUIAssistantMessage
+            {
+                Id = "asst-2",
+                ToolCalls = [new AGUIToolCall { Id = "call_Y", Type = "function", Function = new AGUIFunctionCall { Name = "fn", Arguments = "{}" } }]
+            },
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert — should be user + 1 coalesced assistant = 2 messages
+        Assert.Equal(2, chatMessages.Count);
+        Assert.Equal(ChatRole.User, chatMessages[0].Role);
+        Assert.Equal(ChatRole.Assistant, chatMessages[1].Role);
+        Assert.Equal(2, chatMessages[1].Contents.OfType<FunctionCallContent>().Count());
     }
 
     #endregion

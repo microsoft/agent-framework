@@ -1,11 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Redis integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-redis``
+
+Supported classes:
+- RedisContextProvider
+- RedisHistoryProvider
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_redis"
 PACKAGE_NAME = "agent-framework-redis"
-_IMPORTS = ["__version__", "RedisContextProvider", "RedisHistoryProvider"]
+_IMPORTS = ["RedisContextProvider", "RedisHistoryProvider"]
 
 
 def __getattr__(name: str) -> Any:

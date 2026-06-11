@@ -9,7 +9,7 @@ This client demonstrates:
 
 Prerequisites:
 - The worker must be running with the TravelPlanner agent registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
 - Redis must be running
 - Durable Task Scheduler must be running
 """
@@ -21,9 +21,13 @@ from datetime import timedelta
 
 import redis.asyncio as aioredis
 from agent_framework.azure import DurableAIAgentClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from redis_stream_response_handler import RedisStreamResponseHandler
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -54,9 +58,7 @@ async def get_stream_handler() -> RedisStreamResponseHandler:
 
 
 def get_client(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableAIAgentClient:
     """Create a configured DurableAIAgentClient.
 
@@ -74,14 +76,14 @@ def get_client(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     dts_client = DurableTaskSchedulerClient(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
     return DurableAIAgentClient(dts_client)
@@ -106,7 +108,9 @@ async def stream_from_redis(thread_id: str, cursor: str | None = None) -> None:
             chunk_count = 0
             async for chunk in stream_handler.read_stream(thread_id, cursor):
                 chunk_count += 1
-                logger.debug(f"Received chunk #{chunk_count}: error={chunk.error}, is_done={chunk.is_done}, text_len={len(chunk.text) if chunk.text else 0}")
+                logger.debug(
+                    f"Received chunk #{chunk_count}: error={chunk.error}, is_done={chunk.is_done}, text_len={len(chunk.text) if chunk.text else 0}"
+                )
 
                 if chunk.error:
                     logger.error(f"Stream error: {chunk.error}")
@@ -175,9 +179,6 @@ def run_client(agent_client: DurableAIAgentClient) -> None:
 
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-
     # Create the client
     client = get_client()
 

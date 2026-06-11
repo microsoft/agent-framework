@@ -6,7 +6,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 
@@ -42,7 +41,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private static string GetWorkflowPath(string workflowFileName, bool isSample) =>
         isSample
-            ? Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName)
+            ? Path.Combine(GetRepoFolder(), "declarative-agents", "workflow-samples", workflowFileName)
             : Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName);
 
     protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input, bool useJsonCheckpoint)

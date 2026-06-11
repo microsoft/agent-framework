@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping, Sequence
+import logging
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from datetime import datetime
 from enum import Enum, Flag, auto
 from typing import Any, ClassVar, TypeVar, cast
 from uuid import uuid4
 
-from agent_framework._logging import get_logger
 from agent_framework._serialization import SerializationMixin
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 # --------------------------------------------------------------------------------------
 # Enums & flag helpers
@@ -60,6 +60,23 @@ _PROTECTION_SCOPE_ACTIVITIES_SERIALIZE_ORDER: list[tuple[str, ProtectionScopeAct
 ]
 
 
+def _as_object_list(value: object) -> list[object] | None:
+    if not isinstance(value, (list, tuple, set)):
+        return None
+    return list(cast(Iterable[object], value))
+
+
+def _as_str_dict(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+
+    aliases: dict[str, str] = {}
+    for raw_key, raw_value in cast(dict[object, object], value).items():
+        if isinstance(raw_key, str) and isinstance(raw_value, str):
+            aliases[raw_key] = raw_value
+    return aliases
+
+
 def deserialize_flag(
     value: object, mapping: Mapping[str, FlagT], enum_cls: type[FlagT]
 ) -> FlagT | None:  # pragma: no cover
@@ -82,8 +99,11 @@ def deserialize_flag(
         if not raw:
             return enum_cls(0)
         parts.extend([p.strip() for p in raw.split(",") if p.strip()])
-    elif isinstance(value, (list, tuple, set)):
-        for item in value:
+    else:
+        iterable_items = _as_object_list(value)
+        if iterable_items is None:
+            return None
+        for item in iterable_items:
             if isinstance(item, str):
                 parts.extend([p.strip() for p in item.split(",") if p.strip()])
             elif isinstance(item, enum_cls):
@@ -93,8 +113,6 @@ def deserialize_flag(
                     flag_value |= enum_cls(item)
                 except Exception:
                     logger.warning(f"Failed to convert int {item} to {enum_cls.__name__}")
-    else:
-        return None
 
     for part in parts:
         member = mapping.get(part)
@@ -196,10 +214,10 @@ class _AliasSerializable(SerializationMixin):
         # Collect all aliases from parent classes too
         all_aliases: dict[str, str] = {}
         for cls in type(self).__mro__:
-            if hasattr(cls, "_ALIASES") and isinstance(cls._ALIASES, dict):
-                for internal, external in cls._ALIASES.items():
-                    if external not in all_aliases:
-                        all_aliases[external] = internal
+            aliases_obj = _as_str_dict(getattr(cls, "_ALIASES", None))
+            for internal, external in aliases_obj.items():
+                if external not in all_aliases:
+                    all_aliases[external] = internal
 
         # Normalize all aliased keys in kwargs
         for external, internal in all_aliases.items():
@@ -248,11 +266,11 @@ class _AliasSerializable(SerializationMixin):
         # Collect all aliases from class hierarchy
         all_aliases: dict[str, str] = {}
         for cls in type(self).__mro__:
-            if hasattr(cls, "_ALIASES") and isinstance(cls._ALIASES, dict):
-                # Parent aliases first (will be overridden by child if same key)
-                for internal, external in cls._ALIASES.items():
-                    if internal not in all_aliases:
-                        all_aliases[internal] = external
+            aliases_obj = _as_str_dict(getattr(cls, "_ALIASES", None))
+            # Parent aliases first (will be overridden by child if same key)
+            for internal, external in aliases_obj.items():
+                if internal not in all_aliases:
+                    all_aliases[internal] = external
 
         if not all_aliases:
             return base
@@ -836,17 +854,15 @@ class ProcessContentResponse(_AliasSerializable):
         # Convert to objects
         converted_policy_actions: list[DlpActionInfo] | None = None
         if policy_actions is not None:
-            converted_policy_actions = cast(
-                list[DlpActionInfo],
-                [p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions],
-            )
+            converted_policy_actions = [
+                p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions
+            ]
 
         converted_processing_errors: list[ProcessingError] | None = None
         if processing_errors is not None:
-            converted_processing_errors = cast(
-                list[ProcessingError],
-                [pe if isinstance(pe, ProcessingError) else ProcessingError(**pe) for pe in processing_errors],
-            )
+            converted_processing_errors = [
+                pe if isinstance(pe, ProcessingError) else ProcessingError(**pe) for pe in processing_errors
+            ]
 
         super().__init__(**kwargs)
         self.id = id
@@ -885,17 +901,15 @@ class PolicyScope(_AliasSerializable):
         # Convert nested objects
         converted_locations: list[PolicyLocation] | None = None
         if locations is not None:
-            converted_locations = cast(
-                list[PolicyLocation],
-                [loc if isinstance(loc, PolicyLocation) else PolicyLocation(**loc) for loc in locations],
-            )
+            converted_locations = [
+                loc if isinstance(loc, PolicyLocation) else PolicyLocation(**loc) for loc in locations
+            ]
 
         converted_policy_actions: list[DlpActionInfo] | None = None
         if policy_actions is not None:
-            converted_policy_actions = cast(
-                list[DlpActionInfo],
-                [p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions],
-            )
+            converted_policy_actions = [
+                p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions
+            ]
 
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
@@ -947,9 +961,7 @@ class ProtectionScopesResponse(_AliasSerializable):
 
         converted_scopes: list[PolicyScope] | None = None
         if scopes is not None:
-            converted_scopes = cast(
-                list[PolicyScope], [s if isinstance(s, PolicyScope) else PolicyScope(**s) for s in scopes]
-            )
+            converted_scopes = [s if isinstance(s, PolicyScope) else PolicyScope(**s) for s in scopes]
 
         # Don't pass parameters that have aliases - let parent normalize them
         super().__init__(**kwargs)

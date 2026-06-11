@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Observability;
 
@@ -15,7 +16,7 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
 {
     private FanInEdgeState _state = new(edgeData);
 
-    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
+    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer, CancellationToken cancellationToken)
     {
         Debug.Assert(!envelope.IsExternal, "FanIn edges should never be chased from external input");
 
@@ -31,7 +32,7 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
         }
 
         // source.Id is guaranteed to be non-null here because source is not None.
-        IEnumerable<MessageEnvelope>? releasedMessages = this._state.ProcessMessage(envelope.SourceId, envelope);
+        List<IGrouping<ExecutorIdentity, MessageEnvelope>>? releasedMessages = this._state.ProcessMessage(envelope.SourceId, envelope)?.ToList();
         if (releasedMessages is null)
         {
             // Not ready to process yet.
@@ -41,11 +42,22 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
 
         try
         {
-            // TODO: Filter messages based on accepted input types?
-            Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, stepTracer)
+            // Right now, for serialization purposes every message through FanInEdge goes through the PortableMessageEnvelope state, meaning
+            // we lose type information for all of them, potentially.
+            (ExecutorProtocol, IGrouping<ExecutorIdentity, MessageEnvelope>)[]
+                protocolGroupings = await Task.WhenAll(releasedMessages.Select(MapProtocolsAsync))
+                                              .ConfigureAwait(false);
+
+            IEnumerable<(Type? RuntimeType, MessageEnvelope MessageEnvelope)>
+                typedEnvelopes = protocolGroupings.SelectMany(MapRuntimeTypes);
+
+            Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, stepTracer, cancellationToken)
                                                    .ConfigureAwait(false);
+
             // Materialize the filtered list via ToList() to avoid multiple enumerations
-            var finalReleasedMessages = releasedMessages.Where(envelope => target.CanHandle(envelope.MessageType)).ToList();
+            List<MessageEnvelope> finalReleasedMessages = typedEnvelopes.Where(te => CanHandle(target, te.RuntimeType))
+                                                                        .Select(te => te.MessageEnvelope)
+                                                                        .ToList();
             if (finalReleasedMessages.Count == 0)
             {
                 activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DroppedTypeMismatch);
@@ -53,6 +65,28 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
             }
 
             return new DeliveryMapping(finalReleasedMessages, target);
+
+            async Task<(ExecutorProtocol, IGrouping<ExecutorIdentity, MessageEnvelope>)> MapProtocolsAsync(IGrouping<ExecutorIdentity, MessageEnvelope> grouping)
+            {
+                ExecutorProtocol protocol = await this.FindSourceProtocolAsync(grouping.Key.Id!, stepTracer, cancellationToken).ConfigureAwait(false);
+                return (protocol, grouping);
+            }
+
+            IEnumerable<(Type?, MessageEnvelope)> MapRuntimeTypes((ExecutorProtocol, IGrouping<ExecutorIdentity, MessageEnvelope>) input)
+            {
+                (ExecutorProtocol protocol, IGrouping<ExecutorIdentity, MessageEnvelope> grouping) = input;
+                return grouping.Select(envelope => (ResolveEnvelopeType(envelope), envelope));
+
+                Type? ResolveEnvelopeType(MessageEnvelope messageEnvelope)
+                {
+                    if (messageEnvelope.Message is PortableValue portableValue)
+                    {
+                        return protocol.SendTypeTranslator.MapTypeId(portableValue.TypeId);
+                    }
+
+                    return messageEnvelope.Message.GetType();
+                }
+            }
         }
         catch (Exception) when (activity is not null)
         {

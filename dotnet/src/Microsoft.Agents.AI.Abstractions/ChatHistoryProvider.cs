@@ -2,9 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -36,33 +39,64 @@ namespace Microsoft.Agents.AI;
 /// A <see cref="ChatHistoryProvider"/> is only relevant for scenarios where the underlying AI service that the agent is using
 /// does not use in-service chat history storage.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Agent Framework does not validate or filter the messages returned by the provider
+/// during load — they are accepted as-is and treated identically to user-supplied messages. Implementers must ensure that only
+/// trusted data is returned. If the underlying storage is compromised, adversarial content could influence LLM behavior via
+/// indirect prompt injection — for example, injected messages could alter the conversation context or impersonate different roles.
+/// Messages stored in chat history may contain PII and sensitive conversation content; implementers should consider encryption
+/// at rest and appropriate access controls for the storage backend.
+/// </para>
 /// </remarks>
 public abstract class ChatHistoryProvider
 {
-    /// <summary>
-    /// Gets the key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
-    /// </summary>
-    /// <remarks>
-    /// The default value is the name of the concrete type (e.g. <c>"InMemoryChatHistoryProvider"</c>).
-    /// Implementations may override this to provide a custom key, for example when multiple
-    /// instances of the same provider type are used in the same session.
-    /// </remarks>
-    public virtual string StateKey => this.GetType().Name;
+    private static IEnumerable<ChatMessage> DefaultExcludeChatHistoryFilter(IEnumerable<ChatMessage> messages)
+        => messages.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory);
+    private static IEnumerable<ChatMessage> DefaultNoopFilter(IEnumerable<ChatMessage> messages)
+        => messages;
+
+    private IReadOnlyList<string>? _stateKeys;
+    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? _provideOutputMessageFilter;
+    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storeInputRequestMessageFilter;
+    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storeInputResponseMessageFilter;
 
     /// <summary>
-    /// Called at the start of agent invocation to provide messages from the chat history as context for the next agent invocation.
+    /// Initializes a new instance of the <see cref="ChatHistoryProvider"/> class.
+    /// </summary>
+    /// <param name="provideOutputMessageFilter">An optional filter function to apply to messages when retrieving them from the chat history.</param>
+    /// <param name="storeInputRequestMessageFilter">An optional filter function to apply to request messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <param name="storeInputResponseMessageFilter">An optional filter function to apply to response messages before storing them in the chat history. If not set, defaults to a no-op filter that includes all response messages.</param>
+    protected ChatHistoryProvider(
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
+    {
+        this._provideOutputMessageFilter = provideOutputMessageFilter;
+        this._storeInputRequestMessageFilter = storeInputRequestMessageFilter ?? DefaultExcludeChatHistoryFilter;
+        this._storeInputResponseMessageFilter = storeInputResponseMessageFilter ?? DefaultNoopFilter;
+    }
+
+    /// <summary>
+    /// Gets the set of keys used to store the provider state in the <see cref="AgentSession.StateBag"/>.
+    /// </summary>
+    /// <remarks>
+    /// The default value is a single-element set containing the name of the concrete type (e.g. <c>"InMemoryChatHistoryProvider"</c>).
+    /// Implementations may override this to provide custom keys, for example when multiple
+    /// instances of the same provider type are used in the same session, or when a provider
+    /// stores state under more than one key.
+    /// </remarks>
+    public virtual IReadOnlyList<string> StateKeys => this._stateKeys ??= [this.GetType().Name];
+
+    /// <summary>
+    /// Called at the start of agent invocation to provide messages for the next agent invocation.
     /// </summary>
     /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>
     /// A task that represents the asynchronous operation. The task result contains a collection of <see cref="ChatMessage"/>
-    /// instances in ascending chronological order (oldest first).
+    /// instances that will be used for the agent invocation.
     /// </returns>
     /// <remarks>
-    /// <para>
-    /// Messages are returned in chronological order to maintain proper conversation flow and context for the agent.
-    /// The oldest messages appear first in the collection, followed by more recent messages.
-    /// </para>
     /// <para>
     /// If the total message history becomes very large, implementations should apply appropriate strategies to manage
     /// storage constraints, such as:
@@ -75,22 +109,18 @@ public abstract class ChatHistoryProvider
     /// </para>
     /// </remarks>
     public ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        => this.InvokingCoreAsync(context, cancellationToken);
+        => this.InvokingCoreAsync(Throw.IfNull(context), cancellationToken);
 
     /// <summary>
-    /// Called at the start of agent invocation to provide messages from the chat history as context for the next agent invocation.
+    /// Called at the start of agent invocation to provide messages for the next agent invocation.
     /// </summary>
     /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>
     /// A task that represents the asynchronous operation. The task result contains a collection of <see cref="ChatMessage"/>
-    /// instances in ascending chronological order (oldest first).
+    /// instances that will be used for the agent invocation.
     /// </returns>
     /// <remarks>
-    /// <para>
-    /// Messages are returned in chronological order to maintain proper conversation flow and context for the agent.
-    /// The oldest messages appear first in the collection, followed by more recent messages.
-    /// </para>
     /// <para>
     /// If the total message history becomes very large, implementations should apply appropriate strategies to manage
     /// storage constraints, such as:
@@ -102,11 +132,59 @@ public abstract class ChatHistoryProvider
     /// </list>
     /// </para>
     /// <para>
-    /// Each <see cref="ChatHistoryProvider"/> instance should be associated with a single <see cref="AgentSession"/> to ensure proper message isolation
-    /// and context management.
+    /// The default implementation of this method, calls <see cref="ProvideChatHistoryAsync"/> to get the chat history messages, applies the optional retrieval output filter,
+    /// and merges the returned messages with the caller provided messages (with chat history messages appearing first) before returning the full message list to be used for the invocation.
+    /// For most scenarios, overriding <see cref="ProvideChatHistoryAsync"/> is sufficient to return the desired chat history messages, while still benefiting from the default merging and filtering behavior.
+    /// However, for scenarios that require more control over message filtering, merging or source stamping, overriding this method allows you to directly control the full set of messages returned for the invocation.
     /// </para>
     /// </remarks>
-    protected abstract ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default);
+    protected virtual async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        var output = await this.ProvideChatHistoryAsync(context, cancellationToken).ConfigureAwait(false);
+
+        if (this._provideOutputMessageFilter is not null)
+        {
+            output = this._provideOutputMessageFilter(output);
+        }
+
+        return output
+            .Select(message => message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName!))
+            .Concat(context.RequestMessages);
+    }
+
+    /// <summary>
+    /// When overridden in a derived class, provides the chat history messages to be used for the current invocation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This method is called from <see cref="InvokingCoreAsync"/>.
+    /// Note that <see cref="InvokingCoreAsync"/> can be overridden to directly control message filtering, merging and source stamping, in which case
+    /// it is up to the implementer to call this method as needed to retrieve the unfiltered/unmerged chat history messages.
+    /// </para>
+    /// <para>
+    /// In contrast with <see cref="InvokingCoreAsync"/>, this method only returns additional messages to be added to the request,
+    /// while <see cref="InvokingCoreAsync"/> is responsible for returning the full set of messages to be used for the invocation (including caller provided messages).
+    /// </para>
+    /// <para>
+    /// Messages are returned in chronological order to maintain proper conversation flow and context for the agent.
+    /// The oldest messages appear first in the collection, followed by more recent messages.
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Messages loaded from storage should be treated with the same caution as user-supplied
+    /// messages. A compromised storage backend could alter message roles to escalate trust (e.g., changing <c>user</c> messages to
+    /// <c>system</c> messages) or inject adversarial content that influences LLM behavior.
+    /// </para>
+    /// </remarks>
+    /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>
+    /// A task that represents the asynchronous operation. The task result contains a collection of <see cref="ChatMessage"/>
+    /// instances in ascending chronological order (oldest first).
+    /// </returns>
+    protected virtual ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        return new ValueTask<IEnumerable<ChatMessage>>([]);
+    }
 
     /// <summary>
     /// Called at the end of the agent invocation to add new messages to the chat history.
@@ -134,7 +212,7 @@ public abstract class ChatHistoryProvider
     /// </para>
     /// </remarks>
     public ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default) =>
-        this.InvokedCoreAsync(context, cancellationToken);
+        this.InvokedCoreAsync(Throw.IfNull(context), cancellationToken);
 
     /// <summary>
     /// Called at the end of the agent invocation to add new messages to the chat history.
@@ -160,8 +238,65 @@ public abstract class ChatHistoryProvider
     /// This method is called regardless of whether the invocation succeeded or failed.
     /// To check if the invocation was successful, inspect the <see cref="InvokedContext.InvokeException"/> property.
     /// </para>
+    /// <para>
+    /// The default implementation of this method, skips execution for any invocation failures, filters messages using the optional storage input request and response message filters
+    /// and calls <see cref="StoreChatHistoryAsync"/> to store new chat history messages.
+    /// For most scenarios, overriding <see cref="StoreChatHistoryAsync"/> is sufficient to store chat history messages, while still benefiting from the default error handling and filtering behavior.
+    /// However, for scenarios that require more control over error handling or message filtering, overriding this method allows you to directly control the messages that are stored for the invocation.
+    /// </para>
     /// </remarks>
-    protected abstract ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default);
+    protected virtual ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    {
+        if (context.InvokeException is not null)
+        {
+            return default;
+        }
+
+#pragma warning disable MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+        var subContext = new InvokedContext(context.Agent, context.Session, this._storeInputRequestMessageFilter(context.RequestMessages), this._storeInputResponseMessageFilter(context.ResponseMessages!));
+#pragma warning restore MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+        return this.StoreChatHistoryAsync(subContext, cancellationToken);
+    }
+
+    /// <summary>
+    /// When overridden in a derived class, adds new messages to the chat history at the end of the agent invocation.
+    /// </summary>
+    /// <param name="context">Contains the invocation context including request messages, response messages, and any exception that occurred.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous add operation.</returns>
+    /// <remarks>
+    /// <para>
+    /// Messages should be added in the order they were generated to maintain proper chronological sequence.
+    /// The <see cref="ChatHistoryProvider"/> is responsible for preserving message ordering and ensuring that subsequent calls to
+    /// <see cref="InvokingCoreAsync"/> return messages in the correct chronological order.
+    /// </para>
+    /// <para>
+    /// Implementations may perform additional processing during message addition, such as:
+    /// <list type="bullet">
+    /// <item><description>Validating message content and metadata</description></item>
+    /// <item><description>Applying storage optimizations or compression</description></item>
+    /// <item><description>Triggering background maintenance operations</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// This method is called from <see cref="InvokedCoreAsync"/>.
+    /// Note that <see cref="InvokedCoreAsync"/> can be overridden to directly control message filtering and error handling, in which case
+    /// it is up to the implementer to call this method as needed to store messages.
+    /// </para>
+    /// <para>
+    /// In contrast with <see cref="InvokedCoreAsync"/>, this method only stores messages,
+    /// while <see cref="InvokedCoreAsync"/> is also responsible for messages filtering and error handling.
+    /// </para>
+    /// <para>
+    /// The default implementation of <see cref="InvokedCoreAsync"/> only calls this method if the invocation succeeded.
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Messages being stored may contain PII and sensitive conversation content.
+    /// Implementers should ensure appropriate encryption at rest and access controls for the storage backend.
+    /// </para>
+    /// </remarks>
+    protected virtual ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default) =>
+        default;
 
     /// <summary>Asks the <see cref="ChatHistoryProvider"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
@@ -209,6 +344,7 @@ public abstract class ChatHistoryProvider
         /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="requestMessages">The messages to be used by the agent for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
+        [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
         public InvokingContext(
             AIAgent agent,
             AgentSession? session,
@@ -268,6 +404,7 @@ public abstract class ChatHistoryProvider
         /// that were used by the agent for this invocation.</param>
         /// <param name="responseMessages">The response messages generated during this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="agent"/>, <paramref name="requestMessages"/>, or <paramref name="responseMessages"/> is <see langword="null"/>.</exception>
+        [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
         public InvokedContext(
             AIAgent agent,
             AgentSession? session,

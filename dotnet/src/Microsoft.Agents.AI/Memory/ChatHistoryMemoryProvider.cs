@@ -7,12 +7,14 @@ using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.VectorData;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
+#pragma warning disable IDE0001 // Simplify Names - Microsoft.Extensions.Logging.LogLevel.Trace doesn't get found in net472 when removing the namespace.
 /// <summary>
 /// A context provider that stores all chat history in a vector store and is able to
 /// retrieve related chat history later to augment the current conversation.
@@ -24,8 +26,8 @@ namespace Microsoft.Agents.AI;
 /// abstractions to work with any compatible vector store implementation.
 /// </para>
 /// <para>
-/// Messages are stored during the <see cref="InvokedCoreAsync"/> method and retrieved during the
-/// <see cref="InvokingCoreAsync"/> method using semantic similarity search.
+/// Messages are stored during the <see cref="StoreAIContextAsync"/> method and retrieved during the
+/// <see cref="ProvideAIContextAsync"/> method using semantic similarity search.
 /// </para>
 /// <para>
 /// Behavior is configurable through <see cref="ChatHistoryMemoryProviderOptions"/>. When
@@ -33,16 +35,45 @@ namespace Microsoft.Agents.AI;
 /// exposes a function tool that the model can invoke to retrieve relevant memories on demand instead of
 /// injecting them automatically on each invocation.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong>
+/// <list type="bullet">
+/// <item><description><strong>Indirect prompt injection:</strong> Messages retrieved from the vector store via semantic search
+/// are injected into the LLM context. If the vector store is compromised, adversarial content could influence LLM behavior.
+/// The data returned from the store is accepted as-is without validation or sanitization.</description></item>
+/// <item><description><strong>PII and sensitive data:</strong> Conversation messages (including user inputs and LLM responses)
+/// are stored as vectors in the underlying store. These messages may contain PII or sensitive information. Ensure the vector
+/// store is configured with appropriate access controls and encryption at rest.</description></item>
+/// <item><description><strong>On-demand search tool:</strong> When using <see cref="ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling"/>,
+/// the AI model controls when and what to search for. The search query is AI-generated and should be treated as untrusted input
+/// by the vector store implementation.</description></item>
+/// <item><description><strong>Trace logging:</strong> When <see cref="Microsoft.Extensions.Logging.LogLevel.Trace"/> is enabled,
+/// full search queries and results may be logged. This data may contain PII.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
-public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
+public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDisposable
+#pragma warning restore IDE0001 // Simplify Names
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
     private const int DefaultMaxResults = 3;
     private const string DefaultFunctionToolName = "Search";
     private const string DefaultFunctionToolDescription = "Allows searching for related previous chat history to help answer the user question.";
 
-    private static IEnumerable<ChatMessage> DefaultExternalOnlyFilter(IEnumerable<ChatMessage> messages)
-        => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External);
+    private const string KeyField = "Key";
+    private const string RoleField = "Role";
+    private const string MessageIdField = "MessageId";
+    private const string AuthorNameField = "AuthorName";
+    private const string ApplicationIdField = "ApplicationId";
+    private const string AgentIdField = "AgentId";
+    private const string UserIdField = "UserId";
+    private const string SessionIdField = "SessionId";
+    private const string ContentField = "Content";
+    private const string CreatedAtField = "CreatedAt";
+    private const string ContentEmbeddingField = "ContentEmbedding";
+
+    private readonly ProviderSessionState<State> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
 
 #pragma warning disable CA2213 // VectorStore is not owned by this class - caller is responsible for disposal
     private readonly VectorStore _vectorStore;
@@ -50,15 +81,11 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     private readonly VectorStoreCollection<object, Dictionary<string, object?>> _collection;
     private readonly int _maxResults;
     private readonly string _contextPrompt;
-    private readonly bool _enableSensitiveTelemetryData;
+    private readonly Redactor _redactor;
     private readonly ChatHistoryMemoryProviderOptions.SearchBehavior _searchTime;
     private readonly string _toolName;
     private readonly string _toolDescription;
     private readonly ILogger<ChatHistoryMemoryProvider>? _logger;
-    private readonly string _stateKey;
-    private readonly Func<AgentSession?, State> _stateInitializer;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _searchInputMessageFilter;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storageInputMessageFilter;
 
     private bool _collectionInitialized;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
@@ -81,38 +108,39 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         Func<AgentSession?, State> stateInitializer,
         ChatHistoryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
+        this._sessionState = new ProviderSessionState<State>(
+            Throw.IfNull(stateInitializer),
+            options?.StateKey ?? this.GetType().Name,
+            AgentJsonUtilities.DefaultOptions);
         this._vectorStore = Throw.IfNull(vectorStore);
-        this._stateInitializer = Throw.IfNull(stateInitializer);
 
         options ??= new ChatHistoryMemoryProviderOptions();
         this._maxResults = options.MaxResults.HasValue ? Throw.IfLessThanOrEqual(options.MaxResults.Value, 0) : DefaultMaxResults;
         this._contextPrompt = options.ContextPrompt ?? DefaultContextPrompt;
-        this._enableSensitiveTelemetryData = options.EnableSensitiveTelemetryData;
+        this._redactor = options.EnableSensitiveTelemetryData ? NullRedactor.Instance : (options.Redactor ?? new ReplacingRedactor("<redacted>"));
         this._searchTime = options.SearchTime;
-        this._stateKey = options.StateKey ?? base.StateKey;
         this._logger = loggerFactory?.CreateLogger<ChatHistoryMemoryProvider>();
         this._toolName = options.FunctionToolName ?? DefaultFunctionToolName;
         this._toolDescription = options.FunctionToolDescription ?? DefaultFunctionToolDescription;
-        this._searchInputMessageFilter = options.SearchInputMessageFilter ?? DefaultExternalOnlyFilter;
-        this._storageInputMessageFilter = options.StorageInputMessageFilter ?? DefaultExternalOnlyFilter;
 
         // Create a definition so that we can use the dimensions provided at runtime.
         var definition = new VectorStoreCollectionDefinition
         {
             Properties =
             [
-                new VectorStoreKeyProperty("Key", typeof(Guid)),
-                new VectorStoreDataProperty("Role", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("MessageId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("AuthorName", typeof(string)),
-                new VectorStoreDataProperty("ApplicationId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("AgentId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("UserId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("SessionId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("Content", typeof(string)) { IsFullTextIndexed = true },
-                new VectorStoreDataProperty("CreatedAt", typeof(string)) { IsIndexed = true },
-                new VectorStoreVectorProperty("ContentEmbedding", typeof(string), Throw.IfLessThan(vectorDimensions, 1))
+                new VectorStoreKeyProperty(KeyField, typeof(Guid)),
+                new VectorStoreDataProperty(RoleField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(MessageIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(AuthorNameField, typeof(string)),
+                new VectorStoreDataProperty(ApplicationIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(AgentIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(UserIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(SessionIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(ContentField, typeof(string)) { IsFullTextIndexed = true },
+                new VectorStoreDataProperty(CreatedAtField, typeof(string)) { IsIndexed = true },
+                new VectorStoreVectorProperty(ContentEmbeddingField, typeof(string), Throw.IfLessThan(vectorDimensions, 1))
             ]
         };
 
@@ -120,37 +148,15 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._stateKey;
-
-    /// <summary>
-    /// Gets the state from the session's StateBag, or initializes it using the StateInitializer if not present.
-    /// </summary>
-    /// <param name="session">The agent session containing the StateBag.</param>
-    /// <returns>The provider state, or null if no session is available.</returns>
-    private State? GetOrInitializeState(AgentSession? session)
-    {
-        if (session?.StateBag.TryGetValue<State>(this._stateKey, out var state, AgentJsonUtilities.DefaultOptions) is true && state is not null)
-        {
-            return state;
-        }
-
-        state = this._stateInitializer(session);
-        if (state is not null && session is not null)
-        {
-            session.StateBag.SetValue(this._stateKey, state, AgentJsonUtilities.DefaultOptions);
-        }
-
-        return state;
-    }
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <inheritdoc />
-    protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
-        var inputContext = context.AIContext;
-        var state = this.GetOrInitializeState(context.Session);
-        var searchScope = state?.SearchScope ?? new ChatHistoryMemoryProviderScope();
+        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var searchScope = state.SearchScope;
 
         if (this._searchTime == ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling)
         {
@@ -166,26 +172,53 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                     description: this._toolDescription)
             ];
 
-            // Expose search tool for on-demand invocation by the model, accumulated with the input context
+            // Expose search tool for on-demand invocation by the model
             return new AIContext
             {
-                Instructions = inputContext.Instructions,
-                Messages = inputContext.Messages,
-                Tools = (inputContext.Tools ?? []).Concat(tools)
+                Tools = tools
             };
         }
+
+        return new AIContext
+        {
+            Messages = await this.ProvideMessagesAsync(
+                new InvokingContext(context.Agent, context.Session, context.AIContext.Messages ?? []),
+                cancellationToken).ConfigureAwait(false)
+        };
+    }
+
+    /// <inheritdoc />
+    protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        // This code path is invoked using InvokingAsync on MessageAIContextProvider, which does not support tools and instructions,
+        // and OnDemandFunctionCalling requires tools.
+        if (this._searchTime != ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke)
+        {
+            throw new InvalidOperationException($"Using the {nameof(ChatHistoryMemoryProvider)} as a {nameof(MessageAIContextProvider)} is not supported when {nameof(ChatHistoryMemoryProviderOptions.SearchTime)} is set to {ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling}.");
+        }
+
+        return base.InvokingCoreAsync(context, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(context);
+
+        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var searchScope = state.SearchScope;
 
         try
         {
             // Get the text from the current request messages
             var requestText = string.Join("\n",
-                this._searchInputMessageFilter(inputContext.Messages ?? [])
+                (context.RequestMessages ?? [])
                 .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => m.Text));
 
             if (string.IsNullOrWhiteSpace(requestText))
             {
-                return inputContext;
+                return [];
             }
 
             // Search for relevant chat history
@@ -193,20 +226,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
 
             if (string.IsNullOrWhiteSpace(contextText))
             {
-                return inputContext;
+                return [];
             }
 
-            return new AIContext
-            {
-                Instructions = inputContext.Instructions,
-                Messages =
-                    (inputContext.Messages ?? [])
-                    .Concat(
-                    [
-                        new ChatMessage(ChatRole.User, contextText).WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, this.GetType().FullName!)
-                    ]),
-                Tools = inputContext.Tools
-            };
+            return [new ChatMessage(ChatRole.User, contextText)];
         }
         catch (Exception ex)
         {
@@ -221,44 +244,38 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                     this.SanitizeLogData(searchScope.UserId));
             }
 
-            return inputContext;
+            return [];
         }
     }
 
     /// <inheritdoc />
-    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
-        // Only store if invocation was successful
-        if (context.InvokeException != null)
-        {
-            return;
-        }
-
-        var state = this.GetOrInitializeState(context.Session);
-        var storageScope = state?.StorageScope ?? new ChatHistoryMemoryProviderScope();
+        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var storageScope = state.StorageScope;
 
         try
         {
             // Ensure the collection is initialized
             var collection = await this.EnsureCollectionExistsAsync(cancellationToken).ConfigureAwait(false);
 
-            List<Dictionary<string, object?>> itemsToStore = this._storageInputMessageFilter(context.RequestMessages)
+            List<Dictionary<string, object?>> itemsToStore = context.RequestMessages
                 .Concat(context.ResponseMessages ?? [])
                 .Select(message => new Dictionary<string, object?>
                 {
-                    ["Key"] = Guid.NewGuid(),
-                    ["Role"] = message.Role.ToString(),
-                    ["MessageId"] = message.MessageId,
-                    ["AuthorName"] = message.AuthorName,
-                    ["ApplicationId"] = storageScope.ApplicationId,
-                    ["AgentId"] = storageScope.AgentId,
-                    ["UserId"] = storageScope.UserId,
-                    ["SessionId"] = storageScope.SessionId,
-                    ["Content"] = message.Text,
-                    ["CreatedAt"] = message.CreatedAt?.ToString("O") ?? DateTimeOffset.UtcNow.ToString("O"),
-                    ["ContentEmbedding"] = message.Text,
+                    [KeyField] = Guid.NewGuid(),
+                    [RoleField] = message.Role.ToString(),
+                    [MessageIdField] = message.MessageId,
+                    [AuthorNameField] = message.AuthorName,
+                    [ApplicationIdField] = storageScope.ApplicationId,
+                    [AgentIdField] = storageScope.AgentId,
+                    [UserIdField] = storageScope.UserId,
+                    [SessionIdField] = storageScope.SessionId,
+                    [ContentField] = message.Text,
+                    [CreatedAtField] = message.CreatedAt?.ToString("O") ?? DateTimeOffset.UtcNow.ToString("O"),
+                    [ContentEmbeddingField] = message.Text,
                 })
                 .ToList();
 
@@ -303,7 +320,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         }
 
         // Format the results as a single context message
-        var outputResultsText = string.Join("\n", results.Select(x => (string?)x["Content"]).Where(c => !string.IsNullOrWhiteSpace(c)));
+        var outputResultsText = string.Join("\n", results.Select(x => (string?)x[ContentField]).Where(c => !string.IsNullOrWhiteSpace(c)));
         if (string.IsNullOrWhiteSpace(outputResultsText))
         {
             return string.Empty;
@@ -352,35 +369,37 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         string? userId = searchScope.UserId;
         string? sessionId = searchScope.SessionId;
 
-        Expression<Func<Dictionary<string, object?>, bool>>? filter = null;
+        // Build a combined filter using a single shared parameter to avoid expression tree
+        // scoping issues when multiple filters are combined with AndAlso.
+        ParameterExpression parameter = Expression.Parameter(typeof(Dictionary<string, object?>), "x");
+        Expression? filterBody = null;
+
         if (applicationId != null)
         {
-            filter = x => (string?)x["ApplicationId"] == applicationId;
+            filterBody = RebindFilterBody(x => (string?)x[ApplicationIdField] == applicationId, parameter);
         }
 
         if (agentId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> agentIdFilter = x => (string?)x["AgentId"] == agentId;
-            filter = filter == null ? agentIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
-                Expression.AndAlso(filter.Body, agentIdFilter.Body),
-                filter.Parameters);
+            Expression body = RebindFilterBody(x => (string?)x[AgentIdField] == agentId, parameter);
+            filterBody = filterBody == null ? body : Expression.AndAlso(filterBody, body);
         }
 
         if (userId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> userIdFilter = x => (string?)x["UserId"] == userId;
-            filter = filter == null ? userIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
-                Expression.AndAlso(filter.Body, userIdFilter.Body),
-                filter.Parameters);
+            Expression body = RebindFilterBody(x => (string?)x[UserIdField] == userId, parameter);
+            filterBody = filterBody == null ? body : Expression.AndAlso(filterBody, body);
         }
 
         if (sessionId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> sessionIdFilter = x => (string?)x["SessionId"] == sessionId;
-            filter = filter == null ? sessionIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
-                Expression.AndAlso(filter.Body, sessionIdFilter.Body),
-                filter.Parameters);
+            Expression body = RebindFilterBody(x => (string?)x[SessionIdField] == sessionId, parameter);
+            filterBody = filterBody == null ? body : Expression.AndAlso(filterBody, body);
         }
+
+        Expression<Func<Dictionary<string, object?>, bool>>? filter = filterBody != null
+            ? Expression.Lambda<Func<Dictionary<string, object?>, bool>>(filterBody, parameter)
+            : null;
 
         // Use search to find relevant messages
         var searchResults = collection.SearchAsync(
@@ -467,7 +486,28 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";
+    private string SanitizeLogData(string? data) => this._redactor.Redact(data);
+
+    /// <summary>
+    /// Rebinds a filter expression's body to use the specified shared parameter,
+    /// replacing the original lambda parameter so that multiple filters can be safely
+    /// combined with <see cref="Expression.AndAlso(Expression, Expression)"/>.
+    /// </summary>
+    private static Expression RebindFilterBody(
+        Expression<Func<Dictionary<string, object?>, bool>> filter,
+        ParameterExpression sharedParameter)
+    {
+        return new ParameterReplacer(filter.Parameters[0], sharedParameter).Visit(filter.Body);
+    }
+
+    /// <summary>
+    /// An <see cref="ExpressionVisitor"/> that replaces one <see cref="ParameterExpression"/> with another.
+    /// </summary>
+    private sealed class ParameterReplacer(ParameterExpression original, ParameterExpression replacement) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node)
+            => node == original ? replacement : base.VisitParameter(node);
+    }
 
     /// <summary>
     /// Represents the state of a <see cref="ChatHistoryMemoryProvider"/> stored in the <see cref="AgentSession.StateBag"/>.

@@ -9,15 +9,16 @@ and enables registration of agents as durable entities.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
-from agent_framework import SupportsAgentRun, get_logger
+from agent_framework import SupportsAgentRun
 from durabletask.worker import TaskHubGrpcWorker
 
 from ._callbacks import AgentResponseCallbackProtocol
 from ._entities import AgentEntity, DurableTaskEntityStateProvider
 
-logger = get_logger("agent_framework.durabletask.worker")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 class DurableAIAgentWorker:
@@ -28,9 +29,10 @@ class DurableAIAgentWorker:
 
     Example:
         ```python
-        from durabletask import TaskHubGrpcWorker
+        from durabletask.worker import TaskHubGrpcWorker
         from agent_framework import Agent
-        from agent_framework.azure import DurableAIAgentWorker
+        from agent_framework.openai import OpenAIChatCompletionClient
+        from agent_framework_durabletask import DurableAIAgentWorker
 
         # Create the underlying worker
         worker = TaskHubGrpcWorker(host_address="localhost:4001")
@@ -39,6 +41,7 @@ class DurableAIAgentWorker:
         agent_worker = DurableAIAgentWorker(worker)
 
         # Register agents
+        client = OpenAIChatCompletionClient()
         my_agent = Agent(client=client, name="assistant")
         agent_worker.add_agent(my_agent)
 

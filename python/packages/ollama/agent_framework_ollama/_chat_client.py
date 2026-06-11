@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -28,12 +29,11 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
-    get_logger,
 )
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import (
-    ServiceInvalidRequestError,
-    ServiceResponseException,
+    ChatClientException,
+    ChatClientInvalidRequestException,
 )
 from agent_framework.observability import ChatTelemetryLayer
 from ollama import AsyncClient
@@ -77,7 +77,7 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
 
     Keys:
         # Inherited from ChatOptions (mapped to Ollama options):
-        model_id: The model name, translates to ``model`` in Ollama API.
+        model: The model name, translates to ``model`` in Ollama API.
         temperature: Sampling temperature, translates to ``options.temperature``.
         top_p: Nucleus sampling, translates to ``options.top_p``.
         max_tokens: Maximum tokens to generate, translates to ``options.num_predict``.
@@ -229,7 +229,6 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
 
 
 OLLAMA_OPTION_TRANSLATIONS: dict[str, str] = {
-    "model_id": "model",
     "response_format": "format",
 }
 """Maps ChatOptions keys to Ollama API parameter names."""
@@ -278,15 +277,15 @@ class OllamaSettings(TypedDict, total=False):
     """Ollama settings."""
 
     host: str | None
-    model_id: str | None
+    model: str | None
 
 
-logger = get_logger("agent_framework.ollama")
+logger = logging.getLogger("agent_framework.ollama")
 
 
 class OllamaChatClient(
-    ChatMiddlewareLayer[OllamaChatOptionsT],
     FunctionInvocationLayer[OllamaChatOptionsT],
+    ChatMiddlewareLayer[OllamaChatOptionsT],
     ChatTelemetryLayer[OllamaChatOptionsT],
     BaseChatClient[OllamaChatOptionsT],
 ):
@@ -299,12 +298,12 @@ class OllamaChatClient(
         *,
         host: str | None = None,
         client: AsyncClient | None = None,
-        model_id: str | None = None,
+        model: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Ollama Chat client.
 
@@ -312,33 +311,33 @@ class OllamaChatClient(
             host: Ollama server URL, if none `http://localhost:11434` is used.
                 Can be set via the OLLAMA_HOST env variable.
             client: An optional Ollama Client instance. If not provided, a new instance will be created.
-            model_id: The Ollama chat model ID to use. Can be set via the OLLAMA_MODEL_ID env variable.
+            model: The Ollama chat model to use. Can be set via the OLLAMA_MODEL env variable.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
             env_file_path: An optional path to a dotenv (.env) file to load environment variables from.
             env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
-            **kwargs: Additional keyword arguments passed to BaseChatClient.
         """
         ollama_settings = load_settings(
             OllamaSettings,
             env_prefix="OLLAMA_",
-            required_fields=["model_id"],
+            required_fields=["model"],
             host=host,
-            model_id=model_id,
+            model=model,
             env_file_encoding=env_file_encoding,
             env_file_path=env_file_path,
         )
 
-        self.model_id = ollama_settings["model_id"]
+        self.model = ollama_settings["model"]  # type: ignore[assignment, reportTypedDictNotRequiredAccess]
         # we can just pass in None for the host, the default is set by the Ollama package.
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
         # Save Host URL for serialization with to_dict()
-        self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
+        self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 
         super().__init__(
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
         self.middleware = list(self.chat_middleware)
 
@@ -363,7 +362,7 @@ class OllamaChatClient(
                         **kwargs,
                     )
                 except Exception as ex:
-                    raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
+                    raise ChatClientException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
                 async for part in response_object:
                     yield self._parse_streaming_response_from_ollama(part)
@@ -381,9 +380,12 @@ class OllamaChatClient(
                     **kwargs,
                 )
             except Exception as ex:
-                raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
+                raise ChatClientException(f"Ollama chat request failed : {ex}", ex) from ex
 
-            return self._parse_response_from_ollama(response)
+            return self._parse_response_from_ollama(
+                response,
+                response_format=validated_options.get("response_format"),
+            )
 
         return _get_response()
 
@@ -411,7 +413,7 @@ class OllamaChatClient(
                 translated_key = OLLAMA_MODEL_OPTION_TRANSLATIONS.get(key, key)
                 model_options[translated_key] = value
             else:
-                # Apply top-level translations (e.g., model_id -> model)
+                # Apply top-level translations (e.g., response_format -> format)
                 translated_key = OLLAMA_OPTION_TRANSLATIONS.get(key, key)
                 run_options[translated_key] = value
 
@@ -423,13 +425,13 @@ class OllamaChatClient(
         if messages and "messages" not in run_options:
             run_options["messages"] = self._prepare_messages_for_ollama(messages)
         if "messages" not in run_options:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
+            raise ChatClientInvalidRequestException("Messages are required for chat completions")
 
-        # model id
+        # model
         if not run_options.get("model"):
-            if not self.model_id:
-                raise ValueError("model_id must be a non-empty string")
-            run_options["model"] = self.model_id
+            if not self.model:
+                raise ValueError("model must be a non-empty string")
+            run_options["model"] = self.model
 
         # tools
         tools = options.get("tools")
@@ -457,7 +459,7 @@ class OllamaChatClient(
 
     def _format_user_message(self, message: Message) -> list[OllamaMessage]:
         if not any(c.type in {"text", "data"} for c in message.contents) and not message.text:
-            raise ServiceInvalidRequestError(
+            raise ChatClientInvalidRequestException(
                 "Ollama connector currently only supports user messages with TextContent or DataContent."
             )
 
@@ -468,7 +470,9 @@ class OllamaChatClient(
         data_contents = [c for c in message.contents if c.type == "data"]
         if data_contents:
             if not any(c.has_top_level_media_type("image") for c in data_contents):
-                raise ServiceInvalidRequestError("Only image data content is supported for user messages in Ollama.")
+                raise ChatClientInvalidRequestException(
+                    "Only image data content is supported for user messages in Ollama."
+                )
             # Ollama expects base64 strings without prefix
             user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
         return [user_message]
@@ -498,11 +502,22 @@ class OllamaChatClient(
 
     def _format_tool_message(self, message: Message) -> list[OllamaMessage]:
         # Ollama does not support multiple tool results in a single message, so we create a separate
-        return [
-            OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
-            for item in message.contents
-            if item.type == "function_result"
-        ]
+        messages: list[OllamaMessage] = []
+        for item in message.contents:
+            if item.type == "function_result":
+                if item.items:
+                    text_parts = [c.text or "" for c in item.items if c.type == "text"]
+                    rich_items = [c for c in item.items if c.type in ("data", "uri")]
+                    if rich_items:
+                        logger.warning(
+                            "Ollama does not support rich content (images, audio) in tool results. "
+                            "Rich content items will be omitted."
+                        )
+                    tool_text = "\n".join(text_parts) if text_parts else ""
+                else:
+                    tool_text = str(item.result) if item.result is not None else ""
+                messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=item.call_id))
+        return messages
 
     def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
         contents: list[Content] = []
@@ -520,21 +535,27 @@ class OllamaChatClient(
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",
-            model_id=response.model,
+            model=response.model,
             created_at=response.created_at,
         )
 
-    def _parse_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponse:
+    def _parse_response_from_ollama(
+        self,
+        response: OllamaChatResponse,
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse:
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
             messages=[Message(role="assistant", contents=contents)],
-            model_id=response.model,
+            model=response.model,
             created_at=response.created_at,
             usage_details=UsageDetails(
                 input_token_count=response.prompt_eval_count,
                 output_token_count=response.eval_count,
             ),
+            response_format=response_format,
         )
 
     def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Content]:

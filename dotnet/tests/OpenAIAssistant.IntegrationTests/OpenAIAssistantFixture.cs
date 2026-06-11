@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
@@ -14,8 +15,6 @@ namespace OpenAIAssistant.IntegrationTests;
 
 public class OpenAIAssistantFixture : IChatClientAgentFixture
 {
-    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
-
     private AssistantClient? _assistantClient;
     private ChatClientAgent _agent = null!;
 
@@ -49,7 +48,7 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
     {
         var assistant =
             await this._assistantClient!.CreateAssistantAsync(
-                s_config.ChatModelId!,
+                TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 new AssistantCreationOptions()
                 {
                     Name = name,
@@ -79,21 +78,23 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
         return Task.CompletedTask;
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
-        var client = new OpenAIClient(s_config.ApiKey);
+        var client = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey));
         this._assistantClient = client.GetAssistantClient();
 
         this._agent = await this.CreateChatClientAgentAsync();
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
+
         if (this._assistantClient is not null && this._agent is not null)
         {
-            return this._assistantClient.DeleteAssistantAsync(this._agent.Id);
+            return new ValueTask(this._assistantClient.DeleteAssistantAsync(this._agent.Id));
         }
 
-        return Task.CompletedTask;
+        return default;
     }
 }

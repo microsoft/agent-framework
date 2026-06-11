@@ -13,6 +13,7 @@ using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Shared.IntegrationTests;
 
 namespace CopilotStudio.IntegrationTests;
 
@@ -27,15 +28,24 @@ public class CopilotStudioFixture : IAgentFixture
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 
-    public Task InitializeAsync()
+    public ValueTask InitializeAsync()
     {
         const string CopilotStudioHttpClientName = nameof(CopilotStudioAgent);
 
-        var config = TestConfiguration.LoadSection<CopilotStudioAgentConfiguration>();
-        var settings = new CopilotStudioConnectionSettings(config.TenantId, config.AppClientId)
+        CopilotStudioConnectionSettings? settings = null;
+        try
         {
-            DirectConnectUrl = config.DirectConnectUrl,
-        };
+            settings = new CopilotStudioConnectionSettings(
+                TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioTenantId),
+                TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioAgentAppId))
+            {
+                DirectConnectUrl = TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioDirectConnectUrl),
+            };
+        }
+        catch (InvalidOperationException ex)
+        {
+            Assert.Skip("CopilotStudio configuration could not be loaded. Error:" + ex.Message);
+        }
 
         ServiceCollection services = new();
 
@@ -54,8 +64,12 @@ public class CopilotStudioFixture : IAgentFixture
 
         this.Agent = new CopilotStudioAgent(client);
 
-        return Task.CompletedTask;
+        return default;
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

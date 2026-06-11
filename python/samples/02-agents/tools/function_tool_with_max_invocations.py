@@ -3,8 +3,12 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 For tools you can specify if there is a maximum number of invocations allowed.
@@ -20,7 +24,8 @@ def unicorn_function(times: Annotated[int, "The number of unicorns to return."])
 
 async def main():
     # tools = Tools()
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="ToolAgent",
         instructions="Use the provided tools.",
         tools=[unicorn_function],
@@ -58,9 +63,6 @@ Step 1: Call unicorn_function
 Response: Five unicorns summoned: 🦄🦄🦄🦄🦄✨
 ============================================================
 Step 2: Call unicorn_function again - will refuse to execute due to max_invocations
-[2025-10-31 15:54:40 - /Users/edvan/Work/agent-framework/python/packages/core/agent_framework/_tools.py:718 - ERROR]
-Function failed. Error: Function 'unicorn_function' has reached its maximum invocation limit,
-you can no longer use this tool.
 Response: The unicorn function has reached its maximum invocation limit. I can’t call it again right now.
 
 Here are 10 unicorns manually: 🦄 🦄 🦄 🦄 🦄 🦄 🦄 🦄 🦄 🦄

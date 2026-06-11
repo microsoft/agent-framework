@@ -1,25 +1,42 @@
 # Copyright (c) Microsoft. All rights reserved.
+import asyncio
+import threading
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from agent_framework import (
+    SKIP_PARSING,
     Content,
     FunctionTool,
     tool,
 )
+from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
-    _build_pydantic_model_from_json_schema,
     _parse_annotation,
     _parse_inputs,
+    _tools_to_dict,
 )
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
+
+
+def test_tools_to_dict_supports_pydantic_tool_models() -> None:
+    """Pydantic-based tool specs are serialized without logging parse warnings."""
+
+    class ProviderTool(BaseModel):
+        kind: str
+        enabled: bool = True
+        note: str | None = None
+
+    result = _tools_to_dict([ProviderTool(kind="google_search")])
+
+    assert result == [{"kind": "google_search", "enabled": True}]
 
 
 def test_tool_decorator():
@@ -108,6 +125,91 @@ def test_tool_decorator_with_json_schema_dict():
     assert search("hello") == "Searching for: hello (max 10)"
 
 
+async def test_tool_decorator_with_json_schema_invoke_uses_mapping():
+    """Test that schema-based tools can be invoked directly with mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "max_results": {"type": "integer"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"{query}:{max_results}"
+
+    result = await search.invoke(arguments={"query": "hello", "max_results": 3})
+    assert isinstance(result, list)
+    assert result[0].text == "hello:3"
+
+
+async def test_tool_decorator_with_json_schema_invoke_missing_required():
+    """Test schema-required fields are checked for mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str) -> str:
+        return query
+
+    with pytest.raises(TypeError, match="Missing required argument"):
+        await search.invoke(arguments={})
+
+
+async def test_tool_decorator_with_json_schema_invoke_invalid_type():
+    """Test schema type checks run for mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "max_results": {"type": "integer"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"{query}:{max_results}"
+
+    with pytest.raises(TypeError, match="Invalid type for 'max_results'"):
+        await search.invoke(arguments={"query": "hello", "max_results": "three"})
+
+
+def test_tool_decorator_with_json_schema_preserves_custom_properties():
+    """Test schema passthrough keeps custom JSON schema properties."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "priority": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "x-custom-field": "custom-value",
+            },
+        },
+        "required": ["priority"],
+        "additionalProperties": False,
+    }
+
+    @tool(name="process", description="Process tool", schema=json_schema)
+    def process(priority: str) -> str:
+        return priority
+
+    params = process.parameters()
+    assert not params.get("additionalProperties")
+    assert params["properties"]["priority"]["x-custom-field"] == "custom-value"
+
+
 def test_tool_decorator_schema_none_default():
     """Test that schema=None (default) still infers from function signature."""
 
@@ -138,7 +240,8 @@ async def test_tool_decorator_with_schema_invoke():
         return a + b
 
     result = await calculate.invoke(arguments=CalcInput(a=3, b=7))
-    assert result == "10"
+    assert isinstance(result, list)
+    assert result[0].text == "10"
 
 
 def test_tool_decorator_with_schema_overrides_annotations():
@@ -409,11 +512,13 @@ async def test_tool_decorator_shared_state():
 
     # Test with invoke method as well (simulating agent execution)
     result6 = await increment_tool.invoke(amount=5)
-    assert result6 == "Counter incremented by 5. New value: 60"
+    assert isinstance(result6, list)
+    assert result6[0].text == "Counter incremented by 5. New value: 60"
     assert counter_instance.counter == 60
 
     result7 = await get_value_tool.invoke()
-    assert result7 == "Current counter value: 60"
+    assert isinstance(result7, list)
+    assert result7[0].text == "Current counter value: 60"
     assert counter_instance.counter == 60
 
 
@@ -436,7 +541,8 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == "3"
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -480,7 +586,8 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == "3"
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -504,8 +611,8 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
-async def test_tool_invoke_ignores_additional_kwargs() -> None:
-    """Ensure tools drop unknown kwargs when invoked with validated arguments."""
+async def test_tool_invoke_rejects_unexpected_runtime_kwargs() -> None:
+    """Ensure invoke() requires runtime data to flow through FunctionInvocationContext."""
 
     @tool
     async def simple_tool(message: str) -> str:
@@ -514,14 +621,12 @@ async def test_tool_invoke_ignores_additional_kwargs() -> None:
 
     args = simple_tool.input_model(message="hello world")
 
-    # These kwargs simulate runtime context passed through function invocation.
-    result = await simple_tool.invoke(
-        arguments=args,
-        api_token="secret-token",
-        options={"model_id": "dummy"},
-    )
-
-    assert result == "HELLO WORLD"
+    with pytest.raises(TypeError, match="Unexpected keyword argument"):
+        await simple_tool.invoke(
+            arguments=args,
+            api_token="secret-token",
+            options={"model": "dummy"},
+        )
 
 
 async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
@@ -545,7 +650,8 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
 
     # Verify result
-    assert result == "15"
+    assert isinstance(result, list)
+    assert result[0].text == "15"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -555,7 +661,7 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "pydantic_call"
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool with Pydantic args"
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x":5,"y":10}'
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'
 
 
 async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
@@ -613,7 +719,8 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
 
     # Verify result
-    assert result == "12"
+    assert isinstance(result, list)
+    assert result[0].text == "12"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -824,8 +931,8 @@ def test_parse_inputs_unsupported_type():
 # endregion
 
 
-async def test_ai_function_with_kwargs_injection():
-    """Test that ai_function correctly handles kwargs injection and hides them from schema."""
+async def test_ai_function_with_kwargs_rejects_runtime_invoke_kwargs():
+    """Test that runtime kwargs must be passed through FunctionInvocationContext."""
 
     @tool
     def tool_with_kwargs(x: int, **kwargs: Any) -> str:
@@ -844,18 +951,140 @@ async def test_ai_function_with_kwargs_injection():
     # Verify direct invocation works
     assert tool_with_kwargs(1, user_id="user1") == "x=1, user=user1"
 
-    # Verify invoke works with injected args
-    result = await tool_with_kwargs.invoke(
-        arguments=tool_with_kwargs.input_model(x=5),
-        user_id="user2",
-    )
-    assert result == "x=5, user=user2"
+    with pytest.raises(TypeError, match="Unexpected keyword argument"):
+        await tool_with_kwargs.invoke(
+            arguments=tool_with_kwargs.input_model(x=5),
+            user_id="user2",
+        )
 
     # Verify invoke works without injected args (uses default)
     result_default = await tool_with_kwargs.invoke(
         arguments=tool_with_kwargs.input_model(x=10),
     )
-    assert result_default == "x=10, user=unknown"
+    assert isinstance(result_default, list)
+    assert result_default[0].text == "x=10, user=unknown"
+
+
+async def test_ai_function_with_explicit_invocation_context():
+    """Test that invoke() can receive runtime kwargs via FunctionInvocationContext."""
+
+    @tool
+    def tool_with_context(x: int, ctx: FunctionInvocationContext) -> str:
+        """A tool that accepts runtime context injection."""
+        user_id = ctx.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_context,
+        arguments=tool_with_context.input_model(x=7),
+        kwargs={"user_id": "ctx-user"},
+    )
+
+    result = await tool_with_context.invoke(context=context)
+
+    assert result[0].text == "x=7, user=ctx-user"
+
+
+async def test_ai_function_with_typed_context_parameter_using_custom_name():
+    """Test that typed context injection works for names other than ctx."""
+
+    @tool
+    def tool_with_runtime_context(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool that uses a custom context parameter name."""
+        user_id = runtime.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_runtime_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_runtime_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_runtime_context,
+        arguments=tool_with_runtime_context.input_model(x=8),
+        kwargs={"user_id": "runtime-user"},
+    )
+
+    result = await tool_with_runtime_context.invoke(context=context)
+
+    assert result[0].text == "x=8, user=runtime-user"
+
+
+async def test_ai_function_with_explicit_schema_and_untyped_ctx():
+    """Test that explicit schemas allow an untyped ctx parameter."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x, ctx) -> str:
+        """A tool with explicit schema and implicit ctx injection."""
+        return f"x={x}, user={ctx.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=9),
+        kwargs={"user_id": "schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert result[0].text == "x=9, user=schema-user"
+
+
+async def test_ai_function_with_explicit_schema_and_typed_ctx():
+    """Test that explicit schemas also work with typed context injection."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool with explicit schema and typed context injection."""
+        return f"x={x}, user={runtime.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=11),
+        kwargs={"user_id": "typed-schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert tool_with_schema.parameters() == ToolInput.model_json_schema()
+    assert result[0].text == "x=11, user=typed-schema-user"
+
+
+def test_ai_function_with_multiple_typed_context_parameters_fails():
+    """Test that tools reject multiple typed FunctionInvocationContext parameters."""
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool
+        def invalid_tool(ctx_one: FunctionInvocationContext, ctx_two: FunctionInvocationContext) -> str:
+            return f"{ctx_one.kwargs}-{ctx_two.kwargs}"
+
+
+def test_ai_function_with_ctx_and_typed_context_parameter_fails():
+    """Test that explicit-schema tools reject both implicit ctx and typed context parameters."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool(schema=ToolInput)
+        def invalid_tool(x, ctx, runtime: FunctionInvocationContext) -> str:
+            return f"{x}-{ctx.kwargs}-{runtime.kwargs}"
 
 
 # region _parse_annotation tests
@@ -917,467 +1146,361 @@ def test_parse_annotation_with_annotated_and_literal():
     assert get_args(literal_type) == ("A", "B", "C")
 
 
-def test_build_pydantic_model_from_json_schema_array_of_objects_issue():
-    """Test for Tools with complex input schema (array of objects).
+# endregion
 
-    This test verifies that JSON schemas with array properties containing nested objects
-    are properly parsed, ensuring that the nested object schema is preserved
-    and not reduced to a bare dict.
 
-    Example from issue:
-    ```
-    const SalesOrderItemSchema = z.object({
-        customerMaterialNumber: z.string().optional(),
-        quantity: z.number(),
-        unitOfMeasure: z.string()
-    });
+# region normalize_tools flattening of tool-collection wrappers
 
-    const CreateSalesOrderInputSchema = z.object({
-        contract: z.string(),
-        items: z.array(SalesOrderItemSchema)
-    });
-    ```
 
-    The issue was that agents only saw:
-    ```
-    {"contract": "str", "items": "list[dict]"}
-    ```
+def _make_flatten_function_tool(name: str) -> FunctionTool:
+    """Build a FunctionTool for flattening tests."""
 
-    Instead of the proper nested schema with all fields.
+    @tool(name=name, description=f"{name} tool")
+    def _impl(x: int) -> int:
+        return x
+
+    return _impl  # type: ignore[return-value]
+
+
+def test_normalize_tools_flattens_tool_collection_wrapper() -> None:
+    """A non-tool, non-callable iterable inside the tools list is flattened."""
+    from agent_framework._tools import normalize_tools
+
+    inner_a = _make_flatten_function_tool("inner_a")
+    inner_b = _make_flatten_function_tool("inner_b")
+
+    class ToolBundle:
+        """Minimal stand-in for a tool-collection wrapper like FoundryToolbox."""
+
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    bundle = ToolBundle([inner_a, inner_b])
+
+    normalized = normalize_tools([bundle])
+
+    assert len(normalized) == 2
+    assert normalized[0] is inner_a
+    assert normalized[1] is inner_b
+
+
+def test_normalize_tools_combines_bundle_with_individual_tools() -> None:
+    """The canonical ``tools=[bundle, my_func]`` call site spreads bundle + individual."""
+    from agent_framework._tools import normalize_tools
+
+    bundled = _make_flatten_function_tool("bundled")
+    standalone = _make_flatten_function_tool("standalone")
+
+    class ToolBundle:
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    normalized = normalize_tools([ToolBundle([bundled]), standalone])
+
+    assert len(normalized) == 2
+    assert normalized[0] is bundled
+    assert normalized[1] is standalone
+
+
+def test_normalize_tools_flattens_nested_bundles() -> None:
+    """Bundles inside bundles are flattened recursively via the recursive call."""
+    from agent_framework._tools import normalize_tools
+
+    inner = _make_flatten_function_tool("deep")
+
+    class ToolBundle:
+        def __init__(self, tools: list[Any]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    nested = ToolBundle([ToolBundle([inner])])
+
+    normalized = normalize_tools([nested])
+
+    assert len(normalized) == 1
+    assert normalized[0] is inner
+
+
+def test_normalize_tools_bundle_only_form() -> None:
+    """Passing a bundle directly (no outer list) also flattens its contents.
+
+    ``tools=bundle`` — the outer wrap-in-list happens in the non-Sequence
+    branch, then the flattening logic kicks in on the inner pass.
     """
-    # Schema matching the issue description
-    schema = {
-        "type": "object",
-        "properties": {
-            "contract": {"type": "string", "description": "Reference contract number"},
-            "items": {
-                "type": "array",
-                "description": "Sales order line items",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "customerMaterialNumber": {
-                            "type": "string",
-                            "description": "Customer's material number",
-                        },
-                        "quantity": {"type": "number", "description": "Order quantity"},
-                        "unitOfMeasure": {
-                            "type": "string",
-                            "description": "Unit of measure (e.g., 'ST', 'KG', 'TO')",
-                        },
-                    },
-                    "required": ["quantity", "unitOfMeasure"],
-                },
-            },
-        },
-        "required": ["contract", "items"],
-    }
+    from agent_framework._tools import normalize_tools
 
-    model = _build_pydantic_model_from_json_schema("create_sales_order", schema)
+    a = _make_flatten_function_tool("a")
+    b = _make_flatten_function_tool("b")
 
-    # Test valid data
-    valid_data = {
-        "contract": "CONTRACT-123",
-        "items": [
-            {
-                "customerMaterialNumber": "MAT-001",
-                "quantity": 10,
-                "unitOfMeasure": "ST",
-            },
-            {"quantity": 5.5, "unitOfMeasure": "KG"},
-        ],
-    }
+    class ToolBundle:
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self._tools = tools
 
-    instance = model(**valid_data)
+        def __iter__(self):
+            return iter(self._tools)
 
-    # Verify the data was parsed correctly
-    assert instance.contract == "CONTRACT-123"
-    assert len(instance.items) == 2
+    normalized = normalize_tools(ToolBundle([a, b]))  # type: ignore[arg-type]
 
-    # Verify first item
-    assert instance.items[0].customerMaterialNumber == "MAT-001"
-    assert instance.items[0].quantity == 10
-    assert instance.items[0].unitOfMeasure == "ST"
-
-    # Verify second item (optional field not provided)
-    assert instance.items[1].quantity == 5.5
-    assert instance.items[1].unitOfMeasure == "KG"
-
-    # Verify that items are proper BaseModel instances, not bare dicts
-    assert isinstance(instance.items[0], BaseModel)
-    assert isinstance(instance.items[1], BaseModel)
-
-    # Verify that the nested object has the expected fields
-    assert hasattr(instance.items[0], "customerMaterialNumber")
-    assert hasattr(instance.items[0], "quantity")
-    assert hasattr(instance.items[0], "unitOfMeasure")
-
-    # CRITICAL: Validate using the same methods that actual chat clients use
-    # This is what would actually be sent to the LLM
-
-    # Create a FunctionTool wrapper to access the client-facing APIs
-    def dummy_func(**kwargs):
-        return kwargs
-
-    test_func = FunctionTool(
-        func=dummy_func,
-        name="create_sales_order",
-        description="Create a sales order",
-        input_model=model,
-    )
-
-    # Test 1: Anthropic client uses tool.parameters() directly
-    anthropic_schema = test_func.parameters()
-
-    # Verify contract property
-    assert "contract" in anthropic_schema["properties"]
-    assert anthropic_schema["properties"]["contract"]["type"] == "string"
-
-    # Verify items array property exists
-    assert "items" in anthropic_schema["properties"]
-    items_prop = anthropic_schema["properties"]["items"]
-    assert items_prop["type"] == "array"
-
-    # THE KEY TEST for Anthropic: array items must have proper object schema
-    assert "items" in items_prop, "Array should have 'items' schema definition"
-    array_items_schema = items_prop["items"]
-
-    # Resolve schema if using $ref
-    if "$ref" in array_items_schema:
-        ref_path = array_items_schema["$ref"]
-        assert ref_path.startswith("#/$defs/") or ref_path.startswith("#/definitions/")
-        ref_name = ref_path.split("/")[-1]
-        defs = anthropic_schema.get("$defs", anthropic_schema.get("definitions", {}))
-        assert ref_name in defs, f"Referenced schema '{ref_name}' should exist"
-        item_schema = defs[ref_name]
-    else:
-        item_schema = array_items_schema
-
-    # Verify the nested object has all properties defined
-    assert "properties" in item_schema, "Array items should have properties (not bare dict)"
-    item_properties = item_schema["properties"]
-
-    # All three fields must be present in schema sent to LLM
-    assert "customerMaterialNumber" in item_properties, "customerMaterialNumber missing from LLM schema"
-    assert "quantity" in item_properties, "quantity missing from LLM schema"
-    assert "unitOfMeasure" in item_properties, "unitOfMeasure missing from LLM schema"
-
-    # Verify types are correct
-    assert item_properties["customerMaterialNumber"]["type"] == "string"
-    assert item_properties["quantity"]["type"] in ["number", "integer"]
-    assert item_properties["unitOfMeasure"]["type"] == "string"
-
-    # Test 2: OpenAI client uses tool.to_json_schema_spec()
-    openai_spec = test_func.to_json_schema_spec()
-
-    assert openai_spec["type"] == "function"
-    assert "function" in openai_spec
-    openai_schema = openai_spec["function"]["parameters"]
-
-    # Verify the same structure is present in OpenAI format
-    assert "items" in openai_schema["properties"]
-    openai_items_prop = openai_schema["properties"]["items"]
-    assert openai_items_prop["type"] == "array"
-    assert "items" in openai_items_prop
-
-    openai_array_items = openai_items_prop["items"]
-    if "$ref" in openai_array_items:
-        ref_path = openai_array_items["$ref"]
-        ref_name = ref_path.split("/")[-1]
-        defs = openai_schema.get("$defs", openai_schema.get("definitions", {}))
-        openai_item_schema = defs[ref_name]
-    else:
-        openai_item_schema = openai_array_items
-
-    assert "properties" in openai_item_schema
-    openai_props = openai_item_schema["properties"]
-    assert "customerMaterialNumber" in openai_props
-    assert "quantity" in openai_props
-    assert "unitOfMeasure" in openai_props
-
-    # Test validation - missing required quantity
-    with pytest.raises(ValidationError):
-        model(
-            contract="CONTRACT-456",
-            items=[
-                {
-                    "customerMaterialNumber": "MAT-002",
-                    "unitOfMeasure": "TO",
-                    # Missing required 'quantity'
-                }
-            ],
-        )
-
-    # Test validation - missing required unitOfMeasure
-    with pytest.raises(ValidationError):
-        model(
-            contract="CONTRACT-789",
-            items=[
-                {
-                    "quantity": 20
-                    # Missing required 'unitOfMeasure'
-                }
-            ],
-        )
+    assert len(normalized) == 2
+    assert normalized[0] is a
+    assert normalized[1] is b
 
 
-def test_one_of_discriminator_polymorphism():
-    """Test that oneOf with discriminator creates proper polymorphic union types.
+def test_normalize_tools_does_not_flatten_known_tool_types() -> None:
+    """FunctionTool / dict / callable are detected before the flatten branch."""
+    from agent_framework._tools import normalize_tools
 
-    Tests that oneOf + discriminator patterns are properly converted to Pydantic discriminated unions.
-    """
-    schema = {
-        "$defs": {
-            "CreateProject": {
-                "description": "Action: Create an Azure DevOps project.",
-                "properties": {
-                    "name": {
-                        "const": "create_project",
-                        "default": "create_project",
-                        "type": "string",
-                    },
-                    "params": {"$ref": "#/$defs/CreateProjectParams"},
-                },
-                "required": ["params"],
-                "type": "object",
-            },
-            "CreateProjectParams": {
-                "description": "Parameters for the create_project action.",
-                "properties": {
-                    "orgUrl": {"minLength": 1, "type": "string"},
-                    "projectName": {"minLength": 1, "type": "string"},
-                    "description": {"default": "", "type": "string"},
-                    "template": {"default": "Agile", "type": "string"},
-                    "sourceControl": {
-                        "default": "Git",
-                        "enum": ["Git", "Tfvc"],
-                        "type": "string",
-                    },
-                    "visibility": {"default": "private", "type": "string"},
-                },
-                "required": ["orgUrl", "projectName"],
-                "type": "object",
-            },
-            "DeployRequest": {
-                "description": "Request to deploy Azure DevOps resources.",
-                "properties": {
-                    "projectName": {"minLength": 1, "type": "string"},
-                    "organization": {"minLength": 1, "type": "string"},
-                    "actions": {
-                        "items": {
-                            "discriminator": {
-                                "mapping": {
-                                    "create_project": "#/$defs/CreateProject",
-                                    "hello_world": "#/$defs/HelloWorld",
-                                },
-                                "propertyName": "name",
-                            },
-                            "oneOf": [
-                                {"$ref": "#/$defs/HelloWorld"},
-                                {"$ref": "#/$defs/CreateProject"},
-                            ],
-                        },
-                        "type": "array",
-                    },
-                },
-                "required": ["projectName", "organization"],
-                "type": "object",
-            },
-            "HelloWorld": {
-                "description": "Action: Prints a greeting message.",
-                "properties": {
-                    "name": {
-                        "const": "hello_world",
-                        "default": "hello_world",
-                        "type": "string",
-                    },
-                    "params": {"$ref": "#/$defs/HelloWorldParams"},
-                },
-                "required": ["params"],
-                "type": "object",
-            },
-            "HelloWorldParams": {
-                "description": "Parameters for the hello_world action.",
-                "properties": {
-                    "name": {
-                        "description": "Name to greet",
-                        "minLength": 1,
-                        "type": "string",
-                    }
-                },
-                "required": ["name"],
-                "type": "object",
-            },
-        },
-        "properties": {"params": {"$ref": "#/$defs/DeployRequest"}},
-        "required": ["params"],
-        "type": "object",
-    }
+    func_tool = _make_flatten_function_tool("ft")
+    dict_tool: dict[str, Any] = {"type": "code_interpreter", "container": {"type": "auto"}}
 
-    # Build the model
-    model = _build_pydantic_model_from_json_schema("deploy_tool", schema)
+    def plain_callable(x: int) -> int:
+        return x
 
-    # Verify the model structure
-    assert model is not None
-    assert issubclass(model, BaseModel)
+    normalized = normalize_tools([func_tool, dict_tool, plain_callable])
 
-    # Test with HelloWorld action
-    hello_world_data = {
-        "params": {
-            "projectName": "MyProject",
-            "organization": "MyOrg",
-            "actions": [
-                {
-                    "name": "hello_world",
-                    "params": {"name": "Alice"},
-                }
-            ],
-        }
-    }
-
-    instance = model(**hello_world_data)
-    assert instance.params.projectName == "MyProject"
-    assert instance.params.organization == "MyOrg"
-    assert len(instance.params.actions) == 1
-    assert instance.params.actions[0].name == "hello_world"
-    assert instance.params.actions[0].params.name == "Alice"
-
-    # Test with CreateProject action
-    create_project_data = {
-        "params": {
-            "projectName": "MyProject",
-            "organization": "MyOrg",
-            "actions": [
-                {
-                    "name": "create_project",
-                    "params": {
-                        "orgUrl": "https://dev.azure.com/myorg",
-                        "projectName": "NewProject",
-                        "sourceControl": "Git",
-                    },
-                }
-            ],
-        }
-    }
-
-    instance2 = model(**create_project_data)
-    assert instance2.params.actions[0].name == "create_project"
-    assert instance2.params.actions[0].params.projectName == "NewProject"
-    assert instance2.params.actions[0].params.sourceControl == "Git"
-
-    # Test with mixed actions
-    mixed_data = {
-        "params": {
-            "projectName": "MyProject",
-            "organization": "MyOrg",
-            "actions": [
-                {"name": "hello_world", "params": {"name": "Bob"}},
-                {
-                    "name": "create_project",
-                    "params": {
-                        "orgUrl": "https://dev.azure.com/myorg",
-                        "projectName": "AnotherProject",
-                    },
-                },
-            ],
-        }
-    }
-
-    instance3 = model(**mixed_data)
-    assert len(instance3.params.actions) == 2
-    assert instance3.params.actions[0].name == "hello_world"
-    assert instance3.params.actions[1].name == "create_project"
+    assert len(normalized) == 3
+    assert normalized[0] is func_tool
+    assert normalized[1] is dict_tool
+    # plain_callable was wrapped in a FunctionTool via the @tool helper
+    assert isinstance(normalized[2], FunctionTool)
 
 
-def test_const_creates_literal():
-    """Test that const in JSON Schema creates Literal type."""
-    schema = {
-        "properties": {
-            "action": {
-                "const": "create",
-                "type": "string",
-                "description": "Action type",
-            },
-            "value": {"type": "integer"},
-        },
-        "required": ["action", "value"],
-    }
+def test_normalize_tools_flattens_mapping_like_toolbox_with_tools_attr() -> None:
+    """Mapping-like toolbox objects with ``.tools`` should still flatten."""
+    from collections.abc import Mapping as MappingABC
 
-    model = _build_pydantic_model_from_json_schema("test_const", schema)
+    from agent_framework._tools import normalize_tools
 
-    # Verify valid const value works
-    instance = model(action="create", value=42)
-    assert instance.action == "create"
-    assert instance.value == 42
+    bundled = _make_flatten_function_tool("bundled")
+    standalone = _make_flatten_function_tool("standalone")
 
-    # Verify incorrect const value fails
-    with pytest.raises(ValidationError):
-        model(action="delete", value=42)
+    class ToolBundleMapping(MappingABC[str, Any]):
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self.tools = tools
+            self._data = {"name": "research_tools", "version": "v1", "tools": tools}
 
+        def __getitem__(self, key: str) -> Any:
+            return self._data[key]
 
-def test_enum_creates_literal():
-    """Test that enum in JSON Schema creates Literal type."""
-    schema = {
-        "properties": {
-            "status": {
-                "enum": ["pending", "approved", "rejected"],
-                "type": "string",
-                "description": "Status",
-            },
-            "priority": {"enum": [1, 2, 3], "type": "integer"},
-        },
-        "required": ["status"],
-    }
+        def __iter__(self):
+            return iter(self._data)
 
-    model = _build_pydantic_model_from_json_schema("test_enum", schema)
+        def __len__(self) -> int:
+            return len(self._data)
 
-    # Verify valid enum values work
-    instance = model(status="approved", priority=2)
-    assert instance.status == "approved"
-    assert instance.priority == 2
+    normalized = normalize_tools([ToolBundleMapping([bundled]), standalone])
 
-    # Verify invalid enum value fails
-    with pytest.raises(ValidationError):
-        model(status="unknown")
-
-    with pytest.raises(ValidationError):
-        model(status="pending", priority=5)
+    assert len(normalized) == 2
+    assert normalized[0] is bundled
+    assert normalized[1] is standalone
 
 
-def test_nested_object_with_const_and_enum():
-    """Test that const and enum work in nested objects."""
-    schema = {
-        "properties": {
-            "config": {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "const": "production",
-                        "default": "production",
-                        "type": "string",
-                    },
-                    "level": {"enum": ["low", "medium", "high"], "type": "string"},
-                },
-                "required": ["level"],
-            }
-        },
-        "required": ["config"],
-    }
+# region SKIP_PARSING sentinel & skip_parsing
 
-    model = _build_pydantic_model_from_json_schema("test_nested", schema)
 
-    # Valid data
-    instance = model(config={"type": "production", "level": "high"})
-    assert instance.config.type == "production"
-    assert instance.config.level == "high"
+async def test_invoke_skip_parsing_returns_native_value() -> None:
+    """invoke(skip_parsing=True) returns the wrapped function's raw value."""
 
-    # Invalid const in nested object
-    with pytest.raises(ValidationError):
-        model(config={"type": "development", "level": "low"})
+    @tool
+    def get_weather(city: str) -> dict[str, Any]:
+        """Get the weather."""
+        return {"city": city, "temperature_c": 21.5, "conditions": "partly cloudy"}
 
-    # Invalid enum in nested object
-    with pytest.raises(ValidationError):
-        model(config={"type": "production", "level": "critical"})
+    raw = await get_weather.invoke(arguments={"city": "Seattle"}, skip_parsing=True)
+
+    assert isinstance(raw, dict)
+    assert raw == {"city": "Seattle", "temperature_c": 21.5, "conditions": "partly cloudy"}
+
+
+async def test_invoke_skip_parsing_passes_through_custom_objects() -> None:
+    """skip_parsing must not call str()/repr() on the result."""
+
+    class Custom:  # noqa: B903
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    @tool
+    def make() -> Custom:
+        """Make a custom object."""
+        return Custom(42)
+
+    raw = await make.invoke(skip_parsing=True)
+
+    assert isinstance(raw, Custom)
+    assert raw.value == 42
+
+
+async def test_invoke_skip_parsing_awaits_async_functions() -> None:
+    @tool
+    async def slow(x: int) -> int:
+        """Async tool."""
+        return x * 2
+
+    raw = await slow.invoke(arguments={"x": 21}, skip_parsing=True)
+    assert raw == 42
+
+
+async def test_invoke_sync_tool_does_not_block_event_loop() -> None:
+    release_tool = threading.Event()
+    tool_thread_ids: list[int] = []
+    event_loop_thread_id = threading.get_ident()
+
+    @tool
+    def wait_for_release() -> str:
+        tool_thread_ids.append(threading.get_ident())
+        return "released" if release_tool.wait(timeout=0.2) else "timed out"
+
+    async def release_soon() -> None:
+        await asyncio.sleep(0.01)
+        release_tool.set()
+
+    tool_task = asyncio.create_task(wait_for_release.invoke(skip_parsing=True))
+    release_task = asyncio.create_task(release_soon())
+
+    assert await asyncio.wait_for(tool_task, timeout=1) == "released"
+    await release_task
+    assert tool_thread_ids
+    assert tool_thread_ids[0] != event_loop_thread_id
+
+
+async def test_invoke_sync_tool_can_stay_on_event_loop() -> None:
+    event_loop_thread_id = threading.get_ident()
+    tool_thread_ids: list[int] = []
+
+    @tool
+    def needs_event_loop() -> str:
+        tool_thread_ids.append(threading.get_ident())
+        asyncio.get_running_loop()
+        return "ok"
+
+    needs_event_loop._invoke_sync_on_event_loop = True
+
+    assert await needs_event_loop.invoke(skip_parsing=True) == "ok"
+    assert tool_thread_ids == [event_loop_thread_id]
+
+
+async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
+    """The tool's own result_parser is bypassed when skip_parsing=True is requested."""
+    parser_calls: list[Any] = []
+
+    def parser(value: Any) -> str:
+        parser_calls.append(value)
+        return "PARSED"
+
+    @tool(result_parser=parser)
+    def make_dict() -> dict[str, int]:
+        """Returns a dict."""
+        return {"a": 1}
+
+    raw = await make_dict.invoke(skip_parsing=True)
+    assert raw == {"a": 1}
+    assert parser_calls == []
+
+    # Sanity: omitting skip_parsing still applies the configured parser.
+    parsed = await make_dict.invoke()
+    assert parsed[0].type == "text"
+    assert parsed[0].text == "PARSED"
+
+
+async def test_constructor_skip_parsing_sentinel_returns_raw_by_default() -> None:
+    """Constructing a tool with result_parser=SKIP_PARSING makes invoke return the raw value."""
+
+    @tool(result_parser=SKIP_PARSING)
+    def make_dict() -> dict[str, int]:
+        """Returns a dict."""
+        return {"a": 1}
+
+    raw = await make_dict.invoke()
+    assert raw == {"a": 1}
+
+
+async def test_invoke_skip_parsing_validates_arguments() -> None:
+    """Argument validation is shared with the default path."""
+
+    @tool
+    def adder(x: int, y: int) -> int:
+        """Add."""
+        return x + y
+
+    with pytest.raises(TypeError):
+        await adder.invoke(arguments={"x": "not-an-int", "y": 1}, skip_parsing=True)
+
+
+async def test_invoke_skip_parsing_rejects_unexpected_runtime_kwargs() -> None:
+    @tool
+    async def echo(message: str) -> str:
+        """Echo."""
+        return message
+
+    with pytest.raises(TypeError, match="Unexpected keyword argument"):
+        await echo.invoke(arguments={"message": "hi"}, skip_parsing=True, api_token="secret")
+
+
+async def test_invoke_skip_parsing_raises_for_declaration_only_tool() -> None:
+    declared = FunctionTool(name="dummy", description="declaration only")
+
+    from agent_framework.exceptions import ToolException
+
+    with pytest.raises(ToolException):
+        await declared.invoke(arguments={}, skip_parsing=True)
+
+
+async def test_invoke_skip_parsing_records_telemetry(span_exporter: InMemorySpanExporter) -> None:
+    """skip_parsing participates in OTEL spans and records str(raw) as TOOL_RESULT."""
+
+    @tool(name="raw_tool", description="raw tool")
+    def returns_dict(x: int) -> dict[str, int]:
+        """Returns a dict."""
+        return {"value": x}
+
+    span_exporter.clear()
+    raw = await returns_dict.invoke(arguments={"x": 5}, tool_call_id="raw_call", skip_parsing=True)
+
+    assert raw == {"value": 5}
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes[OtelAttr.TOOL_NAME] == "raw_tool"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "raw_call"
+    assert span.attributes[OtelAttr.TOOL_RESULT] == "{'value': 5}"
+
+
+async def test_invoke_default_path_records_parsed_telemetry(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    """Regression: omitting skip_parsing still records the parsed result in telemetry."""
+
+    def parser(value: Any) -> str:
+        return f"parsed:{value}"
+
+    @tool(name="parsed_tool", description="parsed", result_parser=parser)
+    def returns_int() -> int:
+        """Returns an int."""
+        return 7
+
+    span_exporter.clear()
+    parsed = await returns_int.invoke(tool_call_id="parsed_call")
+
+    assert parsed[0].text == "parsed:7"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].attributes[OtelAttr.TOOL_RESULT] == "parsed:7"
+
+
+def test_skip_parsing_is_singleton() -> None:
+    """SKIP_PARSING is a singleton; instantiation returns the same object."""
+    from agent_framework._tools import _SkipParsingSentinel
+
+    assert _SkipParsingSentinel() is SKIP_PARSING
+    assert repr(SKIP_PARSING) == "SKIP_PARSING"
 
 
 # endregion

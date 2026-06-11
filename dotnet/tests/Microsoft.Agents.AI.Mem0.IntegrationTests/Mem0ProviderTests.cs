@@ -27,19 +27,20 @@ public sealed class Mem0ProviderTests : IDisposable
     public Mem0ProviderTests()
     {
         IConfigurationRoot configuration = new ConfigurationBuilder()
-            .AddJsonFile(path: "testsettings.json", optional: true, reloadOnChange: true)
             .AddJsonFile(path: "testsettings.development.json", optional: true, reloadOnChange: true)
             .AddEnvironmentVariables()
             .AddUserSecrets<Mem0ProviderTests>(optional: true)
             .Build();
 
-        var mem0Settings = configuration.GetSection("Mem0").Get<Mem0Configuration>();
+        var serviceUri = configuration[TestSettings.Mem0Endpoint];
+        var apiKey = configuration[TestSettings.Mem0ApiKey];
+
         this._httpClient = new HttpClient();
 
-        if (mem0Settings is not null && !string.IsNullOrWhiteSpace(mem0Settings.ServiceUri) && !string.IsNullOrWhiteSpace(mem0Settings.ApiKey))
+        if (!string.IsNullOrWhiteSpace(serviceUri) && !string.IsNullOrWhiteSpace(apiKey))
         {
-            this._httpClient.BaseAddress = new Uri(mem0Settings.ServiceUri);
-            this._httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Token", mem0Settings.ApiKey);
+            this._httpClient.BaseAddress = new Uri(serviceUri);
+            this._httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Token", apiKey);
         }
     }
 

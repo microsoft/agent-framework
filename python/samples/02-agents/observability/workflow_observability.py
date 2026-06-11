@@ -80,9 +80,7 @@ async def run_sequential_workflow() -> None:
 
     # Step 2: Build the workflow with the defined edges.
     workflow = (
-        WorkflowBuilder(start_executor=upper_case_executor)
-        .add_edge(upper_case_executor, reverse_text_executor)
-        .build()
+        WorkflowBuilder(start_executor=upper_case_executor).add_edge(upper_case_executor, reverse_text_executor).build()
     )
 
     # Step 3: Run the workflow with an initial message.

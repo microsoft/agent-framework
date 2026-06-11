@@ -19,10 +19,17 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.github import GitHubCopilotAgent
+from copilot.session import PermissionHandler
+from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -39,6 +46,7 @@ async def non_streaming_example() -> None:
     agent = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
     )
 
     async with agent:
@@ -55,6 +63,7 @@ async def streaming_example() -> None:
     agent = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
     )
 
     async with agent:
@@ -74,6 +83,7 @@ async def runtime_options_example() -> None:
     agent = GitHubCopilotAgent(
         instructions="Always respond in exactly 3 words.",
         tools=[get_weather],
+        default_options={"on_permission_request": PermissionHandler.approve_all},
     )
 
     async with agent:

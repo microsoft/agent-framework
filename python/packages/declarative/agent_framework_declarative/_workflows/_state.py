@@ -11,10 +11,10 @@ This module provides state management for declarative workflows, handling:
 
 from __future__ import annotations
 
+import logging
+import uuid
 from collections.abc import Mapping
 from typing import Any, cast
-
-from agent_framework import get_logger
 
 try:
     from powerfx import Engine
@@ -25,7 +25,7 @@ except (ImportError, RuntimeError):
     # RuntimeError: .NET runtime not available or misconfigured
     _powerfx_engine = None
 
-logger = get_logger("agent_framework.declarative.workflows")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 class WorkflowState:
@@ -108,11 +108,15 @@ class WorkflowState:
         self._inputs: dict[str, Any] = dict(inputs) if inputs else {}
         self._local: dict[str, Any] = {}
         self._outputs: dict[str, Any] = {}
+        conversation_id = str(uuid.uuid4())
         self._system: dict[str, Any] = {
-            "ConversationId": "default",
+            "ConversationId": conversation_id,
             "LastMessage": {"Text": "", "Id": ""},
             "LastMessageText": "",
             "LastMessageId": "",
+            "conversations": {
+                conversation_id: {"id": conversation_id, "messages": []},
+            },
         }
         self._agent: dict[str, Any] = {}
         self._conversation: dict[str, Any] = {
@@ -280,8 +284,9 @@ class WorkflowState:
         if existing is None:
             self.set(path, [value])
         elif isinstance(existing, list):
-            existing.append(value)
-            self.set(path, existing)
+            existing_list = cast(list[Any], existing)  # type: ignore[redundant-cast]
+            existing_list.append(value)
+            self.set(path, existing_list)
         else:
             raise ValueError(f"Cannot append to non-list at path '{path}'")
 
@@ -610,9 +615,9 @@ class WorkflowState:
         if isinstance(value, str):
             return self.eval(value)
         if isinstance(value, dict):
-            return {str(k): self.eval_if_expression(v) for k, v in value.items()}
+            return {str(k): self.eval_if_expression(v) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
         if isinstance(value, list):
-            return [self.eval_if_expression(item) for item in value]
+            return [self.eval_if_expression(item) for item in value]  # type: ignore[reportUnknownVariableType]
         return value
 
     def reset_local(self) -> None:

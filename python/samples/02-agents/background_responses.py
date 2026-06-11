@@ -3,7 +3,11 @@
 import asyncio
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """Background Responses Sample.
 
@@ -25,7 +29,7 @@ Prerequisites:
 agent = Agent(
     name="researcher",
     instructions="You are a helpful research assistant. Be concise.",
-    client=OpenAIResponsesClient(model_id="o3"),
+    client=OpenAIChatClient(model="o3"),
 )
 
 

@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from ._types import AGUIChatOptions
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger("agent_framework.ag_ui")
 
 
 def _unwrap_server_function_call_contents(contents: MutableSequence[Content | dict[str, Any]]) -> None:
@@ -111,8 +111,8 @@ def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClien
 
 @_apply_server_function_call_unwrap
 class AGUIChatClient(
-    ChatMiddlewareLayer[AGUIChatOptionsT],
     FunctionInvocationLayer[AGUIChatOptionsT],
+    ChatMiddlewareLayer[AGUIChatOptionsT],
     ChatTelemetryLayer[AGUIChatOptionsT],
     BaseChatClient[AGUIChatOptionsT],
     Generic[AGUIChatOptionsT],
@@ -220,7 +220,6 @@ class AGUIChatClient(
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize the AG-UI chat client.
 
@@ -231,13 +230,11 @@ class AGUIChatClient(
             additional_properties: Additional properties to store
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
-            **kwargs: Additional arguments passed to BaseChatClient
         """
         super().__init__(
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
         self._http_service = AGUIHttpService(
             endpoint=endpoint,
@@ -267,7 +264,7 @@ class AGUIChatClient(
         if any(getattr(tool, "name", None) == tool_name for tool in additional_tools):
             return
 
-        placeholder: FunctionTool[Any] = FunctionTool(
+        placeholder: FunctionTool = FunctionTool(
             name=tool_name,
             description="Server-managed tool placeholder (AG-UI)",
             func=None,
@@ -277,9 +274,6 @@ class AGUIChatClient(
         registered: set[str] = getattr(self, "_registered_server_tools", set())
         registered.add(tool_name)
         self._registered_server_tools = registered  # type: ignore[attr-defined]
-        from agent_framework._logging import get_logger
-
-        logger = get_logger()
         logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
 
     def _extract_state_from_messages(self, messages: Sequence[Message]) -> tuple[list[Message], dict[str, Any] | None]:
@@ -310,9 +304,6 @@ class AGUIChatClient(
                         messages_without_state = list(messages[:-1]) if len(messages) > 1 else []
                         return messages_without_state, state
                 except (json.JSONDecodeError, ValueError, KeyError) as e:
-                    from agent_framework._logging import get_logger
-
-                    logger = get_logger()
                     logger.warning(f"Failed to extract state from message: {e}")
 
         return list(messages), None
@@ -445,6 +436,11 @@ class AGUIChatClient(
             messages=agui_messages,
             state=state,
             tools=agui_tools,
+            available_interrupts=cast(
+                list[dict[str, Any]] | None,
+                options.get("available_interrupts") or options.get("availableInterrupts"),
+            ),
+            resume=cast(dict[str, Any] | None, options.get("resume")),
         ):
             logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
             update = converter.convert_event(event)

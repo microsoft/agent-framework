@@ -30,6 +30,7 @@ All classes support bidirectional conversion between:
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import MutableMapping
 from datetime import datetime, timezone
 from enum import Enum
@@ -40,14 +41,13 @@ from agent_framework import (
     Content,
     Message,
     UsageDetails,
-    get_logger,
 )
 from dateutil import parser as date_parser
 
 from ._constants import ContentTypes, DurableStateFields
 from ._models import RunRequest, serialize_response_format
 
-logger = get_logger("agent_framework.durabletask.durable_agent_state")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 class DurableAgentStateEntryJsonType(str, Enum):
@@ -978,7 +978,7 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
         return DurableAgentStateFunctionCallContent(call_id=content.call_id, name=content.name, arguments=arguments)
 
     def to_ai_content(self) -> Content:
-        return Content.from_function_call(call_id=self.call_id, name=self.name, arguments=self.arguments)
+        return Content.from_function_call(call_id=self.call_id, name=self.name, arguments=json.dumps(self.arguments))
 
 
 class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
@@ -1318,9 +1318,17 @@ class DurableAgentStateUnknownContent(DurableAgentStateContent):
 
     @staticmethod
     def from_unknown_content(content: Any) -> DurableAgentStateUnknownContent:
+        if isinstance(content, Content):
+            return DurableAgentStateUnknownContent(content=content.to_dict())
         return DurableAgentStateUnknownContent(content=content)
 
     def to_ai_content(self) -> Content:
         if not self.content:
             raise Exception("The content is missing and cannot be converted to valid AI content.")
+        content_value: Any = self.content
+        if isinstance(content_value, dict) and "type" in content_value:
+            try:
+                return Content.from_dict(cast(dict[str, Any], content_value))
+            except (ValueError, TypeError):
+                pass
         return Content(type=self.type, additional_properties={"content": self.content})  # type: ignore

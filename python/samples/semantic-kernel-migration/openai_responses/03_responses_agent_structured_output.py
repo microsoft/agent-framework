@@ -12,7 +12,11 @@
 
 import asyncio
 
+from dotenv import load_dotenv
 from pydantic import BaseModel
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class ReleaseBrief(BaseModel):
@@ -22,36 +26,33 @@ class ReleaseBrief(BaseModel):
 
 
 async def run_semantic_kernel() -> None:
-    from azure.identity import AzureCliCredential
-    from semantic_kernel.agents import AzureResponsesAgent
-    from semantic_kernel.connectors.ai.open_ai import AzureOpenAISettings
+    from semantic_kernel.agents import OpenAIResponsesAgent
+    from semantic_kernel.connectors.ai.open_ai import OpenAISettings
 
-    credential = AzureCliCredential()
-    try:
-        client = AzureResponsesAgent.create_client(credential=credential)
-        # response_format requests schema-constrained output from the model.
-        agent = AzureResponsesAgent(
-            ai_model_id=AzureOpenAISettings().responses_deployment_name,
-            client=client,
-            instructions="Return launch briefs as structured JSON.",
-            name="ProductMarketer",
-            text=AzureResponsesAgent.configure_response_format(ReleaseBrief),
-        )
-        response = await agent.get_response(
-            "Draft a launch brief for the Contoso Note app.",
-            response_format=ReleaseBrief,
-        )
-        print("[SK]", response.message.content)
-    finally:
-        await credential.close()
+    openai_settings = OpenAISettings()
+    assert openai_settings.responses_model_id is not None, "Responses model ID must be set in OpenAISettings"
+
+    client = OpenAIResponsesAgent.create_client()
+    # response_format requests schema-constrained output from the model.
+    agent = OpenAIResponsesAgent(
+        ai_model_id=openai_settings.responses_model_id,
+        client=client,
+        instructions="Return launch briefs as structured JSON.",
+        name="ProductMarketer",
+        text=OpenAIResponsesAgent.configure_response_format(ReleaseBrief),  # type: ignore
+    )
+    response = await agent.get_response(
+        "Draft a launch brief for the Contoso Note app.",
+    )
+    print("[SK]", response.message.content)
 
 
 async def run_agent_framework() -> None:
     from agent_framework import Agent
-    from agent_framework.openai import OpenAIResponsesClient
+    from agent_framework.openai import OpenAIChatClient
 
     chat_agent = Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         instructions="Return launch briefs as structured JSON.",
         name="ProductMarketer",
     )

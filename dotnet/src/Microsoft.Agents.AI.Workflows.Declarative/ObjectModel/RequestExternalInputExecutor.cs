@@ -12,6 +12,8 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
+[SendsMessage(typeof(ExternalInputRequest))]
+[SendsMessage(typeof(ExternalInputResponse))]
 internal sealed class RequestExternalInputExecutor(RequestExternalInput model, ResponseAgentProvider agentProvider, WorkflowFormulaState state)
     : DeclarativeActionExecutor<RequestExternalInput>(model, state)
 {
@@ -43,7 +45,13 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, R
                 await agentProvider.CreateMessageAsync(workflowConversationId, inputMessage, cancellationToken).ConfigureAwait(false);
             }
         }
-        await context.SetLastMessageAsync(response.Messages.Last()).ConfigureAwait(false);
+        ChatMessage? lastMessage = response.Messages.LastOrDefault();
+        if (lastMessage is not null)
+        {
+            await context.SetLastMessageAsync(lastMessage).ConfigureAwait(false);
+        }
         await this.AssignAsync(this.Model.Variable?.Path, response.Messages.ToFormula(), context).ConfigureAwait(false);
+
+        await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
 }

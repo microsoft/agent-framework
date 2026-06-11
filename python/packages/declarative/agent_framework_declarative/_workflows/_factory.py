@@ -12,6 +12,7 @@ enabling checkpointing, visualization, and pause/resume capabilities.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -22,19 +23,19 @@ from agent_framework import (
     CheckpointStorage,
     SupportsAgentRun,
     Workflow,
-    get_logger,
 )
 
 from .._loader import AgentFactory
+from ._declarative_base import DeclarativeEnvConfig, discover_env_references
 from ._declarative_builder import DeclarativeWorkflowBuilder
+from ._errors import DeclarativeWorkflowError
+from ._http_handler import HttpRequestHandler
+from ._mcp_handler import MCPToolHandler
 
-logger = get_logger("agent_framework.declarative.workflows")
+logger = logging.getLogger("agent_framework.declarative")
 
 
-class DeclarativeWorkflowError(Exception):
-    """Exception raised for errors in declarative workflow processing."""
-
-    pass
+__all__ = ["WorkflowFactory"]
 
 
 class WorkflowFactory:
@@ -69,11 +70,11 @@ class WorkflowFactory:
 
         .. code-block:: python
 
-            from agent_framework.azure import AzureOpenAIChatClient
+            from agent_framework.openai import OpenAIChatClient
             from agent_framework.declarative import WorkflowFactory
 
             # Pre-register agents for InvokeAzureAgent actions
-            client = AzureOpenAIChatClient()
+            client = OpenAIChatClient()
             agent = client.as_agent(name="MyAgent", instructions="You are helpful.")
 
             factory = WorkflowFactory(agents={"MyAgent": agent})
@@ -90,6 +91,11 @@ class WorkflowFactory:
         bindings: Mapping[str, Any] | None = None,
         env_file: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
+        max_iterations: int | None = None,
+        http_request_handler: HttpRequestHandler | None = None,
+        mcp_tool_handler: MCPToolHandler | None = None,
+        configuration: Mapping[str, str] | None = None,
+        restrict_env_to_configuration: bool = True,
     ) -> None:
         """Initialize the workflow factory.
 
@@ -100,6 +106,39 @@ class WorkflowFactory:
             bindings: Optional function bindings for tool calls within workflow actions.
             env_file: Optional path to .env file for environment variables used in agent creation.
             checkpoint_storage: Optional checkpoint storage enabling pause/resume functionality.
+            max_iterations: Optional maximum runner supersteps.  Overrides the YAML ``maxTurns``
+                field and the core default (100).  Workflows with ``GotoAction`` loops (e.g.
+                DeepResearch) typically need a higher value.
+            http_request_handler: Optional handler used to dispatch HTTP requests for
+                ``HttpRequestAction``. Required if the workflow contains any
+                ``HttpRequestAction``; build will fail with :class:`DeclarativeWorkflowError`
+                otherwise. Use :class:`agent_framework.declarative.DefaultHttpRequestHandler`
+                for a no-policy ``httpx``-based default, or supply your own implementation
+                to enforce SSRF guards, allowlisting, or auth resolution.
+            mcp_tool_handler: Optional handler used to dispatch MCP tool calls for
+                ``InvokeMcpTool``. Required if the workflow contains any
+                ``InvokeMcpTool``; build will fail with :class:`DeclarativeWorkflowError`
+                otherwise. Use :class:`agent_framework.declarative.DefaultMCPToolHandler`
+                for a default backed by :class:`agent_framework.MCPStreamableHTTPTool`,
+                or supply your own implementation to enforce SSRF guards, allowlisting,
+                or auth/connection resolution.
+            configuration: Optional mapping that populates the PowerFx ``Env``
+                symbol referenced from workflow YAML expressions (e.g.
+                ``=Env.MY_KEY``). Keys supplied here are always exposed
+                under ``Env.<key>``; the process ``os.environ`` is consulted
+                only when ``restrict_env_to_configuration`` is ``False``.
+                When neither source produces a value the ``Env`` symbol is
+                omitted so ``=Env.X`` evaluates to the literal expression
+                string.
+            restrict_env_to_configuration: When ``True`` (default), the
+                ``Env`` PowerFx symbol is populated exclusively from
+                ``configuration``; ``os.environ`` is never consulted. Set to
+                ``False`` to additionally fall back to ``os.environ`` for
+                names absent from ``configuration`` that the workflow YAML
+                explicitly references. The fallback is constrained to names
+                discovered in PowerFx expressions inside the workflow
+                definition so unrelated environment variables never enter
+                the PowerFx scope.
 
         Examples:
             .. code-block:: python
@@ -111,11 +150,11 @@ class WorkflowFactory:
 
             .. code-block:: python
 
-                from agent_framework.azure import AzureOpenAIChatClient
+                from agent_framework.openai import OpenAIChatClient
                 from agent_framework.declarative import WorkflowFactory
 
                 # With pre-registered agents
-                client = AzureOpenAIChatClient()
+                client = OpenAIChatClient()
                 agents = {
                     "WriterAgent": client.as_agent(name="Writer", instructions="Write content."),
                     "ReviewerAgent": client.as_agent(name="Reviewer", instructions="Review content."),
@@ -132,11 +171,29 @@ class WorkflowFactory:
                     checkpoint_storage=FileCheckpointStorage("./checkpoints"),
                     env_file=".env",
                 )
+
+            .. code-block:: python
+
+                from agent_framework.declarative import WorkflowFactory
+
+                # Inject named values for =Env.* references in the workflow YAML
+                factory = WorkflowFactory(
+                    configuration={
+                        "MY_SERVER_URL": "https://example.com",
+                        "MY_TOOL_NAME": "search",
+                    },
+                )
         """
         self._agent_factory = agent_factory or AgentFactory(env_file_path=env_file)
         self._agents: dict[str, SupportsAgentRun | AgentExecutor] = dict(agents) if agents else {}
         self._bindings: dict[str, Any] = dict(bindings) if bindings else {}
+        self._tools: dict[str, Any] = {}  # Tool registry for InvokeFunctionTool actions
         self._checkpoint_storage = checkpoint_storage
+        self._max_iterations = max_iterations
+        self._http_request_handler = http_request_handler
+        self._mcp_tool_handler = mcp_tool_handler
+        self._configuration: dict[str, str] = dict(configuration) if configuration else {}
+        self._restrict_env_to_configuration = restrict_env_to_configuration
 
     def create_workflow_from_yaml_path(
         self,
@@ -371,21 +428,37 @@ class WorkflowFactory:
         if description:
             normalized_def["description"] = description
 
-        # Build the graph-based workflow, passing agents for InvokeAzureAgent executors
+        # Build the DeclarativeEnvConfig from the factory's configuration and the
+        # set of Env references actually used in the workflow PowerFx expressions.
+        # The referenced-name allowlist constrains ``os.environ`` fallback (when
+        # enabled) so unrelated variables never enter the PowerFx scope.
+        env_config = DeclarativeEnvConfig(
+            values=dict(self._configuration),
+            restrict_to_configuration=self._restrict_env_to_configuration,
+            referenced_names=frozenset(discover_env_references(normalized_def)),
+        )
+
+        # Build the graph-based workflow, passing agents and tools for specialized executors
         try:
             graph_builder = DeclarativeWorkflowBuilder(
                 normalized_def,
                 workflow_id=name,
                 agents=agents,
+                tools=self._tools,
                 checkpoint_storage=self._checkpoint_storage,
+                max_iterations=self._max_iterations,
+                http_request_handler=self._http_request_handler,
+                mcp_tool_handler=self._mcp_tool_handler,
+                env_config=env_config,
             )
             workflow = graph_builder.build()
         except ValueError as e:
             raise DeclarativeWorkflowError(f"Failed to build graph-based workflow: {e}") from e
 
-        # Store agents and bindings for reference (executors already have them)
+        # Store agents, bindings, and tools for reference (executors already have them)
         workflow._declarative_agents = agents  # type: ignore[attr-defined]
         workflow._declarative_bindings = self._bindings  # type: ignore[attr-defined]
+        workflow._declarative_tools = self._tools  # type: ignore[attr-defined]
 
         # Store input schema if defined in workflow definition
         # This allows DevUI to generate proper input forms
@@ -525,10 +598,10 @@ class WorkflowFactory:
         Examples:
             .. code-block:: python
 
-                from agent_framework.azure import AzureOpenAIChatClient
+                from agent_framework.openai import OpenAIChatClient
                 from agent_framework.declarative import WorkflowFactory
 
-                client = AzureOpenAIChatClient()
+                client = OpenAIChatClient()
 
                 # Method chaining to register multiple agents
                 factory = (
@@ -591,7 +664,64 @@ class WorkflowFactory:
 
                 workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
         """
+        if not callable(func):
+            raise TypeError(f"Expected a callable for binding '{name}', got {type(func).__name__}")
         self._bindings[name] = func
+        return self
+
+    def register_tool(self, name: str, func: Any) -> WorkflowFactory:
+        """Register a function with the factory for use in InvokeFunctionTool actions.
+
+        Registered functions are available to InvokeFunctionTool actions by name via the functionName field.
+        This method supports fluent chaining.
+
+        Args:
+            name: The name to register the function under. Must match the functionName
+                referenced in InvokeFunctionTool actions.
+            func: The function to register (can be sync or async).
+
+        Returns:
+            Self for method chaining.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_declarative import WorkflowFactory
+
+
+                def get_weather(location: str, unit: str = "F") -> dict:
+                    return {"temp": 72, "unit": unit, "location": location}
+
+
+                async def fetch_data(url: str) -> dict:
+                    # Async function example
+                    return {"data": "..."}
+
+
+                # Register functions for use in InvokeFunctionTool workflow actions
+                factory = (
+                    WorkflowFactory().register_tool("get_weather", get_weather).register_tool("fetch_data", fetch_data)
+                )
+
+                workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
+
+            The workflow YAML can then reference these tools:
+
+            .. code-block:: yaml
+
+                actions:
+                  - kind: InvokeFunctionTool
+                    id: call_weather
+                    functionName: get_weather
+                    arguments:
+                      location: =Local.city
+                      unit: F
+                    output:
+                      result: Local.weatherData
+        """
+        if not callable(func):
+            raise TypeError(f"Expected a callable for tool '{name}', got {type(func).__name__}")
+        self._tools[name] = func
         return self
 
     def _convert_inputs_to_json_schema(self, inputs_def: dict[str, Any]) -> dict[str, Any]:

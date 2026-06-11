@@ -1,11 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Mem0 integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-mem0``
+
+Supported classes:
+- Mem0ContextProvider
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_mem0"
 PACKAGE_NAME = "agent-framework-mem0"
-_IMPORTS = ["__version__", "Mem0ContextProvider"]
+_IMPORTS = ["Mem0ContextProvider"]
 
 
 def __getattr__(name: str) -> Any:

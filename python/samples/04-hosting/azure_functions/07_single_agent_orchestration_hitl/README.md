@@ -6,11 +6,11 @@ output or a maximum number of attempts is reached.
 
 ## Prerequisites
 
-Complete the common setup instructions in `../README.md` to prepare the virtual environment, install dependencies, and configure Azure OpenAI and storage settings.
+Complete the common setup instructions in `../README.md` to prepare the virtual environment, install dependencies, and configure Foundry and storage settings.
 
 ## What It Shows
-- Identical environment variable usage (`AZURE_OPENAI_ENDPOINT`,
-  `AZURE_OPENAI_DEPLOYMENT`) and HTTP surface area (`/api/hitl/...`).
+- Identical environment variable usage (`FOUNDRY_PROJECT_ENDPOINT`,
+  `FOUNDRY_MODEL`) and HTTP surface area (`/api/hitl/...`).
 - Durable orchestrations that pause for external events while maintaining
   deterministic state (`context.wait_for_external_event` + timed cancellation).
 - Activity functions that encapsulate the out-of-band operations such as notifying

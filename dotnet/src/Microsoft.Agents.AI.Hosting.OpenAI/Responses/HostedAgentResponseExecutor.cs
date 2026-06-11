@@ -82,6 +82,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
     public async IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,
+        IReadOnlyList<ChatMessage>? conversationHistory = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string agentName = GetAgentName(request)!;
@@ -104,6 +105,11 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         };
         var options = new ChatClientAgentRunOptions(chatOptions);
         var messages = new List<ChatMessage>();
+
+        if (conversationHistory is not null)
+        {
+            messages.AddRange(conversationHistory);
+        }
 
         foreach (var inputMessage in request.Input.GetInputMessages())
         {

@@ -8,8 +8,8 @@ each with their own specialized capabilities and tools.
 
 Prerequisites:
 - The worker must be running with both agents registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL when running the worker
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running
 """
 
@@ -18,8 +18,12 @@ import logging
 import os
 
 from agent_framework.azure import DurableAIAgentClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,9 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_client(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableAIAgentClient:
     """Create a configured DurableAIAgentClient.
 
@@ -47,14 +49,14 @@ def get_client(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     dts_client = DurableTaskSchedulerClient(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
     return DurableAIAgentClient(dts_client)

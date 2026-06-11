@@ -70,6 +70,7 @@ public class AgentResponseUpdate
         this.AuthorName = chatResponseUpdate.AuthorName;
         this.Contents = chatResponseUpdate.Contents;
         this.CreatedAt = chatResponseUpdate.CreatedAt;
+        this.FinishReason = chatResponseUpdate.FinishReason;
         this.MessageId = chatResponseUpdate.MessageId;
         this.RawRepresentation = chatResponseUpdate;
         this.ResponseId = chatResponseUpdate.ResponseId;
@@ -152,6 +153,15 @@ public class AgentResponseUpdate
     /// </para>
     /// </remarks>
     public ResponseContinuationToken? ContinuationToken { get; set; }
+
+    /// <summary>
+    /// Gets or sets the reason for the agent response finishing.
+    /// </summary>
+    /// <value>
+    /// A <see cref="ChatFinishReason"/> value indicating why the response finished (e.g., stop, length, content filter, tool calls),
+    /// or <see langword="null"/> if the finish reason is not available or not yet determined (mid-stream).
+    /// </value>
+    public ChatFinishReason? FinishReason { get; set; }
 
     /// <inheritdoc/>
     public override string ToString() => this.Text;

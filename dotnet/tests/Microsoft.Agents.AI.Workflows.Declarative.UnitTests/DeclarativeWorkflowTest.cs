@@ -12,7 +12,6 @@ using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Moq;
-using Xunit.Abstractions;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
@@ -182,6 +181,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
     [InlineData("MixedScopes.yaml", 2, "activity_input")]
     [InlineData("CaseInsensitive.yaml", 6, "end_when_match")]
+    [InlineData("HttpRequest.yaml", 1, "http_request")]
     public async Task ExecuteActionAsync(string workflowFile, int expectedCount, string expectedId)
     {
         await this.RunWorkflowAsync(workflowFile);
@@ -201,7 +201,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(EmitEvent.Builder))]
     [InlineData(typeof(GetActivityMembers.Builder))]
     [InlineData(typeof(GetConversationMembers.Builder))]
-    [InlineData(typeof(HttpRequestAction.Builder))]
     [InlineData(typeof(InvokeAIBuilderModelAction.Builder))]
     [InlineData(typeof(InvokeConnectorAction.Builder))]
     [InlineData(typeof(InvokeCustomModelAction.Builder))]
@@ -267,12 +266,13 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("SendActivity.yaml", "activity_input")]
     [InlineData("SetVariable.yaml", "set_var")]
     [InlineData("SetTextVariable.yaml", "set_text")]
+    [InlineData("HttpRequest.yaml", "http_request")]
     public async Task CancelRunAsync(string workflowPath, string expectedExecutedId)
     {
         // Arrange
         const string WorkflowInput = "Test input message";
         Workflow workflow = this.CreateWorkflow(workflowPath, WorkflowInput);
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow: workflow, input: WorkflowInput);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow: workflow, input: WorkflowInput);
 
         // Act
         await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
@@ -330,7 +330,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
         Workflow workflow = this.CreateWorkflow(workflowPath, workflowInput);
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, workflowInput);
 
         await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
         {
@@ -375,7 +375,12 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
         Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider($"{workflowInput}");
-        DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
+        DeclarativeWorkflowOptions workflowContext =
+            new(mockAgentProvider.Object)
+            {
+                LoggerFactory = this.Output,
+                HttpRequestHandler = CreateMockHttpRequestHandler().Object,
+            };
         return DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
     }
 
@@ -385,5 +390,19 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         mockAgentProvider.Setup(provider => provider.CreateConversationAsync(It.IsAny<CancellationToken>())).Returns(() => Task.FromResult(Guid.NewGuid().ToString("N")));
         mockAgentProvider.Setup(provider => provider.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult(new ChatMessage(ChatRole.Assistant, input)));
         return mockAgentProvider;
+    }
+
+    private static Mock<IHttpRequestHandler> CreateMockHttpRequestHandler()
+    {
+        Mock<IHttpRequestHandler> mockHandler = new(MockBehavior.Loose);
+        mockHandler
+            .Setup(handler => handler.SendAsync(It.IsAny<HttpRequestInfo>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(new HttpRequestResult
+            {
+                StatusCode = 200,
+                IsSuccessStatusCode = true,
+                Body = "{\"ok\":true}",
+            }));
+        return mockHandler;
     }
 }

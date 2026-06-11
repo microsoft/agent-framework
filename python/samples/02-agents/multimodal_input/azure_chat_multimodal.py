@@ -3,13 +3,17 @@
 import asyncio
 
 from agent_framework import Content, Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def create_sample_image() -> str:
     """Create a simple 1x1 pixel PNG image for testing."""
-    # This is a tiny red pixel in PNG format
+    # This is a tiny yellow pixel in PNG format
     png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
     return f"data:image/png;base64,{png_data}"
 
@@ -17,12 +21,11 @@ def create_sample_image() -> str:
 async def test_image() -> None:
     """Test image analysis with Azure OpenAI."""
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option. Requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+    # authentication option. Requires AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
     # environment variables to be set.
-    # Alternatively, you can pass deployment_name explicitly:
-    # client = AzureOpenAIChatClient(credential=AzureCliCredential(), deployment_name="your-deployment-name")
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
+    # Alternatively, you can pass model explicitly:
+    # client = FoundryChatClient(credential=AzureCliCredential(), model="your-deployment-name")
+    client = FoundryChatClient(credential=AzureCliCredential())
     image_uri = create_sample_image()
     message = Message(
         role="user",
@@ -31,8 +34,7 @@ async def test_image() -> None:
             Content.from_uri(uri=image_uri, media_type="image/png"),
         ],
     )
-
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Image Response: {response}")
 
 

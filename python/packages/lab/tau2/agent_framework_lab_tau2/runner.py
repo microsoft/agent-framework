@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import (
     Agent,
@@ -12,6 +12,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     FunctionExecutor,
+    InMemoryHistoryProvider,
     Message,
     SupportsChatGetResponse,
     Workflow,
@@ -36,6 +37,16 @@ from ._sliding_window import SlidingWindowHistoryProvider
 from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_function_tool
 
 __all__ = ["ASSISTANT_AGENT_ID", "ORCHESTRATOR_ID", "USER_SIMULATOR_ID", "TaskRunner"]
+
+
+def _get_openai_schema(tool: Any) -> dict[str, Any]:
+    schema = getattr(tool, "openai_schema", None)
+    if isinstance(schema, dict):
+        schema_dict = cast(dict[object, Any], schema)
+        if all(isinstance(key, str) for key in schema_dict):
+            return cast(dict[str, Any], schema_dict)
+    raise TypeError(f"Tool {tool} does not expose a dict openai_schema")
+
 
 # Agent instructions matching tau2's LLMAgent
 ASSISTANT_AGENT_INSTRUCTION = """
@@ -200,11 +211,11 @@ class TaskRunner:
             client=assistant_chat_client,
             instructions=assistant_system_prompt,
             tools=tools,
-            temperature=self.assistant_sampling_temperature,
+            default_options={"temperature": self.assistant_sampling_temperature},
             context_providers=[
                 SlidingWindowHistoryProvider(
                     system_message=assistant_system_prompt,
-                    tool_definitions=[tool.openai_schema for tool in tools],
+                    tool_definitions=[_get_openai_schema(tool) for tool in tools],
                     max_tokens=self.assistant_window_size,
                 )
             ],
@@ -235,7 +246,7 @@ class TaskRunner:
         return Agent(
             client=user_simuator_chat_client,
             instructions=user_sim_system_prompt,
-            temperature=0.0,
+            default_options={"temperature": 0.0},
             # No sliding window for user simulator to maintain full conversation context
             # TODO(yuge): Consider adding user tools in future for more realistic scenarios
         )
@@ -342,11 +353,11 @@ class TaskRunner:
         # Matches tau2's expected conversation start pattern
         logger.info(f"Starting workflow with hardcoded greeting: '{DEFAULT_FIRST_AGENT_MESSAGE}'")
 
-        first_message = Message(role="assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)
+        first_message = Message(role="assistant", contents=[DEFAULT_FIRST_AGENT_MESSAGE])
         initial_greeting = AgentExecutorResponse(
             executor_id=ASSISTANT_AGENT_ID,
             agent_response=AgentResponse(messages=[first_message]),
-            full_conversation=[Message(role="assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)],
+            full_conversation=[Message(role="assistant", contents=[DEFAULT_FIRST_AGENT_MESSAGE])],
         )
 
         # STEP 4: Execute the workflow and collect results
@@ -359,7 +370,9 @@ class TaskRunner:
         # 2. The assistant's session state (full history, not just the truncated window)
         # 3. The final user message (if any)
         session_state: dict[str, Any] = self._assistant_executor._session.state  # type: ignore
-        all_messages: list[Message] = list(session_state.get("memory", {}).get("messages", []))  # type: ignore
+        all_messages: list[Message] = list(
+            session_state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).get("messages", [])
+        )  # type: ignore
         full_conversation = [first_message, *all_messages]
         if self._final_user_message is not None:
             full_conversation.extend(self._final_user_message)

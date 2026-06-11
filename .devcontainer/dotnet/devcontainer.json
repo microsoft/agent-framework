@@ -1,12 +1,9 @@
 {
   "name": "C# (.NET)",
-  //"image": "mcr.microsoft.com/devcontainers/dotnet",
-  // Workaround for https://github.com/devcontainers/images/issues/1752
-  "build": {
-    "dockerfile": "dotnet.Dockerfile"
-  },
+  "image": "mcr.microsoft.com/devcontainers/dotnet",
   "features": {
     "ghcr.io/devcontainers/features/azure-cli:1.2.9": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/github-cli:1": {
       "version": "2"
     },

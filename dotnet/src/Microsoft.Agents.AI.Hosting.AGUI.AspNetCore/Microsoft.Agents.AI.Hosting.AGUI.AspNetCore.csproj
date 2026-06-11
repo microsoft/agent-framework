@@ -18,6 +18,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
   </ItemGroup>
 

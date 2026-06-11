@@ -6,6 +6,9 @@ Claude Agent with Session Management
 This sample demonstrates session management with ClaudeAgent, showing
 persistent conversation capabilities. Sessions are automatically persisted
 by the Claude Code CLI.
+
+Environment variables:
+- ANTHROPIC_API_KEY: Your Anthropic API key
 """
 
 import asyncio
@@ -13,8 +16,12 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework_claude import ClaudeAgent
+from agent_framework.anthropic import ClaudeAgent
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @tool
@@ -123,8 +130,8 @@ async def example_with_existing_session_id() -> None:
         )
 
         async with agent2:
-            # Create session with existing session ID
-            session = agent2.create_session(service_session_id=existing_session_id)
+            # Get session with existing session ID
+            session = agent2.get_session(service_session_id=existing_session_id)
 
             query2 = "What was the last city I asked about?"
             print(f"User: {query2}")

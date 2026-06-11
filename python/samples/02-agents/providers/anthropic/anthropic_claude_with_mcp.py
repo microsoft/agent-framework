@@ -12,6 +12,9 @@ Supported MCP server types:
 - "http": Remote HTTP server
 - "sse": Remote SSE (Server-Sent Events) server
 
+Environment variables:
+- ANTHROPIC_API_KEY: Your Anthropic API key
+
 SECURITY NOTE: MCP servers can expose powerful capabilities. Only configure
 servers you trust. Use permission handlers to control what actions are allowed.
 """
@@ -19,8 +22,12 @@ servers you trust. Use permission handlers to control what actions are allowed.
 import asyncio
 from typing import Any
 
-from agent_framework_claude import ClaudeAgent
+from agent_framework.anthropic import ClaudeAgent
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def prompt_permission(

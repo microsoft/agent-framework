@@ -55,7 +55,7 @@ public sealed class DurableAIAgent : AIAgent
 
         if (session is not DurableAgentSession durableSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(DurableAgentSession)}' can be serialized by this agent.");
         }
 
         return new(durableSession.Serialize(jsonSerializerOptions));

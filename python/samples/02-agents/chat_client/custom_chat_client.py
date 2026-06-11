@@ -4,26 +4,22 @@ import asyncio
 import random
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any, ClassVar, Generic
+from typing import Any, ClassVar, TypeAlias, TypedDict
 
 from agent_framework import (
+    Agent,
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
-    Role,
 )
-from agent_framework._clients import OptionsCoT
 from agent_framework.observability import ChatTelemetryLayer
 
-if sys.version_info >= (3, 13):
-    pass
-else:
-    pass
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -34,11 +30,25 @@ else:
 Custom Chat Client Implementation Example
 
 This sample demonstrates implementing a custom chat client and optionally composing
-middleware, telemetry, and function invocation layers explicitly.
+middleware, telemetry, and function invocation layers explicitly. The recommended
+layer order is `FunctionInvocationLayer -> ChatMiddlewareLayer -> ChatTelemetryLayer`
+so chat middleware runs within each tool-loop iteration while telemetry records
+per-call spans without middleware latency.
 """
 
 
-class EchoingChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
+class EchoingChatClientOptions(TypedDict, total=False):
+    """Custom options for EchoingChatClient."""
+
+    uppercase: bool
+    suffix: str
+    stream_delay_seconds: float
+
+
+OptionsT: TypeAlias = EchoingChatClientOptions
+
+
+class EchoingChatClient(BaseChatClient[OptionsT]):
     """A custom chat client that echoes messages back with modifications.
 
     This demonstrates how to implement a custom chat client by extending BaseChatClient
@@ -73,7 +83,7 @@ class EchoingChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
             # Echo the last user message
             last_user_message = None
             for message in reversed(messages):
-                if message.role == Role.USER:
+                if message.role == "user":
                     last_user_message = message
                     break
 
@@ -82,11 +92,17 @@ class EchoingChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
             else:
                 response_text = f"{self.prefix} [No text message found]"
 
-        response_message = Message(role=Role.ASSISTANT, contents=[Content.from_text(response_text)])
+        if options.get("uppercase"):
+            response_text = response_text.upper()
+        if suffix := options.get("suffix"):
+            response_text = f"{response_text} {suffix}"
+        stream_delay_seconds = float(options.get("stream_delay_seconds", 0.05))
+
+        response_message = Message(role="assistant", contents=[response_text])
 
         response = ChatResponse(
             messages=[response_message],
-            model_id="echo-model-v1",
+            model="echo-model-v1",
             response_id=f"echo-resp-{random.randint(1000, 9999)}",
         )
 
@@ -102,21 +118,20 @@ class EchoingChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
             for char in response_text_local:
                 yield ChatResponseUpdate(
                     contents=[Content.from_text(char)],
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     response_id=f"echo-stream-resp-{random.randint(1000, 9999)}",
-                    model_id="echo-model-v1",
+                    model="echo-model-v1",
                 )
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(stream_delay_seconds)
 
         return ResponseStream(_stream(), finalizer=lambda updates: response)
 
 
-class EchoingChatClientWithLayers(  # type: ignore[misc,type-var]
-    ChatMiddlewareLayer[OptionsCoT],
-    ChatTelemetryLayer[OptionsCoT],
-    FunctionInvocationLayer[OptionsCoT],
-    EchoingChatClient[OptionsCoT],
-    Generic[OptionsCoT],
+class EchoingChatClientWithLayers(  # type: ignore[misc]
+    FunctionInvocationLayer[OptionsT],
+    ChatMiddlewareLayer[OptionsT],
+    ChatTelemetryLayer[OptionsT],
+    EchoingChatClient,
 ):
     """Echoing chat client that explicitly composes middleware, telemetry, and function layers."""
 
@@ -134,11 +149,19 @@ async def main() -> None:
 
     # Use the chat client directly
     print("Using chat client directly:")
-    direct_response = await echo_client.get_response("Hello, custom chat client!")
+    direct_response = await echo_client.get_response(
+        [Message(role="user", contents=["Hello, custom chat client!"])],
+        options={
+            "uppercase": True,
+            "suffix": "(CUSTOM OPTIONS)",
+            "stream_delay_seconds": 0.02,
+        },
+    )
     print(f"Direct response: {direct_response.messages[0].text}")
 
     # Create an agent using the custom chat client
-    echo_agent = echo_client.as_agent(
+    echo_agent = Agent(
+        client=echo_client,
         name="EchoAgent",
         instructions="You are a helpful assistant that echoes back what users say.",
     )
@@ -178,7 +201,7 @@ async def main() -> None:
         print(f"Agent: {result.messages[0].text}\n")
 
     # Check conversation history
-    memory_state = session.state.get("memory", {})
+    memory_state = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
     session_messages = memory_state.get("messages", [])
     if session_messages:
         print(f"Session contains {len(session_messages)} messages")

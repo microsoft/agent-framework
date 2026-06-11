@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import copy
 import json
+import logging
 import re
 from collections.abc import Mapping, MutableMapping
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
-from ._logging import get_logger
-
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
 ClassT = TypeVar("ClassT", bound="SerializationMixin")
 ProtocolT = TypeVar("ProtocolT", bound="SerializationProtocol")
@@ -40,7 +42,7 @@ class SerializationProtocol(Protocol):
 
 
             # Message implements SerializationProtocol via SerializationMixin
-            user_msg = Message(role="user", text="What's the weather like today?")
+            user_msg = Message(role="user", contents=["What's the weather like today?"])
 
             # Serialize to dictionary - automatic type identification and nested serialization
             msg_dict = user_msg.to_dict()
@@ -264,6 +266,25 @@ class SerializationMixin:
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
     INJECTABLE: ClassVar[set[str]] = set()
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SerializationMixin:
+        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
+        (e.g., proto/gRPC responses) that are not safe to deep-copy.  They are
+        kept as shallow references in the copy; all other attributes are
+        deep-copied normally.
+        """
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k in cls._SHALLOW_COPY_FIELDS:
+                object.__setattr__(result, k, v)
+            else:
+                object.__setattr__(result, k, copy.deepcopy(v, memo))
+        return result
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.
@@ -304,7 +325,7 @@ class SerializationMixin:
                 # Handle lists containing SerializationProtocol objects
                 if isinstance(value, list):
                     value_as_list: list[Any] = []
-                    for item in value:
+                    for item in value:  # pyright: ignore[reportUnknownVariableType]
                         if isinstance(item, SerializationProtocol):
                             value_as_list.append(item.to_dict(exclude=exclude, exclude_none=exclude_none))
                             continue
@@ -312,7 +333,7 @@ class SerializationMixin:
                             value_as_list.append(item)
                             continue
                         logger.debug(
-                            f"Skipping non-serializable item in list attribute '{key}' of type {type(item).__name__}"
+                            f"Skipping non-serializable item in list attribute '{key}' of type {type(item).__name__}"  # pyright: ignore[reportUnknownArgumentType]
                         )
                     result[key] = value_as_list
                     continue
@@ -321,21 +342,22 @@ class SerializationMixin:
                     from datetime import date, datetime, time
 
                     serialized_dict: dict[str, Any] = {}
-                    for k, v in value.items():
+                    for raw_key, v in value.items():  # pyright: ignore[reportUnknownVariableType]
+                        dict_key = str(raw_key)  # pyright: ignore[reportUnknownArgumentType]
                         if isinstance(v, SerializationProtocol):
-                            serialized_dict[k] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
+                            serialized_dict[dict_key] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
                             continue
                         # Convert datetime objects to strings
                         if isinstance(v, (datetime, date, time)):
-                            serialized_dict[k] = str(v)
+                            serialized_dict[dict_key] = str(v)
                             continue
                         # Check if the value is JSON serializable
                         if is_serializable(v):
-                            serialized_dict[k] = v
+                            serialized_dict[dict_key] = v
                             continue
                         logger.debug(
-                            f"Skipping non-serializable value for key '{k}' in dict attribute '{key}' "
-                            f"of type {type(v).__name__}"
+                            f"Skipping non-serializable value for key '{dict_key}' in dict attribute '{key}' "
+                            f"of type {type(v).__name__}"  # pyright: ignore[reportUnknownArgumentType]
                         )
                     result[key] = serialized_dict
                     continue
@@ -405,13 +427,13 @@ class SerializationMixin:
                 from openai import AsyncOpenAI
 
 
-                # OpenAI chat client requires an AsyncOpenAI client instance
-                # The client is marked as INJECTABLE = {"client"} in OpenAIBase
+                # OpenAI chat client requires an AsyncOpenAI client instance.
+                # The client dependency is excluded from serialization.
 
                 # Serialized data contains only the model configuration
                 client_data = {
                     "type": "open_ai_chat_client",
-                    "model_id": "gpt-4o-mini",
+                    "model": "gpt-4o-mini",
                     # client is excluded from serialization
                 }
 
@@ -506,7 +528,8 @@ class SerializationMixin:
                 # Only apply if the instance matches
                 if kwargs.get(field) == name and isinstance(dep_value, dict):
                     # Apply instance-specific dependencies
-                    for param_name, param_value in dep_value.items():
+                    for raw_param_name, param_value in dep_value.items():  # pyright: ignore[reportUnknownVariableType]
+                        param_name = str(raw_param_name)  # pyright: ignore[reportUnknownArgumentType]
                         if param_name not in cls.INJECTABLE:
                             logger.debug(
                                 f"Dependency '{param_name}' for type '{type_id}' is not in INJECTABLE set. "
@@ -593,3 +616,46 @@ class SerializationMixin:
         # Fallback and default
         # Convert class name to snake_case
         return _CAMEL_TO_SNAKE_PATTERN.sub("_", cls.__name__).lower()
+
+
+def make_json_safe(obj: Any) -> Any:
+    """Recursively convert an object to a JSON-serializable form.
+
+    Handles dataclasses, Pydantic models, objects with ``to_dict``/``dict``/``__dict__``,
+    datetimes, lists, dicts, and primitives.  Falls back to ``str()`` for any remaining
+    non-serializable value so that ``json.dumps`` never raises a ``TypeError``.
+
+    Args:
+        obj: Object to make JSON safe.
+
+    Returns:
+        A JSON-serializable version of the object.
+    """
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return make_json_safe(asdict(obj))  # type: ignore[arg-type]
+    if callable(getattr(obj, "model_dump", None)):
+        try:
+            return make_json_safe(obj.model_dump())  # type: ignore[no-any-return]
+        except TypeError:
+            pass
+    if callable(getattr(obj, "to_dict", None)):
+        try:
+            return make_json_safe(obj.to_dict())  # type: ignore[no-any-return]
+        except TypeError:
+            pass
+    if callable(getattr(obj, "dict", None)):
+        try:
+            return make_json_safe(obj.dict())  # type: ignore[no-any-return]
+        except TypeError:
+            pass
+    if isinstance(obj, dict):
+        return {str(key): make_json_safe(value) for key, value in obj.items()}  # type: ignore[misc]
+    if isinstance(obj, (list, tuple)):
+        return [make_json_safe(item) for item in obj]  # type: ignore[misc]
+    if hasattr(obj, "__dict__"):
+        return {key: make_json_safe(value) for key, value in vars(obj).items()}  # type: ignore[misc]
+    return str(obj)

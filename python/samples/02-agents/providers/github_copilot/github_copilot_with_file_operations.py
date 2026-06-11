@@ -4,8 +4,7 @@
 GitHub Copilot Agent with File Operation Permissions
 
 This sample demonstrates how to enable file read and write operations with GitHubCopilotAgent.
-By providing a permission handler that approves "read" and/or "write" requests, the agent can
-read from and write to files on the filesystem.
+By providing a permission handler, the agent can read from and write to files on the filesystem.
 
 SECURITY NOTE: Only enable file permissions when you trust the agent's actions.
 - "read" allows the agent to read any accessible file
@@ -15,21 +14,18 @@ SECURITY NOTE: Only enable file permissions when you trust the agent's actions.
 import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
-from copilot.types import PermissionRequest, PermissionRequestResult
+from copilot.generated.rpc import PermissionDecisionDeniedInteractivelyByUser
+from copilot.session import PermissionHandler, PermissionRequestResult
+from copilot.session_events import PermissionRequest
 
 
-def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+async def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
     """Permission handler that prompts the user for approval."""
-    kind = request.get("kind", "unknown")
-    print(f"\n[Permission Request: {kind}]")
-
-    if "path" in request:
-        print(f"  Path: {request.get('path')}")
-
-    response = input("Approve? (y/n): ").strip().lower()
+    print(f"\n[Permission Request: {request.kind}]")
+    response = (await asyncio.to_thread(input, "Approve? (y/n): ")).strip().lower()
     if response in ("y", "yes"):
-        return PermissionRequestResult(kind="approved")
-    return PermissionRequestResult(kind="denied-interactively-by-user")
+        return PermissionHandler.approve_all(request, context)
+    return PermissionDecisionDeniedInteractivelyByUser()
 
 
 async def main() -> None:

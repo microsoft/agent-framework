@@ -935,6 +935,60 @@ public sealed class FunctionInvocationDelegatingAgentTests
 
     #endregion
 
+    #region Options Preservation Tests
+
+    /// <summary>
+    /// Tests that FunctionInvocationDelegatingAgent preserves all original AgentRunOptions properties
+    /// when converting base AgentRunOptions to ChatClientAgentRunOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithBaseAgentRunOptions_PreservesAllOriginalOptionsAsync()
+    {
+        // Arrange
+        AgentRunOptions? capturedOptions = null;
+        var responseFormat = ChatResponseFormat.Json;
+        var additionalProperties = new AdditionalPropertiesDictionary { ["key1"] = "value1" };
+
+        Mock<IChatClient> mockChatClient = new();
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object);
+
+        // Wrap the inner agent in a spy that captures the converted options and returns a dummy response
+        var spyAgent = new AnonymousDelegatingAIAgent(
+            chatClientAgent,
+            runFunc: (messages, session, options, innerAgent, ct) =>
+            {
+                capturedOptions = options;
+                return Task.FromResult(new AgentResponse(new ChatResponse(new ChatMessage(ChatRole.Assistant, "test")) { ResponseId = "test" }));
+            },
+            runStreamingFunc: null);
+
+        static ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+            => next(context, cancellationToken);
+
+        var middleware = new FunctionInvocationDelegatingAgent(spyAgent, MiddlewareCallbackAsync);
+
+        var originalOptions = new AgentRunOptions
+        {
+            ResponseFormat = responseFormat,
+            AllowBackgroundResponses = true,
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
+            AdditionalProperties = additionalProperties,
+        };
+
+        // Act
+        await middleware.RunAsync([new(ChatRole.User, "Test")], null, originalOptions, CancellationToken.None);
+
+        // Assert - All original properties were preserved on the converted options
+        Assert.NotNull(capturedOptions);
+        Assert.IsType<ChatClientAgentRunOptions>(capturedOptions);
+        Assert.Same(responseFormat, capturedOptions.ResponseFormat);
+        Assert.True(capturedOptions.AllowBackgroundResponses);
+        Assert.Same(originalOptions.ContinuationToken, capturedOptions.ContinuationToken);
+        Assert.Same(additionalProperties, capturedOptions.AdditionalProperties);
+    }
+
+    #endregion
+
     /// <summary>
     /// Creates a mock IChatClient with predefined responses for testing.
     /// </summary>

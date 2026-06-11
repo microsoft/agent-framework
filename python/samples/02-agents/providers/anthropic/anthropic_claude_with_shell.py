@@ -7,6 +7,9 @@ This sample demonstrates how to enable shell command execution with ClaudeAgent.
 By providing a permission handler via `can_use_tool`, the agent can execute
 shell commands to perform tasks like listing files, running scripts, or executing system commands.
 
+Environment variables:
+- ANTHROPIC_API_KEY: Your Anthropic API key
+
 SECURITY NOTE: Only enable shell permissions when you trust the agent's actions.
 Shell commands have full access to your system within the permissions of the running process.
 """
@@ -14,8 +17,12 @@ Shell commands have full access to your system within the permissions of the run
 import asyncio
 from typing import Any
 
-from agent_framework_claude import ClaudeAgent
+from agent_framework.anthropic import ClaudeAgent
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def prompt_permission(
@@ -47,7 +54,7 @@ async def main() -> None:
     )
 
     async with agent:
-        query = "List the first 3 Python files in the current directory"
+        query = "List the first 3 markdown (.md) files in the current directory"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result.text}\n")

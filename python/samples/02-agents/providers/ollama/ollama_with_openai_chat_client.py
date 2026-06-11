@@ -5,8 +5,12 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Ollama with OpenAI Chat Client Example
@@ -21,7 +25,9 @@ Environment Variables:
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
@@ -35,14 +41,16 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = OpenAIChatClient(
+    _client = OpenAIChatClient(
         api_key="ollama",  # Just a placeholder, Ollama doesn't require API key
         base_url=os.getenv("OLLAMA_ENDPOINT"),
-        model_id=os.getenv("OLLAMA_MODEL"),
-    ).as_agent(
+        model=os.getenv("OLLAMA_MODEL"),
+    )
+    agent = Agent(
+        client=_client,
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
-        tools=get_weather,
+        tools=[get_weather],
     )
 
     query = "What's the weather like in Seattle?"
@@ -55,14 +63,16 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = OpenAIChatClient(
+    _client = OpenAIChatClient(
         api_key="ollama",  # Just a placeholder, Ollama doesn't require API key
         base_url=os.getenv("OLLAMA_ENDPOINT"),
-        model_id=os.getenv("OLLAMA_MODEL"),
-    ).as_agent(
+        model=os.getenv("OLLAMA_MODEL"),
+    )
+    agent = Agent(
+        client=_client,
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
-        tools=get_weather,
+        tools=[get_weather],
     )
 
     query = "What's the weather like in Portland?"

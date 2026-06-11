@@ -6,7 +6,7 @@ import sys
 from typing import Any, Generic
 
 from agent_framework import ChatOptions
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -53,10 +53,12 @@ class AGUIRequest(BaseModel):
     )
     run_id: str | None = Field(
         None,
+        validation_alias=AliasChoices("run_id", "runId"),
         description="Optional run identifier for tracking",
     )
     thread_id: str | None = Field(
         None,
+        validation_alias=AliasChoices("thread_id", "threadId"),
         description="Optional thread identifier for conversation context",
     )
     state: dict[str, Any] | None = Field(
@@ -73,11 +75,22 @@ class AGUIRequest(BaseModel):
     )
     forwarded_props: dict[str, Any] | None = Field(
         None,
+        validation_alias=AliasChoices("forwarded_props", "forwardedProps"),
         description="Additional properties forwarded to the agent",
     )
     parent_run_id: str | None = Field(
         None,
+        validation_alias=AliasChoices("parent_run_id", "parentRunId"),
         description="ID of the run that spawned this run",
+    )
+    available_interrupts: list[dict[str, Any]] | None = Field(
+        None,
+        validation_alias=AliasChoices("availableInterrupts", "available_interrupts"),
+        description="List of interrupts that can be resumed by the server",
+    )
+    resume: dict[str, Any] | None = Field(
+        None,
+        description="Resume payload containing interrupt responses",
     )
 
 
@@ -95,7 +108,7 @@ class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], tota
 
     Keys:
         # Inherited from ChatOptions (forwarded to remote server):
-        model_id: The model identifier (forwarded as-is to server).
+        model: The model identifier (forwarded as-is to server).
         temperature: Sampling temperature.
         top_p: Nucleus sampling parameter.
         max_tokens: Maximum tokens to generate.
@@ -139,6 +152,12 @@ class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], tota
 
     context: dict[str, Any]
     """Shared context/state to send to the server."""
+
+    available_interrupts: list[dict[str, Any]]
+    """Interrupt descriptors available for resumption."""
+
+    resume: dict[str, Any]
+    """Interrupt resume payload to continue a paused run."""
 
     # ChatOptions fields not applicable for AG-UI
     store: None  # type: ignore[misc]

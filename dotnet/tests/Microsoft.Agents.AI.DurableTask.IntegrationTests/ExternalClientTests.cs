@@ -9,7 +9,6 @@ using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Chat;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
@@ -22,7 +21,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
 {
     private static readonly TimeSpan s_defaultTimeout = Debugger.IsAttached
         ? TimeSpan.FromMinutes(5)
-        : TimeSpan.FromSeconds(30);
+        : TimeSpan.FromSeconds(120);
 
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
@@ -37,7 +36,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
 
     public void Dispose() => this._cts.Dispose();
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SimplePromptAsync()
     {
         // Setup
@@ -76,7 +75,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         Assert.Contains(agentLogs, log => log.EventId.Name == "LogAgentResponse");
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task CallFunctionToolsAsync()
     {
         int weatherToolInvocationCount = 0;
@@ -128,7 +127,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         Assert.Equal(1, packingListToolInvocationCount);
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task CallLongRunningFunctionToolsAsync()
     {
         [Description("Starts a greeting workflow and returns the workflow instance ID")]

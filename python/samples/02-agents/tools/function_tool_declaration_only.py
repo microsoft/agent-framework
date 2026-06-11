@@ -2,8 +2,12 @@
 
 import asyncio
 
-from agent_framework import FunctionTool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import Agent, FunctionTool
+from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Example of how to create a function that only consists of a declaration without an implementation.
@@ -21,7 +25,8 @@ async def main():
         description="Get the current time in ISO 8601 format.",
     )
 
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="DeclarationOnlyToolAgent",
         instructions="You are a helpful agent that uses tools.",
         tools=function_declaration,
@@ -72,5 +77,4 @@ Result: {
 
 
 if __name__ == "__main__":
-
     asyncio.run(main())

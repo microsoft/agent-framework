@@ -52,7 +52,7 @@ async def test_structured_output_with_recipe(streaming_chat_client_stub, stream_
     input_data = {"messages": [{"role": "user", "content": "Make pasta"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should emit StateSnapshotEvent with recipe
@@ -94,7 +94,7 @@ async def test_structured_output_with_steps(streaming_chat_client_stub, stream_f
     input_data = {"messages": [{"role": "user", "content": "Do steps"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should emit StateSnapshotEvent with steps
@@ -129,7 +129,7 @@ async def test_structured_output_with_no_schema_match(streaming_chat_client_stub
     input_data = {"messages": [{"role": "user", "content": "Generate data"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should emit StateSnapshotEvent but with no state updates since no schema fields match
@@ -164,7 +164,7 @@ async def test_structured_output_without_schema(streaming_chat_client_stub, stre
     input_data = {"messages": [{"role": "user", "content": "Generate data"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should emit StateSnapshotEvent with both data and info fields
@@ -194,7 +194,7 @@ async def test_no_structured_output_when_no_response_format(streaming_chat_clien
     input_data = {"messages": [{"role": "user", "content": "Hi"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should emit text content normally
@@ -224,7 +224,7 @@ async def test_structured_output_with_message_field(streaming_chat_client_stub, 
     input_data = {"messages": [{"role": "user", "content": "Make salad"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should emit the message as text
@@ -256,7 +256,7 @@ async def test_empty_updates_no_structured_processing(streaming_chat_client_stub
     input_data = {"messages": [{"role": "user", "content": "Test"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should only have start and end events

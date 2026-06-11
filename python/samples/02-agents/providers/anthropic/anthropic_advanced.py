@@ -1,8 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 import asyncio
+import os
 
-from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
+from agent_framework import Agent
+from agent_framework.anthropic import AnthropicClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Anthropic Chat Agent Example
@@ -11,12 +16,20 @@ This sample demonstrates using Anthropic with:
 - Setting up an Anthropic-based agent with hosted tools.
 - Using the `thinking` feature.
 - Displaying both thinking and usage information during streaming responses.
+
+Environment variables:
+    ANTHROPIC_API_KEY    — Your Anthropic API key
+    ANTHROPIC_CHAT_MODEL — The Anthropic model to use (e.g., "claude-sonnet-4-6")
+
 """
 
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    client = AnthropicClient[AnthropicChatOptions]()
+    client = AnthropicClient(
+        api_key=os.getenv("ANTHROPIC_API_KEY"),
+        model=os.getenv("ANTHROPIC_CHAT_MODEL"),
+    )
 
     # Create MCP tool configuration using instance method
     mcp_tool = client.get_mcp_tool(
@@ -27,7 +40,8 @@ async def main() -> None:
     # Create web search tool configuration using instance method
     web_search_tool = client.get_web_search_tool()
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
         tools=[mcp_tool, web_search_tool],
@@ -44,7 +58,7 @@ async def main() -> None:
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run(query, stream=True):
         for content in chunk.contents:
-            if content.type == "text_reasoning":
+            if content.type == "text_reasoning" and content.text:
                 print(f"\033[32m{content.text}\033[0m", end="", flush=True)
             if content.type == "usage":
                 print(f"\n\033[34m[Usage so far: {content.usage_details}]\033[0m\n", end="", flush=True)

@@ -35,7 +35,6 @@ from agent_framework_orchestrations import (
     MagenticResetSignal,
     SequentialBuilder,
     StandardMagenticManager,
-    __version__,
 )
 
 __all__ = [
@@ -73,5 +72,4 @@ __all__ = [
     "MagenticResetSignal",
     "SequentialBuilder",
     "StandardMagenticManager",
-    "__version__",
 ]

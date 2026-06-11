@@ -36,32 +36,32 @@ def test_normalize_type_to_list_none() -> None:
 
 def test_normalize_type_to_list_union_pipe_syntax() -> None:
     """Test normalize_type_to_list with union types using | syntax."""
-    result = normalize_type_to_list(str | int)
+    result = normalize_type_to_list(str | int)  # pyright: ignore[reportArgumentType]
     assert set(result) == {str, int}
 
-    result = normalize_type_to_list(str | int | bool)
+    result = normalize_type_to_list(str | int | bool)  # pyright: ignore[reportArgumentType]
     assert set(result) == {str, int, bool}
 
 
 def test_normalize_type_to_list_union_typing_syntax() -> None:
     """Test normalize_type_to_list with Union[] from typing module."""
-    result = normalize_type_to_list(Union[str, int])
+    result = normalize_type_to_list(Union[str, int])  # pyright: ignore[reportArgumentType]
     assert set(result) == {str, int}
 
-    result = normalize_type_to_list(Union[str, int, bool])
+    result = normalize_type_to_list(Union[str, int, bool])  # pyright: ignore[reportArgumentType]
     assert set(result) == {str, int, bool}
 
 
 def test_normalize_type_to_list_optional() -> None:
     """Test normalize_type_to_list with Optional types (Union[T, None])."""
     # Optional[str] is Union[str, None]
-    result = normalize_type_to_list(Optional[str])
+    result = normalize_type_to_list(Optional[str])  # pyright: ignore[reportArgumentType]
     assert str in result
     assert type(None) in result
     assert len(result) == 2
 
     # str | None is equivalent
-    result = normalize_type_to_list(str | None)
+    result = normalize_type_to_list(str | None)  # pyright: ignore[reportArgumentType]
     assert str in result
     assert type(None) in result
     assert len(result) == 2
@@ -77,7 +77,7 @@ def test_normalize_type_to_list_custom_types() -> None:
     result = normalize_type_to_list(CustomMessage)
     assert result == [CustomMessage]
 
-    result = normalize_type_to_list(CustomMessage | str)
+    result = normalize_type_to_list(CustomMessage | str)  # pyright: ignore[reportArgumentType]
     assert set(result) == {CustomMessage, str}
 
 
@@ -96,7 +96,7 @@ def test_resolve_type_annotation_actual_types() -> None:
     """Test resolve_type_annotation passes through actual types unchanged."""
     assert resolve_type_annotation(str) is str
     assert resolve_type_annotation(int) is int
-    assert resolve_type_annotation(str | int) == str | int
+    assert resolve_type_annotation(str | int) == str | int  # pyright: ignore[reportArgumentType]
 
 
 def test_resolve_type_annotation_string_builtin() -> None:

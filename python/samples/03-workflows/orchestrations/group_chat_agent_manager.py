@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import cast
 
 from agent_framework import (
@@ -8,9 +9,13 @@ from agent_framework import (
     AgentResponseUpdate,
     Message,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Group Chat with Agent-Based Manager
@@ -21,7 +26,9 @@ What it does:
 - Coordinates a researcher and writer agent to solve tasks collaboratively
 
 Prerequisites:
-- OpenAI environment variables configured for OpenAIChatClient
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 ORCHESTRATOR_AGENT_INSTRUCTIONS = """
@@ -35,8 +42,12 @@ Guidelines:
 
 
 async def main() -> None:
-    # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    # Create a Responses client using Azure OpenAI and Azure CLI credentials for all agents
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
     # Orchestrator agent that manages the conversation
     # Note: This agent (and the underlying chat client) must support structured outputs.
@@ -67,13 +78,14 @@ async def main() -> None:
     # Build the group chat workflow
     # termination_condition: stop after 4 assistant messages
     # (The agent orchestrator will intelligently decide when to end before this limit but just in case)
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # Mark participant responses as intermediate so the stream shows the
+    # conversation as it unfolds while the orchestrator's transcript remains the
+    # terminal workflow output.
     workflow = (
         GroupChatBuilder(
             participants=[researcher, writer],
             termination_condition=lambda messages: sum(1 for msg in messages if msg.role == "assistant") >= 4,
-            intermediate_outputs=True,
+            intermediate_output_from=[researcher, writer],
             orchestrator_agent=orchestrator_agent,
         )
         # Set a hard termination condition: stop after 4 assistant messages
@@ -91,7 +103,7 @@ async def main() -> None:
     # Keep track of the last response to format output nicely in streaming mode
     last_response_id: str | None = None
     async for event in workflow.run(task, stream=True):
-        if event.type == "output":
+        if event.type in ("intermediate", "output"):
             data = event.data
             if isinstance(data, AgentResponseUpdate):
                 rid = data.response_id

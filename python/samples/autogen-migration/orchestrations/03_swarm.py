@@ -1,28 +1,24 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/orchestrations/03_swarm.py
-
 # Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+from typing import Any
+
+from agent_framework import Agent, AgentResponseUpdate, WorkflowEvent
+from dotenv import load_dotenv
+
 """AutoGen Swarm pattern vs Agent Framework HandoffBuilder.
 
 Demonstrates agent handoff coordination where agents can transfer control
 to other specialized agents based on the task requirements.
 """
 
-import asyncio
-
-from agent_framework import AgentResponseUpdate, WorkflowEvent
-from orderedmultidict import Any
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def run_autogen() -> None:
     """AutoGen's Swarm pattern with human-in-the-loop handoffs."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.conditions import HandoffTermination, TextMentionTermination
     from autogen_agentchat.messages import HandoffMessage
@@ -114,10 +110,11 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
     from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create triage agent
-    triage_agent = client.as_agent(
+    triage_agent = Agent(
+        client=client,
         name="triage",
         instructions=(
             "You are a triage agent. Analyze the user's request and route to the appropriate specialist:\n"
@@ -125,20 +122,25 @@ async def run_agent_framework() -> None:
             "- For technical issues: call handoff_to_technical_support"
         ),
         description="Routes requests to appropriate specialists",
+        require_per_service_call_history_persistence=True,
     )
 
     # Create billing specialist
-    billing_agent = client.as_agent(
+    billing_agent = Agent(
+        client=client,
         name="billing_agent",
         instructions="You are a billing specialist. Help with payment and billing questions. Provide clear assistance.",
         description="Handles billing and payment questions",
+        require_per_service_call_history_persistence=True,
     )
 
     # Create technical support specialist
-    tech_support = client.as_agent(
+    tech_support = Agent(
+        client=client,
         name="technical_support",
         instructions="You are technical support. Help with technical issues. Provide clear assistance.",
         description="Handles technical support questions",
+        require_per_service_call_history_persistence=True,
     )
 
     # Create handoff workflow - simpler configuration
@@ -197,7 +199,9 @@ async def run_agent_framework() -> None:
         print("---------- user ----------")
         print(user_response)
 
-        responses: dict[str, Any] = {req.request_id: user_response for req in pending_requests}  # type: ignore
+        responses: dict[str, Any] = {
+            req.request_id: HandoffAgentUserRequest.create_response(user_response) for req in pending_requests
+        }  # type: ignore
         pending_requests = []
         current_executor = None
         stream_line_open = False

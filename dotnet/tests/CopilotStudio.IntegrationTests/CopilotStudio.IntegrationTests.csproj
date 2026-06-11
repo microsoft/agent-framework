@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <NoWarn>$(NoWarn);CS8793</NoWarn>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
     <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>

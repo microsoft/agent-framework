@@ -59,7 +59,19 @@ public sealed class InMemoryChatHistoryProviderOptions
     /// Depending on your requirements, you could provide a different filter, that also excludes
     /// messages from e.g. AI context providers.
     /// </value>
-    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputMessageFilter { get; set; }
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputRequestMessageFilter { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional filter function applied to response messages before they are added to storage
+    /// during <see cref="ChatHistoryProvider.InvokedAsync"/>.
+    /// </summary>
+    /// <value>
+    /// When <see langword="null"/>, no filtering is applied to response messages before they are stored.
+    /// If you want to avoid persisting certain messages (for example, those with
+    /// <see cref="AgentRequestMessageSourceType.ChatHistory"/> source type or produced by AI context providers),
+    /// provide a filter that returns only the messages you want to keep.
+    /// </value>
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputResponseMessageFilter { get; set; }
 
     /// <summary>
     /// Gets or sets an optional filter function applied to messages produced by this provider
@@ -71,7 +83,7 @@ public sealed class InMemoryChatHistoryProviderOptions
     /// <value>
     /// When <see langword="null"/>, no filtering is applied to the output messages.
     /// </value>
-    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? RetrievalOutputMessageFilter { get; set; }
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? ProvideOutputMessageFilter { get; set; }
 
     /// <summary>
     /// Defines the events that can trigger a reducer in the <see cref="InMemoryChatHistoryProvider"/>.

@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, overload
 
 import pytest
 
@@ -9,10 +10,14 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
+    Case,
+    Default,
     Executor,
     Message,
+    ResponseStream,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowValidationError,
@@ -21,22 +26,49 @@ from agent_framework import (
 
 
 class DummyAgent(BaseAgent):
-    def run(self, messages=None, *, stream: bool = False, session: AgentSession | None = None, **kwargs):  # type: ignore[override]
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
-            return self._run_stream_impl()
+            return ResponseStream[AgentResponseUpdate, AgentResponse[Any]](self._run_stream_impl())
         return self._run_impl(messages)
 
-    async def _run_impl(self, messages=None) -> AgentResponse:
+    async def _run_impl(self, messages: AgentRunInputs | None = None) -> AgentResponse:
         norm: list[Message] = []
         if messages:
-            for m in messages:  # type: ignore[iteration-over-optional]
+            for m in messages:  # type: ignore[union-attr]
                 if isinstance(m, Message):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(Message(role="user", text=m))
+                    norm.append(Message(role="user", contents=[m]))
         return AgentResponse(messages=norm)
 
-    async def _run_stream_impl(self):  # type: ignore[override]
+    async def _run_stream_impl(self) -> AsyncIterator[AgentResponseUpdate]:
         # Minimal async generator
         yield AgentResponseUpdate()
 
@@ -193,16 +225,39 @@ def test_add_edge_with_condition():
     assert "Target" in workflow.executors
 
 
+def test_switch_case_with_agents():
+    """Test add_switch_case_edge_group with Case and Default edges using agents."""
+    router = DummyAgent(id="router_agent", name="router")
+    handler = DummyAgent(id="handler", name="handler")
+    fallback = DummyAgent(id="fallback_agent", name="fallback")
+
+    workflow = (
+        WorkflowBuilder(start_executor=router)
+        .add_switch_case_edge_group(
+            router,
+            [
+                Case(condition=lambda _: True, target=handler),
+                Default(target=fallback),
+            ],
+        )
+        .build()
+    )
+
+    # All three agents should be AgentExecutor wrappers
+    agent_executors = [e for e in workflow.executors.values() if isinstance(e, AgentExecutor)]
+    assert len(agent_executors) == 3
+
+
 # region with_output_from tests
 
 
 def test_with_output_from_returns_builder():
     """Test that with_output_from returns the builder for method chaining."""
     executor_a = MockExecutor(id="executor_a")
-    builder = WorkflowBuilder(output_executors=[executor_a], start_executor=executor_a)
+    builder = WorkflowBuilder(output_from=[executor_a], start_executor=executor_a)
 
-    # Verify builder was created with output_executors
-    assert builder._output_executors == [executor_a]
+    # Verify builder was created with output_from
+    assert builder._output_from == [executor_a]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_with_output_from_with_executor_instances():
@@ -211,13 +266,11 @@ def test_with_output_from_with_executor_instances():
     executor_b = MockExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_b])
-        .add_edge(executor_a, executor_b)
-        .build()
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_b]).add_edge(executor_a, executor_b).build()
     )
 
     # Verify that the workflow was built with the correct output executors
-    assert workflow._output_executors == ["executor_b"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor_b"}
 
 
 def test_with_output_from_with_agent_instances():
@@ -225,10 +278,10 @@ def test_with_output_from_with_agent_instances():
     agent_a = DummyAgent(id="agent_a", name="writer")
     agent_b = DummyAgent(id="agent_b", name="reviewer")
 
-    workflow = WorkflowBuilder(start_executor=agent_a, output_executors=[agent_b]).add_edge(agent_a, agent_b).build()
+    workflow = WorkflowBuilder(start_executor=agent_a, output_from=[agent_b]).add_edge(agent_a, agent_b).build()
 
     # Verify that the workflow was built with the agent's name as output executor
-    assert workflow._output_executors == ["reviewer"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"reviewer"}
 
 
 def test_with_output_from_with_executor_instances_by_id():
@@ -237,12 +290,10 @@ def test_with_output_from_with_executor_instances_by_id():
     executor_b = MockExecutor(id="ExecutorB")
 
     workflow = (
-        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_b])
-        .add_edge(executor_a, executor_b)
-        .build()
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_b]).add_edge(executor_a, executor_b).build()
     )
 
-    assert workflow._output_executors == ["ExecutorB"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"ExecutorB"}
 
 
 def test_with_output_from_with_multiple_executors():
@@ -252,29 +303,27 @@ def test_with_output_from_with_multiple_executors():
     executor_c = MockExecutor(id="executor_c")
 
     workflow = (
-        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_a, executor_c])
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_a, executor_c])
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_c)
         .build()
     )
 
     # Verify that the workflow was built with both output executors
-    assert set(workflow._output_executors) == {"executor_a", "executor_c"}  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor_a", "executor_c"}
 
 
 def test_with_output_from_can_be_set_to_different_value():
-    """Test that output_executors can be set at construction time."""
+    """Test that output_from can be set at construction time."""
     executor_a = MockExecutor(id="executor_a")
     executor_b = MockExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_b])
-        .add_edge(executor_a, executor_b)
-        .build()
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_b]).add_edge(executor_a, executor_b).build()
     )
 
     # Verify that the setting is applied
-    assert workflow._output_executors == ["executor_b"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor_b"}
 
 
 def test_with_output_from_with_agent_instances_resolves_name():
@@ -283,37 +332,37 @@ def test_with_output_from_with_agent_instances_resolves_name():
     agent_reviewer = DummyAgent(id="agent2", name="reviewer")
 
     workflow = (
-        WorkflowBuilder(start_executor=agent_writer, output_executors=[agent_reviewer])
+        WorkflowBuilder(start_executor=agent_writer, output_from=[agent_reviewer])
         .add_edge(agent_writer, agent_reviewer)
         .build()
     )
 
-    assert workflow._output_executors == ["reviewer"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"reviewer"}
 
 
 def test_with_output_from_in_constructor():
-    """Test that output_executors works correctly when set in the constructor."""
+    """Test that output_from works correctly when set in the constructor."""
     executor_a = MockExecutor(id="executor_a")
     executor_b = MockExecutor(id="executor_b")
     executor_c = MockExecutor(id="executor_c")
 
-    # Build workflow with output_executors in the constructor
+    # Build workflow with output_from in the constructor
     workflow = (
-        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_c])
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_c])
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_c)
         .build()
     )
 
     # Verify that the setting persists through the chain
-    assert workflow._output_executors == ["executor_c"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor_c"}
 
 
 def test_with_output_from_with_invalid_executor_raises_validation_error():
     """Test that with_output_from with an invalid executor raises an error."""
     executor_a = MockExecutor(id="executor_a")
 
-    builder = WorkflowBuilder(start_executor=executor_a, output_executors=[MockExecutor(id="executor_b")])
+    builder = WorkflowBuilder(start_executor=executor_a, output_from=[MockExecutor(id="executor_b")])
 
     # Attempting to set output from an executor not in the workflow should raise an error
     with pytest.raises(

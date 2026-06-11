@@ -31,6 +31,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
     public async IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,
+        IReadOnlyList<ChatMessage>? conversationHistory = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Create options with properties from the request
@@ -51,8 +52,13 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         };
         var options = new ChatClientAgentRunOptions(chatOptions);
 
-        // Convert input to chat messages
+        // Convert input to chat messages, prepending conversation history if available
         var messages = new List<ChatMessage>();
+
+        if (conversationHistory is not null)
+        {
+            messages.AddRange(conversationHistory);
+        }
 
         foreach (var inputMessage in request.Input.GetInputMessages())
         {

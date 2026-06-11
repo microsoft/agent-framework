@@ -30,18 +30,19 @@ Key properties:
 """
 
 import inspect
+import json
 import logging
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
-from agent_framework import Agent, SupportsAgentRun
-from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
+from agent_framework import Agent, AgentResponse, Message, SupportsAgentRun
+from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 from agent_framework._sessions import AgentSession
 from agent_framework._tools import FunctionTool, tool
-from agent_framework._types import AgentResponse, AgentResponseUpdate, Message
-from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
 from agent_framework._workflows._events import WorkflowEvent
@@ -49,10 +50,17 @@ from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
-from typing_extensions import Never
 
 from ._base_group_chat_orchestrator import TerminationCondition
 from ._orchestrator_helpers import clean_conversation_for_handoff
+from ._participant_output_config import (
+    UNSET,
+    _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
+    _coerce_intermediate_output_from,  # pyright: ignore[reportPrivateUsage]
+    _ParticipantIntermediateOutputSelection,  # pyright: ignore[reportPrivateUsage]
+    _ParticipantOutputSpecifier,  # pyright: ignore[reportPrivateUsage]
+    _resolve_participant_output_config,  # pyright: ignore[reportPrivateUsage]
+)
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -136,10 +144,11 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
             await call_next()
             return
 
-        from agent_framework._middleware import MiddlewareTermination
-
         # Short-circuit execution and provide deterministic response payload for the tool call.
-        context.result = {HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]}
+        # Parse the result using the default parser to ensure in a form that can be passed directly to LLM APIs.
+        context.result = FunctionTool.parse_result({
+            HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]
+        })
         raise MiddlewareTermination(result=context.result)
 
 
@@ -158,7 +167,7 @@ class HandoffAgentUserRequest:
         """Create a HandoffAgentUserRequest from a simple text response."""
         messages: list[Message] = []
         if isinstance(response, str):
-            messages.append(Message(role="user", text=response))
+            messages.append(Message(role="user", contents=[response]))
         elif isinstance(response, Message):
             messages.append(response)
         elif isinstance(response, list):
@@ -166,7 +175,7 @@ class HandoffAgentUserRequest:
                 if isinstance(item, Message):
                     messages.append(item)
                 elif isinstance(item, str):
-                    messages.append(Message(role="user", text=item))
+                    messages.append(Message(role="user", contents=[item]))
                 else:
                     raise TypeError("List items must be either str or Message instances")
         else:
@@ -193,7 +202,7 @@ class HandoffAgentExecutor(AgentExecutor):
 
     def __init__(
         self,
-        agent: SupportsAgentRun,
+        agent: Agent,
         handoffs: Sequence[HandoffConfiguration],
         *,
         agent_session: AgentSession | None = None,
@@ -206,7 +215,7 @@ class HandoffAgentExecutor(AgentExecutor):
         """Initialize the HandoffAgentExecutor.
 
         Args:
-            agent: The agent to execute
+            agent: The ``Agent`` instance to execute
             handoffs: Sequence of handoff configurations defining target agents
             agent_session: Optional AgentSession that manages the agent's execution context
             is_start_agent: Whether this agent is the starting agent in the handoff workflow.
@@ -236,23 +245,20 @@ class HandoffAgentExecutor(AgentExecutor):
 
     def _prepare_agent_with_handoffs(
         self,
-        agent: SupportsAgentRun,
+        agent: Agent,
         handoffs: Sequence[HandoffConfiguration],
-    ) -> SupportsAgentRun:
+    ) -> Agent:
         """Prepare an agent by adding handoff tools for the specified target agents.
 
         Args:
-            agent: The agent to prepare
+            agent: The ``Agent`` instance to prepare
             handoffs: Sequence of handoff configurations defining target agents
 
         Returns:
-            A new AgentExecutor instance with handoff tools added
+            A cloned ``Agent`` instance with handoff tools added
         """
-        if not isinstance(agent, Agent):
-            raise TypeError("Handoff can only be applied to Agent. Please ensure the agent is a Agent instance.")
-
         # Clone the agent to avoid mutating the original
-        cloned_agent = self._clone_chat_agent(agent)  # type: ignore
+        cloned_agent = self._clone_chat_agent(agent)
         # Add handoff tools to the cloned agent
         self._apply_auto_tools(cloned_agent, handoffs)
         # Add middleware to handle handoff tool invocations
@@ -263,43 +269,25 @@ class HandoffAgentExecutor(AgentExecutor):
 
         return cloned_agent
 
-    def _clone_chat_agent(self, agent: Agent) -> Agent:
+    def _clone_chat_agent(self, agent: Agent[Any]) -> Agent[Any]:
         """Produce a deep copy of the Agent while preserving runtime configuration."""
         options = agent.default_options
-        middleware = list(agent.middleware or [])
 
         # Reconstruct the original tools list by combining regular tools with MCP tools.
         # Agent.__init__ separates MCP tools during initialization,
         # so we need to recombine them here to pass the complete tools list to the constructor.
         # This makes sure MCP tools are preserved when cloning agents for handoff workflows.
-        tools_from_options = options.get("tools")
-        all_tools = list(tools_from_options) if tools_from_options else []
-        if agent.mcp_tools:
-            all_tools.extend(agent.mcp_tools)
+        tools_from_options = options.pop("tools", [])
+        new_tools = [*tools_from_options, *(agent.mcp_tools if agent.mcp_tools else [])]
 
-        logit_bias = options.get("logit_bias")
-        metadata = options.get("metadata")
-
+        # this ensures all options (including custom ones) are kept
+        cloned_options = deepcopy(options)
         # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
-        cloned_options: dict[str, Any] = {
-            "allow_multiple_tool_calls": False,
-            "frequency_penalty": options.get("frequency_penalty"),
-            "instructions": options.get("instructions"),
-            "logit_bias": dict(logit_bias) if logit_bias else None,
-            "max_tokens": options.get("max_tokens"),
-            "metadata": dict(metadata) if metadata else None,
-            "model_id": options.get("model_id"),
-            "presence_penalty": options.get("presence_penalty"),
-            "response_format": options.get("response_format"),
-            "seed": options.get("seed"),
-            "stop": options.get("stop"),
-            "store": options.get("store"),
-            "temperature": options.get("temperature"),
-            "tool_choice": options.get("tool_choice"),
-            "tools": all_tools if all_tools else None,
-            "top_p": options.get("top_p"),
-            "user": options.get("user"),
-        }
+        cloned_options["allow_multiple_tool_calls"] = False
+        cloned_options["tools"] = new_tools
+
+        # restore the original tools, in case they are shared between agents
+        options["tools"] = tools_from_options
 
         return Agent(
             client=agent.client,
@@ -307,8 +295,9 @@ class HandoffAgentExecutor(AgentExecutor):
             name=agent.name,
             description=agent.description,
             context_providers=agent.context_providers,
-            middleware=middleware,
-            default_options=cloned_options,  # type: ignore[arg-type]
+            middleware=agent.middleware,
+            require_per_service_call_history_persistence=agent.require_per_service_call_history_persistence,
+            default_options=cloned_options,  # type: ignore[assignment]
         )
 
     def _apply_auto_tools(self, agent: Agent, targets: Sequence[HandoffConfiguration]) -> None:
@@ -324,7 +313,7 @@ class HandoffAgentExecutor(AgentExecutor):
         existing_tools = list(default_options.get("tools") or [])
         existing_names = {getattr(tool, "name", "") for tool in existing_tools if hasattr(tool, "name")}
 
-        new_tools: list[FunctionTool[Any]] = []
+        new_tools: list[FunctionTool] = []
         for target in targets:
             handoff_tool = self._create_handoff_tool(target.target_id, target.description)
             if handoff_tool.name in existing_names:
@@ -340,7 +329,7 @@ class HandoffAgentExecutor(AgentExecutor):
         else:
             default_options["tools"] = existing_tools
 
-    def _create_handoff_tool(self, target_id: str, description: str | None = None) -> FunctionTool[Any]:
+    def _create_handoff_tool(self, target_id: str, description: str | None = None) -> FunctionTool:
         """Construct the synthetic handoff tool that signals routing to `target_id`."""
         tool_name = get_handoff_tool_name(target_id)
         doc = description or f"Handoff to the {target_id} agent."
@@ -351,37 +340,36 @@ class HandoffAgentExecutor(AgentExecutor):
         # results, so the function body never actually runs in practice.
 
         @tool(name=tool_name, description=doc, approval_mode="never_require")
-        def _handoff_tool(context: str | None = None) -> str:
-            """Return a deterministic acknowledgement that encodes the target alias."""
-            return f"Handoff to {target_id}"
+        def _handoff_tool() -> None:
+            """This function will be intercepted by the auto-handoff middleware thus the body will never execute."""
+            pass
 
         return _handoff_tool
 
     @override
-    async def _run_agent_and_emit(
-        self, ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate]
-    ) -> None:
+    async def _run_agent_and_emit(self, ctx: WorkflowContext[Any, Any]) -> None:
         """Override to support handoff."""
         # When the full conversation is empty, it means this is the first run.
         # Broadcast the initial cache to all other agents. Subsequent runs won't
         # need this since responses are broadcast after each agent run and user input.
         if self._is_start_agent and not self._full_conversation:
-            await self._broadcast_messages(self._cache.copy(), cast(WorkflowContext[AgentExecutorRequest], ctx))
+            await self._broadcast_messages(self._cache.copy(), ctx)
 
-        # Append the cache to the full conversation history
-        self._full_conversation.extend(self._cache)
+        # Full conversation maintains the chat history between agents across handoffs,
+        # excluding internal agent messages such as tool calls and results.
+        self._full_conversation.extend(self._cache.copy())
 
         # Check termination condition before running the agent
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
+        if await self._should_terminate():
             return
 
         # Run the agent
         if ctx.is_streaming():
             # Streaming mode: emit incremental updates
-            response = await self._run_agent_streaming(cast(WorkflowContext[Never, AgentResponseUpdate], ctx))
+            response = await self._run_agent_streaming(ctx)
         else:
             # Non-streaming mode: use run() and emit single event
-            response = await self._run_agent(cast(WorkflowContext[Never, AgentResponse], ctx))
+            response = await self._run_agent(ctx)
 
         # Clear the cache after running the agent
         self._cache.clear()
@@ -394,28 +382,43 @@ class HandoffAgentExecutor(AgentExecutor):
 
         # Remove function call related content from the agent response for full conversation history
         cleaned_response = clean_conversation_for_handoff(response.messages)
+
         # Append the agent response to the full conversation history. This list removes
         # function call related content such that the result stays consistent regardless
-        # of which agent yields the final output.
+        # of which agent yields Workflow Output.
         self._full_conversation.extend(cleaned_response)
-        # Broadcast the cleaned response to all other agents
-        await self._broadcast_messages(cleaned_response, cast(WorkflowContext[AgentExecutorRequest], ctx))
+
+        # Broadcast only the cleaned response to other agents (without function_calls/results)
+        await self._broadcast_messages(cleaned_response, ctx)
 
         # Check if a handoff was requested
-        if handoff_target := self._is_handoff_requested(response):
+        if is_handoff_requested := self._is_handoff_requested(response):
+            handoff_target, handoff_message = is_handoff_requested
             if handoff_target not in self._handoff_targets:
                 raise ValueError(
                     f"Agent '{resolve_agent_id(self._agent)}' attempted to handoff to unknown "
                     f"target '{handoff_target}'. Valid targets are: {', '.join(self._handoff_targets)}"
                 )
 
-            await cast(WorkflowContext[AgentExecutorRequest], ctx).send_message(
-                AgentExecutorRequest(messages=[], should_respond=True), target_id=handoff_target
+            # Add the handoff message to the cache so that the next invocation of the agent includes
+            # the tool call result. This is necessary because each tool call must have a corresponding
+            # tool result.
+            self._cache.append(handoff_message)
+
+            await ctx.send_message(
+                AgentExecutorRequest(messages=[], should_respond=True),
+                target_id=handoff_target,
             )
             await ctx.add_event(
                 WorkflowEvent("handoff_sent", data=HandoffSentEvent(source=self.id, target=handoff_target))
             )
             self._autonomous_mode_turns = 0  # Reset autonomous mode turn counter on handoff
+            return
+
+        # Re-evaluate termination after appending and broadcasting this response.
+        # Without this check, workflows that become terminal due to the latest assistant
+        # message would still emit request_info and require an unnecessary extra resume.
+        if await self._should_terminate():
             return
 
         # Handle case where no handoff was requested
@@ -424,7 +427,7 @@ class HandoffAgentExecutor(AgentExecutor):
             # or a termination condition is met.
             # This allows the agent to perform long-running tasks without returning control
             # to the coordinator or user prematurely.
-            self._cache.extend([Message(role="user", text=self._autonomous_mode_prompt)])
+            self._cache.extend([Message(role="user", contents=[self._autonomous_mode_prompt])])
             self._autonomous_mode_turns += 1
             await self._run_agent_and_emit(ctx)
         else:
@@ -437,7 +440,7 @@ class HandoffAgentExecutor(AgentExecutor):
         self,
         original_request: HandoffAgentUserRequest,
         response: list[Message],
-        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse],
+        ctx: WorkflowContext[Any, Any],
     ) -> None:
         """Handle user response for a request that is issued after agent runs.
 
@@ -452,25 +455,23 @@ class HandoffAgentExecutor(AgentExecutor):
             response: The user's response messages
             ctx: The workflow context
 
-        If the response is empty, it indicates termination of the handoff workflow.
+        If the response is empty, the handoff workflow terminates. Per-agent responses
+        already surfaced as `output` events; no terminal yield is needed.
         """
         if not response:
-            await cast(WorkflowContext[Never, list[Message]], ctx).yield_output(self._full_conversation)
             return
 
         # Broadcast the user response to all other agents
-        await self._broadcast_messages(response, cast(WorkflowContext[AgentExecutorRequest], ctx))
+        await self._broadcast_messages(response, ctx)
 
         # Append the user response messages to the cache
         self._cache.extend(response)
-        await self._run_agent_and_emit(
-            cast(WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate], ctx)
-        )
+        await self._run_agent_and_emit(ctx)
 
     async def _broadcast_messages(
         self,
         messages: list[Message],
-        ctx: WorkflowContext[AgentExecutorRequest],
+        ctx: WorkflowContext[Any, Any],
     ) -> None:
         """Broadcast the workflow cache to the agent before running."""
         agent_executor_request = AgentExecutorRequest(
@@ -480,12 +481,25 @@ class HandoffAgentExecutor(AgentExecutor):
         # Since all agents are connected via fan-out, we can directly send the message
         await ctx.send_message(agent_executor_request)
 
-    def _is_handoff_requested(self, response: AgentResponse) -> str | None:
+    def _is_handoff_requested(self, response: AgentResponse) -> tuple[str, Message] | None:
         """Determine if the agent response includes a handoff request.
 
         If a handoff tool is invoked, the middleware will short-circuit execution
         and provide a synthetic result that includes the target agent ID. The message
         that contains the function result will be the last message in the response.
+
+        Args:
+            response: The AgentResponse to inspect for handoff requests
+
+        Returns:
+            A tuple of (target_agent_id, message) if a handoff is requested, or None if no handoff is requested
+
+        Note:
+            The returned message is the full message that contains the handoff function result content. This is
+            needed to complete the agent's chat history due to the `_AutoHandoffMiddleware` short-circuiting
+            behavior, which prevents the handoff tool call and result from being included in the agent response
+            messages. By returning the full message, we can ensure the agent's chat history remains valid with
+            a function result for the handoff tool call.
         """
         if not response.messages:
             return None
@@ -493,24 +507,33 @@ class HandoffAgentExecutor(AgentExecutor):
         last_message = response.messages[-1]
         for content in last_message.contents:
             if content.type == "function_result":
-                # Use string comparison instead of isinstance to improve performance
-                if content.result and isinstance(content.result, dict):
-                    handoff_target = content.result.get(HANDOFF_FUNCTION_RESULT_KEY)  # type: ignore
+                payload = content.result
+                parsed_payload: dict[str, Any] | None = None
+                if isinstance(payload, Mapping):
+                    parsed_payload = {key: value for key, value in payload.items() if isinstance(key, str)}  # pyright: ignore[reportUnknownVariableType]
+                elif isinstance(payload, str):
+                    try:
+                        maybe_payload = json.loads(payload)
+                    except json.JSONDecodeError:
+                        maybe_payload = None
+                    if isinstance(maybe_payload, Mapping):
+                        parsed_payload = {key: value for key, value in maybe_payload.items() if isinstance(key, str)}  # pyright: ignore[reportUnknownVariableType]
+
+                if parsed_payload:
+                    handoff_target = parsed_payload.get(HANDOFF_FUNCTION_RESULT_KEY)
                     if isinstance(handoff_target, str):
-                        return handoff_target
+                        return handoff_target, last_message
             else:
                 continue
 
         return None
 
-    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Never, list[Message]]) -> bool:
-        """Check termination conditions and yield completion if met.
+    async def _should_terminate(self) -> bool:
+        """Pure predicate: return True iff the configured termination condition is satisfied.
 
-        Args:
-            ctx: Workflow context for yielding output
-
-        Returns:
-            True if termination condition met and output yielded, False otherwise
+        Per-agent responses already surface as `output` events as agents speak, so the
+        handoff workflow has no terminal yield to make — this method only decides whether
+        the workflow should stop iterating.
         """
         if self._termination_condition is None:
             return False
@@ -518,12 +541,7 @@ class HandoffAgentExecutor(AgentExecutor):
         terminated = self._termination_condition(self._full_conversation)
         if inspect.isawaitable(terminated):
             terminated = await terminated
-
-        if terminated:
-            await ctx.yield_output(self._full_conversation)
-            return True
-
-        return False
+        return bool(terminated)
 
     @override
     async def on_checkpoint_save(self) -> dict[str, Any]:
@@ -555,26 +573,32 @@ class HandoffBuilder:
     approach to multi-agent collaboration. Handoffs can be configured using `.add_handoff`. If
     none are specified, all agents can hand off to all others by default (making a mesh topology).
 
-    Participants must be agents. Support for custom executors is not available in handoff workflows.
+    Participants must be ``Agent`` instances. ``SupportsAgentRun`` protocol implementors that
+    are not ``Agent`` subclasses are not supported because handoff workflows require cloning,
+    tool injection, and middleware — capabilities only available on ``Agent``.
 
     Outputs:
-    The final conversation history as a list of Message once the group chat completes.
+    Each agent's response surfaces as a workflow `output` event as it speaks; there is no
+    synthetic terminal event. Consumers iterating events see per-agent ``AgentResponse`` (or
+    ``AgentResponseUpdate`` while streaming) in conversation order. The workflow returns to
+    idle once the termination condition is met (or the user terminates an interactive run).
 
     Note:
-    1. Agents in handoff workflows must be Agent instances and support local tool calls.
-    2. Handoff doesn't support intermediate outputs from agents. All outputs are returned as
-       they become available. This is because agents in handoff workflows are not considered
-       sub-agents of a central orchestrator, thus all outputs are directly emitted.
+    1. Agents in handoff workflows must be ``Agent`` instances and support local tool calls.
+    2. Because each agent's response is itself Workflow Output, handoff has no separate
+       "intermediate outputs" channel — every per-agent response is the primary output.
     """
 
     def __init__(
         self,
         *,
         name: str | None = None,
-        participants: Sequence[SupportsAgentRun] | None = None,
+        participants: Sequence[Agent] | None = None,
         description: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         termination_condition: TerminationCondition | None = None,
+        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
+        intermediate_output_from: _ParticipantIntermediateOutputSelection = None,
     ) -> None:
         r"""Initialize a HandoffBuilder for creating conversational handoff workflows.
 
@@ -588,7 +612,7 @@ class HandoffBuilder:
         Args:
             name: Optional workflow identifier used in logging and debugging.
                   If not provided, a default name will be generated.
-            participants: Optional list of agents that will participate in the handoff workflow.
+            participants: Optional list of ``Agent`` instances that will participate in the handoff workflow.
                           You can also call `.participants([...])` later. Each participant must have a
                           unique identifier (`.name` is preferred if set, otherwise `.id` is used).
             description: Optional human-readable description explaining the workflow's
@@ -596,12 +620,18 @@ class HandoffBuilder:
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
             termination_condition: Optional callable that receives the full conversation and returns True
                 (or awaitable True) if the workflow should terminate.
+            output_from: Optional participant names or instances whose ``yield_output`` calls
+                surface as workflow ``output`` events. Defaults to all participants; pass ``"all"`` to select every
+                participant explicitly.
+            intermediate_output_from: Optional participant names or instances whose ``yield_output`` calls
+                surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
+                not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
         self._name = name
         self._description = description
 
         # Participant related members
-        self._participants: dict[str, SupportsAgentRun] = {}
+        self._participants: dict[str, Agent] = {}
         self._start_id: str | None = None
 
         if participants:
@@ -621,12 +651,14 @@ class HandoffBuilder:
 
         # Termination related members
         self._termination_condition: Callable[[list[Message]], bool | Awaitable[bool]] | None = termination_condition
+        self._output_from = _coalesce_output_from(output_from=output_from)
+        self._intermediate_output_from = _coerce_intermediate_output_from(intermediate_output_from)
 
-    def participants(self, participants: Sequence[SupportsAgentRun]) -> "HandoffBuilder":
+    def participants(self, participants: Sequence[Agent]) -> "HandoffBuilder":
         """Register the agents that will participate in the handoff workflow.
 
         Args:
-            participants: Sequence of SupportsAgentRun instances. Each must have a unique identifier.
+            participants: Sequence of ``Agent`` instances. Each must have a unique identifier.
                 (`.name` is preferred if set, otherwise `.id` is used).
 
         Returns:
@@ -635,7 +667,7 @@ class HandoffBuilder:
         Raises:
             ValueError: If participants is empty, contains duplicates, or `.participants()`
                         has already been called.
-            TypeError: If participants are not SupportsAgentRun instances.
+            TypeError: If participants are not ``Agent`` instances.
 
         Example:
 
@@ -658,14 +690,15 @@ class HandoffBuilder:
         if not participants:
             raise ValueError("participants cannot be empty")
 
-        named: dict[str, SupportsAgentRun] = {}
+        named: dict[str, Agent] = {}
         for participant in participants:
-            if isinstance(participant, SupportsAgentRun):
-                resolved_id = self._resolve_to_id(participant)
-            else:
+            if not isinstance(participant, Agent):
                 raise TypeError(
-                    f"Participants must be SupportsAgentRun or Executor instances. Got {type(participant).__name__}."
+                    f"Participants must be Agent instances. Got {type(participant).__name__}. "
+                    "Handoff workflows require Agent because they rely on cloning, tool injection, "
+                    "and middleware capabilities."
                 )
+            resolved_id = self._resolve_to_id(participant)
 
             if resolved_id in named:
                 raise ValueError(f"Duplicate participant name '{resolved_id}' detected")
@@ -677,8 +710,8 @@ class HandoffBuilder:
 
     def add_handoff(
         self,
-        source: SupportsAgentRun,
-        targets: Sequence[SupportsAgentRun],
+        source: Agent,
+        targets: Sequence[Agent],
         *,
         description: str | None = None,
     ) -> "HandoffBuilder":
@@ -759,7 +792,7 @@ class HandoffBuilder:
 
         return self
 
-    def with_start_agent(self, agent: SupportsAgentRun) -> "HandoffBuilder":
+    def with_start_agent(self, agent: Agent) -> "HandoffBuilder":
         """Set the agent that will initiate the handoff workflow.
 
         If not specified, the first registered participant will be used as the starting agent.
@@ -783,7 +816,7 @@ class HandoffBuilder:
     def with_autonomous_mode(
         self,
         *,
-        agents: Sequence[SupportsAgentRun] | Sequence[str] | None = None,
+        agents: Sequence[Agent] | Sequence[str] | None = None,
         prompts: dict[str, str] | None = None,
         turn_limits: dict[str, int] | None = None,
     ) -> "HandoffBuilder":
@@ -797,7 +830,7 @@ class HandoffBuilder:
         Args:
             agents: Optional list of agents to enable autonomous mode for. Can be:
                     - Factory names (str): If using participant factories
-                    - SupportsAgentRun instances: The actual agent objects
+                    - SupportsAgentRun / Agent instances: The actual agent objects
                     - If not provided, all agents will operate in autonomous mode.
             prompts: Optional mapping of agent identifiers/factory names to custom prompts to use when continuing
                      in autonomous mode. If not provided, a default prompt will be used.
@@ -911,6 +944,25 @@ class HandoffBuilder:
         # Resolve agents (either from instances or factories)
         # The returned map keys are either executor IDs or factory names, which is need to resolve handoff configs
         resolved_agents = self._resolve_agents()
+
+        # Validate that all agents have require_per_service_call_history_persistence enabled.
+        # Handoff workflows use middleware that short-circuits tool calls (MiddlewareTermination),
+        # which means the service never sees those tool results. Without per-service-call
+        # history persistence, local history providers would persist tool results that
+        # the service has no record of, causing call/result mismatches on subsequent turns.
+        agents_missing_flag = [
+            resolve_agent_id(agent)
+            for agent in resolved_agents.values()
+            if not agent.require_per_service_call_history_persistence
+        ]
+        if agents_missing_flag:
+            raise ValueError(
+                f"Handoff workflows require all participant agents to have "
+                f"'require_per_service_call_history_persistence=True'. "
+                f"The following agents are missing this setting: {', '.join(agents_missing_flag)}. "
+                f"Set this flag when constructing each Agent to ensure local history stays "
+                f"consistent with the service across handoff tool-call short-circuits."
+            )
         # Resolve handoff configurations to use agent display names
         # The returned map keys are executor IDs
         resolved_handoffs = self._resolve_handoffs(resolved_agents)
@@ -921,11 +973,22 @@ class HandoffBuilder:
         if self._start_id is None:
             raise ValueError("Must call with_start_agent(...) before building the workflow.")
         start_executor = executors[self._resolve_to_id(resolved_agents[self._start_id])]
+        # Handoff has no separate terminator: every participant's reply is a primary
+        # output by default. Explicit participant designation can narrow or reclassify
+        # selected speakers.
+        output, intermediate_output = _resolve_participant_output_config(
+            participants=list(executors.values()),
+            output_from=self._output_from,
+            intermediate_output_from=self._intermediate_output_from,
+            default_output_from=list(executors.values()),
+        )
         builder = WorkflowBuilder(
             name=self._name,
             description=self._description,
             start_executor=start_executor,
             checkpoint_storage=self._checkpoint_storage,
+            output_from=output,
+            intermediate_output_from=intermediate_output,
         )
 
         # Add the appropriate edges
@@ -946,22 +1009,22 @@ class HandoffBuilder:
 
     # region Internal Helper Methods
 
-    def _resolve_agents(self) -> dict[str, SupportsAgentRun]:
+    def _resolve_agents(self) -> dict[str, Agent]:
         """Resolve participant instances into agent instances.
 
         Returns:
-            Map of executor IDs to `SupportsAgentRun` instances
+            Map of executor IDs to ``Agent`` instances
         """
         if not self._participants:
             raise ValueError("No participants provided. Call .participants() first.")
 
         return self._participants
 
-    def _resolve_handoffs(self, agents: dict[str, SupportsAgentRun]) -> dict[str, list[HandoffConfiguration]]:
+    def _resolve_handoffs(self, agents: dict[str, Agent]) -> dict[str, list[HandoffConfiguration]]:
         """Resolve handoff configurations to executor IDs.
 
         Args:
-            agents: Map of agent IDs to `SupportsAgentRun` instances
+            agents: Map of agent IDs to ``Agent`` instances
 
         Returns:
             Map of executor IDs to list of HandoffConfiguration instances
@@ -1008,13 +1071,13 @@ class HandoffBuilder:
 
     def _resolve_executors(
         self,
-        agents: dict[str, SupportsAgentRun],
+        agents: dict[str, Agent],
         handoffs: dict[str, list[HandoffConfiguration]],
     ) -> dict[str, HandoffAgentExecutor]:
         """Resolve agents into HandoffAgentExecutors.
 
         Args:
-            agents: Map of agent IDs to `SupportsAgentRun` instances
+            agents: Map of agent IDs to ``Agent`` instances
             handoffs: Map of executor IDs to list of HandoffConfiguration instances
 
         Returns:
