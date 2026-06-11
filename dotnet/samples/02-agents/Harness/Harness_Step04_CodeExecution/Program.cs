@@ -27,8 +27,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hyperlight;
 using Microsoft.Extensions.AI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4";
 
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
@@ -78,6 +78,9 @@ var instructions =
     - If applicable, save final results to file memory.
     """;
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Create the agent with ALL HarnessAgent features enabled plus Hyperlight CodeAct.
 // No Disable* flags are set — TodoProvider, AgentModeProvider, FileMemory, FileAccess,
 // ToolApproval, WebSearch, and AgentSkillsProvider are all active.

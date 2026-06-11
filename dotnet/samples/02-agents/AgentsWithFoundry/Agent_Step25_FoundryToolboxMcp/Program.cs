@@ -24,9 +24,9 @@ using OpenAI.Responses;
 const string ToolboxName = "research_toolbox";
 const string Query = "What tools do you have access to?";
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 TokenCredential credential = new DefaultAzureCredential();
 

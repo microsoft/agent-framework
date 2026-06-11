@@ -231,18 +231,19 @@ class ScopedContentProcessor:
         cached_ps_resp = await self._cache.get(cache_key)
 
         if cached_ps_resp is not None and isinstance(cached_ps_resp, ProtectionScopesResponse):
-            ps_resp = cached_ps_resp
-        else:
-            ttl = self._settings.get("cache_ttl_seconds")
-            ttl_seconds = ttl if ttl is not None else 14400
-            try:
-                ps_resp = await self._client.get_protection_scopes(ps_req)
-                await self._cache.set(cache_key, ps_resp, ttl_seconds=ttl_seconds)
-            except PurviewPaymentRequiredError as ex:
-                # Cache the exception at tenant level so all subsequent requests for this tenant fail fast
-                await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=ttl_seconds)
-                raise
+            return await self._process_with_cached_scopes(pc_request, cached_ps_resp, cache_key)
 
+        task = asyncio.create_task(self._refresh_protection_scopes_background(ps_req, cache_key, pc_request))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return await self._call_process_content(pc_request, cache_key, dlp_actions=[])
+
+    async def _process_with_cached_scopes(
+        self,
+        pc_request: ProcessContentRequest,
+        ps_resp: ProtectionScopesResponse,
+        cache_key: str,
+    ) -> ProcessContentResponse:
         if ps_resp.scope_identifier:
             pc_request.scope_identifier = ps_resp.scope_identifier
 
@@ -259,13 +260,7 @@ class ScopedContentProcessor:
                 task.add_done_callback(self._background_tasks.discard)
                 return ProcessContentResponse(id="204", correlation_id=pc_request.correlation_id)
 
-            pc_resp = await self._client.process_content(pc_request)
-
-            if pc_request.scope_identifier and pc_resp.protection_scope_state == ProtectionScopeState.MODIFIED:
-                await self._cache.remove(cache_key)
-
-            pc_resp.policy_actions = self._combine_policy_actions(pc_resp.policy_actions, dlp_actions)
-            return pc_resp
+            return await self._call_process_content(pc_request, cache_key, dlp_actions=dlp_actions)
 
         # No applicable scopes - send content activities in background
         ca_req = ContentActivitiesRequest(
@@ -281,12 +276,52 @@ class ScopedContentProcessor:
         # Respond with HttpStatusCode 204(No Content)
         return ProcessContentResponse(id="204", correlation_id=pc_request.correlation_id)
 
+    async def _call_process_content(
+        self,
+        pc_request: ProcessContentRequest,
+        cache_key: str,
+        dlp_actions: list[DlpActionInfo],
+    ) -> ProcessContentResponse:
+        pc_resp = await self._client.process_content(pc_request)
+
+        if pc_request.scope_identifier and pc_resp.protection_scope_state == ProtectionScopeState.MODIFIED:
+            await self._cache.remove(cache_key)
+
+        if dlp_actions:
+            pc_resp.policy_actions = self._combine_policy_actions(pc_resp.policy_actions, dlp_actions)
+        return pc_resp
+
+    async def _refresh_protection_scopes_background(
+        self, ps_req: ProtectionScopesRequest, cache_key: str, pc_request: ProcessContentRequest
+    ) -> None:
+        """Fetch protection scopes and warm the cache without blocking the foreground call."""
+        ttl = self._settings.get("cache_ttl_seconds")
+        ttl_seconds = ttl if ttl is not None else 14400
+        try:
+            ps_resp = await self._client.get_protection_scopes(ps_req)
+            await self._cache.set(cache_key, ps_resp, ttl_seconds=ttl_seconds)
+            should_process, _, _ = self._check_applicable_scopes(pc_request, ps_resp)
+            if not should_process:
+                ca_req = ContentActivitiesRequest(
+                    user_id=pc_request.user_id,
+                    tenant_id=pc_request.tenant_id,
+                    content_to_process=pc_request.content_to_process,
+                    correlation_id=pc_request.correlation_id,
+                )
+                await self._send_content_activities_background(ca_req)
+        except PurviewPaymentRequiredError as ex:
+            tenant_payment_cache_key = f"purview:payment_required:{ps_req.tenant_id}"
+            await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=ttl_seconds)
+            logger.warning("Background protection scopes refresh failed with payment required: %s", ex)
+        except Exception as ex:
+            logger.warning("Background protection scopes refresh failed: %s", ex)
+
     async def _process_content_background(self, pc_request: ProcessContentRequest, cache_key: str) -> None:
         """Process content in background for offline execution mode."""
         try:
             pc_resp = await self._client.process_content(pc_request)
 
-            # If protection scope state is modified, make another PC request and invalidate cache
+            # If protection scopes changed, invalidate cache and retry once.
             if pc_request.scope_identifier and pc_resp.protection_scope_state == ProtectionScopeState.MODIFIED:
                 await self._cache.remove(cache_key)
                 await self._client.process_content(pc_request)
@@ -306,14 +341,10 @@ class ScopedContentProcessor:
     def _combine_policy_actions(
         existing: list[DlpActionInfo] | None, new_actions: list[DlpActionInfo]
     ) -> list[DlpActionInfo]:
-        by_key: dict[str, DlpActionInfo] = {}
-        for a in existing or []:
-            if a.action:
-                by_key[a.action] = a
-        for a in new_actions:
-            if a.action:
-                by_key[a.action] = a
-        return list(by_key.values())
+        combined: dict[tuple[DlpAction | None, RestrictionAction | None], DlpActionInfo] = {}
+        for action_info in (existing or []) + new_actions:
+            combined.setdefault((action_info.action, action_info.restriction_action), action_info)
+        return list(combined.values())
 
     @staticmethod
     def _check_applicable_scopes(

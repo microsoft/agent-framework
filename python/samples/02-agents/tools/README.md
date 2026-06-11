@@ -22,6 +22,7 @@ injection, and dynamic (progressive) tool exposure.
 |------|--------------|
 | [`function_tool_with_approval.py`](function_tool_with_approval.py) | Requiring human approval before a tool runs. |
 | [`function_tool_with_approval_and_sessions.py`](function_tool_with_approval_and_sessions.py) | Tool approvals combined with sessions. |
+| [`tool_approval_middleware.py`](tool_approval_middleware.py) | Session-backed approval coordination, mixed-batch approvals, and "always approve" rules. |
 | [`function_invocation_configuration.py`](function_invocation_configuration.py) | Configuring function-invocation settings (e.g. max iterations). |
 | [`control_total_tool_executions.py`](control_total_tool_executions.py) | All the ways to cap how many times tools run. |
 | [`function_tool_with_max_invocations.py`](function_tool_with_max_invocations.py) | Limiting the number of invocations per tool. |

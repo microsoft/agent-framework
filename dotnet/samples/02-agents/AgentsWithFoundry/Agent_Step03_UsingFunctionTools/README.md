@@ -16,15 +16,15 @@ Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (for Azure credential authentication)
+- An authenticated Azure identity (for example, sign in with `az login`)
 
-**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Microsoft Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+**Note**: This sample uses `DefaultAzureCredential`. `az login` is the easiest local development path, but Visual Studio, VS Code, and managed identity credentials also work when available.
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-5.4-mini"
 ```
 
 ## Run the sample

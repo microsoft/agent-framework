@@ -1,4 +1,4 @@
-# Agent Step 00 - FoundryAgent Lifecycle
+﻿# Agent Step 00 - FoundryAgent Lifecycle
 
 This sample demonstrates the full lifecycle of a `FoundryAgent` backed by a server-side versioned agent in Microsoft Foundry: create → run → delete.
 
@@ -6,14 +6,14 @@ This sample demonstrates the full lifecycle of a `FoundryAgent` backed by a serv
 
 - A Microsoft Foundry project endpoint
 - A model deployment name (defaults to `gpt-5.4-mini`)
-- Azure CLI installed and authenticated
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 ## Environment Variables
 
 | Variable | Description | Required |
 | --- | --- | --- |
-| `AZURE_AI_PROJECT_ENDPOINT` | Microsoft Foundry project endpoint | Yes |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment name | No (defaults to `gpt-5.4-mini`) |
+| `FOUNDRY_PROJECT_ENDPOINT` | Microsoft Foundry project endpoint | Yes |
+| `FOUNDRY_MODEL` | Model deployment name | No (defaults to `gpt-5.4-mini`) |
 
 ## Running the sample
 
