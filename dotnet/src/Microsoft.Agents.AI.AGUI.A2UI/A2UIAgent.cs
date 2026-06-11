@@ -36,6 +36,10 @@ namespace Microsoft.Agents.AI.AGUI.A2UI;
 /// </remarks>
 public sealed class A2UIAgent : DelegatingAIAgent
 {
+    // Bare acknowledgement returned as the inner render_a2ui tool result; the painted
+    // surface rides the streamed arguments, so the result only has to balance the call.
+    private const string RenderAcknowledgement = "{\"status\":\"rendered\"}";
+
     private readonly IChatClient _subagentChatClient;
     private readonly A2UIResolvedToolParams _parameters;
 
@@ -194,6 +198,7 @@ public sealed class A2UIAgent : DelegatingAIAgent
 
             string prompt = A2UIGenerationRecovery.AugmentPromptWithValidationErrors(prep.Prompt, lastErrors);
             JsonObject? renderArgs = null;
+            string? renderCallId = null;
             await foreach (ChatResponseUpdate update in this._subagentChatClient
                 .GetStreamingResponseAsync(BuildSubagentMessages(prompt, conversation), CreateSubagentOptions(), cancellationToken)
                 .ConfigureAwait(false))
@@ -201,14 +206,30 @@ public sealed class A2UIAgent : DelegatingAIAgent
                 foreach (AIContent content in update.Contents)
                 {
                     if (content is FunctionCallContent render &&
-                        string.Equals(render.Name, A2UIConstants.RenderA2UIToolName, StringComparison.Ordinal) &&
-                        render.Arguments is { } renderArguments)
+                        string.Equals(render.Name, A2UIConstants.RenderA2UIToolName, StringComparison.Ordinal))
                     {
-                        renderArgs = ToJsonObject(renderArguments);
+                        renderCallId ??= render.CallId;
+                        if (render.Arguments is { } renderArguments)
+                        {
+                            renderArgs = ToJsonObject(renderArguments);
+                        }
                     }
                 }
 
                 yield return new AgentResponseUpdate(update);
+            }
+
+            // The subagent's render_a2ui call is forwarded onto the wire so the hosting
+            // layer can paint its argument fragments progressively — but that means it
+            // becomes part of the persisted conversation. Emit a matching tool result so
+            // the assistant tool call is balanced; an unanswered tool call would make the
+            // next turn's history invalid (e.g. OpenAI rejects it). The painted surface
+            // comes from the streamed arguments, so this result is a bare acknowledgement.
+            if (renderCallId is not null)
+            {
+                yield return new AgentResponseUpdate(
+                    ChatRole.Tool,
+                    [new FunctionResultContent(renderCallId, ParseEnvelope(RenderAcknowledgement))]);
             }
 
             A2UIAttemptRecord record;

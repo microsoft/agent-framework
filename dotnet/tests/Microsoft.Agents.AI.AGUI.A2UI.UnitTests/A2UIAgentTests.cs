@@ -100,10 +100,17 @@ public sealed class A2UIAgentTests
             updates.SelectMany(u => u.Contents).OfType<FunctionCallContent>(),
             c => c.Name == A2UIConstants.RenderA2UIToolName);
 
+        // The forwarded render_a2ui call is balanced with a tool result so the persisted
+        // conversation stays valid for the next turn.
+        FunctionResultContent renderResult = Assert.Single(
+            updates.SelectMany(u => u.Contents).OfType<FunctionResultContent>(),
+            r => r.CallId == renderCall.CallId);
+        Assert.Equal("rendered", Assert.IsType<JsonElement>(renderResult.Result).GetProperty("status").GetString());
+
         // The generate call's result rides the stream as a valid operations envelope.
         FunctionResultContent result = Assert.Single(
-            updates.SelectMany(u => u.Contents).OfType<FunctionResultContent>());
-        Assert.Equal("call-g1", result.CallId);
+            updates.SelectMany(u => u.Contents).OfType<FunctionResultContent>(),
+            r => r.CallId == "call-g1");
         JsonElement envelope = Assert.IsType<JsonElement>(result.Result);
         Assert.True(envelope.TryGetProperty(A2UIConstants.A2UIOperationsKey, out JsonElement ops));
         Assert.Equal(3, ops.GetArrayLength());
@@ -145,14 +152,25 @@ public sealed class A2UIAgentTests
             updates.Add(update);
         }
 
-        // Assert: both attempts streamed (two visible render calls), and the final envelope
-        // is the valid second attempt.
-        Assert.Equal(2, updates
+        // Assert: both attempts streamed (two visible render calls), and every forwarded
+        // render call is balanced with its own tool result so the next turn's history is valid.
+        List<FunctionCallContent> renderCalls = updates
             .SelectMany(u => u.Contents)
             .OfType<FunctionCallContent>()
-            .Count(c => c.Name == A2UIConstants.RenderA2UIToolName));
-        FunctionResultContent result = Assert.Single(
-            updates.SelectMany(u => u.Contents).OfType<FunctionResultContent>());
+            .Where(c => c.Name == A2UIConstants.RenderA2UIToolName)
+            .ToList();
+        Assert.Equal(2, renderCalls.Count);
+        List<FunctionResultContent> resultContents = updates
+            .SelectMany(u => u.Contents)
+            .OfType<FunctionResultContent>()
+            .ToList();
+        foreach (FunctionCallContent renderCall in renderCalls)
+        {
+            Assert.Contains(resultContents, r => r.CallId == renderCall.CallId);
+        }
+
+        // The generate call's final envelope is the valid second attempt.
+        FunctionResultContent result = Assert.Single(resultContents, r => r.CallId == "call-g1");
         JsonElement envelope = Assert.IsType<JsonElement>(result.Result);
         Assert.True(envelope.TryGetProperty(A2UIConstants.A2UIOperationsKey, out _));
         Assert.False(envelope.TryGetProperty("code", out _));
