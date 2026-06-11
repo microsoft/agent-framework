@@ -403,45 +403,15 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             return null;
         }
 
-        if (arguments is IDictionary<string, object?> dict)
+        if (arguments is JsonElement jsonElement)
         {
-            return dict;
-        }
-
-        // Catch dictionary variants that don't match IDictionary<string, object?> due to
-        // generic invariance (e.g., IDictionary<string, object>, custom dictionary types).
-        if (arguments is System.Collections.IDictionary nonGenericDict)
-        {
-            var result = new Dictionary<string, object?>();
-            foreach (System.Collections.DictionaryEntry entry in nonGenericDict)
-            {
-                result[(string)entry.Key] = entry.Value;
-            }
-
-            return result;
-        }
-
-        var typeInfo = (JsonTypeInfo<Dictionary<string, object?>>)this._jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>));
-
-        if (arguments is string jsonString)
-        {
-            if (string.IsNullOrWhiteSpace(jsonString))
+            if (jsonElement.ValueKind == JsonValueKind.Null || jsonElement.ValueKind == JsonValueKind.Undefined)
             {
                 return null;
             }
 
-            try
-            {
-                return JsonSerializer.Deserialize(jsonString, typeInfo);
-            }
-            catch (JsonException)
-            {
-                return new Dictionary<string, object?> { ["value"] = jsonString };
-            }
-        }
+            var typeInfo = (JsonTypeInfo<Dictionary<string, object?>>)this._jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>));
 
-        if (arguments is JsonElement jsonElement)
-        {
             try
             {
                 return JsonSerializer.Deserialize(jsonElement.GetRawText(), typeInfo);
@@ -450,6 +420,11 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             {
                 return new Dictionary<string, object?> { ["value"] = jsonElement.ToString() };
             }
+        }
+
+        if (arguments is IDictionary<string, object?> dict)
+        {
+            return dict;
         }
 
         return new Dictionary<string, object?> { ["value"] = arguments.ToString() };
