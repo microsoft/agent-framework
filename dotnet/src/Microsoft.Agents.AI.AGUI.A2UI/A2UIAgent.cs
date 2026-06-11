@@ -75,7 +75,7 @@ public sealed class A2UIAgent : DelegatingAIAgent
     /// The cap on planner rounds (model turn → generation → result fed back) per run,
     /// guarding against a planner that keeps requesting surfaces without terminating.
     /// </summary>
-    private const int MaxPlannerRounds = 8;
+    internal const int MaxPlannerRounds = 8;
 
     /// <inheritdoc/>
     /// <remarks>
@@ -159,6 +159,20 @@ public sealed class A2UIAgent : DelegatingAIAgent
             pending = history;
             pendingSession = null;
         }
+
+        // The planner kept requesting generations through the round cap. Give it one final
+        // turn to consume the last tool result and narrate, with the generate tool withheld
+        // so it cannot request another surface — otherwise the run would end on an
+        // unanswered tool result with no closing assistant message.
+        chatOptions.Tools = (chatOptions.Tools ?? Enumerable.Empty<AITool>())
+            .Where(t => !string.Equals(t.Name, generateTool.Name, StringComparison.Ordinal))
+            .ToList();
+        await foreach (AgentResponseUpdate update in this.InnerAgent
+            .RunStreamingAsync(history, pendingSession, runOptions, cancellationToken)
+            .ConfigureAwait(false))
+        {
+            yield return update;
+        }
     }
 
     /// <summary>
@@ -197,27 +211,27 @@ public sealed class A2UIAgent : DelegatingAIAgent
             cancellationToken.ThrowIfCancellationRequested();
 
             string prompt = A2UIGenerationRecovery.AugmentPromptWithValidationErrors(prep.Prompt, lastErrors);
-            JsonObject? renderArgs = null;
-            string? renderCallId = null;
+
+            // Forward every update so the hosting layer can paint the render_a2ui argument
+            // fragments progressively, while accumulating them to coalesce the complete
+            // tool call afterward. Reading arguments off a single update is unsafe: a chat
+            // client may stream a tool call's arguments as fragments across updates, and
+            // only the coalesced response carries the full arguments (this mirrors the
+            // non-streaming path, which reads the already-coalesced ChatResponse).
+            List<ChatResponseUpdate> attemptUpdates = [];
             await foreach (ChatResponseUpdate update in this._subagentChatClient
                 .GetStreamingResponseAsync(BuildSubagentMessages(prompt, conversation), CreateSubagentOptions(), cancellationToken)
                 .ConfigureAwait(false))
             {
-                foreach (AIContent content in update.Contents)
-                {
-                    if (content is FunctionCallContent render &&
-                        string.Equals(render.Name, A2UIConstants.RenderA2UIToolName, StringComparison.Ordinal))
-                    {
-                        renderCallId ??= render.CallId;
-                        if (render.Arguments is { } renderArguments)
-                        {
-                            renderArgs = ToJsonObject(renderArguments);
-                        }
-                    }
-                }
-
+                attemptUpdates.Add(update);
                 yield return new AgentResponseUpdate(update);
             }
+
+            FunctionCallContent? renderCall = attemptUpdates.ToChatResponse().Messages
+                .SelectMany(m => m.Contents)
+                .OfType<FunctionCallContent>()
+                .FirstOrDefault(c => string.Equals(c.Name, A2UIConstants.RenderA2UIToolName, StringComparison.Ordinal));
+            JsonObject? renderArgs = renderCall?.Arguments is { } renderArguments ? ToJsonObject(renderArguments) : null;
 
             // The subagent's render_a2ui call is forwarded onto the wire so the hosting
             // layer can paint its argument fragments progressively — but that means it
@@ -225,35 +239,23 @@ public sealed class A2UIAgent : DelegatingAIAgent
             // the assistant tool call is balanced; an unanswered tool call would make the
             // next turn's history invalid (e.g. OpenAI rejects it). The painted surface
             // comes from the streamed arguments, so this result is a bare acknowledgement.
-            if (renderCallId is not null)
+            if (renderCall is not null)
             {
                 yield return new AgentResponseUpdate(
                     ChatRole.Tool,
-                    [new FunctionResultContent(renderCallId, ParseEnvelope(RenderAcknowledgement))]);
+                    [new FunctionResultContent(renderCall.CallId, ParseEnvelope(RenderAcknowledgement))]);
             }
 
-            A2UIAttemptRecord record;
-            if (renderArgs is null)
-            {
-                record = new A2UIAttemptRecord(attempt, Ok: false, [A2UIGenerationRecovery.NoToolCallError]);
-                attempts.Add(record);
-                this._parameters.OnAttempt?.Invoke(record);
-                lastErrors = record.Errors;
-                continue;
-            }
-
-            // The model output is untrusted: narrow components/data to the expected shapes.
-            JsonArray? components = renderArgs["components"] as JsonArray;
-            JsonObject? data = renderArgs["data"] as JsonObject;
-            A2UIValidationResult validation = A2UIComponentValidator.Validate(components, data, this._parameters.Catalog);
-            record = new A2UIAttemptRecord(attempt, validation.Valid, validation.Errors);
+            // Validation and attempt accounting are shared with the non-streaming recovery
+            // loop so the two paths cannot drift on attempt semantics.
+            A2UIAttemptRecord record = A2UIGenerationRecovery.ValidateAttempt(attempt, renderArgs, this._parameters.Catalog);
             attempts.Add(record);
             this._parameters.OnAttempt?.Invoke(record);
 
-            if (validation.Valid)
+            if (record.Ok)
             {
                 envelopeBox.Value = ParseEnvelope(A2UIToolkit.BuildA2UIEnvelope(
-                    renderArgs,
+                    renderArgs!,
                     prep.IsUpdate,
                     targetSurfaceId,
                     prep.Prior,
@@ -262,7 +264,7 @@ public sealed class A2UIAgent : DelegatingAIAgent
                 yield break;
             }
 
-            lastErrors = validation.Errors;
+            lastErrors = record.Errors;
         }
 
         envelopeBox.Value = ParseEnvelope(A2UIGenerationRecovery.WrapRecoveryExhaustedEnvelope(maxAttempts, attempts));

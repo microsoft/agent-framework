@@ -177,6 +177,105 @@ public sealed class A2UIAgentTests
     }
 
     [Fact]
+    public async Task RunStreamingAsync_SubagentNeverCallsTool_ReturnsRecoveryExhaustedEnvelopeAsync()
+    {
+        // Arrange: the subagent never calls render_a2ui, so every attempt fails.
+        int attempts = 0;
+        var inner = new ScriptedPlannerAgent(generateArguments: new() { ["intent"] = "create" });
+        var subagent = new ScriptedChatClient(_ => null);
+        var agent = new A2UIAgent(
+            inner,
+            subagent,
+            new A2UIToolParams { OnAttempt = _ => attempts++ });
+
+        // Act
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "show hotels")]))
+        {
+            updates.Add(update);
+        }
+
+        // Assert: OnAttempt fired once per attempt, and the generate result is the
+        // structured hard-failure envelope — matching the non-streaming path.
+        Assert.Equal(A2UIConstants.MaxA2UIAttempts, attempts);
+        FunctionResultContent result = Assert.Single(
+            updates.SelectMany(u => u.Contents).OfType<FunctionResultContent>(),
+            r => r.CallId == "call-g1");
+        JsonElement envelope = Assert.IsType<JsonElement>(result.Result);
+        Assert.Equal("a2ui_recovery_exhausted", envelope.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_UpdateWithPriorRenderInHistory_ReturnsInPlaceUpdateAsync()
+    {
+        // Arrange: a prior render envelope rides in a tool-result message, the way the
+        // persisted conversation carries it back on a later turn. The streaming update
+        // intent must find it through ToHistoryMessage + FindPriorSurface.
+        string priorEnvelope = A2UIToolkit.WrapAsOperationsEnvelope(
+        [
+            A2UIOperationBuilder.CreateSurface("s1", "https://example.test/catalog.json"),
+            A2UIOperationBuilder.UpdateComponents("s1", s_validRenderArgs["components"]!.AsArray()),
+        ]);
+        using JsonDocument priorDocument = JsonDocument.Parse(priorEnvelope);
+        var inner = new ScriptedPlannerAgent(generateArguments: new()
+        {
+            ["intent"] = "update",
+            ["target_surface_id"] = "s1",
+        });
+        var subagent = new ScriptedChatClient(_ => s_validRenderArgs) { StreamingChunks = 1 };
+        var agent = new A2UIAgent(inner, subagent);
+
+        // Act
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(
+        [
+            new ChatMessage(ChatRole.User, "show hotels"),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call-0", priorDocument.RootElement.Clone())]),
+            new ChatMessage(ChatRole.User, "make the cards bigger"),
+        ]))
+        {
+            updates.Add(update);
+        }
+
+        // Assert: an in-place update — no createSurface for the existing surface.
+        FunctionResultContent result = Assert.Single(
+            updates.SelectMany(u => u.Contents).OfType<FunctionResultContent>(),
+            r => r.CallId == "call-g1");
+        JsonElement envelope = Assert.IsType<JsonElement>(result.Result);
+        JsonElement ops = envelope.GetProperty(A2UIConstants.A2UIOperationsKey);
+        Assert.Equal(2, ops.GetArrayLength());
+        Assert.DoesNotContain(
+            ops.EnumerateArray(),
+            op => op.TryGetProperty("createSurface", out _));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_PlannerExhaustsRounds_ClosesWithGenerateToolWithheldAsync()
+    {
+        // Arrange: a planner that requests a generation every round, so the round cap is hit.
+        var inner = new ScriptedPlannerAgent(generateArguments: new() { ["intent"] = "create" })
+        {
+            AlwaysGenerate = true,
+        };
+        var subagent = new ScriptedChatClient(_ => s_validRenderArgs) { StreamingChunks = 1 };
+        var agent = new A2UIAgent(inner, subagent);
+
+        // Act
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "show hotels")]))
+        {
+            updates.Add(update);
+        }
+
+        // Assert: one final planner turn beyond the cap, and that final turn had the
+        // generate tool withheld so the planner could only narrate (no dangling tool result).
+        Assert.Equal(A2UIAgent.MaxPlannerRounds + 1, inner.Runs.Count);
+        IReadOnlyList<string> finalTurnTools = inner.ToolsPerRun[^1];
+        Assert.DoesNotContain(A2UIConstants.GenerateA2UIToolName, finalTurnTools);
+        Assert.Contains(updates, u => u.Text == "done");
+    }
+
+    [Fact]
     public async Task RunAsync_CustomToolName_IsHonoredAsync()
     {
         // Arrange
@@ -555,7 +654,13 @@ public sealed class A2UIAgentTests
         public ScriptedPlannerAgent(Dictionary<string, object?> generateArguments)
             => this._generateArguments = generateArguments;
 
+        /// <summary>When set, emit a <c>generate_a2ui</c> call on every run instead of narrating after the first.</summary>
+        public bool AlwaysGenerate { get; init; }
+
         public List<IReadOnlyList<ChatMessage>> Runs { get; } = [];
+
+        /// <summary>The tool names advertised on each run, in order.</summary>
+        public List<IReadOnlyList<string>> ToolsPerRun { get; } = [];
 
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
@@ -572,11 +677,16 @@ public sealed class A2UIAgentTests
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             this.Runs.Add(messages.ToList());
-            if (this.Runs.Count == 1)
+            this.ToolsPerRun.Add((options as ChatClientAgentRunOptions)?.ChatOptions?.Tools?.Select(t => t.Name).ToList() ?? []);
+
+            // A generate_a2ui call is only possible when the tool is still advertised; once
+            // the agent withholds it (the round-cap final turn), fall back to narration.
+            bool generateAdvertised = this.ToolsPerRun[^1].Contains(A2UIConstants.GenerateA2UIToolName);
+            if (generateAdvertised && (this.AlwaysGenerate || this.Runs.Count == 1))
             {
                 yield return new AgentResponseUpdate(ChatRole.Assistant,
                 [
-                    new FunctionCallContent("call-g1", A2UIConstants.GenerateA2UIToolName, this._generateArguments),
+                    new FunctionCallContent($"call-g{this.Runs.Count}", A2UIConstants.GenerateA2UIToolName, this._generateArguments),
                 ]);
             }
             else

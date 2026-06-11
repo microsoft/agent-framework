@@ -125,33 +125,43 @@ public static class A2UIGenerationRecovery
             string prompt = AugmentPromptWithValidationErrors(basePrompt, lastErrors);
             JsonObject? args = await invokeSubagentAsync(prompt, attempt, cancellationToken).ConfigureAwait(false);
 
-            A2UIAttemptRecord record;
-            if (args is null)
-            {
-                record = new A2UIAttemptRecord(attempt, Ok: false, [NoToolCallError]);
-                attempts.Add(record);
-                onAttempt?.Invoke(record);
-                lastErrors = record.Errors;
-                continue;
-            }
-
-            // The model output is untrusted: narrow components/data to the expected shapes.
-            JsonArray? components = args["components"] as JsonArray;
-            JsonObject? data = args["data"] as JsonObject;
-            A2UIValidationResult result = A2UIComponentValidator.Validate(components, data, catalog);
-            record = new A2UIAttemptRecord(attempt, result.Valid, result.Errors);
+            A2UIAttemptRecord record = ValidateAttempt(attempt, args, catalog);
             attempts.Add(record);
             onAttempt?.Invoke(record);
 
-            if (result.Valid)
+            if (record.Ok)
             {
-                return new A2UIRecoveryResult(buildEnvelope(args), attempts, Ok: true);
+                return new A2UIRecoveryResult(buildEnvelope(args!), attempts, Ok: true);
             }
 
-            lastErrors = result.Errors;
+            lastErrors = record.Errors;
         }
 
         return new A2UIRecoveryResult(WrapRecoveryExhaustedEnvelope(maxAttempts, attempts), attempts, Ok: false);
+    }
+
+    /// <summary>
+    /// Validates one attempt's structured <c>render_a2ui</c> arguments, narrowing the
+    /// untrusted model output to the expected component/data shapes. A <see langword="null"/>
+    /// <paramref name="args"/> (the subagent did not call the tool) is a failed, retryable
+    /// attempt. Shared by the non-streaming loop and the streaming twin in <c>A2UIAgent</c>
+    /// so the two cannot drift on attempt semantics.
+    /// </summary>
+    /// <param name="attempt">The 1-based attempt number.</param>
+    /// <param name="args">The structured tool arguments, or <see langword="null"/> when absent.</param>
+    /// <param name="catalog">The catalog used for semantic validation, when available.</param>
+    /// <returns>The attempt record.</returns>
+    internal static A2UIAttemptRecord ValidateAttempt(int attempt, JsonObject? args, A2UIValidationCatalog? catalog)
+    {
+        if (args is null)
+        {
+            return new A2UIAttemptRecord(attempt, Ok: false, [NoToolCallError]);
+        }
+
+        JsonArray? components = args["components"] as JsonArray;
+        JsonObject? data = args["data"] as JsonObject;
+        A2UIValidationResult result = A2UIComponentValidator.Validate(components, data, catalog);
+        return new A2UIAttemptRecord(attempt, result.Valid, result.Errors);
     }
 
     internal static string WrapRecoveryExhaustedEnvelope(int maxAttempts, IReadOnlyList<A2UIAttemptRecord> attempts)
