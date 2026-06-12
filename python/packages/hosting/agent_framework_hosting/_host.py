@@ -2,23 +2,21 @@
 
 """The :class:`AgentFrameworkHost` and its :class:`ChannelContext` bridge.
 
-The host is a tiny Starlette wrapper:
+The host is a small Starlette wrapper:
 
 - ``__init__`` accepts a hostable target (``SupportsAgentRun`` agent or
   ``Workflow``) and a sequence of channels.
 - :meth:`AgentFrameworkHost.app` lazily builds a Starlette app by calling
   every channel's ``contribute`` and mounting the returned routes under
   the channel's ``path`` (empty path → mount at the app root).
-- :class:`ChannelContext` exposes ``run`` / ``run_stream`` /
-  ``deliver_response`` for channels to invoke; the host handles
-  per-``isolation_key`` session caching, identity tracking, and
-  :class:`ResponseTarget` fan-out.
+- :class:`ChannelContext` exposes ``run`` / ``run_stream`` for channels to
+  invoke; the host handles hook invocation and per-``isolation_key`` session
+  caching.
 
 Per SPEC-002 (and ADR-0026), the host is intentionally thin so the bulk
 of channel-specific behaviour stays in the channel package. Identity
-linking, link policies, response targets, background runs, and the like
-are pluggable extensions that the future identity/foundry packages will
-contribute on top of this surface.
+linking, multicast delivery, background runs, and durable delivery are
+follow-up enhancements layered outside this v1 host contract.
 """
 
 from __future__ import annotations
@@ -30,7 +28,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from agent_framework import (
     AgentResponse,
@@ -51,20 +49,6 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import BaseRoute, Mount, Route, WebSocketRoute
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ._authorization import (
-    Allowed,
-    AllowlistDecision,
-    AuthorizationContext,
-    AuthorizationOutcome,
-    ChannelConfigurationError,
-    ClaimValue,
-    Denied,
-    IdentityAllowlist,
-    IdentityLinker,
-    LinkChallenge,
-    LinkRequired,
-    SupportsLinkStorePath,
-)
 from ._isolation import (
     ISOLATION_HEADER_CHAT,
     ISOLATION_HEADER_USER,
@@ -73,41 +57,21 @@ from ._isolation import (
     set_current_isolation_keys,
 )
 from ._persistence import normalize_state_dir
-from ._runner import InProcessTaskRunner
-from ._state_store import SessionsStateStore, build_session_dicts
+from ._state_store import SessionsStateStore, build_session_aliases
 from ._types import (
     Channel,
-    ChannelIdentity,
-    ChannelPush,
-    ChannelPushCodec,
     ChannelRequest,
-    DurableTaskPayloadMode,
-    DurableTaskRunner,
+    ChannelResponseHook,
+    ChannelRunHook,
+    ChannelStreamUpdateHook,
     HostedRunResult,
     HostStatePaths,
-    PushPayloadNotSerializable,
-    ResponseTargetKind,
-    apply_channel_response_hook,
 )
 
 if TYPE_CHECKING:
     from agent_framework._workflows._workflow import WorkflowRunResult
 
 logger = logging.getLogger("agent_framework.hosting")
-
-
-# Environment markers that auto-detect ``runtime_mode="ephemeral"``. Order
-# matters only for telemetry — the first match wins and is logged at
-# startup. Adding a new marker is a non-breaking change; consumers can
-# always override via the ``runtime_mode`` constructor parameter.
-_EPHEMERAL_RUNTIME_MARKERS: tuple[str, ...] = (
-    "FOUNDRY_HOSTING_ENVIRONMENT",
-    "AZURE_FUNCTIONS_ENVIRONMENT",
-    "AWS_LAMBDA_FUNCTION_NAME",
-)
-
-
-RuntimeMode = Literal["long_running", "ephemeral"]
 
 
 def _exact_path_route(path: str, route: BaseRoute) -> BaseRoute | None:
@@ -123,46 +87,6 @@ def _exact_path_route(path: str, route: BaseRoute) -> BaseRoute | None:
     if isinstance(route, WebSocketRoute) and route.path == "/":
         return WebSocketRoute(path, route.endpoint, name=route.name)
     return None
-
-
-def _detect_runtime_mode(env: Mapping[str, str] | None = None) -> tuple[RuntimeMode, str | None]:
-    """Inspect deployment markers and return ``(mode, matched_marker_or_None)``.
-
-    Pure / side-effect-free so the host can call it once at construction
-    and tests can pass a synthetic env. ``env`` defaults to
-    :data:`os.environ`. Returns ``"long_running"`` when nothing matches —
-    that's the sensible default for local dev and always-on container
-    deployments.
-    """
-    source = env if env is not None else os.environ
-    for marker in _EPHEMERAL_RUNTIME_MARKERS:
-        if source.get(marker):
-            return ("ephemeral", marker)
-    return ("long_running", None)
-
-
-# Internal name the host uses when registering the push handler on the
-# durable task runner. Exposed as a module constant so adapter packages
-# (and the future background-run wiring under req #14) can use the same
-# name for cross-runner observability.
-HOSTING_PUSH_TASK_NAME = "hosting.push"
-
-
-def _flatten_allowlists(allowlist: IdentityAllowlist) -> tuple[IdentityAllowlist, ...]:
-    """Walk an allowlist tree to expose nested :class:`IdentityAllowlist` instances.
-
-    Used by :meth:`AgentFrameworkHost._validate_channel_authorization`
-    to inspect every leaf so type-checks like
-    ``NativeIdAllowlist(channel=<unknown>)`` can be detected even
-    when buried inside :class:`AnyOfAllowlists` / :class:`AllOfAllowlists`.
-    """
-    children = getattr(allowlist, "_children", None)
-    if children:
-        flat: list[IdentityAllowlist] = [allowlist]
-        for child in children:
-            flat.extend(_flatten_allowlists(child))
-        return tuple(flat)
-    return (allowlist,)
 
 
 def _checkpoint_path_for_isolation_key(root: Path, isolation_key: str) -> Path:
@@ -236,6 +160,34 @@ def _workflow_output_to_text(value: Any) -> str:
     return str(value)
 
 
+async def _apply_run_hook(
+    hook: ChannelRunHook,
+    request: ChannelRequest,
+    *,
+    target: SupportsAgentRun | Workflow,
+    protocol_request: Any | None,
+) -> ChannelRequest:
+    """Invoke a run hook with the host-owned calling convention."""
+    result = hook(request, target=target, protocol_request=protocol_request)
+    if isinstance(result, Awaitable):
+        return await result
+    return result
+
+
+async def _apply_response_hook(
+    hook: ChannelResponseHook,
+    result: HostedRunResult[Any],
+    *,
+    request: ChannelRequest,
+    channel_name: str | None,
+) -> HostedRunResult[Any]:
+    """Invoke a response hook with the host-owned calling convention."""
+    out = hook(result, request=request, channel_name=channel_name or request.channel)
+    if isinstance(out, Awaitable):
+        return await out
+    return out
+
+
 def _workflow_event_to_update(event: WorkflowEvent[Any]) -> AgentResponseUpdate | None:
     """Map a :class:`WorkflowEvent` to a channel-friendly :class:`AgentResponseUpdate`.
 
@@ -272,7 +224,7 @@ def _workflow_event_to_update(event: WorkflowEvent[Any]) -> AgentResponseUpdate 
 
 
 @asynccontextmanager
-async def _suppress_already_consumed() -> AsyncIterator[None]:
+async def _suppress_already_consumed() -> AsyncIterator[None]:  # noqa: RUF029
     """Yield, swallowing finalizer failures so consumer cleanup never crashes the host.
 
     The bridge stream calls ``get_final_response()`` after iterating the
@@ -386,6 +338,63 @@ class _BoundResponseStream:
         return getattr(self._inner, name)
 
 
+class _HostResponseStream:
+    """Adapter that applies host-owned stream and final-response hooks."""
+
+    def __init__(
+        self,
+        inner: Any,
+        *,
+        request: ChannelRequest,
+        stream_update_hook: ChannelStreamUpdateHook | None = None,
+        response_hook: ChannelResponseHook | None = None,
+        channel_name: str | None = None,
+    ) -> None:
+        self._inner = inner
+        self._request = request
+        self._stream_update_hook = stream_update_hook
+        self._response_hook = response_hook
+        self._channel_name = channel_name
+
+    def __await__(self) -> Any:
+        return self.get_final_response().__await__()
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        return self._wrap()
+
+    async def _wrap(self) -> AsyncIterator[Any]:
+        async for update in self._inner:
+            if self._stream_update_hook is None:
+                yield update
+                continue
+            transformed = self._stream_update_hook(update)
+            if isinstance(transformed, Awaitable):
+                transformed = await transformed
+            if transformed is None:
+                continue
+            yield transformed
+
+    async def get_final_response(self) -> Any:
+        result = await self._inner.get_final_response()
+        if self._response_hook is None:
+            return result
+        shaped = await _apply_response_hook(
+            self._response_hook,
+            HostedRunResult(result),
+            request=self._request,
+            channel_name=self._channel_name,
+        )
+        return shaped.result
+
+    async def aclose(self) -> None:
+        close = getattr(self._inner, "aclose", None)
+        if close is not None:
+            await close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
 class ChannelContext:
     """Host-owned bridge that channels call to invoke the target."""
 
@@ -393,8 +402,8 @@ class ChannelContext:
         """Bind the context to its owning :class:`AgentFrameworkHost`.
 
         The host instance is the source of truth for the target, registered
-        channels, identity stores, sessions, and lifecycle state. Channels
-        only ever receive a context; they never see the host directly.
+        channels, sessions, and lifecycle state. Channels only ever receive a
+        context; they never see the host directly.
         """
         self._host = host
 
@@ -403,7 +412,15 @@ class ChannelContext:
         """The hostable target the channel should invoke."""
         return self._host.target
 
-    async def run(self, request: ChannelRequest) -> HostedRunResult[Any]:
+    async def run(
+        self,
+        request: ChannelRequest,
+        *,
+        run_hook: ChannelRunHook | None = None,
+        protocol_request: Any | None = None,
+        response_hook: ChannelResponseHook | None = None,
+        channel_name: str | None = None,
+    ) -> HostedRunResult[Any]:
         """Invoke the target for ``request`` and return a channel-neutral result.
 
         For agent targets the return type narrows to
@@ -412,45 +429,78 @@ class ChannelContext:
         as ``HostedRunResult[Any]`` because :class:`ChannelContext` is
         agnostic to which target shape the host was constructed with;
         channels narrow at the call site if they need it.
-        """
-        return await self._host._invoke(request)  # pyright: ignore[reportPrivateUsage]
 
-    def run_stream(self, request: ChannelRequest) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
-        """Invoke the target with ``stream=True`` and return the agent's ResponseStream.
+        Args:
+            request: The channel-built request envelope.
+
+        Keyword Args:
+            run_hook: Optional channel-supplied hook the host applies before
+                invoking the target.
+            protocol_request: Raw channel-native payload passed to
+                ``run_hook``.
+            response_hook: Optional channel-supplied hook the host applies to
+                the completed result before returning it.
+            channel_name: Channel name passed to ``response_hook``. Defaults
+                to ``request.channel``.
+        """
+        prepared = await self._host._apply_run_hook(  # pyright: ignore[reportPrivateUsage]
+            request,
+            hook=run_hook,
+            protocol_request=protocol_request,
+        )
+        result = await self._host._invoke(prepared)  # pyright: ignore[reportPrivateUsage]
+        return await self._host._apply_response_hook(  # pyright: ignore[reportPrivateUsage]
+            result,
+            request=prepared,
+            hook=response_hook,
+            channel_name=channel_name,
+        )
+
+    async def run_stream(
+        self,
+        request: ChannelRequest,
+        *,
+        run_hook: ChannelRunHook | None = None,
+        protocol_request: Any | None = None,
+        stream_update_hook: ChannelStreamUpdateHook | None = None,
+        response_hook: ChannelResponseHook | None = None,
+        channel_name: str | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        """Apply host-owned hooks and invoke the target with ``stream=True``.
 
         Channels iterate the stream directly (it acts like an AsyncGenerator)
         and are responsible for delivering updates to their wire protocol.
-        Apply per-channel ``transform_hook`` callables during iteration to
-        rewrite or drop individual updates before they hit the wire.
+        When ``stream_update_hook`` is supplied, the host applies it during
+        iteration to rewrite or drop individual updates before they hit the wire.
+
+        Args:
+            request: The channel-built request envelope.
+
+        Keyword Args:
+            run_hook: Optional channel-supplied hook the host applies before
+                opening the target stream.
+            protocol_request: Raw channel-native payload passed to
+                ``run_hook``.
+            stream_update_hook: Optional host-applied update transform.
+            response_hook: Optional host-applied final-response transform.
+            channel_name: Channel name passed to ``response_hook``. Defaults
+                to ``request.channel``.
         """
-        return self._host._invoke_stream(request)  # pyright: ignore[reportPrivateUsage]
-
-    async def deliver_response(
-        self,
-        request: ChannelRequest,
-        payload: HostedRunResult[Any],
-    ) -> bool:
-        """Resolve ``request.response_target`` and push ``payload`` to each destination.
-
-        Returns ``True`` when the originating channel should render the
-        agent reply on its own wire (i.e. the resolved target included
-        the originating channel — explicitly via
-        ``ResponseTarget.originating``, implicitly via
-        ``ResponseTarget.channels(["originating", ...])``, or as the
-        host's "every destination dropped, fall back to originating"
-        recovery path). Returns ``False`` when the reply is fanned out
-        purely to non-originating destinations (or
-        :data:`ResponseTarget.none` suppresses the reply entirely) — in
-        which case the originating channel typically responds with a
-        bare ack.
-
-        Per-destination push outcomes (scheduled, retried, terminally
-        failed) live in the durable task runner's own log; this method
-        emits structured log entries for every resolution-time skip and
-        every schedule-time outage so operators have a single grep
-        anchor for "where did my reply go?".
-        """
-        return await self._host._deliver_response(request, payload)  # pyright: ignore[reportPrivateUsage]
+        prepared = await self._host._apply_run_hook(  # pyright: ignore[reportPrivateUsage]
+            request,
+            hook=run_hook,
+            protocol_request=protocol_request,
+        )
+        stream = self._host._invoke_stream(prepared)  # pyright: ignore[reportPrivateUsage]
+        if stream_update_hook is None and response_hook is None:
+            return stream
+        return _HostResponseStream(
+            stream,
+            request=prepared,
+            stream_update_hook=stream_update_hook,
+            response_hook=response_hook,
+            channel_name=channel_name,
+        )  # type: ignore[return-value]
 
 
 class _FoundryIsolationASGIMiddleware:
@@ -502,11 +552,6 @@ class AgentFrameworkHost:
         channels: Sequence[Channel],
         debug: bool = False,
         checkpoint_location: str | os.PathLike[str] | CheckpointStorage | None = None,
-        runtime_mode: RuntimeMode | None = None,
-        durable_task_runner: DurableTaskRunner | None = None,
-        allow_in_process_runner: bool = False,
-        default_allowlist: IdentityAllowlist | None = None,
-        identity_linker: IdentityLinker | None = None,
         state_dir: str | os.PathLike[str] | HostStatePaths | Mapping[str, str | os.PathLike[str]] | None = None,
     ) -> None:
         """Create a host for ``target`` and its channels.
@@ -544,73 +589,21 @@ class AgentFrameworkHost:
                 ``state_dir['checkpoints']`` (or the auto-derived
                 ``state_dir/checkpoints/`` subfolder); a warning surfaces
                 the double-configuration.
-            runtime_mode: Hint that drives the *defaults* for runtime-shape
-                dependent components (currently the durable task runner,
-                and — by extension — anything that wants to know whether
-                the process is expected to outlive a single request).
-                ``"long_running"`` (containers, OpenClaw-style always-on
-                deployments, local dev) → in-process / in-memory defaults.
-                ``"ephemeral"`` (Foundry Hosted Agents, Azure Functions,
-                AWS Lambda) → the host expects a durable runner to be
-                supplied via ``durable_task_runner`` and logs a warning
-                otherwise. ``None`` (the default) auto-detects from
-                deployment environment markers (currently
-                ``FOUNDRY_HOSTING_ENVIRONMENT``, ``AZURE_FUNCTIONS_ENVIRONMENT``,
-                ``AWS_LAMBDA_FUNCTION_NAME``); falls back to
-                ``"long_running"``.
-            durable_task_runner: The runner used to dispatch
-                non-originating push fan-out. Defaults to a process-local
-                :class:`InProcessTaskRunner` (asyncio + bounded retry, no
-                persistence) — appropriate for ``runtime_mode="long_running"``
-                deployments. Ephemeral deployments should pass a durable
-                adapter (e.g. ``agent-framework-hosting-durabletask``,
-                or a Foundry-native adapter once available) so scheduled
-                pushes survive process restarts.
-            allow_in_process_runner: Opt-in escape hatch that allows
-                ``runtime_mode="ephemeral"`` to be paired with the
-                default in-process runner. Without this flag, the host
-                refuses to start in ephemeral mode without an explicit
-                ``durable_task_runner`` because the failure mode —
-                non-originating pushes silently lost on process recycle —
-                is the worst class of production bug (works in light
-                testing, drops work under load / lifecycle events).
-                Useful for local dev that wants to exercise ephemeral
-                code paths without standing up a durable backend; **not**
-                appropriate for production.
-            default_allowlist: Host-level fallback applied to every
-                channel that leaves ``allowlist="inherit"``. ``None``
-                (the default) means the channel is open unless it sets
-                its own ``allowlist``. Channels can opt out of the host
-                default by setting ``allowlist=None`` explicitly.
-            identity_linker: Optional :class:`IdentityLinker` used to
-                resolve channel-native identities into verified IdP-backed
-                identities, or to return a :class:`LinkChallenge` the
-                channel can render when the user still needs to sign in.
-                Channels with ``require_link=True`` require this to be
-                configured unless they provide their own native verified
-                claims.
             state_dir: Opt-in disk persistence for host-managed state.
-                When set, the host writes the in-process task runner's
-                pending queue and the session-related dicts
-                (``_session_aliases``, ``_active``, ``_identities``) to
-                a :mod:`diskcache`-backed store under ``state_dir`` and
-                replays the runner queue on next startup. When the
-                target is a :class:`Workflow`, the auto-derived
+                When set, the host writes session aliases created by
+                :meth:`reset_session` to a :mod:`diskcache`-backed store
+                under ``state_dir``. When the target is a
+                :class:`Workflow`, the auto-derived
                 ``state_dir/checkpoints/`` subfolder (or the
                 ``checkpoints`` key of the mapping form) is also used
                 as the workflow checkpoint location (equivalent to
-                passing ``checkpoint_location`` directly). The
-                auto-derived ``state_dir/links/`` subfolder (or the
-                ``links`` key of the mapping form) is offered to
-                identity linkers that implement
-                :class:`SupportsLinkStorePath`. Accepts:
+                passing ``checkpoint_location`` directly). Accepts:
 
                 * ``None`` (default) — everything stays in memory; the
                   process owns its state and loses it on exit. Matches
                   today's behaviour exactly.
                 * ``str`` / :class:`os.PathLike` — the host derives
-                  default subpaths ``state_dir/runner/``,
-                  ``state_dir/sessions/``, ``state_dir/links/``, and
+                  default subpaths ``state_dir/sessions/`` and
                   (for workflow targets) ``state_dir/checkpoints/``.
                   Recommended for most
                   long-running-host deployments — one path, no extra
@@ -621,50 +614,32 @@ class AgentFrameworkHost:
                 * :class:`HostStatePaths` typed dict / plain
                   ``Mapping`` — per-component overrides for callers that
                   want each component on a different volume (fast local
-                  SSD for the runner, network-attached volume for
-                  sessions, …). Components missing from the mapping
-                  fall back to in-memory (or, for ``checkpoints``, to
-                  no checkpoint persistence). Unknown keys raise
+                  SSD for checkpoints, network-attached volume for
+                  sessions, …). Components missing from the mapping fall
+                  back to in-memory (or, for ``checkpoints``, to no
+                  checkpoint persistence). Unknown keys raise
                   ``ValueError`` to surface typos early.
 
-                The ``runner`` and ``sessions`` components require the
+                The ``sessions`` component requires the
                 optional ``diskcache`` dependency (install with
                 ``pip install 'agent-framework-hosting[disk]'``);
                 ``checkpoints`` uses the core
                 :class:`~agent_framework.FileCheckpointStorage` and has
-                no extra dependency. Each disk-cache-backed component
-                acquires an OS-level advisory lock on its directory; a
-                second host pointed at the same paths raises
+                no extra dependency. The disk-cache-backed sessions
+                component acquires an OS-level advisory lock on its
+                directory; a second host pointed at the same path raises
                 :class:`RuntimeError` at construction so two processes
-                do not double-execute queued tasks. When
-                ``durable_task_runner`` is supplied explicitly, the
-                ``runner`` sub-path is ignored — the caller owns the
-                runner's persistence story. When ``checkpoint_location``
-                is supplied explicitly, the ``checkpoints`` sub-path is
-                ignored. When an ``identity_linker`` does not implement
-                :class:`SupportsLinkStorePath`, the ``links`` sub-path is
-                ignored and the linker must be configured directly.
+                do not race session-alias writes. When
+                ``checkpoint_location`` is supplied explicitly, the
+                ``checkpoints`` sub-path is ignored.
         """
         self.target: SupportsAgentRun | Workflow = target
         self._is_workflow = isinstance(target, Workflow)
         self.channels = list(channels)
         self._debug = debug
         self._app: Starlette | None = None
-        # Disk persistence — normalise the per-component map up front so
-        # the runner, session-store, and checkpoint paths are resolved
-        # before any consumer (including ``checkpoint_location``) is
-        # built. ``None`` (default) means everything stays in memory.
         self._state_paths: dict[str, Path | None] = normalize_state_dir(state_dir)
-        # Track whether the user passed the mapping form so we can
-        # distinguish "auto-derived from single path" (silent ignore for
-        # non-workflow targets) from "explicit mapping key" (warn for
-        # non-workflow targets, since that's almost certainly dead config).
         checkpoints_explicit_in_mapping = isinstance(state_dir, Mapping) and "checkpoints" in state_dir
-        links_explicit_in_mapping = isinstance(state_dir, Mapping) and "links" in state_dir
-        # Resolve the effective workflow checkpoint location: the
-        # explicit ``checkpoint_location`` argument wins; otherwise we
-        # fall back to ``state_dir['checkpoints']`` (single-path form
-        # auto-derives ``state_dir/checkpoints/``).
         derived_checkpoint_path = self._state_paths.get("checkpoints")
         self._checkpoint_location: Path | CheckpointStorage | None = None
         effective_checkpoint_source: str | os.PathLike[str] | CheckpointStorage | None = checkpoint_location
@@ -685,7 +660,7 @@ class AgentFrameworkHost:
                 "(state_dir['checkpoints']=%s); the explicit checkpoint_location "
                 "takes precedence and the state_dir sub-path is ignored. "
                 "Use the HostStatePaths mapping form and omit 'checkpoints' to "
-                "configure runner/sessions persistence without also enabling "
+                "configure session-alias persistence without also enabling "
                 "host-managed workflow checkpointing.",
                 derived_checkpoint_path,
             )
@@ -713,114 +688,19 @@ class AgentFrameworkHost:
                     # ``CheckpointStorage`` is a non-runtime-checkable Protocol,
                     # so we cannot ``isinstance``-check it directly.
                     self._checkpoint_location = effective_checkpoint_source
-        # Runtime mode + durable task runner. We resolve mode first
-        # because the warning-on-ephemeral-without-runner only fires
-        # when both are at their defaults.
-        if runtime_mode is None:
-            resolved_mode, matched_marker = _detect_runtime_mode()
-            self._runtime_mode: RuntimeMode = resolved_mode
-            self._runtime_mode_source: str = (
-                f"auto-detected from {matched_marker}" if matched_marker is not None else "auto-detected default"
-            )
-        else:
-            self._runtime_mode = runtime_mode
-            self._runtime_mode_source = "explicit"
-        if durable_task_runner is None:
-            if self._runtime_mode == "ephemeral" and not allow_in_process_runner:
-                raise RuntimeError(
-                    "AgentFrameworkHost is running in ephemeral runtime mode "
-                    f"({self._runtime_mode_source}) without a durable_task_runner. "
-                    "Non-originating push deliveries would be lost on process "
-                    "recycle. Pass `durable_task_runner=...` (e.g. an "
-                    "agent-framework-hosting-durabletask runner) for production, "
-                    "or set `allow_in_process_runner=True` to opt out of this "
-                    "check (e.g. for local dev exercising ephemeral code paths)."
-                )
-            # When state_dir["runner"] is set, the default in-process
-            # runner persists its queue to disk so a long-running host
-            # can replay in-flight pushes after a crash / restart.
-            self._durable_task_runner: DurableTaskRunner = InProcessTaskRunner(
-                state_dir=self._state_paths.get("runner"),
-            )
-            self._owns_runner = True
-            if self._runtime_mode == "ephemeral":
-                logger.warning(
-                    "AgentFrameworkHost is running in ephemeral runtime mode "
-                    "with the default InProcessTaskRunner (allow_in_process_runner=True). "
-                    "Non-originating push deliveries will be lost if the process is "
-                    "recycled mid-flight — this configuration is intended for local dev only."
-                )
-        else:
-            self._durable_task_runner = durable_task_runner
-            self._owns_runner = False
-            if self._state_paths.get("runner") is not None:
-                # The caller supplied both a runner and a runner state
-                # path. The path would only have applied to the default
-                # in-process runner; surface the misconfig so it doesn't
-                # silently become a no-op.
-                logger.warning(
-                    "state_dir['runner'] is set but a durable_task_runner was "
-                    "supplied explicitly; the runner sub-path is ignored — "
-                    "configure persistence on the runner instance directly."
-                )
-        # Validate the runner / push-codec pairing eagerly: a JSON-mode
-        # durable runner cannot persist payloads for a push-capable
-        # channel that has no codec. Failing here makes the misconfig
-        # visible at process start rather than on first push.
-        self._validate_runner_codec_pairing()
-        # Register the internal push handler eagerly so it is available
-        # whether callers invoke ``_deliver_response`` directly (e.g.
-        # tests) or through the lifespan-managed ASGI app. Doing this
-        # in ``__init__`` is safe because runner handler registration
-        # has no I/O — it only associates a name with a callable.
-        self._durable_task_runner.register(HOSTING_PUSH_TASK_NAME, self._handle_push_task)
-        # Per-isolation_key session cache. The real spec backs this with a
-        # pluggable session store; this base host keeps it in-process.
-        # NOTE: live ``AgentSession`` objects are NOT persisted to disk
-        # — the history provider rehydrates them from its own store on
-        # the next turn. ``state_dir`` only persists the lightweight
-        # pickle-friendly bookkeeping below.
         self._sessions: dict[str, Any] = {}
-        # Open the disk-backed sessions store first when persistence is
-        # on; the three persisted dicts share the same cache + lock to
-        # minimise file handles and acquisition cost.
         sessions_path = self._state_paths.get("sessions")
         self._sessions_store: SessionsStateStore | None
         if sessions_path is not None:
             self._sessions_store = SessionsStateStore(sessions_path)
-            # ``isolation_key -> active session_id``. Normally identical to the
-            # isolation_key, but ``reset_session`` rotates this to a fresh id so
-            # the next turn starts a new ``AgentSession`` while the old history
-            # remains on disk under its original session_id. Persisted so a
-            # rotation survives a restart.
-            aliases_dict, active_dict, identities_dict = build_session_dicts(self._sessions_store)
-            self._session_aliases: dict[str, str] = aliases_dict
-            # (isolation_key -> last-seen channel name) for ResponseTarget.active.
-            self._active: dict[str, str] = active_dict
-            # Per-isolation_key identity registry: which channels we've seen this
-            # user on, and which native_id they used on each. Powers
-            # ResponseTarget.active / .channel(name) / .channels([...]) /
-            # .all_linked.
-            # Shape: { isolation_key: { channel_name: ChannelIdentity } }.
-            self._identities: dict[str, dict[str, ChannelIdentity]] = identities_dict
+            self._session_aliases: dict[str, str] = build_session_aliases(self._sessions_store)
         else:
             self._sessions_store = None
             self._session_aliases = {}
-            self._active = {}
-            self._identities = {}
         # Set by ``serve()`` so the lifespan startup handler doesn't
         # double-log the banner; remains ``False`` when callers mount
         # ``host.app`` under their own ASGI server.
         self._startup_logged: bool = False
-        # Authorization seam: allowlists, optional identity linker, and
-        # construction-time validation for fail-fast misconfigurations.
-        self._default_allowlist: IdentityAllowlist | None = default_allowlist
-        self._identity_linker: IdentityLinker | None = identity_linker
-        self._configure_identity_linker_state(
-            self._state_paths.get("links"),
-            explicit=links_explicit_in_mapping,
-        )
-        self._validate_channel_authorization()
 
     @property
     def app(self) -> Starlette:
@@ -828,340 +708,6 @@ class AgentFrameworkHost:
         if self._app is None:
             self._app = self._build_app()
         return self._app
-
-    def _configure_identity_linker_state(self, links_path: Path | None, *, explicit: bool) -> None:
-        """Offer the derived ``state_dir['links']`` path to compatible linkers."""
-        if links_path is None:
-            return
-        linker = self._identity_linker
-        if linker is None:
-            if explicit:
-                logger.warning("state_dir['links'] is set but no identity_linker is configured; ignoring.")
-            return
-        if isinstance(linker, SupportsLinkStorePath):
-            linker.configure_link_store_path(links_path)
-            return
-        logger.warning(
-            "state_dir['links'] is set but the configured identity_linker does not implement "
-            "SupportsLinkStorePath; configure link-store persistence on the linker directly."
-        )
-
-    def _validate_runner_codec_pairing(self) -> None:
-        """Refuse to start when a JSON-mode runner is paired with codec-less push channels.
-
-        A JSON-mode durable runner (``payload_mode=JSON``) persists every
-        scheduled task's payload so it survives process restarts. The
-        host's ``hosting.push`` payload includes a
-        :class:`HostedRunResult` containing the full agent / workflow
-        output, which cannot be JSON-serialised without help from the
-        destination channel. Push-capable channels therefore must
-        declare a :class:`ChannelPushCodec` (a duck-typed
-        ``push_codec`` attribute on the channel) when paired with a
-        JSON-mode runner.
-
-        Object-mode runners (the default in-process runner) accept live
-        Python references and skip this check.
-        """
-        mode = getattr(self._durable_task_runner, "payload_mode", DurableTaskPayloadMode.OBJECT)
-        if mode != DurableTaskPayloadMode.JSON:
-            return
-        missing: list[str] = []
-        for channel in self.channels:
-            if not isinstance(channel, ChannelPush):
-                # Channels that don't implement push are never scheduled,
-                # so a missing codec is fine.
-                continue
-            codec = getattr(channel, "push_codec", None)
-            if codec is None:
-                missing.append(channel.name)
-        if missing:
-            raise RuntimeError(
-                "Durable task runner declares payload_mode=JSON, but the following "
-                "push-capable channels have no `push_codec` attribute and cannot "
-                "be serialised for persistence: "
-                f"{', '.join(missing)}. Add a ChannelPushCodec to each channel "
-                "or switch to an object-mode runner (e.g. InProcessTaskRunner)."
-            )
-
-    def _resolve_channel_allowlist(self, channel: Channel) -> IdentityAllowlist | None:
-        """Apply the ``"inherit"`` / ``None`` / explicit semantics.
-
-        - ``"inherit"`` (default) → host's ``default_allowlist``.
-        - ``None`` → explicitly open (carve-out inside a locked host).
-        - any other value → use as-is.
-        """
-        raw: Any = getattr(channel, "allowlist", "inherit")
-        if raw == "inherit":
-            return self._default_allowlist
-        # ``None`` and concrete allowlists both pass through unchanged;
-        # the caller (``authorize``) treats ``None`` as "open".
-        return cast("IdentityAllowlist | None", raw)
-
-    def _validate_channel_authorization(self) -> None:
-        """Reject configurations that would silently deny every user.
-
-        Runs three rules (see spec § "Configuration validation"):
-
-        1. If a channel's resolved allowlist declares
-           ``requires_linked_claims=True``, the channel must either set
-           ``require_link=True`` or declare
-           ``emits_verified_claims=True`` — otherwise no verified
-           claims will ever reach :meth:`evaluate` and the allowlist
-           would always ``ABSTAIN`` / ``DENY``.
-        2. If any channel has ``require_link=True``, an
-           ``identity_linker`` must be configured. Silent
-           deny-everyone is the worst possible default.
-        3. ``NativeIdAllowlist(channel=<other>)`` must reference a
-           channel name that exists on this host — typo-detection.
-        """
-        known_channels = {c.name for c in self.channels}
-        for channel in self.channels:
-            allowlist = self._resolve_channel_allowlist(channel)
-            require_link = bool(getattr(channel, "require_link", False))
-            emits_claims = bool(getattr(channel, "emits_verified_claims", False))
-            # Rule #2: require_link without a linker.
-            if require_link and self._identity_linker is None:
-                raise ChannelConfigurationError(
-                    f"Channel '{channel.name}' has require_link=True but no "
-                    "identity_linker is configured on the host. Configure one or "
-                    "remove require_link=True (silent deny-everyone is rejected)."
-                )
-            if allowlist is None:
-                continue
-            # Rule #1: claim-dependent allowlist needs a claim source.
-            if getattr(allowlist, "requires_linked_claims", False) and not (require_link or emits_claims):
-                raise ChannelConfigurationError(
-                    f"Channel '{channel.name}' has an allowlist that requires "
-                    "verified IdP claims (requires_linked_claims=True) but the "
-                    "channel neither sets require_link=True nor emits verified "
-                    "claims natively. Configure a source of verified claims for "
-                    "the allowlist (silent deny-everyone is rejected)."
-                )
-            # Rule #3: native-id allowlists pointing at unknown channels.
-            for nested in _flatten_allowlists(allowlist):
-                target = getattr(nested, "channel", None)
-                if target is not None and target not in known_channels:
-                    raise ChannelConfigurationError(
-                        f"NativeIdAllowlist on channel '{channel.name}' references "
-                        f"unknown channel '{target}'. Known channels: "
-                        f"{sorted(known_channels)}."
-                    )
-
-    async def authorize(
-        self,
-        identity: ChannelIdentity,
-        *,
-        require_link: bool = False,
-        allowlist: IdentityAllowlist | None = None,
-        verified_claims: Mapping[str, ClaimValue] | None = None,
-    ) -> AuthorizationOutcome:
-        """Evaluate authorization for ``identity`` against ``allowlist``.
-
-        Channels should call this **before** producing a
-        :class:`ChannelRequest` so a denied identity never reaches the
-        agent. The host's run path also re-checks authorization for
-        defense-in-depth, but channels that surface :class:`Denied` or
-        :class:`LinkRequired` themselves can render the outcome
-        through their native UX (refusal message, link challenge)
-        rather than a generic error.
-
-        Supports open, native-id allowlist, and verified-claim allowlist
-        profiles. ``require_link=True`` or claim-based allowlists use
-        the configured :class:`IdentityLinker`; channels that natively
-        authenticate users may pass ``verified_claims`` directly.
-
-        Returns:
-            One of :class:`Allowed`, :class:`LinkRequired`, or
-            :class:`Denied`.
-        """
-        claims: Mapping[str, ClaimValue] = verified_claims or {}
-        claim_source: Literal["linker", "channel", "none"] = "channel" if claims else "none"
-        auto_isolation_key = self._auto_issue_isolation_key(identity)
-        if allowlist is None:
-            # Open profile (or explicitly carved-out channel).
-            if require_link:
-                return await self._resolve_required_link(identity)
-            return Allowed(isolation_key=auto_isolation_key, verified_claims=claims, claim_source=claim_source)
-        pre_context = AuthorizationContext(
-            identity=identity,
-            phase="pre_link",
-            isolation_key=None,
-            verified_claims=claims,
-            claim_source=claim_source,
-        )
-        decision = await allowlist.evaluate(pre_context)
-        if decision is AllowlistDecision.ALLOW:
-            if require_link:
-                return await self._resolve_required_link(identity)
-            return Allowed(isolation_key=auto_isolation_key, verified_claims=claims, claim_source=claim_source)
-        if decision is AllowlistDecision.DENY:
-            return Denied(
-                reason_code="allowlist_denied_pre_link",
-                user_message="You don't have access to this bot.",
-                log_details={
-                    "channel": identity.channel,
-                    "phase": "pre_link",
-                },
-            )
-        # ABSTAIN: claim-dependent allowlists need a post-link /
-        # verified-claim evaluation. Non-claim allowlists can fall
-        # through to the open path, while still honoring require_link.
-        if getattr(allowlist, "requires_linked_claims", False):
-            if claims:
-                post_context = AuthorizationContext(
-                    identity=identity,
-                    phase="post_link",
-                    isolation_key=auto_isolation_key,
-                    verified_claims=claims,
-                    claim_source="channel",
-                )
-                post_decision = await allowlist.evaluate(post_context)
-                return self._authorization_outcome_from_post_link(
-                    identity=identity,
-                    isolation_key=auto_isolation_key,
-                    claims=claims,
-                    claim_source="channel",
-                    decision=post_decision,
-                )
-            return await self._resolve_and_evaluate_claim_allowlist(identity, allowlist)
-        if require_link:
-            return await self._resolve_required_link(identity)
-        return Allowed(isolation_key=auto_isolation_key, verified_claims=claims, claim_source=claim_source)
-
-    async def _resolve_required_link(self, identity: ChannelIdentity) -> AuthorizationOutcome:
-        """Resolve ``identity`` through the configured linker or request linking."""
-        linker = self._identity_linker
-        if linker is None:
-            # Defensive: the construction-time validator should catch this.
-            return Denied(
-                reason_code="link_required_without_linker",
-                user_message="Sign-in is not configured for this bot.",
-                log_details={"channel": identity.channel},
-            )
-        resolution = await linker.resolve(identity)
-        if isinstance(resolution, LinkChallenge):
-            return LinkRequired(challenge=resolution)
-        return Allowed(
-            isolation_key=resolution.isolation_key,
-            verified_claims=resolution.verified_claims,
-            claim_source=resolution.claim_source,
-        )
-
-    async def _resolve_and_evaluate_claim_allowlist(
-        self,
-        identity: ChannelIdentity,
-        allowlist: IdentityAllowlist,
-    ) -> AuthorizationOutcome:
-        """Resolve identity, then run a claim-dependent allowlist post-link."""
-        linker = self._identity_linker
-        if linker is None:
-            return Denied(
-                reason_code="allowlist_requires_link",
-                user_message="Please link your account to continue.",
-                log_details={"channel": identity.channel, "phase": "pre_link"},
-            )
-        resolution = await linker.resolve(identity)
-        if isinstance(resolution, LinkChallenge):
-            return LinkRequired(challenge=resolution)
-        post_context = AuthorizationContext(
-            identity=identity,
-            phase="post_link",
-            isolation_key=resolution.isolation_key,
-            verified_claims=resolution.verified_claims,
-            claim_source=resolution.claim_source,
-        )
-        post_decision = await allowlist.evaluate(post_context)
-        return self._authorization_outcome_from_post_link(
-            identity=identity,
-            isolation_key=resolution.isolation_key,
-            claims=resolution.verified_claims,
-            claim_source=resolution.claim_source,
-            decision=post_decision,
-        )
-
-    def _authorization_outcome_from_post_link(
-        self,
-        *,
-        identity: ChannelIdentity,
-        isolation_key: str,
-        claims: Mapping[str, ClaimValue],
-        claim_source: Literal["linker", "channel"],
-        decision: AllowlistDecision,
-    ) -> AuthorizationOutcome:
-        """Convert a post-link allowlist decision to a host outcome."""
-        if decision is AllowlistDecision.ALLOW:
-            return Allowed(isolation_key=isolation_key, verified_claims=claims, claim_source=claim_source)
-        if decision is AllowlistDecision.DENY:
-            return Denied(
-                reason_code="allowlist_denied_post_link",
-                user_message="You don't have access to this bot.",
-                log_details={
-                    "channel": identity.channel,
-                    "phase": "post_link",
-                    "claim_source": claim_source,
-                },
-            )
-        return Denied(
-            reason_code="allowlist_abstained_post_link",
-            user_message="You don't have access to this bot.",
-            log_details={
-                "channel": identity.channel,
-                "phase": "post_link",
-                "claim_source": claim_source,
-            },
-        )
-
-    def _auto_issue_isolation_key(self, identity: ChannelIdentity) -> str:
-        """Auto-issue a stable isolation key for ``identity``.
-
-        Returns the existing key when ``(channel, native_id)`` has
-        already been seen, or coins ``"<channel>:<native_id>"`` on
-        first contact. Configured :class:`IdentityLinker` instances can
-        return provider-backed isolation keys for flows that require
-        verified identity.
-        """
-        # Look for an existing isolation_key that has already linked
-        # this (channel, native_id). Linear scan is fine for the
-        # in-process registry. Linker implementations can use their own
-        # indexed stores for provider-backed identities.
-        for isolation_key, by_channel in self._identities.items():
-            existing = by_channel.get(identity.channel)
-            if existing is not None and existing.native_id == identity.native_id:
-                return isolation_key
-        # First contact — coin a deterministic key.
-        return f"{identity.channel}:{identity.native_id}"
-
-    @property
-    def default_allowlist(self) -> IdentityAllowlist | None:
-        """Host-level fallback allowlist applied to channels with ``allowlist="inherit"``."""
-        return self._default_allowlist
-
-    @property
-    def runtime_mode(self) -> RuntimeMode:
-        """The resolved runtime mode for this host.
-
-        Either ``"long_running"`` or ``"ephemeral"``. Resolved at
-        construction from the ``runtime_mode`` constructor argument or
-        — when unset — auto-detected from deployment environment
-        markers; see :func:`_detect_runtime_mode`. Advisory: the value
-        drives the *defaults* selected for runtime-shape-dependent
-        components (today, the durable task runner) and is logged at
-        startup for operator visibility.
-        """
-        return self._runtime_mode
-
-    @property
-    def durable_task_runner(self) -> DurableTaskRunner:
-        """The durable task runner used to dispatch non-originating pushes.
-
-        Defaults to a process-local :class:`InProcessTaskRunner` when no
-        runner was supplied at construction. Adapter packages may
-        replace this with a durable backend (e.g. Foundry-native
-        scheduling, ``agent-framework-hosting-durabletask``); the host
-        itself only relies on the :class:`DurableTaskRunner` Protocol
-        surface so any conforming implementation is usable.
-        """
-        return self._durable_task_runner
 
     def serve(
         self,
@@ -1257,9 +803,7 @@ class AgentFrameworkHost:
         Called from both :meth:`serve` (which knows the bind triple)
         and the ASGI lifespan ``startup`` phase (which does not — the
         host may be embedded under any caller-managed ASGI server).
-        Bind fields are omitted from the log line when unknown so
-        operators can still spot the runtime-mode banner under
-        externally-managed servers.
+        Bind fields are omitted from the log line when unknown.
         """
         target_kind = "Workflow" if isinstance(self.target, Workflow) else type(self.target).__name__
         target_name = getattr(self.target, "name", None) or target_kind
@@ -1270,16 +814,12 @@ class AgentFrameworkHost:
         is_hosted = bool(os.environ.get("FOUNDRY_HOSTING_ENVIRONMENT"))
         bind = f"{host}:{port}" if host is not None and port is not None else "<embedded>"
         logger.info(
-            "AgentFrameworkHost starting: target=%s (%s) bind=%s workers=%s hosted=%s "
-            "runtime_mode=%s (%s) runner=%s channels=[%s]",
+            "AgentFrameworkHost starting: target=%s (%s) bind=%s workers=%s hosted=%s channels=[%s]",
             target_name,
             target_kind,
             bind,
             workers if workers is not None else "<embedded>",
             is_hosted,
-            self._runtime_mode,
-            self._runtime_mode_source,
-            type(self._durable_task_runner).__name__,
             channels_repr or "<none>",
         )
 
@@ -1329,8 +869,7 @@ class AgentFrameworkHost:
             # logged it (it logs eagerly so the banner appears before
             # control passes to hypercorn); the lifespan still logs it
             # for callers that mount ``host.app`` directly under their
-            # own ASGI server — that path otherwise wouldn't get a
-            # runtime-mode banner at all.
+            # own ASGI server.
             if not self._startup_logged:
                 self._log_startup()
                 self._startup_logged = True
@@ -1341,27 +880,7 @@ class AgentFrameworkHost:
             # Starlette / the ASGI server still aborts boot — and log
             # every other failure so operators can see them all in one
             # log scrape rather than discovering them turn-by-turn.
-            # (The hosting.push handler is registered eagerly in
-            # ``__init__`` rather than here, so ``_deliver_response``
-            # can be called without first entering the lifespan — e.g.
-            # in tests, or by callers driving the host without an ASGI
-            # server.)
             startup_errors: list[tuple[str, BaseException]] = []
-            # Replay any persisted pending tasks first so re-scheduled
-            # work runs alongside fresh traffic from the moment the
-            # host accepts requests. Only meaningful for the host-owned
-            # in-process runner with disk persistence on; caller-owned
-            # runners manage their own replay lifecycle.
-            if (
-                self._owns_runner
-                and isinstance(self._durable_task_runner, InProcessTaskRunner)
-                and self._state_paths.get("runner") is not None
-            ):
-                try:
-                    await self._durable_task_runner.resume()
-                except Exception as exc:
-                    logger.exception("lifespan startup: durable task runner resume failed")
-                    startup_errors.append(("InProcessTaskRunner.resume", exc))
             for cb in on_startup:
                 try:
                     await cb()
@@ -1394,21 +913,6 @@ class AgentFrameworkHost:
                         name = getattr(cb, "__qualname__", repr(cb))
                         logger.exception("lifespan shutdown: callback %s failed", name)
                         shutdown_errors.append((name, exc))
-                # Drain the host-owned runner after channel shutdowns —
-                # channels may legitimately schedule a final push while
-                # tearing down (e.g. a goodbye message), and we want
-                # those tasks to get a chance to complete before we
-                # cancel pending work. For caller-supplied runners we
-                # leave lifecycle to the caller.
-                if self._owns_runner and isinstance(self._durable_task_runner, InProcessTaskRunner):
-                    try:
-                        await self._durable_task_runner.shutdown(timeout=5.0)
-                    except Exception as exc:  # pragma: no cover - defensive
-                        logger.exception("lifespan shutdown: durable task runner shutdown failed")
-                        shutdown_errors.append(("InProcessTaskRunner.shutdown", exc))
-                # Close the persisted sessions store after the runner so
-                # any in-flight task that touches session state during
-                # shutdown can still write through.
                 if self._sessions_store is not None:
                     try:
                         self._sessions_store.close()
@@ -1426,17 +930,18 @@ class AgentFrameworkHost:
                         )
                     raise first_exc
 
+        middleware = (
+            [Middleware(_FoundryIsolationASGIMiddleware)] if os.environ.get("FOUNDRY_HOSTING_ENVIRONMENT") else []
+        )
         return Starlette(
             debug=self._debug,
             routes=routes,
             lifespan=lifespan,
-            middleware=[Middleware(_FoundryIsolationASGIMiddleware)],
+            middleware=middleware,
         )
 
     def _build_run_kwargs(self, request: ChannelRequest) -> dict[str, Any]:
-        # The full spec resolves a ChannelSession into an AgentSession here,
-        # honors session_mode, and consults LinkPolicy / ResponseTarget. This
-        # base host keys a per-isolation_key AgentSession off the channel's
+        # The host keys a per-isolation_key AgentSession off the channel's
         # session hint so context providers (FileHistoryProvider, …) on the
         # target see one session per end user.
         session = None
@@ -1470,6 +975,36 @@ class AgentFrameworkHost:
         if request.options:
             run_kwargs["options"] = request.options
         return run_kwargs
+
+    async def _apply_run_hook(
+        self,
+        request: ChannelRequest,
+        *,
+        hook: ChannelRunHook | None,
+        protocol_request: Any | None,
+    ) -> ChannelRequest:
+        """Apply a channel-supplied run hook under host ownership."""
+        if hook is None:
+            return request
+        return await _apply_run_hook(
+            hook,
+            request,
+            target=self.target,
+            protocol_request=protocol_request,
+        )
+
+    async def _apply_response_hook(
+        self,
+        result: HostedRunResult[Any],
+        *,
+        request: ChannelRequest,
+        hook: ChannelResponseHook | None,
+        channel_name: str | None,
+    ) -> HostedRunResult[Any]:
+        """Apply a channel-supplied response hook under host ownership."""
+        if hook is None:
+            return result
+        return await _apply_response_hook(hook, result, request=request, channel_name=channel_name)
 
     def _log_incoming(self, request: ChannelRequest, *, stream: bool) -> None:
         """Emit a structured INFO summary for every incoming target invocation.
@@ -1554,7 +1089,6 @@ class AgentFrameworkHost:
 
     async def _invoke(self, request: ChannelRequest) -> HostedRunResult[AgentResponse]:
         self._log_incoming(request, stream=False)
-        self._record_identity(request)
         if self._is_workflow:
             # Workflow targets follow a separate path; the dedicated dispatch
             # is parameterised on ``WorkflowRunResult`` so the static return
@@ -1579,7 +1113,6 @@ class AgentFrameworkHost:
 
     def _invoke_stream(self, request: ChannelRequest) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         self._log_incoming(request, stream=True)
-        self._record_identity(request)
         if self._is_workflow:
             return self._invoke_workflow_stream(request)
         run_kwargs = self._build_run_kwargs(request)
@@ -1711,7 +1244,7 @@ class AgentFrameworkHost:
         Wraps the workflow's ``ResponseStream[WorkflowEvent, WorkflowRunResult]``
         in a new ``ResponseStream[AgentResponseUpdate, AgentResponse]`` so
         channels can iterate it identically to an agent stream and apply
-        their ``stream_transform_hook`` callables.
+        their ``stream_update_hook`` callables.
 
         Mapping rules:
 
@@ -1799,10 +1332,10 @@ class AgentFrameworkHost:
 
         Channels deliver inputs as plain text, a single ``Message``, or a list
         of ``Message`` (e.g. a Responses-API request that includes a ``system``
-        instruction plus the user turn). To preserve channel provenance +
-        identity + ``response_target`` on the persisted history record (and
-        make it visible to context providers, evals, audits), we attach a
-        ``hosting`` block under ``additional_properties``. AF's
+        instruction plus the user turn). To preserve channel provenance and
+        optional identity metadata on the persisted history record (and make it
+        visible to context providers, evals, audits), we attach a ``hosting``
+        block under ``additional_properties``. AF's
         ``Message.to_dict`` round-trips ``additional_properties`` through any
         ``HistoryProvider`` that serializes via ``to_dict`` (e.g.
         ``FileHistoryProvider``) and the framework explicitly does *not*
@@ -1819,12 +1352,6 @@ class AgentFrameworkHost:
                 "native_id": request.identity.native_id,
                 "attributes": dict(request.identity.attributes) if request.identity.attributes else {},
             }
-        target = request.response_target
-        hosting_meta["response_target"] = {
-            "kind": target.kind.value,
-            "targets": list(target.targets),
-        }
-
         raw = request.input
         if isinstance(raw, Message):
             raw.additional_properties = {**(raw.additional_properties or {}), "hosting": hosting_meta}
@@ -1841,532 +1368,6 @@ class AgentFrameworkHost:
             contents=[raw],  # type: ignore[list-item]
             additional_properties={"hosting": hosting_meta},
         )
-
-    def _record_identity(self, request: ChannelRequest) -> None:
-        """Update the per-``isolation_key`` identity registry + active-channel hint.
-
-        Called on every successful resolve. ``ResponseTarget.active``
-        consumes ``self._active``; ``ResponseTarget.channel(name)`` /
-        ``.channels([...])`` / ``.all_linked`` consume ``self._identities``.
-        """
-        if request.identity is None or request.session is None:
-            return
-        key = request.session.isolation_key
-        if not key:
-            return
-        self._identities.setdefault(key, {})[request.identity.channel] = request.identity
-        self._active[key] = request.identity.channel
-
-    def _build_echo_payload(self, request: ChannelRequest) -> HostedRunResult[AgentResponse]:
-        """Build a ``HostedRunResult`` representing the originating user message.
-
-        Used when ``ResponseTarget.echo_input`` is set so non-originating
-        destinations can mirror the user's turn before the agent reply
-        arrives. The user-facing payload is synthesised as a one-message
-        :class:`AgentResponse` (``role="user"``) so it flows through the
-        same delivery machinery as the agent's reply — channels handle
-        both via a single ``HostedRunResult[AgentResponse]`` shape. The
-        hosting metadata that ``_wrap_input`` attaches for agent
-        invocation is intentionally stripped: the echo is end-user-facing
-        and we don't leak host-internal bookkeeping onto another
-        channel's wire.
-        """
-        raw = request.input
-        if isinstance(raw, Message):
-            user_messages: list[Message] = [
-                Message(role="user", contents=list(raw.contents), author_name=raw.author_name),
-            ]
-        elif isinstance(raw, list) and raw and all(isinstance(m, Message) for m in raw):
-            user_messages = [
-                Message(role="user", contents=list(m.contents), author_name=m.author_name)
-                for m in raw
-                if isinstance(m, Message)
-            ]
-        elif isinstance(raw, str):
-            user_messages = [Message(role="user", contents=[Content.from_text(text=raw)])]
-        elif isinstance(raw, Content):
-            user_messages = [Message(role="user", contents=[raw])]
-        else:
-            # AgentRunInputs allows other shapes (mapping, sequence of mixed
-            # str/Content); stringify as a defensive fallback.
-            user_messages = [Message(role="user", contents=[Content.from_text(text=str(raw))])]
-        return HostedRunResult(AgentResponse(messages=user_messages))
-
-    async def _deliver_payload_to_channel(
-        self,
-        channel: ChannelPush,
-        identity: ChannelIdentity,
-        payload: HostedRunResult[Any],
-        *,
-        request: ChannelRequest,
-        is_echo: bool,
-    ) -> HostedRunResult[Any]:
-        """Clone, run the channel's ``response_hook`` (if any), and push.
-
-        The clone keeps fan-out free from cross-destination mutation: a
-        hook that rebinds ``result`` on one destination cannot leak into
-        the next push. Note that the clone is shallow — channels that
-        need to mutate ``result`` itself (rather than rebind it via
-        :meth:`HostedRunResult.replace`) are responsible for their own
-        deep copy. Returns the (possibly hook-shaped) payload so callers
-        can log post-hook diagnostics rather than the pre-hook ones.
-
-        ``response_hook`` is duck-typed on the channel: any attribute
-        named ``response_hook`` that is callable participates. The
-        :class:`Channel` Protocol stays a small "name / path / contribute"
-        contract; richer surfaces stay attribute-level so adding hook
-        support to a new channel does not require updating the Protocol.
-        """
-        shaped = await apply_channel_response_hook(
-            channel,
-            payload,
-            request=request,
-            destination_identity=identity,
-            originating=False,
-            is_echo=is_echo,
-            clone=True,
-        )
-        await channel.push(identity, shaped)
-        return shaped
-
-    async def _handle_push_task(self, payload: Mapping[str, Any]) -> None:
-        """Runner-side handler for ``hosting.push`` tasks.
-
-        Unpacks a single per-destination push payload (one channel, one
-        identity) and runs the echo (when present) followed by the
-        response push. Echo failures are logged and swallowed — the
-        user-visible failure mode is "response delivered without
-        echo", *not* "no response at all". Response-push failures
-        re-raise so the runner can retry per the configured
-        :class:`RetryPolicy`.
-
-        **Retry idempotency for the echo phase.** The payload includes a
-        mutable ``"echo_done"`` cursor (initialised to ``False`` at
-        schedule time). If a previous attempt already delivered the
-        echo but the response push then failed, the runner retries the
-        whole task; we observe ``echo_done == True`` and skip the
-        re-echo so end users on channels without server-side
-        deduplication don't see the same user-message echoed multiple
-        times. This is a best-effort guarantee for the in-process
-        runner — payload mutations don't survive process restarts.
-        Durable adapter packages SHOULD persist the cursor as part of
-        their task state (their replay machinery typically gives them
-        that primitive for free).
-
-        Payload shape depends on the configured
-        :data:`DurableTaskRunner.payload_mode`:
-
-        * Object mode (default) — live Python references:
-          ``channel_name``, ``identity``, ``result``, ``echo_result``,
-          ``echo_done``, ``request``.
-        * JSON mode — a single ``envelope`` produced by the
-          destination channel's :class:`ChannelPushCodec` plus
-          ``channel_name`` and ``echo_done``. The handler invokes
-          ``codec.decode(envelope)`` to recover the live references
-          before pushing.
-        """
-        channel_name = cast(str, payload["channel_name"])
-        echo_done = bool(payload.get("echo_done", False))
-
-        by_name = {ch.name: ch for ch in self.channels}
-        channel = by_name.get(channel_name)
-        if channel is None or not isinstance(channel, ChannelPush):
-            # Channel was validated at schedule time; if we ever land
-            # here it means the host's channel list mutated mid-flight,
-            # which we don't support. Log loudly and drop — re-raising
-            # would just cause the runner to retry forever.
-            logger.error(
-                "hosting.push: channel %r is no longer a ChannelPush; dropping task",
-                channel_name,
-            )
-            return
-        push_channel = cast(ChannelPush, channel)
-
-        # Recover the live references. Object-mode runners pass them
-        # through verbatim; JSON-mode runners persisted an envelope the
-        # channel's codec produced and we now ask the codec to decode
-        # it back.
-        envelope = payload.get("envelope")
-        if envelope is not None:
-            codec = cast("ChannelPushCodec | None", getattr(channel, "push_codec", None))
-            if codec is None:
-                logger.error(
-                    "hosting.push: channel %r received a JSON envelope but has no push_codec; dropping task",
-                    channel_name,
-                )
-                return
-            result, request, identity, echo_result = await codec.decode(envelope)
-        else:
-            identity = cast(ChannelIdentity, payload["identity"])
-            result = cast(HostedRunResult[Any], payload["result"])
-            echo_result = cast("HostedRunResult[Any] | None", payload.get("echo_result"))
-            request = cast(ChannelRequest, payload["request"])
-
-        if echo_result is not None and not echo_done:
-            try:
-                await self._deliver_payload_to_channel(
-                    push_channel,
-                    identity,
-                    echo_result,
-                    request=request,
-                    is_echo=True,
-                )
-            except Exception:
-                logger.exception(
-                    "hosting.push: echo push failed for channel=%s native_id=%s",
-                    channel_name,
-                    identity.native_id,
-                )
-            else:
-                # Mutate the payload mapping so a subsequent retry of
-                # this task (triggered by a failure in the response
-                # phase below) skips the echo. The in-process runner
-                # reuses the same mapping object across retries — see
-                # ``_run_with_retry``; durable adapters persist the
-                # cursor as part of their task state.
-                if isinstance(payload, dict):
-                    payload["echo_done"] = True
-                logger.info(
-                    "hosting.push: echoed user message",
-                    extra={"channel": channel_name, "native_id": identity.native_id},
-                )
-        elif echo_result is not None and echo_done:
-            logger.debug(
-                "hosting.push: skipping echo on retry (already delivered)",
-                extra={"channel": channel_name, "native_id": identity.native_id},
-            )
-
-        # Response phase — raise on failure so the runner retries per
-        # the configured retry policy. The runner is responsible for
-        # terminal-failure bookkeeping.
-        await self._deliver_payload_to_channel(
-            push_channel,
-            identity,
-            result,
-            request=request,
-            is_echo=False,
-        )
-        logger.info(
-            "hosting.push: pushed agent response",
-            extra={"channel": channel_name, "native_id": identity.native_id},
-        )
-
-    async def _deliver_response(self, request: ChannelRequest, payload: HostedRunResult[Any]) -> bool:
-        """Resolve ``request.response_target``, annotate audit metadata, and schedule pushes.
-
-        Returns ``True`` when the originating channel should render the
-        agent reply on its own wire (the resolved target included the
-        originating channel either explicitly or via the host's "every
-        destination dropped, fall back to originating" recovery path).
-        Returns ``False`` when the reply is fanned out purely to
-        non-originating destinations (or :data:`ResponseTarget.none`
-        suppresses the reply entirely).
-
-        Per SPEC-002 §"Intended targets + durable delivery": for any
-        non-``originating`` target, the originating channel returns an
-        acknowledgement and the actual agent reply is dispatched
-        **asynchronously** via the host's :class:`DurableTaskRunner` —
-        one scheduled task per destination, with the runner owning
-        retry / terminal-failure / replay semantics.
-
-        **Immutable audit annotation.** Before scheduling, the host
-        annotates each resolved assistant ``Message`` in the payload
-        with the ``hosting.intended_targets`` list (and optionally
-        ``hosting.skipped_targets`` for destinations dropped at
-        resolution time). Persistence providers therefore observe the
-        host's *intent* from a single immutable write — mutable
-        per-destination delivery state is owned by the runner backend.
-
-        When a destination cannot be resolved (no known native id), or
-        the destination channel doesn't implement :class:`ChannelPush`,
-        or no channel by that name is registered, it is dropped
-        synchronously and logged at WARNING. When the only resolved
-        destinations all drop at resolution time we fall back to
-        delivering on the originating channel so the user is never left
-        without a reply.
-
-        When ``request.response_target.echo_input`` is True the echo
-        payload (the originating user message) is bundled into the
-        same per-destination task as the agent response — see
-        :meth:`_handle_push_task`. The echo is dispatched *before* the
-        response within that task; an echo failure does not abort the
-        response push, and a retried task skips an already-delivered
-        echo via the ``echo_done`` cursor.
-
-        For JSON-mode runners the destination channel's
-        :class:`ChannelPushCodec` is called to project the in-memory
-        :class:`HostedRunResult` into a JSON-safe envelope before
-        scheduling. Codec failures
-        (:class:`PushPayloadNotSerializable`) abort the schedule for
-        that destination (logged and treated as skipped); other
-        destinations still get their chance.
-
-        Each per-destination push (echo and response) goes through
-        :meth:`_deliver_payload_to_channel`, which clones the payload
-        and applies the channel's optional ``response_hook`` so
-        per-channel transforms (e.g. flatten multi-modal to text for a
-        text-only wire) can't leak across destinations.
-        """
-        target = request.response_target
-        kind = target.kind
-
-        # Fast paths for the trivial variants.
-        if kind == ResponseTargetKind.ORIGINATING:
-            return True
-        if kind == ResponseTargetKind.NONE:
-            # Background-only — drop the reply on the floor for now (no
-            # ContinuationToken in the prototype).
-            return False
-
-        # Build the destination set.
-        include_originating = False
-        # Each entry is (channel_name, identity_override_or_None_to_lookup).
-        destinations: list[tuple[str, ChannelIdentity | None]] = []
-        isolation_key = request.session.isolation_key if request.session is not None else None
-        known = self._identities.get(isolation_key or "", {})
-
-        if kind == ResponseTargetKind.ACTIVE:
-            active = self._active.get(isolation_key or "")
-            if active is None or active == request.channel:
-                # Fall back to originating when there's no other active
-                # channel known (matches the "first message" case).
-                self._annotate_intended_targets(payload, intended=(), skipped=())
-                return True
-            destinations.append((active, known.get(active)))
-
-        elif kind == ResponseTargetKind.ALL_LINKED:
-            for channel_name, identity in known.items():
-                if channel_name == request.channel:
-                    include_originating = True
-                    continue
-                destinations.append((channel_name, identity))
-            if not destinations and not include_originating:
-                # No links recorded yet — fall back.
-                self._annotate_intended_targets(payload, intended=(), skipped=())
-                return True
-
-        elif kind == ResponseTargetKind.IDENTITIES:
-            for ident in target.target_identities:
-                if ident.channel == request.channel:
-                    # Pointing the originating channel at itself — fold
-                    # into ``include_originating`` so the originating
-                    # channel renders on its own wire rather than
-                    # double-delivering via push.
-                    include_originating = True
-                    continue
-                destinations.append((ident.channel, ident))
-
-        elif kind == ResponseTargetKind.CHANNELS:
-            for entry in target.targets:
-                if entry == "originating":
-                    include_originating = True
-                    continue
-                if ":" in entry:
-                    channel_name, _, native_id = entry.partition(":")
-                    if channel_name == request.channel:
-                        # Pointing the originating channel at itself with a
-                        # specific native id — treat as "include
-                        # originating" since the channel will reply on its
-                        # own wire to that user anyway.
-                        include_originating = True
-                        continue
-                    destinations.append((channel_name, ChannelIdentity(channel=channel_name, native_id=native_id)))
-                else:
-                    if entry == request.channel:
-                        include_originating = True
-                        continue
-                    destinations.append((entry, known.get(entry)))
-
-        # Schedule per-destination push tasks via the durable runner.
-        by_name = {ch.name: ch for ch in self.channels}
-        runner_mode = getattr(self._durable_task_runner, "payload_mode", DurableTaskPayloadMode.OBJECT)
-        intended_tokens: list[str] = []
-        skipped_tokens: list[str] = []
-        echo_payload = self._build_echo_payload(request) if target.echo_input else None
-        for channel_name, dest_identity in destinations:
-            channel = by_name.get(channel_name)
-            token = f"{channel_name}:{dest_identity.native_id}" if dest_identity is not None else channel_name
-            if channel is None:
-                logger.warning("deliver_response: no channel named %r (target=%s)", channel_name, token)
-                skipped_tokens.append(token)
-                continue
-            if not isinstance(channel, ChannelPush):
-                logger.warning(
-                    "deliver_response: channel %r does not implement ChannelPush (target=%s)",
-                    channel_name,
-                    token,
-                )
-                skipped_tokens.append(token)
-                continue
-            if dest_identity is None:
-                logger.warning(
-                    "deliver_response: no known identity for isolation_key=%s on channel=%s",
-                    isolation_key,
-                    channel_name,
-                )
-                skipped_tokens.append(token)
-                continue
-
-            # Build the runner payload. Object-mode runners get live
-            # references for speed; JSON-mode runners get a fully
-            # encoded envelope from the channel's push codec.
-            try:
-                task_payload = await self._build_push_payload(
-                    channel=channel,
-                    channel_name=channel_name,
-                    identity=dest_identity,
-                    request=request,
-                    result=payload,
-                    echo_payload=echo_payload,
-                    runner_mode=runner_mode,
-                )
-            except PushPayloadNotSerializable:
-                logger.exception(
-                    "deliver_response: channel %r push codec refused payload (target=%s); skipping",
-                    channel_name,
-                    token,
-                )
-                skipped_tokens.append(token)
-                continue
-            try:
-                await self._durable_task_runner.schedule(HOSTING_PUSH_TASK_NAME, task_payload)
-            except Exception:
-                # Schedule-time failures are a host-side outage (runner
-                # backend unreachable, configuration error). Log and
-                # treat the destination as skipped — the originating
-                # channel's fall-back-to-originating rule (below) keeps
-                # the user from being left without a reply when every
-                # destination dropped.
-                logger.exception("deliver_response: failed to schedule push for target=%s", token)
-                skipped_tokens.append(token)
-                continue
-            intended_tokens.append(token)
-            logger.info(
-                "deliver_response: scheduled push",
-                extra={"target": token, "channel": channel_name},
-            )
-
-        if not intended_tokens and not include_originating:
-            # Spec policy: if every destination drops at resolution time
-            # (or scheduling fails universally) deliver to originating
-            # so the user gets a response. The runner backend still
-            # owns observability for any partial-failure case where at
-            # least one destination did get scheduled.
-            logger.warning("deliver_response: every destination dropped — falling back to originating")
-            include_originating = True
-
-        self._annotate_intended_targets(
-            payload,
-            intended=tuple(intended_tokens),
-            skipped=tuple(skipped_tokens),
-            include_originating=include_originating,
-            originating_channel=request.channel,
-        )
-
-        return include_originating
-
-    async def _build_push_payload(
-        self,
-        *,
-        channel: ChannelPush,
-        channel_name: str,
-        identity: ChannelIdentity,
-        request: ChannelRequest,
-        result: HostedRunResult[Any],
-        echo_payload: HostedRunResult[Any] | None,
-        runner_mode: DurableTaskPayloadMode,
-    ) -> dict[str, Any]:
-        """Assemble the runner payload for a single push destination.
-
-        For object-mode runners (the default in-process runner) we
-        forward live references — no serialisation cost on the hot
-        path. For JSON-mode runners we invoke the channel's
-        :class:`ChannelPushCodec` once to produce a JSON-safe envelope
-        for the whole push triple; the codec is the only entity that
-        knows how to project a :class:`HostedRunResult` plus the
-        channel-side request/identity context for a specific channel's
-        wire format.
-        """
-        if runner_mode == DurableTaskPayloadMode.OBJECT:
-            return {
-                "channel_name": channel_name,
-                "identity": identity,
-                "result": result,
-                "echo_result": echo_payload,
-                "echo_done": False,
-                "request": request,
-            }
-        # JSON mode — the startup validator guarantees every push-capable
-        # channel has a ``push_codec``. Use ``getattr`` for the same
-        # duck-typed lookup pattern the validator and decoder use.
-        codec = cast("ChannelPushCodec", getattr(channel, "push_codec"))  # noqa: B009
-        envelope = await codec.encode(
-            result=result,
-            request=request,
-            identity=identity,
-            echo_result=echo_payload,
-        )
-        return {
-            "channel_name": channel_name,
-            "envelope": dict(envelope),
-            "echo_done": False,
-        }
-
-    def _annotate_intended_targets(
-        self,
-        payload: HostedRunResult[Any],
-        *,
-        intended: tuple[str, ...],
-        skipped: tuple[str, ...],
-        include_originating: bool = False,
-        originating_channel: str | None = None,
-    ) -> None:
-        """Stamp ``additional_properties["hosting"]`` on every assistant message in the payload.
-
-        The audit annotation is the spec's immutable record of the
-        host's delivery *intent* — persistence providers see what the
-        host meant to deliver from a single write, without ever
-        observing mutable per-destination state (the runner owns
-        that). Annotated fields:
-
-        - ``intended_targets``: ``[<channel>[:<native_id>], …]`` for
-          every non-originating destination whose push task was
-          scheduled successfully.
-        - ``skipped_targets``: destinations dropped at resolution time
-          (unknown channel, no ``ChannelPush``, no known identity, or
-          schedule-time outage). Useful for ops triage.
-        - ``includes_originating``: ``True`` when the originating
-          channel rendered (or will render) the reply on its own wire.
-
-        Workflow targets producing arbitrary result objects with no
-        ``messages`` field are left untouched — the annotation is a
-        best-effort augmentation of conventional agent responses.
-        """
-        result_obj = payload.result
-        messages_raw: Any = getattr(result_obj, "messages", None)
-        if not isinstance(messages_raw, list):
-            return
-        hosting_meta: dict[str, Any] = {
-            "intended_targets": list(intended),
-            "includes_originating": include_originating,
-        }
-        if skipped:
-            hosting_meta["skipped_targets"] = list(skipped)
-        if include_originating and originating_channel is not None:
-            hosting_meta["originating_channel"] = originating_channel
-        for entry in cast("list[Any]", messages_raw):  # type: ignore[redundant-cast]
-            if not isinstance(entry, Message):
-                continue
-            message: Message = entry
-            if getattr(message, "role", None) != "assistant":
-                continue
-            existing = message.additional_properties or {}
-            existing_hosting = existing.get("hosting") if isinstance(existing, Mapping) else None
-            if isinstance(existing_hosting, Mapping):
-                merged_hosting: Mapping[str, Any] = {**existing_hosting, **hosting_meta}
-            else:
-                merged_hosting = hosting_meta
-            message.additional_properties = {**existing, "hosting": merged_hosting}
 
 
 __all__ = ["AgentFrameworkHost", "ChannelContext", "logger"]

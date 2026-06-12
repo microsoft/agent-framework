@@ -11,12 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from agent_framework import AgentResponse, Content, Message
 from agent_framework_hosting import (
     AgentFrameworkHost,
     ChannelCommand,
@@ -119,10 +118,6 @@ class _FakeAgent:
         return _coro()
 
 
-def _run_result(text: str) -> HostedRunResult[AgentResponse]:
-    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
-
-
 def _make_telegram(
     stream_default: bool = False, *, path: str = "/telegram/webhook"
 ) -> tuple[TelegramChannel, _FakeAgent]:
@@ -186,10 +181,10 @@ class TestTelegramWebhook:
         assert not agent.runs
 
     async def test_response_hook_can_rewrite_originating_reply(self) -> None:
-        contexts: list[Any] = []
+        seen_kwargs: list[dict[str, Any]] = []
 
         def hook(result: HostedRunResult, **kwargs: Any) -> HostedRunResult:
-            contexts.append(kwargs["context"])
+            seen_kwargs.append(dict(kwargs))
             return HostedRunResult(_FakeAgentResponse(text=result.result.text.upper()), session=result.session)
 
         ch, agent = _make_telegram()
@@ -198,11 +193,22 @@ class TestTelegramWebhook:
         class _Ctx:
             target: Any = agent
 
-            async def run(self, _request: ChannelRequest) -> HostedRunResult:
-                return HostedRunResult(_FakeAgentResponse(text="hi"))
-
-            async def deliver_response(self, _request: ChannelRequest, _payload: HostedRunResult) -> bool:
-                return True
+            async def run(
+                self,
+                _request: ChannelRequest,
+                *,
+                run_hook: Any | None = None,
+                protocol_request: Any | None = None,
+                response_hook: Any | None = None,
+                channel_name: str | None = None,
+            ) -> HostedRunResult:
+                result = HostedRunResult(_FakeAgentResponse(text="hi"))
+                if response_hook is None:
+                    return result
+                shaped = response_hook(result, request=_request, channel_name=channel_name or _request.channel)
+                if isinstance(shaped, Awaitable):
+                    return await shaped
+                return shaped
 
         ch._ctx = _Ctx()  # type: ignore[assignment] # pyright: ignore[reportPrivateUsage]
 
@@ -213,42 +219,11 @@ class TestTelegramWebhook:
         args, kwargs = ch._http.post.call_args  # type: ignore[attr-defined]
         assert args[0].endswith("/sendMessage")
         assert kwargs["json"]["text"] == "HI"
-        assert contexts
-        assert contexts[0].channel_name == "telegram"
-        assert contexts[0].originating is True
-        assert contexts[0].destination_identity is None
+        assert seen_kwargs
+        assert seen_kwargs[0]["channel_name"] == "telegram"
 
 
-class TestPushAndCommand:
-    async def test_push_calls_send(self) -> None:
-        ch, _agent = _make_telegram()
-        from agent_framework_hosting import ChannelIdentity
-
-        await ch.push(ChannelIdentity(channel="telegram", native_id="42"), _run_result("hi"))
-        assert ch._http is not None
-        ch._http.post.assert_called()  # type: ignore[attr-defined]
-        args, kwargs = ch._http.post.call_args  # type: ignore[attr-defined]
-        assert args[0].endswith("/sendMessage")
-        assert kwargs["json"]["chat_id"] in ("42", 42)
-        assert kwargs["json"]["text"] == "hi"
-        # Agent replies must stay loud: no silent flag on a non-echo push.
-        assert "disable_notification" not in kwargs["json"]
-
-    async def test_push_echo_is_silent(self) -> None:
-        ch, _agent = _make_telegram()
-        from agent_framework_hosting import ChannelIdentity
-
-        echo = HostedRunResult(
-            AgentResponse(messages=[Message(role="user", contents=[Content.from_text(text="said via X")])])
-        )
-        await ch.push(ChannelIdentity(channel="telegram", native_id="42"), echo)
-        assert ch._http is not None
-        _args, kwargs = ch._http.post.call_args  # type: ignore[attr-defined]
-        # Bots cannot impersonate the user (no MTProto send_as), so the echo is
-        # delivered silently instead of buzzing the device like a real reply.
-        assert kwargs["json"]["disable_notification"] is True
-        assert kwargs["json"]["text"] == "said via X"
-
+class TestCommand:
     async def test_command_handler_invoked(self) -> None:
         captured: list[ChannelCommandContext] = []
 
@@ -422,9 +397,7 @@ class TestShutdownDrainsWorkers:
 
 
 def _deletewebhook_called(http_mock: MagicMock) -> bool:
-    return any(
-        call.args and str(call.args[0]).endswith("/deleteWebhook") for call in http_mock.post.call_args_list
-    )
+    return any(call.args and str(call.args[0]).endswith("/deleteWebhook") for call in http_mock.post.call_args_list)
 
 
 class TestWebhookShutdownTeardown:

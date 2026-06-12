@@ -17,22 +17,17 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from typing import Any, cast
+from collections.abc import AsyncIterator, Callable, Mapping
+from typing import Any
 
-from agent_framework import AgentResponse, Content, Message
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
     ChannelRequest,
-    ChannelResponseContext,
     ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
-    ChannelStreamTransformHook,
-    HostedRunResult,
-    apply_response_hook,
-    apply_run_hook,
+    ChannelStreamUpdateHook,
     get_current_isolation_keys,
     logger,
 )
@@ -53,23 +48,9 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from ._parsing import (
-    parse_response_target,
     parse_responses_identity,
     parse_responses_request,
 )
-
-
-def _ack_text() -> str:
-    """Tiny acknowledgement string for the originating wire.
-
-    Used when the agent reply is delivered out-of-band via :class:`ChannelPush`.
-    """
-    return "[delivered out-of-band]"
-
-
-def _text_result(text: str) -> HostedRunResult[AgentResponse]:
-    """Build a host delivery payload from text accumulated by this channel."""
-    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
 class ResponsesChannel:
@@ -88,7 +69,7 @@ class ResponsesChannel:
         path: str = "/responses",
         run_hook: ChannelRunHook | None = None,
         response_hook: ChannelResponseHook | None = None,
-        stream_transform_hook: ChannelStreamTransformHook | None = None,
+        stream_update_hook: ChannelStreamUpdateHook | None = None,
         response_id_factory: Callable[..., str] | None = None,
     ) -> None:
         """Create a Responses channel.
@@ -97,15 +78,13 @@ class ResponsesChannel:
             path: Endpoint path on the host. Default ``"/responses"`` matches
                 the upstream OpenAI surface; use ``""`` to expose this channel
                 at the app root.
-            run_hook: Optional :data:`ChannelRunHook` invoked with the
-                parsed :class:`ChannelRequest` before the agent target
+            run_hook: Optional :data:`ChannelRunHook` the host invokes with
+                the parsed :class:`ChannelRequest` before the agent target
                 runs. May return a replacement request.
-            response_hook: Optional :data:`ChannelResponseHook` invoked
+            response_hook: Optional :data:`ChannelResponseHook` the host invokes
                 before the channel serializes an originating
-                :class:`HostedRunResult` into a Responses envelope. The
-                host also invokes this hook when delivering to this
-                channel as a non-originating push destination.
-            stream_transform_hook: Optional per-update transform hook
+                :class:`HostedRunResult` into a Responses envelope.
+            stream_update_hook: Optional per-update hook
                 applied while streaming Server-Sent Events. Return a
                 replacement update, or ``None`` to drop the update.
             response_id_factory: Optional callable that mints the
@@ -138,7 +117,7 @@ class ResponsesChannel:
         self.path = path
         self._hook = run_hook
         self.response_hook = response_hook
-        self._stream_transform_hook = stream_transform_hook
+        self._stream_update_hook = stream_update_hook
         self._ctx: ChannelContext | None = None
         self._response_id_factory: Callable[..., str] = (
             response_id_factory if response_id_factory is not None else (lambda *_a, **_kw: f"resp_{uuid.uuid4().hex}")
@@ -156,8 +135,6 @@ class ResponsesChannel:
         ``options`` / ``ChannelSession`` triples via :mod:`._parsing`,
         applies the optional ``run_hook``, and either streams an SSE
         response stream or returns a one-shot OpenAI ``Response`` envelope.
-        Non-originating ``response_target`` values resolve to a delivery
-        acknowledgement instead of echoing the agent text on this wire.
         """
         if self._ctx is None:  # pragma: no cover - guarded by Channel lifecycle
             return JSONResponse({"error": "channel not initialized"}, status_code=500)
@@ -218,8 +195,8 @@ class ResponsesChannel:
             attributes["previous_response_id"] = previous_response_id
 
         # Honor the OpenAI-Responses ``stream`` flag — non-streaming by
-        # default, SSE when the caller opts in. Run hooks may still flip
-        # this per-request (e.g. force non-streaming for a particular user).
+        # default, SSE when the caller opts in. The channel chooses the
+        # transport before run hooks execute.
         channel_request = ChannelRequest(
             channel=self.name,
             operation="message.create",
@@ -228,17 +205,8 @@ class ResponsesChannel:
             options=options or None,
             stream=bool(body.get("stream", False)),
             identity=parse_responses_identity(body, self.name),
-            response_target=parse_response_target(body),
             attributes=attributes,
         )
-
-        if self._hook is not None:
-            channel_request = await apply_run_hook(
-                self._hook,
-                channel_request,
-                target=self._ctx.target,
-                protocol_request=body,
-            )
 
         if channel_request.stream:
             return StreamingResponse(
@@ -247,31 +215,16 @@ class ResponsesChannel:
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-        result = await self._ctx.run(channel_request)
-        include_originating = await self._ctx.deliver_response(channel_request, result)
-        if include_originating:
-            result = await self._apply_response_hook(result, channel_request)
-        text = result.result.text if include_originating else _ack_text()
+        result = await self._ctx.run(
+            channel_request,
+            run_hook=self._hook,
+            protocol_request=body,
+            response_hook=self.response_hook,
+            channel_name=self.name,
+        )
+        text = result.result.text
         envelope = self._build_response(body, text, status="completed", response_id=response_id)
         return JSONResponse(envelope.model_dump(mode="json", exclude_none=True))
-
-    async def _apply_response_hook(
-        self,
-        result: HostedRunResult[AgentResponse],
-        request: ChannelRequest,
-    ) -> HostedRunResult[AgentResponse]:
-        """Apply the channel-level response hook for an originating reply."""
-        if self.response_hook is None:
-            return result
-        context = ChannelResponseContext(
-            request=request,
-            channel_name=self.name,
-            destination_identity=None,
-            originating=True,
-            is_echo=False,
-        )
-        shaped = await apply_response_hook(self.response_hook, result, context=context)
-        return cast("HostedRunResult[AgentResponse]", shaped)
 
     def _build_response(
         self,
@@ -350,13 +303,15 @@ class ResponsesChannel:
 
         accumulated = ""
         try:
-            stream = self._ctx.run_stream(request)
+            stream = await self._ctx.run_stream(
+                request,
+                run_hook=self._hook,
+                protocol_request=body,
+                stream_update_hook=self._stream_update_hook,
+                response_hook=self.response_hook,
+                channel_name=self.name,
+            )
             async for update in stream:
-                if self._stream_transform_hook is not None:
-                    transformed = self._stream_transform_hook(update)
-                    update = await transformed if isinstance(transformed, Awaitable) else transformed
-                    if update is None:
-                        continue
                 chunk = getattr(update, "text", None)
                 if chunk:
                     accumulated += chunk
@@ -374,24 +329,12 @@ class ResponsesChannel:
             try:
                 # Finalize so context-provider / history hooks on the agent
                 # still run even though we are emitting our own SSE.
-                await stream.get_final_response()
+                final_response = await stream.get_final_response()
             except Exception:  # pragma: no cover - finalize is best-effort
                 logger.exception("Responses stream finalize failed")
+                final_response = None
         except Exception as exc:
             logger.exception("Responses stream consumption failed")
-            # Mid-stream failure: the wire already saw partial deltas
-            # so host-side state must reflect that — call
-            # ``deliver_response`` with the accumulated text (best-effort)
-            # before signalling failure to the client. Without this,
-            # next turn's chain anchored on this ``response_id`` would
-            # be inconsistent with what the user actually saw, and any
-            # non-originating push targets would silently miss the turn.
-            # ``deliver_response`` itself is best-effort; we swallow its
-            # exceptions so the failure event still reaches the client.
-            try:
-                await self._ctx.deliver_response(request, _text_result(accumulated))
-            except Exception:  # pragma: no cover - delivery is best-effort
-                logger.exception("Responses stream failure deliver_response failed")
             failed = self._build_response(body, accumulated, status="failed", response_id=response_id)
             failed.error = ResponseError(code="server_error", message=str(exc))
             yield sse(
@@ -403,14 +346,7 @@ class ResponsesChannel:
             )
             return
 
-        completed_text = accumulated
-        result = _text_result(accumulated)
-        include_originating = await self._ctx.deliver_response(request, result)
-        if include_originating:
-            result = await self._apply_response_hook(result, request)
-            completed_text = result.result.text
-        else:
-            completed_text = _ack_text()
+        completed_text = getattr(final_response, "text", None) or accumulated
         completed = self._build_response(body, completed_text, status="completed", response_id=response_id)
         # Reuse the same message id we emitted deltas under.
         if completed.output and isinstance(completed.output[0], ResponseOutputMessage):

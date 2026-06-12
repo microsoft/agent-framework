@@ -8,7 +8,7 @@ The general hosting plumbing lives in
 its own package (`agent-framework-hosting-responses`,
 `agent-framework-hosting-invocations`,
 `agent-framework-hosting-telegram`, `agent-framework-hosting-activity-protocol`,
-`agent-framework-hosting-entra`).
+`agent-framework-hosting-discord`).
 
 | Sample | What it shows | Packaging |
 |---|---|---|
@@ -16,8 +16,7 @@ its own package (`agent-framework-hosting-responses`,
 | [`local_responses_workflow/`](./local_responses_workflow) | A 4-step `Workflow` (typed `SloganBrief` intake → writer → legal → formatter) hosted behind **both** the Responses and Invocations channels via a shared `run_hook` that parses inbound text/JSON into the workflow's typed input. The host writes per-conversation checkpoints via `checkpoint_location=…`. Demonstrates workflow targets + structured input adaptation + multi-channel + resume-across-turns. Includes a `call_server.rest` file with REST examples for both endpoints. | **Local only.** |
 | [`foundry_hosted_agent/`](./foundry_hosted_agent) | One Foundry agent, **Responses + Invocations only** — the minimal shape that is **runtime-compatible with the Foundry Hosted Agents platform**. | Ships with `Dockerfile` + `agent.yaml` + `agent.manifest.yaml` + `azure.yaml` so the same image runs locally **or** as a Foundry Hosted Agent (`azd up`). |
 | [`foundry_telegram_invocations_weather/`](./foundry_telegram_invocations_weather) | Experimental Telegram weather bot that mounts `TelegramChannel` at `POST /invocations`, registers the Foundry Hosted Agents Invocations URL as the Telegram webhook, and uses `FoundryHostedAgentHistoryProvider` for storage. | Ships with `Dockerfile` + `agent.yaml` + `agent.manifest.yaml` + `azure.yaml`; used to validate whether a non-Responses channel can run under Foundry Invocations. |
-| [`local_telegram/`](./local_telegram) | Adds Telegram, a `@tool`, `FileHistoryProvider`, run hooks (per-user / per-chat session keying), extra Telegram commands, and `ResponseTarget` multicast. Runs under Hypercorn with multiple workers. | **Local only.** No Dockerfile / Foundry packaging. |
-| [`local_identity_link/`](./local_identity_link) | Everything in `local_telegram/` plus Teams and the Entra identity-link sidecar (`/auth/start` + `/auth/callback`). Demonstrates linking a Telegram chat to an Entra user so multiple non-Entra channels can share one isolation key. | **Local only.** No Dockerfile / Foundry packaging. |
+| [`local_telegram/`](./local_telegram) | Adds Telegram, a `@tool`, `FileHistoryProvider`, run hooks (per-user / per-chat session keying), and extra Telegram commands. Runs under Hypercorn with multiple workers. | **Local only.** No Dockerfile / Foundry packaging. |
 
 Each sample is fully self-contained — its own `pyproject.toml`, `uv.lock`,
 server `app.py`, calling script(s), and `storage/` directory. Every
@@ -40,9 +39,9 @@ involved**.
 
 | Aspect | `af-hosting/` (this directory) | `foundry-hosted-agents/` |
 |---|---|---|
-| Server stack | `agent-framework-hosting` + per-channel packages (`-responses`, `-invocations`, `-telegram`, `-activity-protocol`, `-entra`) | `agent-framework-hosted` only — the Foundry Hosted Agents runtime owns the HTTP surface |
-| Channels other than Responses / Invocations | Yes — Telegram, Activity Protocol (Teams), Entra identity-linking | No — the platform exposes Responses + Invocations only |
-| Run target | Local Hypercorn (`local_responses/`, `local_telegram/`, `local_identity_link/`); Hosted Agents *or* local (`foundry_hosted_agent/`) | Hosted Agents *or* local container; targets the Hosted Agents platform contract |
+| Server stack | `agent-framework-hosting` + per-channel packages (`-responses`, `-invocations`, `-telegram`, `-activity-protocol`, `-discord`) | `agent-framework-hosted` only — the Foundry Hosted Agents runtime owns the HTTP surface |
+| Channels other than Responses / Invocations | Yes — Telegram, Activity Protocol (Teams), Discord | No — the platform exposes Responses + Invocations only |
+| Run target | Local Hypercorn (`local_responses/`, `local_telegram/`); Hosted Agents *or* local (`foundry_hosted_agent/`) | Hosted Agents *or* local container; targets the Hosted Agents platform contract |
 | When to pick this | You need extra channels (Telegram/Teams via Activity Protocol/…), custom hosting middleware, or want to run outside the Foundry runtime | You only need Responses/Invocations and want zero hosting boilerplate, leveraging the Foundry-managed surface |
 
 `foundry_hosted_agent/` is the bridge sample: it uses the
