@@ -19,8 +19,8 @@ can we collect a lightweight, privacy-respecting signal of feature usage for the
 traffic we can actually read, without standing up new event pipelines?
 
 The detailed mechanism is in [SPEC-002](../specs/002-feature-usage-telemetry.md);
-the per-language bit lists are in
-[`docs/feature-usage-bit-registry.json`](../feature-usage-bit-registry.json).
+the per-language bit tables are in
+[feature-usage-bit-registry.md](../specs/feature-usage-bit-registry.md).
 
 ## Decision Drivers
 
@@ -274,8 +274,7 @@ These are unresolved and should be decided before/at approval:
 ## More Information
 
 - Mechanism & API: [SPEC-002](../specs/002-feature-usage-telemetry.md)
-- Per-language bit lists: [`docs/feature-usage-bit-registry.json`](../feature-usage-bit-registry.json)
-- Encoding / opt-out / governance prose: [feature-usage-bit-registry.md](../specs/feature-usage-bit-registry.md)
+- Per-language bit tables, encoding, opt-out, governance: [feature-usage-bit-registry.md](../specs/feature-usage-bit-registry.md)
 - Existing accumulator pattern: `python/packages/core/agent_framework/_telemetry.py`
 - .NET emission policies: `dotnet/src/Microsoft.Agents.AI.Foundry/AgentFrameworkUserAgentPolicy.cs`,
   `dotnet/src/Microsoft.Agents.AI.Foundry.Hosting/HostedAgentUserAgentPolicy.cs`
