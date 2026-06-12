@@ -6,6 +6,7 @@ on:
     branches: ["main"]
     paths:
       - "python/**"
+      - "!python/.github/skills/*"
       - "!python/.github/skills/**"
 
 env:

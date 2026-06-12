@@ -5,6 +5,7 @@ on:
     branches: ["main", "feature*"]
     paths:
       - "python/**"
+      - "!python/.github/skills/*"
       - "!python/.github/skills/**"
 env:
   # Configure a constant location for the uv cache
