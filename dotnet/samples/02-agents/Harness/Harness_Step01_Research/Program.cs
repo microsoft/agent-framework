@@ -25,8 +25,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using SampleApp;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4";
 
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
@@ -79,8 +79,10 @@ AIAgent agent =
     .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
-    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    .AsHarnessAgent(new HarnessAgentOptions
     {
+        MaxContextWindowTokens = MaxContextWindowTokens,
+        MaxOutputTokens = MaxOutputTokens,
         Name = "ResearchAgent",
         Description = "A research assistant that plans and executes research tasks.",
         DisableFileAccess = true,                           // If enabled, this would allow the agent to read/write files in a working directory

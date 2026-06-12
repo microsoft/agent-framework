@@ -14,9 +14,9 @@ using Microsoft.Agents.AI;
 using ModelContextProtocol.Client;
 
 // --- Configuration ---
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 string toolboxMcpServerUrl = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_MCP_SERVER_URL")
     ?? throw new InvalidOperationException("FOUNDRY_TOOLBOX_MCP_SERVER_URL is not set.");
 

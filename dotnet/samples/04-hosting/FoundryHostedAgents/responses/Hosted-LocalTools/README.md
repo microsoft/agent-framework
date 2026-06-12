@@ -1,4 +1,4 @@
-# Hosted-LocalTools
+﻿# Hosted-LocalTools
 
 A hosted agent with **local C# function tools** for hotel search. Demonstrates how to define and wire local tools that the LLM can invoke — a key advantage of code-based hosted agents over prompt agents.
 
@@ -21,10 +21,10 @@ cp .env.example .env
 Edit `.env` and set your Azure AI Foundry project endpoint:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 ```
 
 > **Note:** `.env` is gitignored. The `.env.example` template is checked in as a reference.
@@ -107,6 +107,34 @@ The agent has a single tool `GetAvailableHotels` defined as a C# method with `[D
 | `maxPrice` | int | Max price per night in USD (default: 500) |
 
 The tool searches a mock database of 6 Seattle hotels and returns formatted results with name, location, rating, and pricing.
+
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-local-tools && cd hosted-local-tools
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalTools/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-local-tools
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+---
 
 ## NuGet package users
 

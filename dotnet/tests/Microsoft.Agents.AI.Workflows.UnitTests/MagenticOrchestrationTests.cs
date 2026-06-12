@@ -420,6 +420,82 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
+    public async Task Participant_Receives_Prior_Participant_Response_Not_InstructionAsync()
+    {
+        // Regression: each participant must see prior participants' *responses* (the running conversation),
+        // not their *instructions*. Previously the orchestrator broadcast the per-round instruction to every
+        // participant (untargeted fan-out) and never broadcast replies, so a later speaker received the earlier
+        // speaker's instruction and never its answer.
+        const string HealthInstruction = "HEALTH_CHECKER_INSTRUCTION_check_framework";
+        const string DatabaseInstruction = "DATABASE_CHECKER_INSTRUCTION_check_database";
+        const string HealthEchoPrefix = "HC_RESPONSE::";
+        const string DatabaseEchoPrefix = "DB_RESPONSE::";
+
+        List<ChatMessage> facts = CreatePlanResponse("Facts");
+        List<ChatMessage> plan = CreatePlanResponse("Plan");
+        List<ChatMessage> round1Ledger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "HealthChecker",
+            instructionOrQuestion: HealthInstruction);
+        List<ChatMessage> round2Ledger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "DatabaseChecker",
+            instructionOrQuestion: DatabaseInstruction);
+        List<ChatMessage> round3Ledger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "DatabaseChecker",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswer = CreateFinalAnswerResponse("All systems checked");
+
+        TestReplayAgent manager = new(
+            [facts, plan, round1Ledger, round2Ledger, round3Ledger, finalAnswer],
+            name: "Manager");
+        RecordingEchoAgent healthChecker = new(name: "HealthChecker", prefix: HealthEchoPrefix);
+        RecordingEchoAgent databaseChecker = new(name: "DatabaseChecker", prefix: DatabaseEchoPrefix);
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(healthChecker, databaseChecker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Check system health")]);
+
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("All systems checked");
+
+        // Each participant takes exactly one turn.
+        healthChecker.RecordedInputs.Should().ContainSingle();
+        databaseChecker.RecordedInputs.Should().ContainSingle();
+
+        // The first speaker receives its own instruction.
+        List<ChatMessage> healthInput = healthChecker.RecordedInputs[0];
+        healthInput.Should().Contain(m => m.Text.Contains(HealthInstruction), "the first speaker receives its own instruction");
+
+        // The second speaker must see the first speaker's RESPONSE (authored by HealthChecker, carrying the echo
+        // prefix that only the response — not the raw instruction — has), plus its own instruction.
+        List<ChatMessage> databaseInput = databaseChecker.RecordedInputs[0];
+        databaseInput.Should().Contain(
+            m => m.AuthorName == "HealthChecker" && m.Text.Contains(HealthEchoPrefix),
+            "the next speaker must receive the prior participant's response (the running conversation)");
+        databaseInput.Should().Contain(m => m.Text.Contains(DatabaseInstruction),
+            "the next speaker must receive its own instruction");
+
+        // The leaked-instruction bug: the second speaker must not receive HealthChecker's instruction as a
+        // bare message (it should only appear, if at all, embedded in HealthChecker's prefixed response).
+        databaseInput.Should().NotContain(
+            m => m.AuthorName != "HealthChecker" && m.Text.Trim() == HealthInstruction,
+            "the prior speaker's instruction must not leak into the next speaker's context as a standalone message");
+    }
+
+    [Fact]
     public async Task PlanReview_Revised_Triggers_ReplanAsync()
     {
         // Arrange: Human rejects initial plan with revision, triggering a replan.

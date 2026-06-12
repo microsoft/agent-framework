@@ -72,7 +72,7 @@ class HarnessScrollPanel(RichLog):
 
         # Truncate lines back to where streaming started
         if len(self.lines) > self._streaming_line_start:
-            del self.lines[self._streaming_line_start:]
+            del self.lines[self._streaming_line_start :]
             from textual.geometry import Size
 
             self.virtual_size = Size(self._widest_line_width, len(self.lines))

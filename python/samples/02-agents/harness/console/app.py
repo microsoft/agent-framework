@@ -182,18 +182,12 @@ class HarnessApp(App[None]):
         if command_handlers is None:
             from .commands import build_default_command_handlers
 
-            self._command_handlers = build_default_command_handlers(
-                agent, mode_colors=mode_colors
-            )
+            self._command_handlers = build_default_command_handlers(agent, mode_colors=mode_colors)
         else:
             self._command_handlers = command_handlers
 
         # Compute help text from command handlers
-        help_parts = [
-            h.get_help_text()
-            for h in self._command_handlers
-            if h.get_help_text() is not None
-        ]
+        help_parts = [h.get_help_text() for h in self._command_handlers if h.get_help_text() is not None]
         help_text = ", ".join(help_parts) if help_parts else None
 
         # State and driver

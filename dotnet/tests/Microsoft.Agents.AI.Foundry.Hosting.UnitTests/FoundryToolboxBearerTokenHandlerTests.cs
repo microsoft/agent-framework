@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -51,28 +54,144 @@ public class FoundryToolboxBearerTokenHandlerTests
     }
 
     [Fact]
-    public async Task SendAsync_InjectsFoundryFeaturesHeaderAsync()
+    public async Task SendAsync_UsesAiAzureComScopeAsync()
+    {
+        // Arrange
+        var capturedContexts = new List<TokenRequestContext>();
+        var credential = new Mock<TokenCredential>();
+        credential
+            .Setup(c => c.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()))
+            .Callback<TokenRequestContext, CancellationToken>((ctx, _) => capturedContexts.Add(ctx))
+            .ReturnsAsync(new AccessToken(FakeToken, DateTimeOffset.MaxValue));
+        var (handler, _) = CreateHandlerPair(credential);
+        using var invoker = new HttpMessageInvoker(handler);
+
+        // Act
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+        await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert: spec §4 mandates the https://ai.azure.com audience.
+        Assert.Single(capturedContexts);
+        Assert.Contains("https://ai.azure.com/.default", capturedContexts[0].Scopes);
+    }
+
+    [Fact]
+    public async Task SendAsync_AlwaysInjectsMandatoryFoundryFeaturesHeaderAsync()
+    {
+        // Arrange
+        var (handler, _) = CreateHandlerPair(featuresHeader: null);
+        using var invoker = new HttpMessageInvoker(handler);
+
+        // Act
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+        using var response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert: spec §2 requires Foundry-Features: Toolboxes=V1Preview on every request.
+        Assert.True(request.Headers.TryGetValues("Foundry-Features", out var values));
+        Assert.Equal("Toolboxes=V1Preview", values.Single());
+    }
+
+    [Fact]
+    public async Task SendAsync_MergesMandatoryAndOverrideFeaturesAsync()
     {
         var (handler, _) = CreateHandlerPair(featuresHeader: "feature1,feature2");
         using var invoker = new HttpMessageInvoker(handler);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
-        using var response = await invoker.SendAsync(request, CancellationToken.None);
+        await invoker.SendAsync(request, CancellationToken.None);
 
         Assert.True(request.Headers.TryGetValues("Foundry-Features", out var values));
-        Assert.Contains("feature1,feature2", values);
+        var header = values.Single();
+        Assert.Contains("Toolboxes=V1Preview", header, StringComparison.Ordinal);
+        Assert.Contains("feature1", header, StringComparison.Ordinal);
+        Assert.Contains("feature2", header, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task SendAsync_OmitsFeaturesHeaderWhenNullAsync()
+    public async Task SendAsync_DoesNotDuplicateMandatoryFlagAsync()
     {
-        var (handler, _) = CreateHandlerPair(featuresHeader: null);
+        // Override already contains the mandatory flag — must not be duplicated in the merged value.
+        var (handler, _) = CreateHandlerPair(featuresHeader: "Toolboxes=V1Preview");
         using var invoker = new HttpMessageInvoker(handler);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
-        using var response = await invoker.SendAsync(request, CancellationToken.None);
+        await invoker.SendAsync(request, CancellationToken.None);
 
-        Assert.False(request.Headers.Contains("Foundry-Features"));
+        Assert.True(request.Headers.TryGetValues("Foundry-Features", out var values));
+        var header = values.Single();
+        var count = 0;
+        var idx = 0;
+        while ((idx = header.IndexOf("Toolboxes=V1Preview", idx, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            count++;
+            idx += "Toolboxes=V1Preview".Length;
+        }
+        Assert.Equal(1, count);
+    }
+
+    [Fact]
+    public async Task SendAsync_PropagatesTraceContextFromActivityAsync()
+    {
+        // Arrange: activate an Activity so Activity.Current is populated.
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = _ => true,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var source = new ActivitySource("test-source");
+        using var activity = source.StartActivity("test-op")!;
+        Assert.NotNull(activity);
+        activity.TraceStateString = "vendor=value";
+        activity.AddBaggage("user", "alice");
+
+        var (handler, _) = CreateHandlerPair();
+        using var invoker = new HttpMessageInvoker(handler);
+
+        // Act
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+        await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert: spec §6.3 requires traceparent/tracestate/baggage propagation.
+        Assert.True(request.Headers.TryGetValues("traceparent", out var tpValues));
+        Assert.Contains(activity.TraceId.ToString(), tpValues.Single(), StringComparison.Ordinal);
+
+        Assert.True(request.Headers.TryGetValues("tracestate", out var tsValues));
+        Assert.Equal("vendor=value", tsValues.Single());
+
+        Assert.True(request.Headers.TryGetValues("baggage", out var bgValues));
+        Assert.Contains("user=alice", bgValues.Single(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SendAsync_DoesNotOverrideExistingTraceparentAsync()
+    {
+        // Caller pre-set traceparent on the message; must not be duplicated or replaced.
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = _ => true,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var source = new ActivitySource("test-source");
+        using var activity = source.StartActivity("test-op")!;
+        Assert.NotNull(activity);
+
+        var (handler, _) = CreateHandlerPair();
+        using var invoker = new HttpMessageInvoker(handler);
+
+        const string PresetTraceparent = "00-00000000000000000000000000000001-0000000000000001-01";
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+        request.Headers.TryAddWithoutValidation("traceparent", PresetTraceparent);
+
+        // Act
+        await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert
+        Assert.True(request.Headers.TryGetValues("traceparent", out var values));
+        var list = values.ToList();
+        Assert.Single(list);
+        Assert.Equal(PresetTraceparent, list[0]);
     }
 
     [Theory]
