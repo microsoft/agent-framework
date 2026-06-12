@@ -159,7 +159,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString), CosmosOptionsHelper.CreateOptions("CosmosChatHistoryProvider")), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
+        : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString), CosmosOptionsHelper.CreateOptions(nameof(CosmosChatHistoryProvider))), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
     {
     }
 
@@ -187,7 +187,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential), CosmosOptionsHelper.CreateOptions("CosmosChatHistoryProvider")), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
+        : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential), CosmosOptionsHelper.CreateOptions(nameof(CosmosChatHistoryProvider))), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
     {
     }
 

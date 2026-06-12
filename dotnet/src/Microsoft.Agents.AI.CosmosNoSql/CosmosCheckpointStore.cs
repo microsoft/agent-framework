@@ -38,7 +38,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosCheckpointStore(string connectionString, string databaseId, string containerId)
     {
-        var cosmosClientOptions = CosmosOptionsHelper.CreateOptions("CosmosCheckpointStore");
+        var cosmosClientOptions = CosmosOptionsHelper.CreateOptions(nameof(CosmosCheckpointStore));
 
         this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(connectionString), cosmosClientOptions);
         this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
@@ -56,7 +56,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosCheckpointStore(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId)
     {
-        var cosmosClientOptions = CosmosOptionsHelper.CreateOptions("CosmosCheckpointStore");
+        var cosmosClientOptions = CosmosOptionsHelper.CreateOptions(nameof(CosmosCheckpointStore));
         cosmosClientOptions.SerializerOptions = new CosmosSerializationOptions
         {
             PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
