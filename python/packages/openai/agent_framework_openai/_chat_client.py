@@ -2980,13 +2980,15 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             total_token_count=usage.total_tokens,
         )
         if usage.input_tokens_details:
-            cached_tokens = usage.input_tokens_details.cached_tokens
-            details["openai.cached_input_tokens"] = cached_tokens  # type: ignore[typeddict-unknown-key]
-            details["cache_read_input_token_count"] = cached_tokens
+            cached_tokens = cast("int | None", getattr(usage.input_tokens_details, "cached_tokens", None))
+            if cached_tokens is not None:
+                details["openai.cached_input_tokens"] = cached_tokens  # type: ignore[typeddict-unknown-key]
+                details["cache_read_input_token_count"] = cached_tokens
         if usage.output_tokens_details:
-            reasoning_tokens = usage.output_tokens_details.reasoning_tokens
-            details["openai.reasoning_tokens"] = reasoning_tokens  # type: ignore[typeddict-unknown-key]
-            details["reasoning_output_token_count"] = reasoning_tokens
+            reasoning_tokens = cast("int | None", getattr(usage.output_tokens_details, "reasoning_tokens", None))
+            if reasoning_tokens is not None:
+                details["openai.reasoning_tokens"] = reasoning_tokens  # type: ignore[typeddict-unknown-key]
+                details["reasoning_output_token_count"] = reasoning_tokens
         return details
 
     def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:

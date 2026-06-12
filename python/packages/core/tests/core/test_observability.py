@@ -2994,6 +2994,23 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
     assert spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
 
 
+def test_capture_response_records_zero_token_usage():
+    """Test _capture_response records zero-valued token usage."""
+    from agent_framework.observability import OtelAttr, _capture_response
+
+    span = Mock()
+    token_histogram = Mock()
+    attrs = {
+        OtelAttr.INPUT_TOKENS: 0,
+        OtelAttr.OUTPUT_TOKENS: 0,
+    }
+
+    _capture_response(span=span, attributes=attrs, token_usage_histogram=token_histogram)
+
+    span.set_attributes.assert_called_once_with(attrs)
+    assert token_histogram.record.call_count == 2
+
+
 async def test_layer_ordering_span_sequence_with_function_calling(span_exporter: InMemorySpanExporter):
     """Test that with correct layer ordering, spans appear in the expected sequence.
 

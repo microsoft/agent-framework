@@ -3344,6 +3344,27 @@ def test_usage_details_with_zero_cached_and_reasoning_tokens() -> None:
     assert details["reasoning_output_token_count"] == 0
 
 
+def test_usage_details_omits_missing_cached_and_reasoning_tokens() -> None:
+    """Test _parse_usage_from_openai omits missing mapped usage details."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.input_tokens = 150
+    mock_usage.output_tokens = 80
+    mock_usage.total_tokens = 230
+    mock_usage.input_tokens_details = MagicMock()
+    mock_usage.input_tokens_details.cached_tokens = None
+    mock_usage.output_tokens_details = MagicMock()
+    mock_usage.output_tokens_details.reasoning_tokens = None
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore
+    assert details is not None
+    assert "openai.cached_input_tokens" not in details
+    assert "cache_read_input_token_count" not in details
+    assert "openai.reasoning_tokens" not in details
+    assert "reasoning_output_token_count" not in details
+
+
 def test_get_metadata_from_response() -> None:
     """Test the _get_metadata_from_response method."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
