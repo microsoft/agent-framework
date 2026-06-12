@@ -4,15 +4,21 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+import uvicorn
 from a2a.server.events import EventQueue
-from a2a.types import AgentCard, Message, Part, Role, Task, TaskState
-from agent_framework import Content
-from agent_framework_hosting import ChannelContribution, ChannelRequest, HostedRunResult
+from a2a.types import AgentCard, AgentInterface, Message, Part, Role, Task, TaskState
+from agent_framework import AgentResponse, Content
+from agent_framework import Message as AFMessage
+from agent_framework_a2a import A2AAgent
+from agent_framework_hosting import AgentFrameworkHost, ChannelContribution, ChannelRequest, HostedRunResult
+from starlette.types import ASGIApp
 
 from agent_framework_hosting_a2a import A2AChannel, HostAgentExecutor
 
@@ -140,6 +146,33 @@ class _FakeRequestContext:
         return self._text
 
 
+class _HostedAgent:
+    name = "HostedAssistant"
+    description = "A hosted test assistant."
+
+    async def run(self, messages: Any = None, *, stream: bool = False, **_kwargs: Any) -> AgentResponse[Any]:
+        text = messages.text if isinstance(messages, AFMessage) else str(messages)
+        return AgentResponse(messages=[AFMessage(role="assistant", contents=[Content.from_text(text=f"host: {text}")])])
+
+
+@asynccontextmanager
+async def _serve_app(app: ASGIApp, *, port: int) -> AsyncIterator[str]:
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="on")
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise RuntimeError("Test A2A server did not start")
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        await task
+
+
 def _status_states(events: list[Any]) -> list[int]:
     states: list[int] = []
     for event in events:
@@ -167,6 +200,16 @@ def test_build_agent_card_defaults_from_target() -> None:
     assert card.description == "A helpful assistant."
     assert card.capabilities.streaming is True
     assert card.supported_interfaces[0].url == "https://example.com/"
+
+
+def test_build_agent_card_accepts_supported_interfaces() -> None:
+    interfaces = [
+        AgentInterface(url="https://example.com/jsonrpc", protocol_binding="JSONRPC"),
+        AgentInterface(url="https://example.com/grpc", protocol_binding="GRPC"),
+    ]
+    channel = A2AChannel(supported_interfaces=interfaces)
+    card = channel._build_agent_card(_FakeContext())  # type: ignore[arg-type]
+    assert card.supported_interfaces == interfaces
 
 
 def test_build_agent_card_override_wins() -> None:
@@ -235,6 +278,21 @@ async def test_execute_requires_context_id() -> None:
 
     with pytest.raises(ValueError, match="Context ID"):
         await executor.execute(request_context, queue)  # type: ignore[arg-type]
+
+
+async def test_a2a_agent_can_call_hosted_channel(unused_tcp_port: int) -> None:
+    host = AgentFrameworkHost(target=_HostedAgent(), channels=[A2AChannel(streaming=False)])
+
+    async with (
+        _serve_app(host.app, port=unused_tcp_port) as base_url,
+        A2AAgent(
+            url=base_url,
+            timeout=5.0,
+        ) as agent,
+    ):
+        response = await agent.run("hello")
+
+    assert response.messages[0].text == "host: hello"
 
 
 def test_contents_to_parts_conversion() -> None:

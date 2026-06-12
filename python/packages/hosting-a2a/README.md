@@ -25,7 +25,8 @@ By default the channel mounts at the app root so the well-known agent card is
 reachable at `/.well-known/agent-card.json`, with the JSON-RPC endpoint at `/`.
 The A2A `context_id` maps onto the host session (caller-supplied session family).
 A default agent card is derived from the target's name and description; pass a
-fully-specified `agent_card` to override it.
+fully-specified `agent_card` to override it. To advertise additional protocol
+bindings in the generated card, pass `supported_interfaces`.
 
 > **Note:** Task state is held in an in-memory A2A task store for this version; it
 > is independent of the host's session storage and is not persisted across

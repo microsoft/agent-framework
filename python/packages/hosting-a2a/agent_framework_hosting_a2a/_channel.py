@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from agent_framework_hosting import (
@@ -23,13 +24,6 @@ from agent_framework_hosting import (
 )
 
 from ._executor import HostAgentExecutor
-
-try:
-    from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-except ImportError as exc:  # pragma: no cover - guards against incompatible a2a-sdk layout
-    raise ImportError(
-        "agent-framework-hosting-a2a requires a2a-sdk route helpers (create_agent_card_routes, create_jsonrpc_routes)."
-    ) from exc
 
 
 class A2AChannel:
@@ -57,6 +51,7 @@ class A2AChannel:
         agent_version: str = "1.0.0",
         agent_card: AgentCard | None = None,
         skills: Sequence[AgentSkill] | None = None,
+        supported_interfaces: Sequence[AgentInterface] | None = None,
         streaming: bool = True,
         rpc_url: str = "/",
         card_url: str = "/.well-known/agent-card.json",
@@ -80,6 +75,8 @@ class A2AChannel:
             agent_card: A fully-specified agent card; when provided it takes
                 precedence over the ``agent_*``/``url``/``skills`` fields.
             skills: Skills advertised in the default agent card.
+            supported_interfaces: Interfaces advertised in the default agent card.
+                Defaults to one JSON-RPC interface using ``url``.
             streaming: Consume the target via streaming and publish incremental
                 A2A task artifacts (default ``True``).
             rpc_url: Path for the JSON-RPC endpoint (relative to ``path``).
@@ -96,6 +93,7 @@ class A2AChannel:
         self._agent_version = agent_version
         self._agent_card = agent_card
         self._skills = list(skills) if skills is not None else []
+        self._supported_interfaces = list(supported_interfaces) if supported_interfaces is not None else None
         self._streaming = streaming
         self._rpc_url = rpc_url
         self._card_url = card_url
@@ -116,7 +114,8 @@ class A2AChannel:
             default_input_modes=["text"],
             default_output_modes=["text"],
             capabilities=AgentCapabilities(streaming=self._streaming),
-            supported_interfaces=[AgentInterface(url=self._url, protocol_binding="JSONRPC")],
+            supported_interfaces=self._supported_interfaces
+            or [AgentInterface(url=self._url, protocol_binding="JSONRPC")],
             skills=self._skills,
         )
 
