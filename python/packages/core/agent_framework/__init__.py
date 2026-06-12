@@ -125,7 +125,6 @@ from ._harness._todo import (
     TodoSessionStore,
     TodoStore,
 )
-from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool, SamplingApprovalCallback
 from ._harness._tool_approval import (
     DEFAULT_TOOL_APPROVAL_SOURCE_ID,
     ToolApprovalMiddleware,
@@ -135,6 +134,7 @@ from ._harness._tool_approval import (
     create_always_approve_tool_response,
     create_always_approve_tool_with_arguments_response,
 )
+from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool, SamplingApprovalCallback
 from ._middleware import (
     AgentContext,
     AgentMiddleware,
