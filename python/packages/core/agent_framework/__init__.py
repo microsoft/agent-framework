@@ -27,6 +27,7 @@ from ._clients import (
     SupportsGetEmbeddings,
     SupportsImageGenerationTool,
     SupportsMCPTool,
+    SupportsShellTool,
     SupportsWebSearchTool,
 )
 from ._compaction import (
@@ -506,6 +507,7 @@ __all__ = [
     "SupportsGetEmbeddings",
     "SupportsImageGenerationTool",
     "SupportsMCPTool",
+    "SupportsShellTool",
     "SupportsWebSearchTool",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
