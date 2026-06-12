@@ -1,4 +1,4 @@
-# Hosted-FoundryAgent
+﻿# Hosted-FoundryAgent
 
 A hosted agent that delegates to a **Foundry-managed agent definition**. Instead of defining the model, instructions, and tools inline in code, this sample retrieves an existing agent registered in the Foundry platform via `AIProjectClient.AsAIAgent(agentRecord)` and hosts it using the Responses protocol.
 
@@ -21,7 +21,7 @@ cp .env.example .env
 Edit `.env` and set your Azure AI Foundry project endpoint:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
 ```

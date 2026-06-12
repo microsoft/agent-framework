@@ -27,6 +27,7 @@ from ._clients import (
     SupportsGetEmbeddings,
     SupportsImageGenerationTool,
     SupportsMCPTool,
+    SupportsShellTool,
     SupportsWebSearchTool,
 )
 from ._compaction import (
@@ -125,6 +126,15 @@ from ._harness._todo import (
     TodoStore,
 )
 from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool, SamplingApprovalCallback
+from ._harness._tool_approval import (
+    DEFAULT_TOOL_APPROVAL_SOURCE_ID,
+    ToolApprovalMiddleware,
+    ToolApprovalRule,
+    ToolApprovalRuleCallback,
+    ToolApprovalState,
+    create_always_approve_tool_response,
+    create_always_approve_tool_with_arguments_response,
+)
 from ._middleware import (
     AgentContext,
     AgentMiddleware,
@@ -330,6 +340,7 @@ __all__ = [
     "DEFAULT_MEMORY_SOURCE_ID",
     "DEFAULT_MODE_SOURCE_ID",
     "DEFAULT_TODO_SOURCE_ID",
+    "DEFAULT_TOOL_APPROVAL_SOURCE_ID",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
     "GROUP_ANNOTATION_KEY",
@@ -496,6 +507,7 @@ __all__ = [
     "SupportsGetEmbeddings",
     "SupportsImageGenerationTool",
     "SupportsMCPTool",
+    "SupportsShellTool",
     "SupportsWebSearchTool",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
@@ -509,6 +521,10 @@ __all__ = [
     "TodoStore",
     "TokenBudgetComposedStrategy",
     "TokenizerProtocol",
+    "ToolApprovalMiddleware",
+    "ToolApprovalRule",
+    "ToolApprovalRuleCallback",
+    "ToolApprovalState",
     "ToolMode",
     "ToolResultCompactionStrategy",
     "ToolTypes",
@@ -543,6 +559,8 @@ __all__ = [
     "annotate_message_groups",
     "apply_compaction",
     "chat_middleware",
+    "create_always_approve_tool_response",
+    "create_always_approve_tool_with_arguments_response",
     "create_edge_runner",
     "create_harness_agent",
     "detect_media_type_from_base64",

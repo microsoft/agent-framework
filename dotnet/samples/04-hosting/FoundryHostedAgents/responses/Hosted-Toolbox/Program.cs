@@ -6,14 +6,16 @@
 // call tools provided by the Foundry platform's managed MCP proxy.
 //
 // Required environment variables:
-//   AZURE_AI_PROJECT_ENDPOINT (local-dev) OR FOUNDRY_PROJECT_ENDPOINT (hosted runtime)
+//   FOUNDRY_PROJECT_ENDPOINT (hosted runtime) OR AZURE_AI_PROJECT_ENDPOINT (local-dev)
 //                                     - Azure AI Foundry project endpoint. The Foundry hosted
 //                                       runtime auto-injects FOUNDRY_PROJECT_ENDPOINT; locally
 //                                       set AZURE_AI_PROJECT_ENDPOINT.
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME    - Model deployment name (default: gpt-4o)
+//   FOUNDRY_MODEL                     - Model deployment name (default: gpt-4o)
 //
 // Optional:
-//   TOOLBOX_NAME                      - Name of the toolbox to load (default: my-toolbox)
+//   FOUNDRY_TOOLBOX_NAME              - Name of the toolbox to load (default: my-toolset)
+//   FOUNDRY_AGENT_TOOLSET_ENDPOINT    - Foundry Toolsets proxy base URL
+//                                       (injected automatically by Foundry platform at runtime)
 //   FOUNDRY_AGENT_NAME                - Client name reported to MCP server (auto-injected in hosted runtime)
 //   FOUNDRY_AGENT_VERSION             - Client version reported to MCP server (auto-injected in hosted runtime)
 //   FOUNDRY_AGENT_TOOLSET_FEATURES    - Additional Foundry-Features header flags (the mandatory
@@ -39,9 +41,14 @@ string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException(
         "Neither FOUNDRY_PROJECT_ENDPOINT (platform-injected in hosted runtime) " +
         "nor AZURE_AI_PROJECT_ENDPOINT (local-dev convention) is set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
-string toolboxName = Environment.GetEnvironmentVariable("TOOLBOX_NAME") ?? "my-toolbox";
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL")
+    ?? Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+string toolboxName = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_NAME")
+    ?? Environment.GetEnvironmentVariable("TOOLBOX_NAME") ?? "my-toolset";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
 TokenCredential credential = new ChainedTokenCredential(

@@ -1,4 +1,4 @@
-# Hosted-TextRag
+﻿# Hosted-TextRag
 
 A hosted agent with **Retrieval Augmented Generation (RAG)** capabilities using `TextSearchProvider`. The agent grounds its answers in product documentation by running a search before each model invocation, then citing the source in its response.
 
@@ -21,10 +21,10 @@ cp .env.example .env
 Edit `.env` and set your Azure AI Foundry project endpoint:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 AZURE_BEARER_TOKEN=
 ```
 
