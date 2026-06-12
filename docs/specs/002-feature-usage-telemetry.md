@@ -281,9 +281,11 @@ AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
   `(feat=...)` comment, and register the feat-stamping policy **only on
   Azure/Foundry clients** (e.g. `FoundryChatClient`), not on third-party
   `IChatClient`s.
-- Same `v<version>.<hex>` comment format ⇒ decoded numbers mean the same thing in
-  both SDKs. (.NET's policy was already per-request, so there is no Python/.NET
-  timing asymmetry.)
+- Same **wire format** (`v<version>.<hex>` comment, hex encoding) in both SDKs —
+  but the **mask is decoded per language**: indexes are not shared, so a decoder
+  must read the language from the UA product token and select that language's
+  table before decoding. (.NET's policy was already per-request, so there is no
+  Python/.NET timing asymmetry.)
 
 ## Keeping the bitmap in sync
 
