@@ -51,6 +51,7 @@ members = [
     "agent-framework-gemini",
     "agent-framework-github-copilot",
     "agent-framework-hosting",
+    "agent-framework-hosting-a2a",
     "agent-framework-hosting-activity-protocol",
     "agent-framework-hosting-discord",
     "agent-framework-hosting-invocations",
@@ -651,6 +652,28 @@ provides-extras = ["serve", "disk"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "httpx", specifier = ">=0.28.1" }]
+
+[[package]]
+name = "agent-framework-hosting-a2a"
+version = "1.0.0a260424"
+source = { editable = "packages/hosting-a2a" }
+dependencies = [
+    { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "starlette", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "a2a-sdk", specifier = ">=1.0.0,<2" },
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "starlette", specifier = ">=0.37" },
+]
+
+[package.metadata.requires-dev]
+dev = []
 
 [[package]]
 name = "agent-framework-hosting-activity-protocol"
