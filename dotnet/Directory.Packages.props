@@ -37,6 +37,8 @@
     <!-- Google Gemini  -->
     <PackageVersion Include="Google.GenAI" Version="1.6.0" />
     <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="2.9.3" />
+    <!-- MessagePack -->
+    <PackageVersion Include="MessagePack" Version="2.5.301" />
     <!-- Microsoft.Azure.* -->
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.54.0" />
     <!-- Newtonsoft.Json -->
