@@ -139,8 +139,8 @@ already present in the UA product token.
 
 #### J. Hand-written enum + parity test (chosen)
 
-- Good, ~40 members that change a few times a year; a 10-line test (enum vs JSON
-  list) is enough.
+- Good, ~40 members that change a few times a year; a 10-line test (the enum vs
+  the per-language table in the registry doc) is enough.
 - Good, no build step, no generator to own.
 
 #### K. Code-generate the enums from the registry
