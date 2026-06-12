@@ -21,6 +21,7 @@ The resumed invocation MUST come from the framework-delivered
 """
 
 import sys
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -51,6 +52,7 @@ from agent_framework_declarative._workflows import (  # noqa: E402
     ToolApprovalRequest,
     ToolApprovalResponse,
 )
+from agent_framework_declarative._workflows._declarative_base import DeclarativeWorkflowState  # noqa: E402
 from agent_framework_declarative._workflows._executors_mcp import (  # noqa: E402
     InvokeMcpToolActionExecutor,
 )
@@ -439,3 +441,88 @@ class TestMcpToolApprovalBinding:
         request = mock_context.request_info.call_args[0][0]
         assert isinstance(request, MCPToolApprovalRequest)
         assert request.connection_name == "conn-from-action"
+
+    @pytest.mark.asyncio
+    async def test_request_payload_pins_conversation_id(self, mock_state, mock_context) -> None:
+        """Evaluated ``conversationId`` is pinned in ``metadata`` at request-emit time."""
+        from agent_framework_declarative._workflows._declarative_base import ActionTrigger
+
+        _seed_state(mock_state)
+        state = DeclarativeWorkflowState(mock_state)
+        state.set("Local.targetConversation", "conv-original")
+        action = self._action()
+        action["conversationId"] = "=Local.targetConversation"
+        executor = InvokeMcpToolActionExecutor(action, mcp_tool_handler=_RecordingMcpHandler())
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        mock_context.request_info.assert_called_once()
+        request = mock_context.request_info.call_args[0][0]
+        assert isinstance(request, MCPToolApprovalRequest)
+        assert request.metadata.get("conversation_id") == "conv-original"
+
+    @pytest.mark.asyncio
+    async def test_resume_routes_output_to_pinned_conversation_not_mutated_state(
+        self, mock_state, mock_context
+    ) -> None:
+        """Output appends to the conversation pinned on ``original_request``, not the
+        current state evaluation."""
+        _seed_state(mock_state)
+        state = DeclarativeWorkflowState(mock_state)
+        state.set("System.conversations.conv-original.messages", [])
+        state.set("System.conversations.conv-mutated.messages", [])
+        state.set("Local.targetConversation", "conv-mutated")
+
+        handler = _RecordingMcpHandler(MCPToolResult(outputs=[Content.from_text("approved-output")]))
+        action = self._action()
+        action["conversationId"] = "=Local.targetConversation"
+        executor = InvokeMcpToolActionExecutor(action, mcp_tool_handler=handler)
+
+        original_request = MCPToolApprovalRequest(
+            request_id="r-1",
+            tool_name="search",
+            server_url="https://mcp.example/api",
+            server_label=None,
+            arguments={"q": "x"},
+            connection_name=None,
+            metadata={"conversation_id": "conv-original"},
+        )
+        await executor.handle_approval_response(original_request, ToolApprovalResponse(approved=True), mock_context)
+
+        assert len(state.get("System.conversations.conv-original.messages") or []) == 1
+        assert state.get("System.conversations.conv-mutated.messages") == []
+
+    @pytest.mark.asyncio
+    async def test_resume_handles_legacy_request_without_new_fields(self, mock_state, mock_context) -> None:
+        """Resume tolerates payloads lacking ``connection_name`` / ``metadata`` (legacy pickle shape)."""
+
+        @dataclass
+        class _LegacyMCPApprovalRequest:
+            request_id: str
+            tool_name: str
+            server_url: str
+            server_label: str | None
+            arguments: dict[str, Any]
+            header_names: list[str]
+
+        _seed_state(mock_state)
+        handler = _RecordingMcpHandler()
+        executor = InvokeMcpToolActionExecutor(self._action(), mcp_tool_handler=handler)
+
+        legacy_request = _LegacyMCPApprovalRequest(
+            request_id="r-1",
+            tool_name="search",
+            server_url="https://mcp.example/api",
+            server_label=None,
+            arguments={"q": "x"},
+            header_names=[],
+        )
+        await executor.handle_approval_response(
+            legacy_request,  # type: ignore[arg-type]
+            ToolApprovalResponse(approved=True),
+            mock_context,
+        )
+
+        assert handler.call_count == 1
+        assert handler.last is not None
+        assert handler.last.connection_name is None
