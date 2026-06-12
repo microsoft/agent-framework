@@ -137,6 +137,24 @@ public sealed class A2UIComponentValidatorTests
     }
 
     [Fact]
+    public void Validate_EmptyStringIds_ReportMissingIdNotDuplicate()
+    {
+        // Arrange: two components with empty-string ids must each be reported as a missing
+        // id, not as duplicates of one another.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Row", ["children"] = new JsonArray() },
+            new JsonObject { ["id"] = "", ["component"] = "Row", ["children"] = new JsonArray() },
+            new JsonObject { ["id"] = "", ["component"] = "Row", ["children"] = new JsonArray() });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(components);
+
+        // Assert
+        Assert.Contains(A2UIValidationErrorCodes.MissingId, Codes(result));
+        Assert.DoesNotContain(A2UIValidationErrorCodes.DuplicateId, Codes(result));
+    }
+
+    [Fact]
     public void Validate_EmptyOrNullComponents_FailsLoud()
     {
         // Act

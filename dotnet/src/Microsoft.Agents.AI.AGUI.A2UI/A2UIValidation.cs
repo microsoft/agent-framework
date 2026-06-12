@@ -125,12 +125,14 @@ public static class A2UIComponentValidator
 
         List<A2UIValidationError> errors = [];
 
-        // First pass: collect ids and flag duplicates.
+        // First pass: collect ids and flag duplicates. Empty ids are skipped here so they
+        // are reported once as a missing id in the next pass rather than as spurious
+        // duplicates of each other.
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (JsonNode? node in components)
         {
             if (node is JsonObject component && component["id"] is JsonValue idValue &&
-                idValue.TryGetValue(out string? id) && !ids.Add(id))
+                idValue.TryGetValue(out string? id) && !string.IsNullOrEmpty(id) && !ids.Add(id))
             {
                 errors.Add(new A2UIValidationError(
                     A2UIValidationErrorCodes.DuplicateId,
