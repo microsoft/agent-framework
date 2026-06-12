@@ -15,87 +15,17 @@ jobs:
       pull-requests: write
 
     steps:
+      - name: Checkout scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          persist-credentials: false
+
       - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         name: "Issue/PR: update title"
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            let prefixLabels = {
-              "python": "Python",
-              ".NET": ".NET"
-            };
-
-            // Labels that prepend a bracketed prefix to the title (e.g. "[BREAKING] ...").
-            let bracketPrefixLabels = {
-              "breaking change": "[BREAKING]"
-            };
-
-            function addTitlePrefix(title, prefix)
-            {
-              // Update the title based on the label and prefix
-              // Check if the title starts with the prefix (case-sensitive)
-              if (!title.startsWith(prefix + ": ")) {
-                // If not, check if the first word is the label (case-insensitive)
-                if (title.match(new RegExp(`^${prefix}`, 'i'))) {
-                  // If yes, replace it with the prefix (case-sensitive)
-                  title = title.replace(new RegExp(`^${prefix}`, 'i'), prefix);
-                } else {
-                  // If not, prepend the prefix to the title
-                  title = prefix + ": " + title;
-                }
-              }
-
-              return title;
-            }
-
-            function addBracketPrefix(title, prefix)
-            {
-              // Prepend a bracketed prefix (e.g. "[BREAKING]") if it is not already present.
-              if (title.includes(prefix)) {
-                return title;
-              }
-
-              return prefix + " " + title;
-            }
-
-            labelAdded = context.payload.label.name
-
-            // Determine the new title based on which kind of label was added.
-            let newTitle = null;
-            if (labelAdded in prefixLabels) {
-              let prefix = prefixLabels[labelAdded];
-              let currentTitle = context.eventName === 'issues'
-                ? context.payload.issue.title
-                : context.payload.pull_request.title;
-              newTitle = addTitlePrefix(currentTitle, prefix);
-            } else if (labelAdded in bracketPrefixLabels) {
-              let prefix = bracketPrefixLabels[labelAdded];
-              let currentTitle = context.eventName === 'issues'
-                ? context.payload.issue.title
-                : context.payload.pull_request.title;
-              newTitle = addBracketPrefix(currentTitle, prefix);
-            }
-
-            if (newTitle !== null) {
-              switch(context.eventName) {
-                case 'issues':
-                  github.rest.issues.update({
-                    issue_number: context.issue.number,
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    title: newTitle
-                  });
-                  break
-
-                case 'pull_request_target':
-                  github.rest.pulls.update({
-                    pull_number: context.issue.number,
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    title: newTitle
-                  });
-                  break
-                default:
-                  core.setFailed('Unrecognited eventName: ' + context.eventName);
-              }
-            }
+            const { updateTitleForAddedLabel } = require('./.github/scripts/title_prefix.js');
+            await updateTitleForAddedLabel({ github, context, core });

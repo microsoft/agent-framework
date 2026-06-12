@@ -41,10 +41,11 @@ no other open PR for the same issue; if there is, explain how this PR differs.
 ### `### Contribution Checklist`
 Check every item that applies. For the breaking-change item:
 - Leave **"This is not a breaking change."** checked for the common case.
-- If the change **is** breaking, add the `breaking change` label **or** put a
-  `[BREAKING]` prefix in the title — a workflow keeps the label and the title
-  prefix in sync automatically (see `.github/workflows/label-title-prefix.yml`
-  and `.github/workflows/label-breaking-change.yml`).
+- If the change **is** breaking, add the `breaking change` label **or** put
+  `[BREAKING]` in the title prefix, before or after a language prefix such as
+  `Python:` or `.NET:` — workflows keep the label and the title prefix in sync
+  automatically (see `.github/workflows/label-title-prefix.yml` and
+  `.github/workflows/label-pr.yml`).
 
 ### Do not
 - Do **not** add ad-hoc sections such as "Validation" or "Tests run"; CI/CD and

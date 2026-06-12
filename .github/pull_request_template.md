@@ -25,10 +25,10 @@ Please help reviewers and future users, providing the following information:
 ### Related Issue
 
 <!-- Which issue does this PR fix? Link it using a GitHub closing keyword so it is
-    closed automatically when this PR is merged, e.g. "Fixes #123" or "Closes #123".
-    PRs that are not linked to an issue may be closed, no matter how valid the change is.
-    Also check if there are not open PR's for this issue already,
-    then please explain how this PR is different.-->
+     closed automatically when this PR is merged, e.g. "Fixes #123" or "Closes #123".
+     PRs that are not linked to an issue may be closed, no matter how valid the change is.
+     Also check whether an open PR already exists for this issue; if so,
+     explain how this PR is different. -->
 
 Fixes #
 
@@ -40,4 +40,4 @@ Fixes #
 - [ ] All unit tests pass, and I have added new tests where possible
 - [ ] The PR follows the [Contribution Guidelines](https://github.com/microsoft/agent-framework/blob/main/CONTRIBUTING.md)
 - [ ] This PR is linked to an issue and there is no other open PR for this issue (see Related Issue above).
-- [ ] **This is not a breaking change.** If it _is_ a breaking change, add the `breaking change` label (or add a "[BREAKING]" prefix to the title) — a workflow keeps the label and title prefix in sync automatically.
+- [x] **This is not a breaking change.** If it _is_ a breaking change, add the `breaking change` label (or add "[BREAKING]" to the title prefix, before or after any language prefix) — a workflow keeps the label and title prefix in sync automatically.
