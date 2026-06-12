@@ -137,24 +137,22 @@ class TestInvocations:
 
         async def hook(req: ChannelRequest, **_: Any) -> ChannelRequest:
             captured.append(req)
-            # Force stream off even if requested.
-            return replace(req, stream=False)
+            return replace(req, input="rewritten")
 
         agent = _FakeAgent(reply="ok")
         host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel(run_hook=hook)])
         with TestClient(host.app) as client:
             r = client.post("/invocations", json={"message": "x", "stream": True})
         assert r.status_code == 200
-        # Even though caller asked for stream=True, hook flipped it off — so
-        # we get JSON back, not SSE.
-        assert r.headers["content-type"].startswith("application/json")
+        assert r.headers["content-type"].startswith("text/event-stream")
         assert captured and captured[0].channel == "invocations"
+        assert agent.calls[0]["messages"].text == "rewritten"
 
     def test_response_hook_can_rewrite_originating_reply(self) -> None:
-        contexts: list[Any] = []
+        seen_kwargs: list[dict[str, Any]] = []
 
         def hook(result: HostedRunResult, **kwargs: Any) -> HostedRunResult:
-            contexts.append(kwargs["context"])
+            seen_kwargs.append(dict(kwargs))
             return HostedRunResult(_FakeAgentResponse(text=f"hooked:{result.result.text}"), session=result.session)
 
         agent = _FakeAgent(reply="pong")
@@ -165,12 +163,10 @@ class TestInvocations:
 
         assert r.status_code == 200
         assert r.json() == {"response": "hooked:pong", "session_id": None}
-        assert contexts
-        assert contexts[0].channel_name == "invocations"
-        assert contexts[0].originating is True
-        assert contexts[0].destination_identity is None
+        assert seen_kwargs
+        assert seen_kwargs[0]["channel_name"] == "invocations"
 
-    def test_stream_transform_hook_can_rewrite_chunks(self) -> None:
+    def test_stream_update_hook_can_rewrite_chunks(self) -> None:
         agent = _FakeAgent(chunks=["foo", "bar"])
 
         def transform(update: Any) -> Any:
@@ -178,7 +174,7 @@ class TestInvocations:
 
         host = AgentFrameworkHost(
             target=agent,
-            channels=[InvocationsChannel(stream_transform_hook=transform)],
+            channels=[InvocationsChannel(stream_update_hook=transform)],
         )
         with TestClient(host.app) as client:
             r = client.post("/invocations", json={"message": "x", "stream": True})
@@ -188,7 +184,7 @@ class TestInvocations:
         assert "data: BAR" in body
         assert "data: foo" not in body
 
-    def test_stream_transform_hook_can_drop_chunks(self) -> None:
+    def test_stream_update_hook_can_drop_chunks(self) -> None:
         agent = _FakeAgent(chunks=["keep", "drop", "keep2"])
 
         def transform(update: Any) -> Any:
@@ -196,7 +192,7 @@ class TestInvocations:
 
         host = AgentFrameworkHost(
             target=agent,
-            channels=[InvocationsChannel(stream_transform_hook=transform)],
+            channels=[InvocationsChannel(stream_update_hook=transform)],
         )
         with TestClient(host.app) as client:
             r = client.post("/invocations", json={"message": "x", "stream": True})
@@ -206,7 +202,7 @@ class TestInvocations:
         assert "data: keep2" in body
         assert "data: drop" not in body
 
-    def test_stream_transform_hook_supports_async(self) -> None:
+    def test_stream_update_hook_supports_async(self) -> None:
         agent = _FakeAgent(chunks=["aa"])
 
         async def transform(update: Any) -> Any:
@@ -214,7 +210,7 @@ class TestInvocations:
 
         host = AgentFrameworkHost(
             target=agent,
-            channels=[InvocationsChannel(stream_transform_hook=transform)],
+            channels=[InvocationsChannel(stream_update_hook=transform)],
         )
         with TestClient(host.app) as client:
             r = client.post("/invocations", json={"message": "x", "stream": True})

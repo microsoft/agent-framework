@@ -25,10 +25,8 @@ is unset) it transparently falls back to an in-memory store, so the same
 code runs in dev. Writes are a no-op — Foundry persists Responses turns
 authoritatively as the runtime executes them.
 
-For richer scenarios (custom tools, history providers, run hooks,
-multicast, Telegram, Teams, identity linking) see
-[`../local_telegram`](../local_telegram) and
-[`../local_identity_link`](../local_identity_link).
+For richer local scenarios (custom tools, history providers, run hooks,
+Telegram, and Activity Protocol) see [`../local_telegram`](../local_telegram).
 
 ## Layout
 

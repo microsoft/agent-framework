@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
@@ -168,7 +169,22 @@ def _make_host_with_probe() -> tuple[object, _IsolationProbeChannel]:
 
 
 class TestIsolationMiddlewareEndToEnd:
-    def test_both_headers_lifted_into_contextvar(self) -> None:
+    def test_headers_ignored_outside_foundry_environment(self) -> None:
+        host, probe = _make_host_with_probe()
+        with TestClient(host.app) as client:  # type: ignore[attr-defined]
+            r = client.get(
+                "/probe",
+                headers={
+                    ISOLATION_HEADER_USER: "alice-uid",
+                    ISOLATION_HEADER_CHAT: "general-cid",
+                },
+            )
+        assert r.status_code == 200
+        assert r.json() == {"user": None, "chat": None, "_present": False}
+        assert probe.captured == [None]
+
+    def test_both_headers_lifted_into_contextvar(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
         host, probe = _make_host_with_probe()
         with TestClient(host.app) as client:  # type: ignore[attr-defined]
             r = client.get(
@@ -186,15 +202,17 @@ class TestIsolationMiddlewareEndToEnd:
         assert captured.user_key == "alice-uid"
         assert captured.chat_key == "general-cid"
 
-    def test_only_user_header_lifted(self) -> None:
+    def test_only_user_header_lifted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """One-header-only branch: the middleware still binds (chat=None)."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
         host, probe = _make_host_with_probe()
         with TestClient(host.app) as client:  # type: ignore[attr-defined]
             r = client.get("/probe", headers={ISOLATION_HEADER_USER: "alice-uid"})
         assert r.status_code == 200
         assert r.json() == {"user": "alice-uid", "chat": None}
 
-    def test_only_chat_header_lifted(self) -> None:
+    def test_only_chat_header_lifted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
         host, probe = _make_host_with_probe()
         with TestClient(host.app) as client:  # type: ignore[attr-defined]
             r = client.get("/probe", headers={ISOLATION_HEADER_CHAT: "general-cid"})
@@ -213,9 +231,10 @@ class TestIsolationMiddlewareEndToEnd:
         assert r.json() == {"user": None, "chat": None, "_present": False}
         assert probe.captured == [None]
 
-    def test_empty_header_value_treated_as_absent(self) -> None:
+    def test_empty_header_value_treated_as_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A header that's present but empty must not bind an empty key —
         ``IsolationContext`` rejects empty strings on the read side."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
         host, probe = _make_host_with_probe()
         with TestClient(host.app) as client:  # type: ignore[attr-defined]
             r = client.get(
@@ -229,10 +248,11 @@ class TestIsolationMiddlewareEndToEnd:
         # Empty user header decodes to None; chat key stays bound.
         assert r.json() == {"user": None, "chat": "general-cid"}
 
-    def test_contextvar_resets_after_request(self) -> None:
+    def test_contextvar_resets_after_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The middleware must call ``reset_current_isolation_keys`` in
         a ``finally`` so per-request state never leaks across requests
         or back into the calling thread's context."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
         host, probe = _make_host_with_probe()
         with TestClient(host.app) as client:  # type: ignore[attr-defined]
             r1 = client.get("/probe", headers={ISOLATION_HEADER_USER: "alice-uid"})
@@ -245,9 +265,10 @@ class TestIsolationMiddlewareEndToEnd:
             r2 = client.get("/probe")
             assert r2.json() == {"user": None, "chat": None, "_present": False}
 
-    def test_concurrent_requests_get_isolated_contextvars(self) -> None:
+    def test_concurrent_requests_get_isolated_contextvars(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Different requests run in different async contexts; binding
         from request A must NOT leak into a concurrent request B."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
         host, probe = _make_host_with_probe()
 
         async def _drive() -> None:

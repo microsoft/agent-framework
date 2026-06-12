@@ -91,7 +91,6 @@ agent-framework-hosting = { workspace = true }
 agent-framework-hosting-invocations = { workspace = true }
 agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hosting-activity-protocol = { workspace = true }
-agent-framework-hosting-entra = { workspace = true }
 agent-framework-hosting-discord = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
@@ -220,7 +219,6 @@ executionEnvironments = [
     { root = "packages/hosting-invocations/tests", reportPrivateUsage = "none" },
     { root = "packages/hosting-telegram/tests", reportPrivateUsage = "none" },
     { root = "packages/hosting-activity-protocol/tests", reportPrivateUsage = "none" },
-    { root = "packages/hosting-entra/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/lightning/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/tau2/tests", reportPrivateUsage = "none" },

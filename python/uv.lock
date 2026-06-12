@@ -53,7 +53,6 @@ members = [
     "agent-framework-hosting",
     "agent-framework-hosting-activity-protocol",
     "agent-framework-hosting-discord",
-    "agent-framework-hosting-entra",
     "agent-framework-hosting-invocations",
     "agent-framework-hosting-responses",
     "agent-framework-hosting-telegram",
@@ -689,27 +688,6 @@ requires-dist = [
     { name = "agent-framework-hosting", editable = "packages/hosting" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "pynacl", specifier = ">=1.2.0,<2" },
-]
-
-[[package]]
-name = "agent-framework-hosting-entra"
-version = "1.0.0a260424"
-source = { editable = "packages/hosting-entra" }
-dependencies = [
-    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "cryptography", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "msal", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-framework-core", editable = "packages/core" },
-    { name = "agent-framework-hosting", editable = "packages/hosting" },
-    { name = "cryptography", specifier = ">=42" },
-    { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "msal", specifier = ">=1.28,<2" },
 ]
 
 [[package]]
