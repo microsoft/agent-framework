@@ -48,6 +48,8 @@ jobs:
           filters: |
             dotnet:
               - 'dotnet/**'
+              - '!dotnet/AGENTS.md'
+              - '!dotnet/**/AGENTS.md'
               - '!dotnet/.github/skills/*'
               - '!dotnet/.github/skills/**'
             cosmosdb:

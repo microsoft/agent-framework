@@ -5,6 +5,8 @@ on:
     branches: ["main", "feature*"]
     paths:
       - "python/**"
+      - "!python/AGENTS.md"
+      - "!python/**/AGENTS.md"
       - "!python/.github/skills/*"
       - "!python/.github/skills/**"
 env:

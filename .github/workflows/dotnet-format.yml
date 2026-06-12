@@ -10,6 +10,8 @@ on:
     branches: ["main", "feature*"]
     paths:
       - dotnet/**
+      - '!dotnet/AGENTS.md'
+      - '!dotnet/**/AGENTS.md'
       - '!dotnet/.github/skills/*'
       - '!dotnet/.github/skills/**'
       - '.github/workflows/dotnet-format.yml'

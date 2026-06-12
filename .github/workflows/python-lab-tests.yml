@@ -31,6 +31,8 @@ jobs:
           filters: |
             python:
               - 'python/**'
+              - '!python/AGENTS.md'
+              - '!python/**/AGENTS.md'
               - '!python/.github/skills/*'
               - '!python/.github/skills/**'
       # run only if 'python' files were changed
