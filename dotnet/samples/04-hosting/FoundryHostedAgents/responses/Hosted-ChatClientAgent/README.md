@@ -1,4 +1,4 @@
-# Hosted-ChatClientAgent
+﻿# Hosted-ChatClientAgent
 
 A simple general-purpose AI assistant hosted as a Foundry Hosted Agent using the Agent Framework instance hosting pattern. The agent is created inline via `AIProjectClient.AsAIAgent(model, instructions)` and served using the Responses protocol.
 
@@ -19,10 +19,10 @@ cp .env.example .env
 Edit `.env` and set your Azure AI Foundry project endpoint:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 ```
 
 > **Note:** `.env` is gitignored. The `.env.example` template is checked in as a reference.
@@ -103,6 +103,32 @@ curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
   -d '{"input": "Hello!", "model": "hosted-chat-client-agent"}'
 ```
+
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-chat-client-agent && cd hosted-chat-client-agent
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-chat-client-agent
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
 
 ## NuGet package users
 

@@ -2,6 +2,7 @@
 
 """Tests for Purview processor."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -217,10 +218,38 @@ class TestScopedContentProcessor:
         assert action1 in combined
         assert action2 in combined
 
+    async def test_combine_policy_actions_preserves_restriction_only_actions(
+        self, processor: ScopedContentProcessor
+    ) -> None:
+        """Test _combine_policy_actions keeps actions that only set restrictionAction."""
+        existing_action = DlpActionInfo(action=DlpAction.OTHER, restrictionAction=RestrictionAction.OTHER)
+        restriction_only_action = DlpActionInfo(restriction_action=RestrictionAction.BLOCK)
+
+        combined = processor._combine_policy_actions([existing_action], [restriction_only_action])
+
+        assert combined == [existing_action, restriction_only_action]
+
+    async def test_combine_policy_actions_deduplicates_by_action_and_restriction(
+        self, processor: ScopedContentProcessor
+    ) -> None:
+        """Test _combine_policy_actions removes exact duplicate actions."""
+        block_action = DlpActionInfo(action=DlpAction.BLOCK_ACCESS, restriction_action=RestrictionAction.BLOCK)
+        duplicate_block_action = DlpActionInfo(
+            action=DlpAction.BLOCK_ACCESS, restriction_action=RestrictionAction.BLOCK
+        )
+        restriction_only_action = DlpActionInfo(restriction_action=RestrictionAction.BLOCK)
+
+        combined = processor._combine_policy_actions(
+            [block_action],
+            [duplicate_block_action, restriction_only_action],
+        )
+
+        assert combined == [block_action, restriction_only_action]
+
     async def test_process_with_scopes_calls_client_methods(
         self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
     ) -> None:
-        """Test _process_with_scopes calls get_protection_scopes when scopes response is empty."""
+        """Test _process_with_scopes calls process_content immediately and warms scopes in background on cache miss."""
         from agent_framework_purview._models import (
             ContentActivitiesResponse,
             ProtectionScopesResponse,
@@ -236,38 +265,91 @@ class TestScopedContentProcessor:
 
         response = await processor._process_with_scopes(request)
 
-        mock_client.get_protection_scopes.assert_called_once()
-        # When no scopes apply, process_content is not called (activities are sent in background)
-        mock_client.process_content.assert_not_called()
-        # The response should have id=204 (No Content) when no scopes apply
-        assert response.id == "204"
+        # On cache miss, ProcessContent runs in the foreground and the response is returned.
+        assert response.id == "response-123"
+        mock_client.process_content.assert_called_once()
 
-    async def test_process_with_scopes_ignores_unexpected_cached_value_type(
+        # Protection scopes are refreshed in a background task.
+        await asyncio.gather(*list(processor._background_tasks))
+        mock_client.get_protection_scopes.assert_called_once()
+        mock_client.send_content_activities.assert_called_once()
+
+    async def test_process_with_scopes_preserves_restriction_only_policy_actions(
         self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
     ) -> None:
-        """Test that a corrupted cache entry does not crash processing."""
+        """Test cold-cache ProcessContent actions are not dropped when they only contain restrictionAction."""
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        request = process_content_request_factory()
+        restriction_only_action = DlpActionInfo(restriction_action=RestrictionAction.BLOCK)
+
+        mock_client.get_protection_scopes = AsyncMock(return_value=ProtectionScopesResponse(**{"value": []}))
+        mock_client.process_content = AsyncMock(
+            return_value=ProcessContentResponse(
+                id="response-123",
+                protection_scope_state="notModified",
+                policy_actions=[restriction_only_action],
+            )
+        )
+
+        response = await processor._process_with_scopes(request)
+
+        assert response.policy_actions == [restriction_only_action]
+        await asyncio.gather(*list(processor._background_tasks))
+
+    async def test_process_with_cached_scopes_preserves_restriction_only_policy_actions(
+        self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """Test cached ProtectionScopes actions are not dropped when they only contain restrictionAction."""
         from agent_framework_purview._models import (
             ExecutionMode,
             PolicyLocation,
             PolicyScope,
-            ProcessContentResponse,
             ProtectionScopeActivities,
             ProtectionScopesResponse,
         )
 
         request = process_content_request_factory()
+        restriction_only_action = DlpActionInfo(restriction_action=RestrictionAction.BLOCK)
+        process_content_action = DlpActionInfo(action=DlpAction.OTHER, restriction_action=RestrictionAction.OTHER)
+        scope_location = PolicyLocation(
+            data_type="microsoft.graph.policyLocationApplication",
+            value="app-id",
+        )
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            locations=[scope_location],
+            policy_actions=[restriction_only_action],
+            execution_mode=ExecutionMode.EVALUATE_INLINE,
+        )
 
-        # Return a valid, inline scope so we stay on the normal (non-background) path.
-        scope_location = PolicyLocation(**{
-            "@odata.type": "microsoft.graph.policyLocationApplication",
-            "value": "app-id",
-        })
-        scope = PolicyScope(**{
-            "activities": ProtectionScopeActivities.UPLOAD_TEXT,
-            "locations": [scope_location],
-            "execution_mode": ExecutionMode.EVALUATE_INLINE,
-        })
-        mock_client.get_protection_scopes = AsyncMock(return_value=ProtectionScopesResponse(**{"value": [scope]}))
+        processor._cache.get = AsyncMock(
+            side_effect=[
+                None,
+                ProtectionScopesResponse(scope_identifier="scope-123", scopes=[scope]),
+            ]
+        )  # type: ignore[method-assign]
+        mock_client.process_content = AsyncMock(
+            return_value=ProcessContentResponse(
+                id="response-123",
+                protection_scope_state="notModified",
+                policy_actions=[process_content_action],
+            )
+        )
+
+        response = await processor._process_with_scopes(request)
+
+        assert response.policy_actions == [process_content_action, restriction_only_action]
+
+    async def test_process_with_scopes_ignores_unexpected_cached_value_type(
+        self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """Test that a corrupted cache entry does not crash processing."""
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        request = process_content_request_factory()
+
+        mock_client.get_protection_scopes = AsyncMock(return_value=ProtectionScopesResponse(**{"value": []}))
         mock_client.process_content = AsyncMock(
             return_value=ProcessContentResponse(**{"id": "ok", "protectionScopeState": "notModified"})
         )
@@ -279,8 +361,9 @@ class TestScopedContentProcessor:
         response = await processor._process_with_scopes(request)
 
         assert response.id == "ok"
-        mock_client.get_protection_scopes.assert_called_once()
         mock_client.process_content.assert_called_once()
+        await asyncio.gather(*list(processor._background_tasks))
+        mock_client.get_protection_scopes.assert_called_once()
 
     async def test_process_with_scopes_uses_tenant_payment_exception_cache(
         self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
@@ -301,8 +384,6 @@ class TestScopedContentProcessor:
         self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
     ) -> None:
         """Test offline background processing invalidates cache and retries when scope state changes."""
-        from agent_framework_purview._models import ProcessContentResponse
-
         request = process_content_request_factory()
         request.scope_identifier = "etag-1"
 
@@ -318,6 +399,36 @@ class TestScopedContentProcessor:
 
         processor._cache.remove.assert_called_once_with("purview:protection_scopes:abc")
         assert mock_client.process_content.call_count == 2
+
+    async def test_background_scope_refresh_caches_payment_required(
+        self, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """402 raised during background scope refresh is cached at the tenant level."""
+        from agent_framework_purview._cache import InMemoryCacheProvider
+        from agent_framework_purview._exceptions import PurviewPaymentRequiredError
+
+        settings = PurviewSettings(
+            app_name="Test App",
+            tenant_id="12345678-1234-1234-1234-123456789012",
+            purview_app_location=PurviewAppLocation(
+                location_type=PurviewLocationType.APPLICATION, location_value="app-id"
+            ),
+        )
+
+        cache = InMemoryCacheProvider()
+        processor = ScopedContentProcessor(mock_client, settings, cache_provider=cache)
+
+        mock_client.get_protection_scopes = AsyncMock(side_effect=PurviewPaymentRequiredError("nope"))
+        mock_client.process_content = AsyncMock(
+            return_value=ProcessContentResponse(**{"id": "pc-1", "protectionScopeState": "notModified"})
+        )
+
+        request = process_content_request_factory()
+        await processor._process_with_scopes(request)
+        await asyncio.gather(*list(processor._background_tasks))
+
+        cached = await cache.get(f"purview:payment_required:{request.tenant_id}")
+        assert isinstance(cached, PurviewPaymentRequiredError)
 
     async def test_map_messages_with_user_id_in_additional_properties(self, mock_client: AsyncMock) -> None:
         """Test user_id extraction from message additional_properties."""
@@ -387,6 +498,8 @@ class TestScopedContentProcessor:
         self, mock_client: AsyncMock, process_content_request_factory
     ) -> None:
         """Test that response is returned when scopes don't apply (activities sent in background)."""
+        from agent_framework_purview._models import ProtectionScopesResponse
+
         settings = PurviewSettings(
             app_name="Test App",
             tenant_id="12345678-1234-1234-1234-123456789012",
@@ -398,10 +511,8 @@ class TestScopedContentProcessor:
 
         pc_request = process_content_request_factory()
 
-        # Mock get_protection_scopes to return no applicable scopes
-        mock_ps_response = MagicMock()
-        mock_ps_response.scopes = []
-        mock_client.get_protection_scopes.return_value = mock_ps_response
+        mock_ps_response = ProtectionScopesResponse(scopes=[])
+        processor._cache.get = AsyncMock(side_effect=[None, mock_ps_response])  # type: ignore[method-assign]
 
         # Mock send_content_activities to return success (called in background)
         mock_ca_response = MagicMock()
@@ -410,8 +521,10 @@ class TestScopedContentProcessor:
 
         response = await processor._process_with_scopes(pc_request)
 
-        mock_client.get_protection_scopes.assert_called_once()
+        mock_client.get_protection_scopes.assert_not_called()
         mock_client.process_content.assert_not_called()
+        await asyncio.gather(*list(processor._background_tasks))
+        mock_client.send_content_activities.assert_called_once()
         # Response should have id=204 when no scopes apply
         assert response.id == "204"
 
@@ -419,6 +532,8 @@ class TestScopedContentProcessor:
         self, mock_client: AsyncMock, process_content_request_factory
     ) -> None:
         """Test that errors in background activities don't affect the response."""
+        from agent_framework_purview._models import ProtectionScopesResponse
+
         settings = PurviewSettings(
             app_name="Test App",
             tenant_id="12345678-1234-1234-1234-123456789012",
@@ -430,10 +545,8 @@ class TestScopedContentProcessor:
 
         pc_request = process_content_request_factory()
 
-        # Mock get_protection_scopes to return no applicable scopes
-        mock_ps_response = MagicMock()
-        mock_ps_response.scopes = []
-        mock_client.get_protection_scopes.return_value = mock_ps_response
+        mock_ps_response = ProtectionScopesResponse(scopes=[])
+        processor._cache.get = AsyncMock(side_effect=[None, mock_ps_response])  # type: ignore[method-assign]
 
         # Mock send_content_activities to return error (called in background task)
         mock_ca_response = MagicMock()
@@ -445,6 +558,8 @@ class TestScopedContentProcessor:
         # Since activities are sent in background, errors don't affect the response
         # Response should have id=204 when no scopes apply
         assert response.id == "204"
+        await asyncio.gather(*list(processor._background_tasks))
+        mock_client.send_content_activities.assert_called_once()
 
 
 class TestUserIdResolution:
@@ -656,10 +771,12 @@ class TestScopedContentProcessorCaching:
         mock_client.get_protection_scopes.return_value = ProtectionScopesResponse(
             scope_identifier="scope-123", scopes=[]
         )
+        mock_client.process_content.return_value = ProcessContentResponse(id="ok", protection_scope_state="notModified")
 
         messages = [Message(role="user", contents=["Test"])]
 
         await processor.process_messages(messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012")
+        await asyncio.gather(*list(processor._background_tasks))
 
         mock_client.get_protection_scopes.assert_called_once()
 
@@ -670,7 +787,7 @@ class TestScopedContentProcessorCaching:
     async def test_payment_required_exception_cached_at_tenant_level(
         self, mock_client: AsyncMock, settings: PurviewSettings
     ) -> None:
-        """Test that 402 payment required exceptions are cached at tenant level."""
+        """Test that background scope 402 returns once, then throws from the tenant-level cache."""
         from agent_framework_purview._cache import InMemoryCacheProvider
         from agent_framework_purview._exceptions import PurviewPaymentRequiredError
 
@@ -678,13 +795,12 @@ class TestScopedContentProcessorCaching:
         processor = ScopedContentProcessor(mock_client, settings, cache_provider=cache_provider)
 
         mock_client.get_protection_scopes.side_effect = PurviewPaymentRequiredError("Payment required")
+        mock_client.process_content.return_value = ProcessContentResponse(id="ok", protection_scope_state="notModified")
 
         messages = [Message(role="user", contents=["Test"])]
 
-        with pytest.raises(PurviewPaymentRequiredError):
-            await processor.process_messages(
-                messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012"
-            )
+        await processor.process_messages(messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012")
+        await asyncio.gather(*list(processor._background_tasks))
 
         mock_client.get_protection_scopes.assert_called_once()
 

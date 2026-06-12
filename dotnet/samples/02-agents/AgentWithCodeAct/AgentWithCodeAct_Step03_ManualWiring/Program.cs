@@ -31,6 +31,9 @@ var instructions =
     + "and calling `execute_code` instead of computing values yourself.\n\n"
     + executeCode.BuildInstructions(toolsVisibleToModel: false);
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
