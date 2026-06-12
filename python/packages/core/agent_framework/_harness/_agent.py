@@ -15,7 +15,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from .._agents import Agent, SupportsAgentRun
-from .._clients import SupportsWebSearchTool
+from .._clients import SupportsShellTool, SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy, ToolResultCompactionStrategy
 from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider
@@ -27,6 +27,8 @@ from ._todo import TodoProvider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from agent_framework_tools.shell import ShellEnvironmentProviderOptions, ShellExecutor
 
     from .._clients import SupportsChatGetResponse
     from .._compaction import CompactionStrategy, TokenizerProtocol
@@ -128,6 +130,7 @@ def _assemble_context_providers(
     skills_paths: Sequence[str] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
     background_agents_instructions: str | None,
+    shell_context_provider: ContextProvider | None,
     extra_context_providers: Sequence[ContextProvider] | None,
 ) -> list[ContextProvider]:
     """Assemble the ordered list of context providers."""
@@ -159,11 +162,59 @@ def _assemble_context_providers(
     if background_agents:
         providers.append(BackgroundAgentsProvider(background_agents, instructions=background_agents_instructions))
 
+    # Shell environment provider is opt-in: only added when a shell tool was wired.
+    if shell_context_provider is not None:
+        providers.append(shell_context_provider)
+
     # Append any user-supplied additional providers.
     if extra_context_providers:
         providers.extend(extra_context_providers)
 
     return providers
+
+
+def _assemble_shell(
+    client: SupportsChatGetResponse[Any],
+    shell_executor: ShellExecutor | None,
+    shell_environment_provider_options: ShellEnvironmentProviderOptions | None,
+) -> tuple[ToolTypes | None, ContextProvider | None]:
+    """Build the shell tool and environment provider when a shell executor is supplied.
+
+    Returns a ``(tool, provider)`` tuple. Both are ``None`` when no shell executor is
+    provided, or when the client does not support shell tools (a warning is logged in the
+    latter case, since the environment provider is not useful without an execution path).
+
+    Raises:
+        TypeError: If ``shell_executor`` does not expose a callable ``as_function()`` method.
+    """
+    if shell_executor is None:
+        return None, None
+
+    # ShellExecutor is a protocol without ``as_function()``, so the
+    # contract is validated at runtime: a shell tool such as LocalShellTool/DockerShellTool exposes it.
+    as_function = getattr(shell_executor, "as_function", None)
+    if not callable(as_function):
+        raise TypeError(
+            f"shell_executor must expose a callable 'as_function()' method "
+            f"(e.g. a LocalShellTool or DockerShellTool from agent-framework-tools), "
+            f"but got {type(shell_executor).__name__}."
+        )
+
+    if not isinstance(client, SupportsShellTool):
+        logger.warning(
+            "Shell tool not available: client %r does not implement SupportsShellTool. "
+            "Skipping the shell tool and environment provider.",
+            type(client).__name__,
+        )
+        return None, None
+
+    # Imported lazily: the shell types live in the separate agent-framework-tools package,
+    # which depends on core, so core cannot import them at module load time.
+    from agent_framework_tools.shell import ShellEnvironmentProvider
+
+    shell_tool = client.get_shell_tool(func=as_function())
+    shell_provider = ShellEnvironmentProvider(shell_executor, shell_environment_provider_options)
+    return shell_tool, shell_provider
 
 
 HARNESS_AGENT_PROVIDER_NAME = "microsoft.agent_framework.harness"
@@ -196,6 +247,8 @@ def create_harness_agent(
     skills_paths: Sequence[str] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
     background_agents_instructions: str | None = None,
+    shell_executor: ShellExecutor | None = None,
+    shell_environment_provider_options: ShellEnvironmentProviderOptions | None = None,
     disable_web_search: bool = False,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
@@ -298,6 +351,15 @@ def create_harness_agent(
         background_agents_instructions: Optional instruction override for the
             ``BackgroundAgentsProvider``. May include ``{background_agents}`` placeholder
             which will be replaced with the agent listing.
+        shell_executor: Optional shell tool that enables shell command execution. When
+            provided, the shell tool and a ``ShellEnvironmentProvider`` are automatically
+            added (provided the client supports shell tools; otherwise a warning is logged
+            and both are skipped). The object must expose ``as_function()`` and satisfy the
+            ``ShellExecutor`` protocol -- e.g. a ``LocalShellTool`` or ``DockerShellTool`` from
+            the ``agent-framework-tools`` package. The caller owns the executor's lifecycle.
+        shell_environment_provider_options: Optional ``ShellEnvironmentProviderOptions``
+            (from ``agent-framework-tools``) used to customize the ``ShellEnvironmentProvider``
+            environment probing and instructions. Only used when ``shell_executor`` is provided.
         disable_web_search: When True, skip automatic web search tool inclusion.
             When False (default), the web search tool is automatically added if the
             client implements SupportsWebSearchTool. A warning is logged if the client
@@ -340,6 +402,13 @@ def create_harness_agent(
         tokenizer=tokenizer,
     )
 
+    # Build the shell tool and environment provider (opt-in via shell_executor).
+    shell_tool, shell_provider = _assemble_shell(
+        client,
+        shell_executor,
+        shell_environment_provider_options,
+    )
+
     # Build context providers.
     assembled_providers = _assemble_context_providers(
         history_provider=resolved_history,
@@ -354,6 +423,7 @@ def create_harness_agent(
         skills_paths=skills_paths,
         background_agents=background_agents,
         background_agents_instructions=background_agents_instructions,
+        shell_context_provider=shell_provider,
         extra_context_providers=context_providers,
     )
 
@@ -371,6 +441,8 @@ def create_harness_agent(
                 "Set disable_web_search=True to suppress this warning.",
                 type(client).__name__,
             )
+    if shell_tool is not None:
+        assembled_tools.append(shell_tool)
     if tools is not None:
         if isinstance(tools, Sequence):
             assembled_tools.extend(tools)  # pyright: ignore[reportUnknownArgumentType]

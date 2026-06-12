@@ -1,4 +1,4 @@
-# Hosted-AzureSearchRag
+﻿# Hosted-AzureSearchRag
 
 A hosted agent with **Retrieval Augmented Generation (RAG)** capabilities backed by **Azure AI Search**. The agent grounds its answers in product documentation by running a keyword search against an Azure AI Search index before each model invocation, then citing the source in its response.
 
@@ -77,8 +77,8 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_MODEL=gpt-4o
 AZURE_SEARCH_ENDPOINT=https://<your-search>.search.windows.net
 AZURE_SEARCH_INDEX_NAME=contoso-outdoors
 AZURE_BEARER_TOKEN_FOUNDRY=DefaultAzureCredential

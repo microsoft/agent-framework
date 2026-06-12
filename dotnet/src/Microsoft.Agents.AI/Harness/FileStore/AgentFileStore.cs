@@ -59,6 +59,14 @@ public abstract class AgentFileStore
     public abstract Task<IReadOnlyList<string>> ListFilesAsync(string directory, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Lists the direct child subdirectories of a directory.
+    /// </summary>
+    /// <param name="directory">The relative path of the directory to list. Use an empty string for the root.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>A list of subdirectory names in the specified directory (direct children only).</returns>
+    public abstract Task<IReadOnlyList<string>> ListDirectoriesAsync(string directory, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Checks whether a file exists.
     /// </summary>
     /// <param name="path">The relative path of the file to check.</param>
@@ -76,12 +84,20 @@ public abstract class AgentFileStore
     /// </param>
     /// <param name="filePattern">
     /// An optional glob pattern to filter which files are searched (e.g., <c>"*.md"</c>, <c>"research*"</c>).
-    /// When <see langword="null"/>, all files in the directory are searched.
-    /// Uses standard glob syntax from <see cref="Matcher"/>.
+    /// When <see langword="null"/>, all files are searched.
+    /// Uses standard glob syntax from <see cref="Matcher"/>, matched against each file's path relative to
+    /// <paramref name="directory"/>. Use <c>**</c> to match across subdirectories (e.g., <c>"**/*.md"</c>).
+    /// </param>
+    /// <param name="recursive">
+    /// When <see langword="true"/>, all descendant files of <paramref name="directory"/> are searched.
+    /// When <see langword="false"/> (default), only the direct children of <paramref name="directory"/> are searched.
     /// </param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>A list of search results with matching file names, snippets, and matching lines.</returns>
-    public abstract Task<IReadOnlyList<FileSearchResult>> SearchFilesAsync(string directory, string regexPattern, string? filePattern = null, CancellationToken cancellationToken = default);
+    /// <returns>
+    /// A list of search results. Each result's <see cref="FileSearchResult.FileName"/> is the matching file's
+    /// path relative to <paramref name="directory"/>.
+    /// </returns>
+    public abstract Task<IReadOnlyList<FileSearchResult>> SearchFilesAsync(string directory, string regexPattern, string? filePattern = null, bool recursive = false, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Ensures a directory exists, creating it if necessary.

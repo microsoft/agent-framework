@@ -27,7 +27,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 #else
     private const string BuildConfiguration = "Release";
 #endif
-    private static readonly HttpClient s_sharedHttpClient = new();
+    private static readonly HttpClient s_sharedHttpClient = new() { Timeout = TimeSpan.FromMinutes(3) };
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
             .AddEnvironmentVariables()
@@ -60,7 +60,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         await Task.CompletedTask;
     }
 
-    [RetryFact(2, 5000, Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "01_SingleAgent");
@@ -148,7 +148,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000, Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentOrchestrationConcurrentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "03_AgentOrchestration_Concurrency");
@@ -198,7 +198,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000, Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentOrchestrationConditionalsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "04_AgentOrchestration_Conditionals");
@@ -216,7 +216,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000, Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -272,7 +272,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000, Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [RetryFact(2, 5000)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -362,7 +362,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000, Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [RetryFact(2, 5000)]
     public async Task AgentAsMcpToolAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_AgentAsMcpTool");
@@ -402,7 +402,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000, Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [RetryFact(2, 5000)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");
@@ -844,6 +844,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT_NAME env variable is not set.");
 
         // Set required environment variables for the function app (see local.settings.json for required settings)
+        startInfo.EnvironmentVariables["FUNCTIONS_WORKER_RUNTIME"] = "dotnet-isolated";
         startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;
         startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT_NAME"] = openAiDeployment;
         startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =

@@ -819,6 +819,36 @@ class SupportsFileSearchTool(Protocol):
         ...
 
 
+@runtime_checkable
+class SupportsShellTool(Protocol):
+    """Protocol for clients that support shell tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports executing shell commands.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsShellTool
+
+            if isinstance(client, SupportsShellTool):
+                tool = client.get_shell_tool(func=shell.as_function())
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_shell_tool(**kwargs: Any) -> Any:
+        """Create a shell tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
 # endregion
 
 

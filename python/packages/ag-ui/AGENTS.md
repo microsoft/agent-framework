@@ -10,10 +10,12 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - **`AGUIHttpService`** - HTTP service for AG-UI endpoints
 - **`AGUIEventConverter`** - Converts between Agent Framework and AG-UI events
 - **`add_agent_framework_fastapi_endpoint()`** - Add AG-UI endpoint to FastAPI app (`SupportsAgentRun` or `Workflow`)
+- **`InMemoryAGUIThreadSnapshotStore`** - Memory-only latest AG-UI Thread Snapshot store for local development, demos, and tests
 
 ## Types
 
 - **`AGUIRequest`** / **`AGUIChatOptions`** - Request types
+- **`AGUIThreadSnapshot`** / **`AGUIThreadSnapshotStore`** - Replayable thread snapshot model and scoped async store protocol
 - **`availableInterrupts` / `resume`** - Optional interrupt configuration and continuation payloads
 - **`AgentState`** / **`RunMetadata`** - State management types
 - **`PredictStateConfig`** - Configuration for state prediction

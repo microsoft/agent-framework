@@ -10,6 +10,9 @@ builder.AddServiceDefaults();
 builder.AddAzureChatCompletionsClient(connectionName: "foundry",
     configureSettings: settings =>
         {
+            // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+            // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+            // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
             settings.TokenCredential = new DefaultAzureCredential();
             settings.EnableSensitiveTelemetryData = builder.Environment.IsDevelopment();
         })

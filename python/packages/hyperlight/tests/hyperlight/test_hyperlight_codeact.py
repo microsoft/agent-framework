@@ -978,6 +978,10 @@ async def test_sandbox_code_failure_returns_nonzero_exit(restored_sandbox) -> No
 
 
 @skip_if_hyperlight_integration_tests_disabled
+@pytest.mark.skipif(
+    sys.platform == "win32" and sys.version_info < (3, 11),
+    reason="Hyperlight sandbox snapshot/restore crashes on Windows Python 3.10.",
+)
 async def test_sandbox_snapshot_restore_keeps_sandbox_functional(restored_sandbox) -> None:
     """Verify snapshot/restore cycle leaves the sandbox in a working state."""
     # Mutate the sandbox

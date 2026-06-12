@@ -1,4 +1,4 @@
-## Overview
+﻿## Overview
 
 This sample shows how to use the OpenAI SDK to create and use a simple AI agent with any model hosted in Microsoft Foundry.
 
@@ -13,7 +13,7 @@ Before you begin, ensure you have the following prerequisites:
 - .NET 10 SDK or later
 - Microsoft Foundry resource
 - A model deployment in your Microsoft Foundry resource. This example defaults to using the `Phi-4-mini-instruct` model,
-so if you want to use a different model, ensure that you set your `AZURE_AI_MODEL_DEPLOYMENT_NAME` environment
+so if you want to use a different model, ensure that you set your `FOUNDRY_MODEL` environment
 variable to the name of your deployed model.
 - An API key or role based authentication to access the Microsoft Foundry resource
 
@@ -30,5 +30,5 @@ $env:AZURE_OPENAI_ENDPOINT="https://ai-foundry-<myresourcename>.services.ai.azur
 $env:AZURE_OPENAI_API_KEY="************"
 
 # Optional, defaults to Phi-4-mini-instruct
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="Phi-4-mini-instruct"
+$env:FOUNDRY_MODEL="Phi-4-mini-instruct"
 ```

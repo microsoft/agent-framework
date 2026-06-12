@@ -13,7 +13,7 @@ using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
-var model = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "Phi-4-mini-instruct";
+var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "Phi-4-mini-instruct";
 
 // Since we are using the OpenAI Client SDK, we need to override the default endpoint to point to Microsoft Foundry.
 var clientOptions = new OpenAIClientOptions() { Endpoint = new Uri(endpoint) };
