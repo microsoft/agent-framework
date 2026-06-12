@@ -284,10 +284,16 @@ public sealed class A2UIAgentTests
         };
         var subagent = new ScriptedChatClient(_ => s_validRenderArgs) { StreamingChunks = 1 };
         var agent = new A2UIAgent(inner, subagent);
+        var callerOptions = new ChatClientAgentRunOptions
+        {
+            AllowBackgroundResponses = true,
+            ResponseFormat = ChatResponseFormat.Json,
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["run-key"] = "run-value" },
+        };
 
         // Act
         List<AgentResponseUpdate> updates = [];
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "show hotels")]))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "show hotels")], options: callerOptions))
         {
             updates.Add(update);
         }
@@ -298,6 +304,13 @@ public sealed class A2UIAgentTests
         IReadOnlyList<string> finalTurnTools = inner.ToolsPerRun[^1];
         Assert.DoesNotContain(A2UIConstants.GenerateA2UIToolName, finalTurnTools);
         Assert.Contains(updates, u => u.Text == "done");
+
+        // The closing turn preserves the caller's base run-option members rather than
+        // rebuilding a partial options instance.
+        ChatClientAgentRunOptions finalTurnOptions = Assert.IsType<ChatClientAgentRunOptions>(inner.OptionsPerRun[^1]);
+        Assert.True(finalTurnOptions.AllowBackgroundResponses);
+        Assert.Same(ChatResponseFormat.Json, finalTurnOptions.ResponseFormat);
+        Assert.Equal("run-value", finalTurnOptions.AdditionalProperties?["run-key"]);
     }
 
     [Fact]
@@ -690,6 +703,9 @@ public sealed class A2UIAgentTests
         /// <summary>The tool names advertised on each run, in order.</summary>
         public List<IReadOnlyList<string>> ToolsPerRun { get; } = [];
 
+        /// <summary>The run options received on each run, in order.</summary>
+        public List<AgentRunOptions?> OptionsPerRun { get; } = [];
+
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
@@ -706,6 +722,7 @@ public sealed class A2UIAgentTests
         {
             this.Runs.Add(messages.ToList());
             this.ToolsPerRun.Add((options as ChatClientAgentRunOptions)?.ChatOptions?.Tools?.Select(t => t.Name).ToList() ?? []);
+            this.OptionsPerRun.Add(options);
 
             // A generate_a2ui call is only possible when the tool is still advertised; once
             // the agent withholds it (the round-cap final turn), fall back to narration.

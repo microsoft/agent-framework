@@ -170,14 +170,17 @@ public sealed class A2UIAgent : DelegatingAIAgent
 
         // The planner kept requesting generations through the round cap. Give it one final
         // turn to consume the last tool result and narrate, with the generate tool withheld
-        // so it cannot request another surface — otherwise the run would end on an
-        // unanswered tool result with no closing assistant message. A fresh options instance
-        // keeps the loop's own options untouched.
-        var closingChatOptions = chatOptions.Clone();
-        closingChatOptions.Tools = (chatOptions.Tools ?? Enumerable.Empty<AITool>())
+        // so it cannot request another surface, otherwise the run would end on an unanswered
+        // tool result with no closing assistant message. Clone the run options so the base
+        // AgentRunOptions members (continuation token, background-response opt-in, additional
+        // properties, response format) and the chat client factory all survive, then strip
+        // only the generate tool from the cloned chat options.
+        ChatClientAgentRunOptions closingOptions = CloneRunOptions(runOptions);
+        ChatOptions closingChatOptions = closingOptions.ChatOptions ?? new ChatOptions();
+        closingOptions.ChatOptions = closingChatOptions;
+        closingChatOptions.Tools = (closingChatOptions.Tools ?? Enumerable.Empty<AITool>())
             .Where(t => !string.Equals(t.Name, generateTool.Name, StringComparison.Ordinal))
             .ToList();
-        var closingOptions = new ChatClientAgentRunOptions { ChatOptions = closingChatOptions, ChatClientFactory = runOptions.ChatClientFactory };
         await foreach (AgentResponseUpdate update in this.InnerAgent
             .RunStreamingAsync(history, pendingSession, closingOptions, cancellationToken)
             .ConfigureAwait(false))
