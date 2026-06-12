@@ -155,6 +155,36 @@ public sealed class A2UIComponentValidatorTests
     }
 
     [Fact]
+    public void Validate_SingularChildUnresolved_ReportsUnresolvedChild()
+    {
+        // Arrange: a one-child container (Card) whose singular `child` points at a
+        // component id that does not exist.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Card", ["child"] = "ghost" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(components);
+
+        // Assert
+        Assert.Contains(A2UIValidationErrorCodes.UnresolvedChild, Codes(result));
+    }
+
+    [Fact]
+    public void Validate_SingularChildResolved_IsValid()
+    {
+        // Arrange: the singular `child` points at a real component id.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Card", ["child"] = "label" },
+            new JsonObject { ["id"] = "label", ["component"] = "Text" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(components);
+
+        // Assert
+        Assert.DoesNotContain(A2UIValidationErrorCodes.UnresolvedChild, Codes(result));
+    }
+
+    [Fact]
     public void Validate_EmptyOrNullComponents_FailsLoud()
     {
         // Act

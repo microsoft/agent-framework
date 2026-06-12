@@ -93,6 +93,9 @@ public sealed class A2UIValidationCatalog
 /// </remarks>
 public static class A2UIComponentValidator
 {
+    /// <summary>The component fields that carry child references: singular <c>child</c> and plural <c>children</c>.</summary>
+    private static readonly string[] s_childReferenceFields = ["child", "children"];
+
     /// <summary>
     /// Validates a flat A2UI component array against structural rules and, optionally,
     /// a component catalog and a data model.
@@ -190,14 +193,20 @@ public static class A2UIComponentValidator
 
             if (component is not null)
             {
-                foreach (string reference in CollectChildReferences(component["children"]))
+                // Validate both the singular `child` (one-child containers such as Card and
+                // Button, which the default prompt uses) and the plural `children` so a
+                // dangling reference in either is caught and fed back to the recovery loop.
+                foreach (string field in s_childReferenceFields)
                 {
-                    if (!ids.Contains(reference))
+                    foreach (string reference in CollectChildReferences(component[field]))
                     {
-                        errors.Add(new A2UIValidationError(
-                            A2UIValidationErrorCodes.UnresolvedChild,
-                            $"components[{i}].children",
-                            $"Child reference '{reference}' does not match any component id"));
+                        if (!ids.Contains(reference))
+                        {
+                            errors.Add(new A2UIValidationError(
+                                A2UIValidationErrorCodes.UnresolvedChild,
+                                $"components[{i}].{field}",
+                                $"Child reference '{reference}' does not match any component id"));
+                        }
                     }
                 }
 
@@ -304,8 +313,10 @@ public static class A2UIComponentValidator
                 Push(child);
             }
         }
-        else if (children is JsonObject)
+        else if (children is JsonObject or JsonValue)
         {
+            // A JsonObject template ({ componentId, ... }) or a bare string id (the singular
+            // `child` shape).
             Push(children);
         }
 
