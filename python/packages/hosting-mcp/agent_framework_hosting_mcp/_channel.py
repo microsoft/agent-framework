@@ -18,11 +18,16 @@ typed inputs).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import base64
+import json
+import re
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any
+from dataclasses import asdict, is_dataclass
+from typing import Any, cast
 
 import mcp.types as types
+from agent_framework import Content, Message
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
@@ -36,6 +41,7 @@ from agent_framework_hosting import (
 )
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from pydantic import AnyUrl
 from starlette.routing import Mount
 from starlette.types import Receive, Scope, Send
 
@@ -45,6 +51,124 @@ _DEFAULT_TOOL_DESCRIPTION = (
     "return its reply. Pass an optional ``session_id`` to continue a prior "
     "conversation."
 )
+_DATA_URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<data>[A-Za-z0-9+/=]+)$")
+
+
+def _mcp_uri(uri: str) -> AnyUrl:
+    """Build an MCP URI model from a string URI."""
+    return AnyUrl(uri)
+
+
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-serializable representation for MCP structured content."""
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _structured_content(value: Any) -> dict[str, Any] | None:
+    """Normalize an Agent Framework structured output value for MCP."""
+    if value is None:
+        return None
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        value = model_dump(mode="json")
+    elif is_dataclass(value) and not isinstance(value, type):
+        value = asdict(value)
+
+    if isinstance(value, Mapping):
+        mapping_value = cast("Mapping[Any, Any]", value)  # type: ignore[redundant-cast]
+        safe_value = _json_safe(dict(mapping_value))
+        if isinstance(safe_value, dict):
+            safe_mapping = cast("Mapping[Any, Any]", safe_value)
+            return {str(key): item for key, item in safe_mapping.items()}
+        return {"value": safe_value}
+    safe_value = _json_safe(value)
+    return {"value": safe_value}
+
+
+def _data_content_to_mcp(content: Content) -> list[types.ContentBlock]:
+    """Convert Agent Framework data content into the closest MCP content block."""
+    if not content.uri:
+        return []
+    match = _DATA_URI_PATTERN.match(content.uri)
+    if match is None:
+        logger.warning("MCPChannel could not parse data URI; omitted.")
+        return []
+
+    media_type = content.media_type or match.group("media_type")
+    data = match.group("data")
+    if media_type.startswith("image/"):
+        return [types.ImageContent(type="image", data=data, mimeType=media_type)]
+    if media_type.startswith("audio/"):
+        return [types.AudioContent(type="audio", data=data, mimeType=media_type)]
+    return [
+        types.EmbeddedResource(
+            type="resource",
+            resource=types.BlobResourceContents(uri=_mcp_uri(content.uri), mimeType=media_type, blob=data),
+        )
+    ]
+
+
+def _content_to_mcp(content: Content) -> list[types.ContentBlock]:
+    """Convert one Agent Framework content item into MCP content blocks."""
+    match content.type:
+        case "text":
+            return [types.TextContent(type="text", text=content.text or "")]
+        case "text_reasoning":
+            return [types.TextContent(type="text", text=content.text)] if content.text else []
+        case "data":
+            return _data_content_to_mcp(content)
+        case "uri":
+            if not content.uri:
+                return []
+            block: types.ContentBlock = types.ResourceLink(
+                type="resource_link",
+                name=content.uri,
+                uri=_mcp_uri(content.uri),
+                mimeType=content.media_type,
+            )
+            return [block]
+        case "function_result":
+            if content.items:
+                blocks: list[types.ContentBlock] = []
+                for item in content.items:
+                    blocks.extend(_content_to_mcp(item))
+                return blocks
+            return [types.TextContent(type="text", text=str(content.result or ""))]
+        case "error":
+            return [types.TextContent(type="text", text=content.message or content.error_details or "")]
+        case _:
+            logger.warning("MCPChannel does not support content type: %s. Omitted.", content.type)
+            return []
+
+
+def _value_to_mcp(value: Any) -> list[types.ContentBlock]:
+    """Convert a workflow output or fallback value into MCP content blocks."""
+    if isinstance(value, Content):
+        return _content_to_mcp(value)
+    if isinstance(value, Message):
+        blocks: list[types.ContentBlock] = []
+        for content in value.contents:
+            blocks.extend(_content_to_mcp(content))
+        return blocks
+    if isinstance(value, str):
+        return [types.TextContent(type="text", text=value)]
+    if isinstance(value, bytes):
+        data = base64.b64encode(value).decode("utf-8")
+        return [
+            types.EmbeddedResource(
+                type="resource",
+                resource=types.BlobResourceContents(
+                    uri=_mcp_uri("data:application/octet-stream;base64," + data),
+                    mimeType="application/octet-stream",
+                    blob=data,
+                ),
+            )
+        ]
+    return [types.TextContent(type="text", text=json.dumps(_json_safe(value), default=str))]
 
 
 class MCPChannel:
@@ -52,9 +176,8 @@ class MCPChannel:
 
     Mounts the MCP Streamable-HTTP transport at ``path`` (default ``/mcp``).
     The advertised tool accepts ``{"input": str, "session_id": str?}`` and
-    returns the target's textual reply as MCP ``TextContent``. Non-text
-    content produced by the target is logged and dropped (mirroring
-    :meth:`agent_framework.Agent.as_mcp_server`).
+    returns the target's reply as MCP content blocks. Agent structured outputs
+    are returned as MCP ``structuredContent``.
     """
 
     name = "mcp"
@@ -65,7 +188,7 @@ class MCPChannel:
         path: str = "/mcp",
         tool_name: str = _DEFAULT_TOOL_NAME,
         tool_description: str = _DEFAULT_TOOL_DESCRIPTION,
-        server_name: str = "agent-framework-hosting",
+        server_name: str | None = None,
         server_version: str | None = None,
         streaming: bool = True,
         json_response: bool = False,
@@ -80,6 +203,7 @@ class MCPChannel:
             tool_name: Name of the advertised tool. Default ``run_agent``.
             tool_description: Human-readable description advertised to clients.
             server_name: MCP server name reported in the initialize handshake.
+                Defaults to the hosted target's ``name`` attribute when available.
             server_version: Optional MCP server version string.
             streaming: When ``True`` (default) the channel consumes the target
                 via :meth:`ChannelContext.run_stream` and forwards incremental
@@ -121,8 +245,10 @@ class MCPChannel:
             json_response=self._json_response,
             stateless=self._stateless,
         )
+        # StreamableHTTPSessionManager owns MCP initialize/session/progress semantics;
+        # mounting it keeps the channel on the real MCP HTTP transport.
         return ChannelContribution(
-            routes=[Mount(self.path, app=self._handle_asgi)],
+            routes=[Mount("/", app=self._handle_asgi)],
             on_startup=[self._on_startup],
             on_shutdown=[self._on_shutdown],
         )
@@ -148,7 +274,9 @@ class MCPChannel:
 
     def _build_server(self) -> Server[Any, Any]:
         """Build the low-level MCP server with the single host-routed tool."""
-        server: Server[Any, Any] = Server(name=self._server_name, version=self._server_version)
+        target_name = getattr(self._ctx.target, "name", None) if self._ctx is not None else None
+        server_name = self._server_name or (target_name if isinstance(target_name, str) and target_name else None)
+        server: Server[Any, Any] = Server(name=server_name or "agent-framework-hosting", version=self._server_version)
         tool = types.Tool(
             name=self._tool_name,
             description=self._tool_description,
@@ -173,19 +301,22 @@ class MCPChannel:
             return [tool]
 
         @server.call_tool()  # type: ignore[no-untyped-call, untyped-decorator, misc]
-        async def _call_tool(name: str, arguments: Mapping[str, Any]) -> list[types.ContentBlock]:  # pyright: ignore[reportUnusedFunction]
+        async def _call_tool(name: str, arguments: Mapping[str, Any]) -> types.CallToolResult:  # pyright: ignore[reportUnusedFunction]
             return await self._invoke_tool(arguments)
 
         return server
 
-    async def _invoke_tool(self, arguments: Mapping[str, Any]) -> list[types.ContentBlock]:
+    async def _invoke_tool(self, arguments: Mapping[str, Any]) -> types.CallToolResult:
         """Route a single ``tool/call`` through the host pipeline."""
         if self._ctx is None:  # pragma: no cover - guarded by Channel lifecycle
             raise RuntimeError("MCPChannel not initialized")
 
         text_input = arguments.get("input")
         if not isinstance(text_input, str) or not text_input:
-            return [types.TextContent(type="text", text="Error: 'input' must be a non-empty string.")]
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="Error: 'input' must be a non-empty string.")],
+                isError=True,
+            )
         session_id = arguments.get("session_id")
         session = ChannelSession(isolation_key=session_id) if isinstance(session_id, str) and session_id else None
         identity = (
@@ -274,9 +405,33 @@ class MCPChannel:
             related_request_id=request_id,
         )
 
-    def _result_to_content(self, result: HostedRunResult[Any]) -> list[types.ContentBlock]:
-        """Convert a host result into MCP tool content (text only)."""
-        text = getattr(result.result, "text", None)
-        if not isinstance(text, str):
-            text = ""
-        return [types.TextContent(type="text", text=text)]
+    def _result_to_content(self, result: HostedRunResult[Any]) -> types.CallToolResult:
+        """Convert a host result into an MCP tool result."""
+        response = result.result
+        content: list[types.ContentBlock] = []
+
+        messages = cast("Sequence[Any] | None", getattr(response, "messages", None))
+        if messages:
+            for message in messages:
+                for item in cast("Sequence[Any]", getattr(message, "contents", None) or ()):
+                    if isinstance(item, Content):
+                        content.extend(_content_to_mcp(item))
+                    else:
+                        content.append(types.TextContent(type="text", text=str(item)))
+
+        get_outputs = getattr(response, "get_outputs", None)
+        if callable(get_outputs):
+            for output in cast("Sequence[Any]", get_outputs()):
+                content.extend(_value_to_mcp(output))
+
+        structured = _structured_content(getattr(response, "value", None))
+        if not content:
+            text = getattr(response, "text", None)
+            if isinstance(text, str) and text:
+                content.append(types.TextContent(type="text", text=text))
+            elif structured is not None:
+                content.append(types.TextContent(type="text", text=json.dumps(structured, indent=2)))
+            else:
+                content.append(types.TextContent(type="text", text=""))
+
+        return types.CallToolResult(content=content, structuredContent=structured, isError=False)

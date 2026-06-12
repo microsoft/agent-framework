@@ -19,8 +19,9 @@ host.serve(port=8000)
 ```
 
 The Streamable-HTTP endpoint is mounted at `path` (default `/mcp`). The advertised
-tool accepts `{"input": str, "session_id": str?}` and returns the target's textual
-reply; pass `session_id` to continue a prior conversation (it maps onto the host
+tool accepts `{"input": str, "session_id": str?}` and returns the target's reply
+as MCP content blocks, including structured output when the agent returns one.
+Pass `session_id` to continue a prior conversation (it maps onto the host
 session). When `streaming=True` (default) incremental text is forwarded as MCP
 progress notifications while the full reply is returned as the tool result.
 
