@@ -1532,6 +1532,8 @@ class SkillScriptRunner(Protocol):
 # endregion
 
 SKILL_FILE_NAME: Final[str] = "SKILL.md"
+# How deep to search for SKILL.md files within the top-level skill_paths directories.
+# This is separate from DEFAULT_SEARCH_DEPTH which controls per-skill resource/script scanning.
 MAX_SEARCH_DEPTH: Final[int] = 2
 MAX_NAME_LENGTH: Final[int] = 64
 MAX_DESCRIPTION_LENGTH: Final[int] = 1024
@@ -1546,6 +1548,8 @@ DEFAULT_RESOURCE_EXTENSIONS: Final[tuple[str, ...]] = (
     ".txt",
 )
 DEFAULT_SCRIPT_EXTENSIONS: Final[tuple[str, ...]] = (".py",)
+# How deep to scan for resource/script files within each individual skill directory.
+# This is separate from MAX_SEARCH_DEPTH which controls SKILL.md discovery.
 DEFAULT_SEARCH_DEPTH: Final[int] = 2
 
 
@@ -2796,6 +2800,10 @@ class FileSkillsSource(SkillsSource):
         # Recurse into subdirectories if within depth limit
         if current_depth < self._search_depth:
             for subdir in subdirectories:
+                # Skip subdirectories that contain their own SKILL.md — they are
+                # separate skills and their files should not be attached to this one.
+                if (subdir / SKILL_FILE_NAME).is_file():
+                    continue
                 self._scan_directory_for_resources(
                     target_dir=subdir,
                     skill_dir=skill_dir,
@@ -2945,6 +2953,10 @@ class FileSkillsSource(SkillsSource):
         # Recurse into subdirectories if within depth limit
         if current_depth < self._search_depth:
             for subdir in subdirectories:
+                # Skip subdirectories that contain their own SKILL.md — they are
+                # separate skills and their files should not be attached to this one.
+                if (subdir / SKILL_FILE_NAME).is_file():
+                    continue
                 self._scan_directory_for_scripts(
                     target_dir=subdir,
                     skill_dir=skill_dir,

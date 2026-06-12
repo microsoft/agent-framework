@@ -1831,6 +1831,44 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         assert "keep.md" in resource_names
         assert "drop.md" not in resource_names
 
+    async def test_nested_skill_directory_not_crossed(self, tmp_path: Path) -> None:
+        """Files in a nested skill directory are NOT attached to the parent skill."""
+        parent_dir = tmp_path / "parent-skill"
+        child_dir = parent_dir / "child-skill"
+        child_dir.mkdir(parents=True)
+        (parent_dir / "SKILL.md").write_text(
+            "---\nname: parent-skill\ndescription: parent\n---\nParent body",
+            encoding="utf-8",
+        )
+        (parent_dir / "parent-resource.md").write_text("parent", encoding="utf-8")
+        (child_dir / "SKILL.md").write_text(
+            "---\nname: child-skill\ndescription: child\n---\nChild body",
+            encoding="utf-8",
+        )
+        (child_dir / "child-resource.md").write_text("child", encoding="utf-8")
+        (child_dir / "child-script.py").write_text("print('child')", encoding="utf-8")
+
+        source = FileSkillsSource(str(tmp_path), search_depth=3)
+        skills = await source.get_skills()
+        skills_dict = {s.frontmatter.name: s for s in skills}
+
+        # Both skills are discovered
+        assert "parent-skill" in skills_dict
+        assert "child-skill" in skills_dict
+
+        # Parent does NOT pick up child's files
+        parent_resources = [r.name for r in skills_dict["parent-skill"]._resources]
+        parent_scripts = [s.name for s in skills_dict["parent-skill"]._scripts]
+        assert "parent-resource.md" in parent_resources
+        assert "child-skill/child-resource.md" not in parent_resources
+        assert "child-skill/child-script.py" not in parent_scripts
+
+        # Child has its own files
+        child_resources = [r.name for r in skills_dict["child-skill"]._resources]
+        child_scripts = [s.name for s in skills_dict["child-skill"]._scripts]
+        assert "child-resource.md" in child_resources
+        assert "child-script.py" in child_scripts
+
 
 # ---------------------------------------------------------------------------
 # Tests: _is_path_within_directory
