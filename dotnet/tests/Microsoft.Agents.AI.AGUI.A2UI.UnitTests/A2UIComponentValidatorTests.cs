@@ -185,6 +185,84 @@ public sealed class A2UIComponentValidatorTests
     }
 
     [Fact]
+    public void Validate_SelfReferentialChild_ReportsChildCycle()
+    {
+        // Arrange: a one-child container whose singular `child` points at itself.
+        // The default prompt warns the model the child tree must be a DAG; a
+        // self-reference never terminates at render time.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "avatar", ["component"] = "Card", ["child"] = "avatar" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(components);
+
+        // Assert
+        Assert.False(result.Valid);
+        Assert.Contains(result.Errors, e =>
+            e.Code == A2UIValidationErrorCodes.ChildCycle && e.Message.Contains("avatar -> avatar"));
+    }
+
+    [Fact]
+    public void Validate_MultiComponentCycle_ReportedOnce()
+    {
+        // Arrange: root -> a -> b -> a forms a cycle reachable from multiple entry points.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Row", ["children"] = new JsonArray("a") },
+            new JsonObject { ["id"] = "a", ["component"] = "Row", ["children"] = new JsonArray("b") },
+            new JsonObject { ["id"] = "b", ["component"] = "Row", ["children"] = new JsonArray("a") });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(components);
+
+        // Assert
+        Assert.Equal(1, result.Errors.Count(e => e.Code == A2UIValidationErrorCodes.ChildCycle));
+        Assert.Contains(result.Errors, e =>
+            e.Code == A2UIValidationErrorCodes.ChildCycle && e.Message.Contains("a -> b -> a"));
+    }
+
+    [Fact]
+    public void Validate_AcyclicChildGraph_NoChildCycle()
+    {
+        // Arrange
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Row", ["children"] = new JsonArray("a", "b") },
+            new JsonObject { ["id"] = "a", ["component"] = "Text" },
+            new JsonObject { ["id"] = "b", ["component"] = "Text" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(components);
+
+        // Assert
+        Assert.DoesNotContain(A2UIValidationErrorCodes.ChildCycle, Codes(result));
+    }
+
+    [Fact]
+    public void Validate_DeepLinearChildChain_DoesNotOverflow()
+    {
+        // Arrange: a very deep linear child chain (root -> c1 -> c2 -> ... -> cN). The cycle
+        // walk must handle untrusted depth without overflowing the stack and must not report
+        // a cycle for an acyclic chain.
+        const int depth = 20_000;
+        var components = new JsonArray
+        {
+            new JsonObject { ["id"] = "root", ["component"] = "Card", ["child"] = "c1" },
+        };
+        for (int i = 1; i < depth; i++)
+        {
+            components.Add(new JsonObject { ["id"] = $"c{i}", ["component"] = "Card", ["child"] = $"c{i + 1}" });
+        }
+
+        components.Add(new JsonObject { ["id"] = $"c{depth}", ["component"] = "Text" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(components);
+
+        // Assert
+        Assert.DoesNotContain(A2UIValidationErrorCodes.ChildCycle, Codes(result));
+        Assert.DoesNotContain(A2UIValidationErrorCodes.UnresolvedChild, Codes(result));
+    }
+
+    [Fact]
     public void Validate_EmptyOrNullComponents_FailsLoud()
     {
         // Act
