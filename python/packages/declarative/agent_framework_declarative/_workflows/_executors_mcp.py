@@ -276,13 +276,9 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         state = self._get_state(ctx.state)
 
         tool_name = original_request.tool_name
-        server_url = original_request.server_url
-        server_label = original_request.server_label
-        arguments = original_request.arguments
-        connection_name = getattr(original_request, "connection_name", None)
         metadata: dict[str, Any] = getattr(original_request, "metadata", None) or {}
         raw_conversation_id = metadata.get("conversation_id")
-        conversation_id = str(raw_conversation_id) if isinstance(raw_conversation_id, str) and raw_conversation_id else None
+        conversation_id = raw_conversation_id if isinstance(raw_conversation_id, str) and raw_conversation_id else None
 
         auto_send = self._get_auto_send(state)
         output_messages_path = _get_output_path(self._action_def, "messages")
@@ -299,15 +295,13 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             await ctx.send_message(ActionComplete())
             return
 
-        headers = self._evaluate_headers(state, self._action_def.get("headers"))
-
         invocation = MCPToolInvocation(
-            server_url=server_url,
+            server_url=original_request.server_url,
             tool_name=tool_name,
-            server_label=server_label,
-            arguments=arguments,
-            headers=headers,
-            connection_name=connection_name,
+            server_label=original_request.server_label,
+            arguments=original_request.arguments,
+            headers=self._evaluate_headers(state, self._action_def.get("headers")),
+            connection_name=getattr(original_request, "connection_name", None),
         )
         result = await self._invoke_with_narrow_catch(invocation)
         await self._process_result(
