@@ -462,8 +462,11 @@ internal static class ChatResponseUpdateAGUIExtensions
         // argument fragments are still observable on the update's RawRepresentation:
         // surface them as incremental TOOL_CALL_ARGS events and suppress the duplicate
         // atomic emission when the coalesced FunctionCallContent arrives.
+        // Two views of the same open raw-streamed calls: by fragment index (for matching
+        // later fragments and the deterministic end-of-stream sweep) and by call id (for an
+        // O(1) close when the coalesced FunctionCallContent arrives).
         Dictionary<int, string> rawToolCallIdsByIndex = [];
-        HashSet<string> rawStreamedToolCallIds = new(StringComparer.Ordinal);
+        Dictionary<string, int> rawToolCallIndexById = new(StringComparer.Ordinal);
 #endif
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
@@ -564,7 +567,7 @@ internal static class ChatResponseUpdateAGUIExtensions
 
                         rawToolCallId = toolCallUpdate.ToolCallId;
                         rawToolCallIdsByIndex[toolCallUpdate.Index] = rawToolCallId;
-                        rawStreamedToolCallIds.Add(rawToolCallId);
+                        rawToolCallIndexById[rawToolCallId] = toolCallUpdate.Index;
 
                         // Close any open reasoning block before emitting tool events.
                         if (currentReasoningMessageId is not null)
@@ -618,22 +621,9 @@ internal static class ChatResponseUpdateAGUIExtensions
                         // per-call state is then released: OpenAI restarts tool-call indexes
                         // at 0 for each assistant turn, so a stale index entry would silently
                         // absorb a later round's fragments into this finished call.
-                        if (rawStreamedToolCallIds.Remove(functionCallContent.CallId))
+                        if (rawToolCallIndexById.Remove(functionCallContent.CallId, out int closedIndex))
                         {
-                            int? closedIndex = null;
-                            foreach (KeyValuePair<int, string> entry in rawToolCallIdsByIndex)
-                            {
-                                if (string.Equals(entry.Value, functionCallContent.CallId, StringComparison.Ordinal))
-                                {
-                                    closedIndex = entry.Key;
-                                    break;
-                                }
-                            }
-
-                            if (closedIndex is int index)
-                            {
-                                rawToolCallIdsByIndex.Remove(index);
-                            }
+                            rawToolCallIdsByIndex.Remove(closedIndex);
 
                             // Close any open reasoning block before emitting tool events.
                             if (currentReasoningMessageId is not null)
@@ -861,17 +851,14 @@ internal static class ChatResponseUpdateAGUIExtensions
         openToolCallIndexes.Sort();
         foreach (int openToolCallIndex in openToolCallIndexes)
         {
-            if (rawStreamedToolCallIds.Remove(rawToolCallIdsByIndex[openToolCallIndex]))
+            yield return new ToolCallEndEvent
             {
-                yield return new ToolCallEndEvent
-                {
-                    ToolCallId = rawToolCallIdsByIndex[openToolCallIndex]
-                };
-            }
+                ToolCallId = rawToolCallIdsByIndex[openToolCallIndex]
+            };
         }
 
-        rawStreamedToolCallIds.Clear();
         rawToolCallIdsByIndex.Clear();
+        rawToolCallIndexById.Clear();
 #endif
 
         yield return new RunFinishedEvent
