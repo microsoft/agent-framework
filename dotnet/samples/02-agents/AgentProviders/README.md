@@ -5,7 +5,7 @@ organized by provider. This is not an exhaustive list, but shows a variety of
 the more popular options.
 
 For other samples that demonstrate how to use AIAgent instances,
-see the [Getting Started With Agents](../agents/README.md) samples.
+see the [Getting Started With Agents](../Agents/README.md) samples.
 
 ## Prerequisites
 
