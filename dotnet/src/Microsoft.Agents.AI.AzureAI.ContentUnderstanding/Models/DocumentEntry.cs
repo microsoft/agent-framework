@@ -85,9 +85,6 @@ internal sealed record DocumentEntry
     /// </summary>
     public string? MarkdownResult { get; init; }
 
-    /// <summary>Alternate rendering used for vector-store upload (typically without the fields block).</summary>
-    public string? SearchPayload { get; init; }
-
     /// <summary>Error message when <see cref="Status"/> is <see cref="DocumentStatus.Failed"/>.</summary>
     public string? Error { get; init; }
 

@@ -277,11 +277,6 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                     outcome.Result,
                     att.Filename,
                     AnalysisSection.Markdown);
-                string? searchPayload = AnalysisRenderer.RenderSearchPayload(
-                    outcome.Result,
-                    att.Filename,
-                    this._options.OutputSections,
-                    this._options.FileSearchConfig);
                 entry = new DocumentEntry
                 {
                     DocumentKey = att.Filename,
@@ -293,7 +288,6 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                     AnalysisDuration = outcome.Duration,
                     Result = rendered,
                     MarkdownResult = markdownOnly,
-                    SearchPayload = searchPayload,
                     SizeBytes = att.Data?.Length,
                 };
                 newlyReady.Add(entry);
@@ -584,7 +578,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         if (entry.Status != DocumentStatus.Ready)
         {
             // Failed / Analyzing entries flow through unchanged — they were never going to
-            // produce a SearchPayload and the message-injection path emits an error note
+            // produce an upload payload and the message-injection path emits an error note
             // (or, for Analyzing, just the existing "still analyzing" hint downstream).
             return FileSearchOutcome.Skip(entry, null);
         }
@@ -598,7 +592,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                 $"Document `{entry.MarkdownSafeName}`: indexed in vector store — call `file_search` to query its contents.");
         }
 
-        string? payload = entry.SearchPayload;
+        string? payload = entry.Result;
         if (!HasRenderableBody(payload))
         {
             // Empty / front-matter-only payload would create a vacuous vector-store record.
@@ -612,7 +606,7 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         {
             // Foreground budget was fully consumed by analysis, so we never even attempted
             // the vector-store upload. The analysis itself succeeded and the rendered content
-            // is intact — keep the entry Ready (and keep Result/MarkdownResult/SearchPayload)
+            // is intact — keep the entry Ready (and keep Result/MarkdownResult)
             // so list_documents / get_analyzed_document still serve it, and so the next turn's
             // promotion scan retries the upload (VectorStoreFileId is still null). Record a
             // non-destructive upload marker and emit a "will retry next turn" note instead of
@@ -874,15 +868,12 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                     outcome.Result, entry.Filename, this._options.OutputSections);
                 string markdownOnly = AnalysisRenderer.Render(
                     outcome.Result, entry.Filename, AnalysisSection.Markdown);
-                string? searchPayload = AnalysisRenderer.RenderSearchPayload(
-                    outcome.Result, entry.Filename, this._options.OutputSections, this._options.FileSearchConfig);
 
                 providerState.Documents[entry.DocumentKey] = entry with
                 {
                     Status = DocumentStatus.Ready,
                     Result = rendered,
                     MarkdownResult = markdownOnly,
-                    SearchPayload = searchPayload,
                     AnalyzedAt = DateTimeOffset.UtcNow,
                     AnalysisDuration = (entry.AnalysisDuration ?? TimeSpan.Zero) + outcome.Duration,
                     RehydrationTokenJson = null,

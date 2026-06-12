@@ -1,29 +1,21 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Text.RegularExpressions;
 using Azure.AI.ContentUnderstanding;
 
 namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 
 /// <summary>
 /// Converts a Content Understanding <see cref="AnalysisResult"/> into the LLM-ready Markdown block
-/// injected into the agent context, plus the alternate payload uploaded to a file-search vector
-/// store.
+/// injected into the agent context (also used verbatim for the file-search vector-store upload).
 /// </summary>
 /// <remarks>
 /// Delegates to <see cref="LlmInputHelper.ToLlmInput(AnalysisResult, IDictionary{string, object}, LlmInputOptions)"/>
-/// for the actual rendering. After rendering, strips spurious telemetry lines of the form
-/// <c>- LLMStats: ...</c> that the SDK occasionally leaks into the <c>rai_warnings:</c> YAML list
-/// (decision C1).
+/// for the actual rendering. Filtering of spurious <c>LLMStats:</c> telemetry from the
+/// <c>rai_warnings:</c> block is handled upstream by the SDK helper
+/// (<c>Azure.AI.ContentUnderstanding</c> >= 1.2.0-beta.2).
 /// </remarks>
 internal static class AnalysisRenderer
 {
-    // Multi-line regex matching "- LLMStats: ..." entries inside the rai_warnings YAML list:
-    // ^[ \t]*-[ \t]+LLMStats:.*(?:\r?\n|$)
-    private static readonly Regex s_telemetryLineRegex = new(
-        @"^[ \t]*-[ \t]+LLMStats:.*(?:\r?\n|$)",
-        RegexOptions.Multiline | RegexOptions.CultureInvariant);
-
     public static string Render(
         AnalysisResult result,
         string filename,
@@ -50,37 +42,6 @@ internal static class AnalysisRenderer
             IncludeFields = (sections & AnalysisSection.Fields) != 0,
         };
 
-        string rendered = result.ToLlmInput(metadata, options);
-        return StripTelemetry(rendered);
+        return result.ToLlmInput(metadata, options);
     }
-
-    /// <summary>
-    /// Renders the payload uploaded to a file-search vector store, or <see langword="null"/>
-    /// when <paramref name="config"/> is <see langword="null"/> (file-search disabled — the
-    /// caller injects the rendered block into the message stream instead).
-    /// </summary>
-    /// <remarks>
-    /// Uses the same <paramref name="sections"/> selection as <see cref="Render"/>, so the
-    /// vector-store copy honors the caller's <see cref="ContentUnderstandingContextProviderOptions.OutputSections"/>.
-    /// </remarks>
-    public static string? RenderSearchPayload(
-        AnalysisResult result,
-        string filename,
-        AnalysisSection sections,
-        FileSearchConfig? config)
-    {
-        if (config is null)
-        {
-            return null;
-        }
-
-        return Render(result, filename, sections);
-    }
-
-    /// <summary>
-    /// Removes <c>- LLMStats: ...</c> telemetry lines from an already-rendered block.
-    /// Exposed <c>internal</c> for direct regex coverage in unit tests.
-    /// </summary>
-    internal static string StripTelemetry(string rendered)
-        => string.IsNullOrEmpty(rendered) ? rendered : s_telemetryLineRegex.Replace(rendered, string.Empty);
 }

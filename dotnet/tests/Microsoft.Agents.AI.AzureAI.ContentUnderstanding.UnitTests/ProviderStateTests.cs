@@ -25,7 +25,6 @@ public sealed class ProviderStateTests
             AnalysisDuration = TimeSpan.FromSeconds(3.5),
             UploadDuration = TimeSpan.FromMilliseconds(750),
             Result = "rendered markdown",
-            SearchPayload = "rendered markdown (no fields)",
             Error = null,
             OperationId = "op-abc-123",
         };
@@ -51,7 +50,6 @@ public sealed class ProviderStateTests
             AnalysisDuration = null,
             UploadDuration = null,
             Result = null,
-            SearchPayload = null,
             Error = null,
             OperationId = "lro-handle",
         };
@@ -64,7 +62,6 @@ public sealed class ProviderStateTests
         Assert.Null(clone.AnalysisDuration);
         Assert.Null(clone.UploadDuration);
         Assert.Null(clone.Result);
-        Assert.Null(clone.SearchPayload);
         Assert.Null(clone.Error);
         Assert.Equal("lro-handle", clone.OperationId);
         Assert.Equal(DocumentStatus.Analyzing, clone.Status);
