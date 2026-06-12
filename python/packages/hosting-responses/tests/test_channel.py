@@ -10,7 +10,6 @@ from typing import Any
 
 from agent_framework_hosting import (
     AgentFrameworkHost,
-    ChannelIdentity,
     HostedRunResult,
 )
 from starlette.testclient import TestClient
@@ -68,22 +67,6 @@ class _FakeAgent:
             return _FakeAgentResponse(text=self._reply)
 
         return _coro()
-
-
-class _RecordingPushChannel:
-    name = "telegram"
-    path = "/telegram"
-
-    def __init__(self) -> None:
-        self.pushes: list[tuple[ChannelIdentity, HostedRunResult]] = []
-
-    def contribute(self, _ctx: Any) -> Any:
-        from agent_framework_hosting import ChannelContribution
-
-        return ChannelContribution()
-
-    async def push(self, identity: ChannelIdentity, payload: HostedRunResult) -> None:
-        self.pushes.append((identity, payload))
 
 
 # --------------------------------------------------------------------------- #
@@ -151,7 +134,17 @@ class TestResponsesChannelNonStreaming:
         # _FakeAgent.create_session stashes the session_id on the dict it returns.
         assert sess["session_id"] == "resp_42"
 
-    def test_chat_isolation_header_creates_session_when_no_prev_id(self) -> None:
+    def test_chat_isolation_header_ignored_outside_foundry(self) -> None:
+        client, _host, agent = _make_client()
+        with client:
+            client.post(
+                "/responses",
+                json={"input": "x"},
+                headers={"x-agent-chat-isolation-key": "chat-abc"},
+            )
+        assert "session" not in agent.calls[0]["kwargs"]
+
+    def test_chat_isolation_header_creates_session_in_foundry(self, monkeypatch: Any) -> None:
         """Foundry-style ``x-agent-chat-isolation-key`` falls back to a session anchor.
 
         First-turn requests have no ``previous_response_id`` (the client
@@ -160,6 +153,7 @@ class TestResponsesChannelNonStreaming:
         chat key so the host can build a stable per-conversation session
         that history providers persist under.
         """
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
         client, _host, agent = _make_client()
         with client:
             client.post(
@@ -171,13 +165,14 @@ class TestResponsesChannelNonStreaming:
         assert sess is not None
         assert sess["session_id"] == "chat-abc"
 
-    def test_prev_response_id_wins_over_chat_isolation_header(self) -> None:
+    def test_prev_response_id_wins_over_chat_isolation_header(self, monkeypatch: Any) -> None:
         """When both anchors are present, ``previous_response_id`` wins.
 
         ``previous_response_id`` is the protocol-native chain anchor; the
         header fallback is only meant to bootstrap when no protocol
         anchor exists.
         """
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
         client, _host, agent = _make_client()
         with client:
             client.post(
@@ -189,31 +184,11 @@ class TestResponsesChannelNonStreaming:
         assert sess is not None
         assert sess["session_id"] == "resp_99"
 
-    def test_response_target_channel_returns_ack_text_when_pushed(self) -> None:
-        agent = _FakeAgent(reply="real reply")
-        push_ch = _RecordingPushChannel()
-        host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel(), push_ch])
-
-        with TestClient(host.app) as client:
-            r = client.post(
-                "/responses",
-                json={
-                    "input": "hi",
-                    "response_target": "telegram:42",
-                },
-            )
-        assert r.status_code == 200
-        body = r.json()
-        text = body["output"][0]["content"][0]["text"]
-        assert "delivered out-of-band" in text
-        assert push_ch.pushes and push_ch.pushes[0][1].result.text == "real reply"
-        assert push_ch.pushes[0][0].native_id == "42"
-
     def test_response_hook_can_rewrite_originating_reply(self) -> None:
-        contexts: list[Any] = []
+        seen_kwargs: list[dict[str, Any]] = []
 
         def hook(result: HostedRunResult, **kwargs: Any) -> HostedRunResult:
-            contexts.append(kwargs["context"])
+            seen_kwargs.append(dict(kwargs))
             return HostedRunResult(_FakeAgentResponse(text=result.result.text.upper()), session=result.session)
 
         agent = _FakeAgent(reply="hooked")
@@ -225,10 +200,8 @@ class TestResponsesChannelNonStreaming:
         assert r.status_code == 200
         body = r.json()
         assert body["output"][0]["content"][0]["text"] == "HOOKED"
-        assert contexts
-        assert contexts[0].channel_name == "responses"
-        assert contexts[0].originating is True
-        assert contexts[0].destination_identity is None
+        assert seen_kwargs
+        assert seen_kwargs[0]["channel_name"] == "responses"
 
 
 class TestResponsesChannelStreaming:
@@ -252,14 +225,15 @@ class TestResponsesChannelStreaming:
         def transform(update: _FakeUpdate) -> _FakeUpdate:
             return _FakeUpdate(text=update.text.upper())
 
-        host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel(stream_transform_hook=transform)])
+        host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel(stream_update_hook=transform)])
         with TestClient(host.app) as client:
             r = client.post("/responses", json={"input": "hi", "stream": True})
 
         assert r.status_code == 200
         assert '"delta":"HE"' in r.text
         assert '"delta":"LLO"' in r.text
-        assert '"text":"HELLO"' in r.text
+        # Stream update hooks are update-only; they do not rewrite get_final_response().
+        assert '"text":"hello"' in r.text
 
     def test_sse_emits_failed_when_stream_raises(self) -> None:
         # Regression: ResponseOutputMessage.status only accepts in_progress/

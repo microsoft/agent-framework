@@ -5,11 +5,9 @@
 from __future__ import annotations
 
 import pytest
-from agent_framework_hosting import ResponseTarget, ResponseTargetKind
 
 from agent_framework_hosting_responses import (
     messages_from_responses_input,
-    parse_response_target,
     parse_responses_identity,
     parse_responses_request,
 )
@@ -125,64 +123,6 @@ class TestParseResponsesRequest:
         _, _, sess = parse_responses_request({"input": "x", "previous_response_id": "resp_42"})
         assert sess is not None
         assert sess.isolation_key == "resp_42"
-
-
-class TestParseResponseTarget:
-    def test_default_originating_when_missing(self) -> None:
-        assert parse_response_target({}).kind is ResponseTargetKind.ORIGINATING
-
-    @pytest.mark.parametrize(
-        "value,expected_kind",
-        [
-            ("originating", ResponseTargetKind.ORIGINATING),
-            ("active", ResponseTargetKind.ACTIVE),
-            ("all_linked", ResponseTargetKind.ALL_LINKED),
-            ("none", ResponseTargetKind.NONE),
-        ],
-    )
-    def test_bare_string_kinds(self, value: str, expected_kind: ResponseTargetKind) -> None:
-        assert parse_response_target({"response_target": value}).kind is expected_kind
-
-    def test_bare_string_other_becomes_channel(self) -> None:
-        target = parse_response_target({"response_target": "telegram"})
-        assert target == ResponseTarget.channel("telegram")
-
-    def test_bare_string_with_native_id_becomes_channel(self) -> None:
-        target = parse_response_target({"response_target": "telegram:42"})
-        assert target.kind is ResponseTargetKind.CHANNELS
-        assert target.targets == ("telegram:42",)
-
-    def test_list_form(self) -> None:
-        target = parse_response_target({"response_target": ["telegram:42", "originating"]})
-        assert target == ResponseTarget.channels(["telegram:42", "originating"])
-
-    def test_list_drops_non_strings(self) -> None:
-        target = parse_response_target({"response_target": ["telegram", 42, ""]})
-        assert target.targets == ("telegram",)
-
-    def test_empty_list_falls_back_to_originating(self) -> None:
-        target = parse_response_target({"response_target": []})
-        assert target.kind is ResponseTargetKind.ORIGINATING
-
-    def test_dict_with_channels(self) -> None:
-        target = parse_response_target({"response_target": {"channels": ["a", "b"]}})
-        assert target == ResponseTarget.channels(["a", "b"])
-
-    @pytest.mark.parametrize(
-        "kind,expected",
-        [
-            ("active", ResponseTargetKind.ACTIVE),
-            ("all_linked", ResponseTargetKind.ALL_LINKED),
-            ("none", ResponseTargetKind.NONE),
-            ("originating", ResponseTargetKind.ORIGINATING),
-        ],
-    )
-    def test_dict_kind(self, kind: str, expected: ResponseTargetKind) -> None:
-        assert parse_response_target({"response_target": {"kind": kind}}).kind is expected
-
-    def test_malformed_falls_back_to_originating(self) -> None:
-        target = parse_response_target({"response_target": 42})
-        assert target.kind is ResponseTargetKind.ORIGINATING
 
 
 class TestParseResponsesIdentity:

@@ -9,11 +9,11 @@ import json
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from typing import Any, cast
 
 import httpx
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
+from agent_framework import AgentResponse, AgentResponseUpdate, ResponseStream
 from agent_framework_hosting import (
     ChannelCommand,
     ChannelCommandContext,
@@ -24,10 +24,8 @@ from agent_framework_hosting import (
     ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
-    ChannelStreamTransformHook,
+    ChannelStreamUpdateHook,
     HostedRunResult,
-    apply_channel_response_hook,
-    apply_run_hook,
 )
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
@@ -75,11 +73,6 @@ def _default_isolation_key(interaction: DiscordInteraction) -> str:
     return discord_isolation_key(guild_id, channel_id, user_id)
 
 
-def _text_result(text: str) -> HostedRunResult[AgentResponse]:
-    """Build a host delivery payload from text accumulated by this channel."""
-    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
-
-
 class DiscordChannel:
     """Discord channel backed by signed HTTP Interactions."""
 
@@ -100,7 +93,7 @@ class DiscordChannel:
         commands: Sequence[ChannelCommand] | None = None,
         run_hook: ChannelRunHook | None = None,
         response_hook: ChannelResponseHook | None = None,
-        stream_transform_hook: ChannelStreamTransformHook | None = None,
+        stream_update_hook: ChannelStreamUpdateHook | None = None,
         streaming: bool = False,
         isolation_key_factory: DiscordIsolationKeyFactory | None = None,
         skip_signature_verification: bool = False,
@@ -133,7 +126,7 @@ class DiscordChannel:
                 it reaches the host.
             response_hook: Optional hook that can rewrite the hosted result
                 before the originating Discord response is serialized.
-            stream_transform_hook: Optional per-update transform hook applied
+            stream_update_hook: Optional per-update hook applied
                 while streaming.
             streaming: Whether the agent command should call ``run_stream``
                 and edit the original interaction response as deltas arrive.
@@ -163,7 +156,7 @@ class DiscordChannel:
         self._command_by_name = {command.name: command for command in self._commands}
         self._run_hook = run_hook
         self.response_hook = response_hook
-        self._stream_transform_hook = stream_transform_hook
+        self._stream_update_hook = stream_update_hook
         self._streaming = streaming
         self._isolation_key_factory = isolation_key_factory or _default_isolation_key
         self._skip_signature_verification = skip_signature_verification
@@ -189,25 +182,6 @@ class DiscordChannel:
             on_startup=[self._on_startup],
             on_shutdown=[self._on_shutdown],
         )
-
-    async def push(self, identity: ChannelIdentity, payload: HostedRunResult[Any]) -> None:
-        """Push a hosted result to a Discord channel.
-
-        Args:
-            identity: Destination identity. ``identity.attributes`` must carry
-                ``channel_id``.
-            payload: Hosted run result to render as Discord message text.
-
-        Raises:
-            RuntimeError: If the channel has no bot token for Discord REST.
-            ValueError: If ``channel_id`` is missing from the identity.
-        """
-        channel_id = _string_or_none(identity.attributes.get("channel_id"))
-        if channel_id is None:
-            raise ValueError("Discord push requires identity.attributes['channel_id']")
-        if self.bot_token is None:
-            raise RuntimeError("DiscordChannel.push requires bot_token to send channel messages")
-        await self._send_channel_messages(channel_id, _payload_text(payload))
 
     async def _on_startup(self) -> None:
         """Open the Discord REST client and optionally register slash commands."""
@@ -297,23 +271,17 @@ class DiscordChannel:
             input_value=prompt,
             stream=self._streaming,
         )
-        if self._run_hook is not None:
-            request = await apply_run_hook(
-                self._run_hook,
-                request,
-                target=self._ctx.target,
-                protocol_request=interaction,
-            )
         if request.stream:
-            await self._run_streaming(request, token)
+            await self._run_streaming(request, token, protocol_request=interaction)
             return
-        result = await self._ctx.run(request)
-        include_originating = await self._ctx.deliver_response(request, result)
-        if include_originating:
-            result = await apply_channel_response_hook(self, result, request=request, originating=True)
-            await self._edit_original_with_result(token, result)
-        else:
-            await self._edit_original(token, "Sent.")
+        result = await self._ctx.run(
+            request=request,
+            run_hook=self._run_hook,
+            protocol_request=interaction,
+            response_hook=self.response_hook,
+            channel_name=self.name,
+        )
+        await self._edit_original_with_result(token, result)
 
     async def _run_channel_command(
         self,
@@ -333,23 +301,23 @@ class DiscordChannel:
         if not reply.sent:
             await self._edit_original(token, "Done.")
 
-    async def _run_streaming(self, request: ChannelRequest, token: str) -> None:
+    async def _run_streaming(
+        self, request: ChannelRequest, token: str, *, protocol_request: DiscordInteraction | None = None
+    ) -> None:
         if self._ctx is None:
             raise RuntimeError("DiscordChannel was not contributed to a host.")
-        stream: ResponseStream[AgentResponseUpdate, AgentResponse] = self._ctx.run_stream(request)
+        stream: ResponseStream[AgentResponseUpdate, AgentResponse] = await self._ctx.run_stream(
+            request,
+            run_hook=self._run_hook,
+            protocol_request=protocol_request,
+            stream_update_hook=self._stream_update_hook,
+            response_hook=self.response_hook,
+            channel_name=self.name,
+        )
         accumulated: list[str] = []
         last_edit = 0.0
         async for update in stream:
-            transformed: AgentResponseUpdate | None = update
-            if self._stream_transform_hook is not None:
-                maybe = self._stream_transform_hook(update)
-                if isinstance(maybe, Awaitable):
-                    transformed = await cast("Awaitable[AgentResponseUpdate | None]", maybe)
-                else:
-                    transformed = maybe
-            if transformed is None:
-                continue
-            chunk = _update_text(transformed)
+            chunk = _update_text(update)
             if not chunk:
                 continue
             accumulated.append(chunk)
@@ -358,13 +326,8 @@ class DiscordChannel:
                 await self._edit_original(token, _stream_preview_content("".join(accumulated)))
                 last_edit = now
 
-        final = _text_result("".join(accumulated))
-        include_originating = await self._ctx.deliver_response(request, final)
-        if include_originating:
-            final = await apply_channel_response_hook(self, final, request=request, originating=True)
-            await self._edit_original_with_result(token, final)
-        else:
-            await self._edit_original(token, "Sent.")
+        final_response = await stream.get_final_response()
+        await self._edit_original_with_result(token, HostedRunResult(final_response))
 
     def _build_request(
         self,
@@ -477,16 +440,6 @@ class DiscordChannel:
             json={"content": _normalize_content(content)},
         )
         _raise_for_discord_error(response, "send interaction follow-up")
-
-    async def _send_channel_messages(self, channel_id: str, content: str) -> None:
-        http = self._ensure_http()
-        for chunk in _split_content(content):
-            response = await http.post(
-                f"/channels/{channel_id}/messages",
-                headers=self._bot_headers(),
-                json={"content": chunk},
-            )
-            _raise_for_discord_error(response, "send channel message")
 
     def _bot_headers(self) -> dict[str, str]:
         if self.bot_token is None:

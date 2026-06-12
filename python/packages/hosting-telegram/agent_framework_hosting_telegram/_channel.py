@@ -36,14 +36,10 @@ from agent_framework_hosting import (
     ChannelContribution,
     ChannelIdentity,
     ChannelRequest,
-    ChannelResponseContext,
     ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
-    ChannelStreamTransformHook,
-    HostedRunResult,
-    apply_response_hook,
-    apply_run_hook,
+    ChannelStreamUpdateHook,
     logger,
 )
 from starlette.requests import Request
@@ -81,26 +77,6 @@ def telegram_isolation_key(chat_id: Any) -> str:
     Telegram conversation by passing the chat id).
     """
     return f"telegram:{chat_id}"
-
-
-def _text_result(text: str) -> HostedRunResult[AgentResponse]:
-    """Build a host delivery payload from text accumulated by this channel."""
-    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
-
-
-def _is_echo_payload(payload: HostedRunResult[AgentResponse]) -> bool:
-    """Return ``True`` when a push payload is an echoed user turn.
-
-    Per the :class:`~agent_framework_hosting.ChannelPush` contract the host
-    mirrors the originating user's input as a one-or-more message
-    :class:`~agent_framework.AgentResponse` with every ``role == "user"``,
-    delivered *before* the agent's (``role == "assistant"``) reply. Treating a
-    payload whose messages are all user-role as an echo lets the channel pick
-    echo-only delivery options (e.g. silent notifications) without the host
-    having to thread an explicit ``is_echo`` flag through ``push``.
-    """
-    messages = getattr(payload.result, "messages", None) or []
-    return bool(messages) and all(getattr(m, "role", None) == "user" for m in messages)
 
 
 def _telegram_media_file_id(message: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -155,9 +131,9 @@ class TelegramChannel:
     Telegram message as ``AgentResponseUpdate`` chunks arrive (Telegram has
     no native streaming primitive). Pass ``stream=False`` on the constructor
     to opt out for all messages, or override per-request inside the
-    ``run_hook`` (set ``ChannelRequest.stream = False``). A ``stream_transform_hook``
-    can rewrite or drop individual updates before they hit the wire — useful
-    for redaction, formatting, or merging tool-call deltas.
+    the constructor. A ``stream_update_hook`` can rewrite or drop individual
+    updates before they hit the wire — useful for redaction, formatting, or
+    merging tool-call deltas.
     """
 
     name = "telegram"
@@ -180,7 +156,7 @@ class TelegramChannel:
         transport: Literal["auto", "polling", "webhook"] = "auto",
         polling_timeout: int = 30,
         stream: bool = True,
-        stream_transform_hook: ChannelStreamTransformHook | None = None,
+        stream_update_hook: ChannelStreamUpdateHook | None = None,
         stream_edit_min_interval: float = 0.4,
     ) -> None:
         self.path = path
@@ -190,7 +166,7 @@ class TelegramChannel:
         self._hook = run_hook
         self.response_hook = response_hook
         self._stream_default = stream
-        self._stream_transform_hook = stream_transform_hook
+        self._stream_update_hook = stream_update_hook
         self._stream_edit_min_interval = stream_edit_min_interval
         self._api = f"{api_base}/bot{bot_token}"
         self._webhook_url = webhook_url
@@ -542,15 +518,7 @@ class TelegramChannel:
             stream=self._stream_default,
             identity=ChannelIdentity(channel=self.name, native_id=str(chat_id)),
         )
-        if self._hook is not None:
-            channel_request = await apply_run_hook(
-                self._hook,
-                channel_request,
-                target=self._ctx.target,
-                protocol_request=update,
-            )
-
-        await self._dispatch(chat_id, channel_request)
+        await self._dispatch(chat_id, channel_request, protocol_request=update)
 
     async def _handle_callback_query(self, callback: Mapping[str, Any]) -> None:
         """Handle an inline-button click.
@@ -588,15 +556,7 @@ class TelegramChannel:
             stream=self._stream_default,
             identity=ChannelIdentity(channel=self.name, native_id=str(chat_id)),
         )
-        if self._hook is not None:
-            channel_request = await apply_run_hook(
-                self._hook,
-                channel_request,
-                target=self._ctx.target,
-                protocol_request=callback,
-            )
-
-        await self._dispatch(chat_id, channel_request)
+        await self._dispatch(chat_id, channel_request, protocol_request=callback)
 
     async def _resolve_file_url(self, file_id: str) -> str | None:
         """Resolve a Telegram file_id into an HTTPS URL via getFile."""
@@ -613,21 +573,31 @@ class TelegramChannel:
 
     # -- outbound helpers -------------------------------------------------- #
 
-    async def _dispatch(self, chat_id: int, request: ChannelRequest) -> None:
+    async def _dispatch(self, chat_id: int, request: ChannelRequest, *, protocol_request: Any | None = None) -> None:
         """Run the request and forward results to ``chat_id``."""
         if self._ctx is None:  # pragma: no cover - guarded by lifecycle
             raise RuntimeError("telegram channel not started")
         if not request.stream:
             if self._send_typing_action:
                 await self._send_chat_action(chat_id, "typing")
-            result = await self._ctx.run(request)
-            include_originating = await self._ctx.deliver_response(request, result)
-            if include_originating:
-                result = await self._apply_response_hook(result, request)
-                await self._reply_with_result(chat_id, result.result)
+            result = await self._ctx.run(
+                request,
+                run_hook=self._hook,
+                protocol_request=protocol_request,
+                response_hook=self.response_hook,
+                channel_name=self.name,
+            )
+            await self._reply_with_result(chat_id, result.result)
             return
 
-        stream = self._ctx.run_stream(request)
+        stream = await self._ctx.run_stream(
+            request,
+            run_hook=self._hook,
+            protocol_request=protocol_request,
+            stream_update_hook=self._stream_update_hook,
+            response_hook=self.response_hook,
+            channel_name=self.name,
+        )
         await self._stream_to_chat(chat_id, request, stream)
 
     async def _stream_to_chat(
@@ -724,13 +694,6 @@ class TelegramChannel:
 
         try:
             async for update in stream:
-                if self._stream_transform_hook is not None:
-                    transformed = self._stream_transform_hook(update)
-                    if isinstance(transformed, Awaitable):
-                        transformed = await transformed
-                    if transformed is None:
-                        continue
-                    update = transformed
                 chunk = getattr(update, "text", None)
                 if chunk:
                     accumulated += chunk
@@ -756,14 +719,7 @@ class TelegramChannel:
             final = None
 
         # Final edit applies parse_mode (if configured) to the full text.
-        final_text = (accumulated or last_sent)[:_TELEGRAM_MAX_TEXT_LEN]
-        result = _text_result(final_text) if final_text else None
-        include_originating = True
-        if result is not None and self._ctx is not None:
-            include_originating = await self._ctx.deliver_response(request, result)
-            if include_originating:
-                result = await self._apply_response_hook(result, request)
-                final_text = result.result.text[:_TELEGRAM_MAX_TEXT_LEN]
+        final_text = (getattr(final, "text", None) or accumulated or last_sent)[:_TELEGRAM_MAX_TEXT_LEN]
         if message_id is not None and final_text and final_text != last_sent:
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
@@ -784,28 +740,8 @@ class TelegramChannel:
 
         # If nothing ever streamed (no text chunks at all), fall back to the
         # full result so images / tool outputs still reach the user.
-        if not accumulated and include_originating:
-            if final is not None:
-                wrapped_final = await self._apply_response_hook(HostedRunResult(final), request)
-                final = wrapped_final.result
+        if not accumulated:
             await self._reply_with_result(chat_id, final)
-
-    async def _apply_response_hook(
-        self,
-        result: HostedRunResult[Any],
-        request: ChannelRequest,
-    ) -> HostedRunResult[Any]:
-        """Apply the channel-level response hook for an originating reply."""
-        if self.response_hook is None:
-            return result
-        context = ChannelResponseContext(
-            request=request,
-            channel_name=self.name,
-            destination_identity=None,
-            originating=True,
-            is_echo=False,
-        )
-        return await apply_response_hook(self.response_hook, result, context=context)
 
     async def _reply_with_result(self, chat_id: int, result: Any) -> None:
         """Forward an AgentRunResponse back to Telegram.
@@ -851,35 +787,6 @@ class TelegramChannel:
             payload["parse_mode"] = self._parse_mode
         payload.update(extra)
         await self._http.post(f"{self._api}/sendMessage", json=payload)
-
-    # -- ChannelPush -------------------------------------------------------- #
-
-    async def push(self, identity: ChannelIdentity, payload: HostedRunResult[AgentResponse]) -> None:
-        """Proactive delivery to a Telegram chat.
-
-        Implements :class:`host.ChannelPush` so other channels' callers can
-        target Telegram via ``ChannelRequest.response_target``
-        (e.g. ``ResponseTarget.channels(["telegram:8741188429"])`` from a
-        ``/responses`` request). ``identity.native_id`` is the Telegram
-        chat id.
-        """
-        try:
-            chat_id = int(identity.native_id)
-        except ValueError as exc:
-            raise ValueError(f"Telegram push requires an int chat_id, got {identity.native_id!r}") from exc
-        if self._http is None:
-            raise RuntimeError("TelegramChannel.push called before startup")
-        # The Bot API can only ever send AS the bot, so there is no way to
-        # impersonate the user for an echo (the MTProto ``send_as`` field is
-        # not exposed to bots). The next best UX is to deliver echoes
-        # *silently* (``disable_notification``) so a mirrored input doesn't
-        # buzz the user's device the way a genuine reply does. Echo phases are
-        # identified per the ChannelPush contract: a payload whose messages are
-        # all ``role == "user"`` is the originating turn mirrored here.
-        extra: dict[str, Any] = {}
-        if _is_echo_payload(payload):
-            extra["disable_notification"] = True
-        await self._send(chat_id, payload.result.text, **extra)
 
     async def _send_photo(self, chat_id: int, photo_url: str, caption: str | None = None) -> None:
         """POST a ``sendPhoto`` to Telegram with an optional caption."""

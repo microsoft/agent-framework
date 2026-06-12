@@ -90,14 +90,10 @@ from agent_framework_hosting import (
     ChannelContribution,
     ChannelIdentity,
     ChannelRequest,
-    ChannelResponseContext,
     ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
-    ChannelStreamTransformHook,
-    HostedRunResult,
-    apply_response_hook,
-    apply_run_hook,
+    ChannelStreamUpdateHook,
     logger,
 )
 from azure.core.credentials_async import AsyncTokenCredential
@@ -149,11 +145,6 @@ def activity_protocol_isolation_key(conversation_id: Any) -> str:
 
 class _OutboundError(RuntimeError):
     """Marker for transient outbound failures that should produce 502/retry."""
-
-
-def _text_result(text: str) -> HostedRunResult[AgentResponse]:
-    """Wrap plain text in a ``HostedRunResult`` for streaming fan-out delivery."""
-    return HostedRunResult(AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])]))
 
 
 def _parse_activity(activity: Mapping[str, Any]) -> Message:
@@ -231,7 +222,7 @@ class ActivityProtocolChannel:
     When ``stream=True`` (default), the channel sends an initial placeholder
     activity, then edits it in place as the agent emits ``AgentResponseUpdate``
     chunks (``PUT /v3/conversations/{id}/activities/{id}``). When ``stream=False``
-    it just sends the final reply. A ``stream_transform_hook`` can rewrite or
+    it just sends the final reply. A ``stream_update_hook`` can rewrite or
     drop individual updates before they hit the wire.
     """
 
@@ -253,7 +244,7 @@ class ActivityProtocolChannel:
         response_hook: ChannelResponseHook | None = None,
         send_typing_action: bool = True,
         stream: bool = True,
-        stream_transform_hook: ChannelStreamTransformHook | None = None,
+        stream_update_hook: ChannelStreamUpdateHook | None = None,
         stream_edit_min_interval: float = 0.7,
         inbound_auth_validator: InboundAuthValidator | None = None,
         service_url_allowed_hosts: tuple[str, ...] = _DEFAULT_SERVICE_URL_HOSTS,
@@ -290,17 +281,15 @@ class ActivityProtocolChannel:
                 Unknown ``/foo`` text falls through to the agent. Handlers reply
                 via ``ChannelCommandContext.reply``; surface them to users with
                 a Teams manifest ``commandLists`` entry.
-            run_hook: Optional rewrite of ``ChannelRequest`` before invocation.
+            run_hook: Optional rewrite of ``ChannelRequest`` before invocation;
+                the host owns invocation of this hook.
             response_hook: Optional rewrite of the
                 :class:`HostedRunResult` before the originating Activity
-                reply is serialized. The host also invokes this hook when
-                delivering to this channel as a non-originating push
-                destination.
+                reply is serialized; the host owns invocation of this hook.
             send_typing_action: Whether to send ``typing`` activities while
                 the agent runs.
-            stream: Whether to stream by default. ``run_hook`` can flip per
-                request.
-            stream_transform_hook: Optional rewrite of each
+            stream: Whether to stream by default.
+            stream_update_hook: Optional rewrite of each
                 ``AgentResponseUpdate`` before it hits the wire.
             stream_edit_min_interval: Seconds between successive in-place
                 edits. Teams is more rate-sensitive than Telegram, so default
@@ -341,7 +330,7 @@ class ActivityProtocolChannel:
         self.response_hook = response_hook
         self._send_typing_action = send_typing_action
         self._stream_default = stream
-        self._stream_transform_hook = stream_transform_hook
+        self._stream_update_hook = stream_update_hook
         self._stream_edit_min_interval = stream_edit_min_interval
         self._inbound_auth_validator = inbound_auth_validator
         self._service_url_allowed_hosts = tuple(h.lower().lstrip(".") for h in service_url_allowed_hosts)
@@ -557,11 +546,10 @@ class ActivityProtocolChannel:
                         return
 
         parsed = _parse_activity(activity)
-        # Store a Bot Framework conversation reference on the identity so the
-        # host can proactively ``push`` to this conversation later (fan-out
-        # from another channel). Recording the identity also registers this
-        # channel under the isolation key so ``ResponseTarget.all_linked`` /
-        # ``.active`` can resolve it.
+        # Store a Bot Framework conversation reference on the identity so
+        # channel hooks and command handlers can inspect it. Cross-channel
+        # proactive delivery is a follow-up enhancement outside the v1 host
+        # contract.
         identity = ChannelIdentity(
             channel=self.name,
             native_id=conversation_id,
@@ -591,14 +579,6 @@ class ActivityProtocolChannel:
             metadata={"reply_to_id": activity.get("id"), "recipient": activity.get("recipient")},
             stream=self._stream_default,
         )
-        if self._hook is not None:
-            channel_request = await apply_run_hook(
-                self._hook,
-                channel_request,
-                target=self._ctx.target,
-                protocol_request=activity,
-            )
-
         await self._dispatch(activity, channel_request)
 
     async def _invoke_command(
@@ -647,13 +627,6 @@ class ActivityProtocolChannel:
             },
             metadata={"reply_to_id": activity.get("id"), "recipient": activity.get("recipient")},
         )
-        if self._hook is not None:
-            request = await apply_run_hook(
-                self._hook,
-                request,
-                target=self._ctx.target,
-                protocol_request=activity,
-            )
 
         async def _reply(body: str) -> None:
             await self._send_message(activity, body)
@@ -679,33 +652,26 @@ class ActivityProtocolChannel:
             await self._send_typing(inbound)
 
         if not request.stream:
-            result = await self._ctx.run(request)
-            include_originating = await self._ctx.deliver_response(request, result)
-            if include_originating:
-                result = await self._apply_response_hook(result, request)
-                text = getattr(result.result, "text", None) or "(no response)"
-                await self._send_message(inbound, text)
+            result = await self._ctx.run(
+                request,
+                run_hook=self._hook,
+                protocol_request=inbound,
+                response_hook=self.response_hook,
+                channel_name=self.name,
+            )
+            text = getattr(result.result, "text", None) or "(no response)"
+            await self._send_message(inbound, text)
             return
 
-        stream = self._ctx.run_stream(request)
-        await self._stream_to_conversation(inbound, request, stream)
-
-    async def _apply_response_hook(
-        self,
-        result: HostedRunResult[Any],
-        request: ChannelRequest,
-    ) -> HostedRunResult[Any]:
-        """Apply the channel-level response hook for an originating reply."""
-        if self.response_hook is None:
-            return result
-        context = ChannelResponseContext(
-            request=request,
+        stream = await self._ctx.run_stream(
+            request,
+            run_hook=self._hook,
+            protocol_request=inbound,
+            stream_update_hook=self._stream_update_hook,
+            response_hook=self.response_hook,
             channel_name=self.name,
-            destination_identity=None,
-            originating=True,
-            is_echo=False,
         )
-        return await apply_response_hook(self.response_hook, result, context=context)
+        await self._stream_to_conversation(inbound, request, stream)
 
     async def _stream_to_conversation(
         self,
@@ -799,13 +765,6 @@ class ActivityProtocolChannel:
 
         try:
             async for update in stream:
-                if self._stream_transform_hook is not None:
-                    transformed = self._stream_transform_hook(update)
-                    if isinstance(transformed, Awaitable):
-                        transformed = await transformed
-                    if transformed is None:
-                        continue
-                    update = transformed
                 chunk = getattr(update, "text", None)
                 if chunk:
                     accumulated += chunk
@@ -821,39 +780,28 @@ class ActivityProtocolChannel:
                 logger.exception("Activity edit worker crashed")
 
         try:
-            await stream.get_final_response()
+            final = await stream.get_final_response()
         except Exception:  # pragma: no cover
             logger.exception("Stream finalize failed")
-
-        # Fan the final reply out to any non-originating linked destinations
-        # (e.g. ``ResponseTarget.all_linked``) and learn whether this channel
-        # should still render on its own wire. For the default
-        # ``ResponseTarget.originating`` this is a no-op that returns True.
-        # Always consult the host even when nothing streamed so that
-        # ``ResponseTarget.none`` is honoured and non-originating targets are
-        # still fanned out for empty replies.
-        include_originating = True
-        if self._ctx is not None:
-            include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
-        if not include_originating:
-            return
+            final = None
+        final_text = getattr(final, "text", None) or accumulated
 
         # Final flush — make sure the user sees everything that arrived after
         # the worker's last edit. If the placeholder failed, or the channel
         # turned out not to support edits (405), POST a fresh activity here
         # with whatever accumulated rather than PUT-editing the placeholder.
         if not placeholder_ok or edit_unsupported:
-            text = accumulated or "(no response)"
+            text = final_text or "(no response)"
             try:
                 await self._send_message(inbound, text)
             except Exception:  # pragma: no cover
                 logger.exception("Activity fallback final send failed")
-        elif activity_id is not None and accumulated and accumulated != last_sent:
+        elif activity_id is not None and final_text and final_text != last_sent:
             try:
-                await self._update_activity(inbound, activity_id, accumulated)
+                await self._update_activity(inbound, activity_id, final_text)
             except Exception:  # pragma: no cover
                 logger.exception("Activity final edit failed")
-        elif not accumulated and activity_id is not None:
+        elif not final_text and activity_id is not None:
             # No text streamed — replace the placeholder with a stub so the
             # user isn't left staring at "…".
             try:
@@ -875,19 +823,12 @@ class ActivityProtocolChannel:
         ``PUT /v3/conversations/{id}/activities/{id}``, so the progressive
         in-place edit cannot be used; we buffer the stream and ``POST`` a
         single message at the end. Mirrors the non-streaming path's
-        fan-out + response-hook semantics so behaviour is consistent
-        regardless of whether the target streamed.
+        response-hook semantics so behaviour is consistent regardless of
+        whether the target streamed.
         """
         accumulated = ""
         try:
             async for update in stream:
-                if self._stream_transform_hook is not None:
-                    transformed = self._stream_transform_hook(update)
-                    if isinstance(transformed, Awaitable):
-                        transformed = await transformed
-                    if transformed is None:
-                        continue
-                    update = transformed
                 chunk = getattr(update, "text", None)
                 if chunk:
                     accumulated += chunk
@@ -895,23 +836,11 @@ class ActivityProtocolChannel:
             logger.exception("Activity streaming consumption failed")
 
         try:
-            await stream.get_final_response()
+            final = await stream.get_final_response()
         except Exception:  # pragma: no cover
             logger.exception("Stream finalize failed")
-
-        # Fan the final reply out to any non-originating linked destinations
-        # and learn whether this channel should still render on its own wire.
-        # Always consult the host even when nothing streamed so that
-        # ``ResponseTarget.none`` is honoured and non-originating targets are
-        # still fanned out for empty replies.
-        include_originating = True
-        if self._ctx is not None:
-            include_originating = await self._ctx.deliver_response(request, _text_result(accumulated))
-        if not include_originating:
-            return
-
-        result = await self._apply_response_hook(_text_result(accumulated), request)
-        text = getattr(result.result, "text", None) or "(no response)"
+            final = None
+        text = getattr(final, "text", None) or accumulated or "(no response)"
         try:
             await self._send_message(inbound, text)
         except Exception:  # pragma: no cover
@@ -997,57 +926,6 @@ class ActivityProtocolChannel:
             )
         except Exception:  # pragma: no cover - non-critical UX
             logger.exception("Teams typing send failed")
-
-    # -- ChannelPush -------------------------------------------------------- #
-
-    async def push(self, identity: ChannelIdentity, payload: HostedRunResult[Any]) -> None:
-        """Proactively deliver an out-of-band message into a Bot Framework conversation.
-
-        Implements :class:`host.ChannelPush` so this channel can be a
-        non-originating destination for ``ChannelRequest.response_target``
-        (e.g. ``ResponseTarget.all_linked`` fan-out from Telegram/Discord, or
-        ``echo_input`` replay). The conversation reference is reconstructed
-        from ``identity.attributes`` captured on the inbound activity:
-        ``service_url``, ``conversation``, ``bot`` (outbound ``from``),
-        ``user`` (outbound ``recipient``), and ``channel_id``.
-
-        Echo payloads (the user's mirrored input) carry ``role="user"``
-        messages; Bot Service channels can only send AS the bot, so the text
-        is delivered as a normal bot message.
-        """
-        if self._http is None:
-            raise RuntimeError("ActivityProtocolChannel.push called before startup")
-        attrs = identity.attributes
-        service_url = str(attrs.get("service_url") or "").rstrip("/")
-        conversation = dict(attrs.get("conversation") or {"id": identity.native_id})
-        conversation_id = conversation.get("id") or identity.native_id
-        if not service_url:
-            raise ValueError("ActivityProtocolChannel.push requires 'service_url' in identity attributes")
-        # Re-validate the persisted ``service_url`` against the allow-list. The
-        # identity may have been recorded hours earlier (push runs out-of-band),
-        # so the allow-list could have narrowed or the store been tampered with
-        # since; never send a bearer token to a now-disallowed host.
-        if not self._is_service_url_allowed(service_url):
-            raise ValueError(f"ActivityProtocolChannel.push: service_url {service_url!r} is not in the allowed hosts")
-
-        text = getattr(payload.result, "text", None) or "(no response)"
-        activity = {
-            "type": "message",
-            "from": dict(attrs.get("bot") or {}),
-            "recipient": dict(attrs.get("user") or {}),
-            "conversation": conversation,
-            "channelId": attrs.get("channel_id"),
-            "serviceUrl": attrs.get("service_url"),
-            "text": text,
-            "textFormat": "markdown",
-        }
-        if attrs.get("locale"):
-            activity["locale"] = attrs["locale"]
-
-        url = f"{service_url}/v3/conversations/{conversation_id}/activities"
-        token = await self._get_token()
-        response = await self._http.post(url, json=activity, headers=self._auth_headers(token))
-        response.raise_for_status()
 
 
 __all__ = ["ActivityProtocolChannel", "activity_protocol_isolation_key"]

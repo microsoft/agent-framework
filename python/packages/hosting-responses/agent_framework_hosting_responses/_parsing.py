@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from agent_framework import Content, Message
-from agent_framework_hosting import ChannelIdentity, ChannelSession, ResponseTarget, logger
+from agent_framework_hosting import ChannelIdentity, ChannelSession
 
 # OpenAI Responses field name → Agent Framework ChatOptions field name.
 _RESPONSES_OPTION_REMAP = {
@@ -43,71 +43,7 @@ _RESPONSES_OPTION_PASSTHROUGH = {
     "logit_bias",
 }
 # Fields the Responses transport owns; they must not be forwarded as options.
-_RESPONSES_TRANSPORT_KEYS = {"input", "model", "stream", "previous_response_id", "response_target"}
-
-
-def parse_response_target(body: Mapping[str, Any]) -> ResponseTarget:
-    """Translate the OpenAI Responses ``response_target`` field into a :class:`ResponseTarget`.
-
-    Accepted shapes:
-
-    - ``"originating"`` / ``"active"`` / ``"all_linked"`` / ``"none"`` — bare strings.
-    - ``"telegram"`` / ``"telegram:<chat_id>"`` — single channel destination.
-    - ``["telegram:<id>", "originating"]`` — list of destinations; the
-      pseudo-name ``"originating"`` includes the originating channel.
-    - ``{"channels": [...]}`` — same list semantics with the explicit key.
-    - ``{"kind": "active"}`` / ``{"kind": "all_linked"}`` — explicit kind.
-
-    Anything malformed is logged at WARNING and falls back to ``originating``.
-    """
-    raw = body.get("response_target")
-    if raw is None:
-        return ResponseTarget.originating  # type: ignore[attr-defined,no-any-return]
-    if isinstance(raw, str):
-        keyword = raw.strip()
-        if keyword == "originating":
-            return ResponseTarget.originating  # type: ignore[attr-defined,no-any-return]
-        if keyword == "active":
-            return ResponseTarget.active  # type: ignore[attr-defined,no-any-return]
-        if keyword == "all_linked":
-            return ResponseTarget.all_linked  # type: ignore[attr-defined,no-any-return]
-        if keyword == "none":
-            return ResponseTarget.none  # type: ignore[attr-defined,no-any-return]
-        # Treat any other bare string as a single channel destination.
-        return ResponseTarget.channel(keyword)
-    if isinstance(raw, list):
-        return _parse_channels_list(cast("list[Any]", raw))  # type: ignore[redundant-cast]
-    if isinstance(raw, Mapping):
-        raw_map = cast("Mapping[str, Any]", raw)
-        channels = raw_map.get("channels")
-        if isinstance(channels, list):
-            return _parse_channels_list(cast("list[Any]", channels))  # type: ignore[redundant-cast]
-        kind = raw_map.get("kind")
-        if kind == "active":
-            return ResponseTarget.active  # type: ignore[attr-defined,no-any-return]
-        if kind == "all_linked":
-            return ResponseTarget.all_linked  # type: ignore[attr-defined,no-any-return]
-        if kind == "none":
-            return ResponseTarget.none  # type: ignore[attr-defined,no-any-return]
-        if kind == "originating":
-            return ResponseTarget.originating  # type: ignore[attr-defined,no-any-return]
-    logger.warning("responses: ignoring malformed response_target=%r", cast("Any", raw))
-    return ResponseTarget.originating  # type: ignore[attr-defined,no-any-return]
-
-
-def _parse_channels_list(raw: list[Any]) -> ResponseTarget:
-    """Build a ``ResponseTarget.channels`` from a raw list, dropping non-string entries.
-
-    An empty list (or one with no usable strings) collapses back to
-    ``originating`` so we never silently produce a target that nobody
-    will deliver to.
-    """
-    tokens = [t for t in raw if isinstance(t, str) and t]
-    if len(tokens) != len(raw):
-        logger.warning("responses: dropping non-string entries from response_target=%r", raw)
-    if not tokens:
-        return ResponseTarget.originating  # type: ignore[attr-defined,no-any-return]
-    return ResponseTarget.channels(tokens)
+_RESPONSES_TRANSPORT_KEYS = {"input", "model", "stream", "previous_response_id"}
 
 
 def parse_responses_identity(body: Mapping[str, Any], channel_name: str) -> ChannelIdentity | None:
@@ -228,7 +164,6 @@ def parse_responses_request(
 
 __all__ = [
     "messages_from_responses_input",
-    "parse_response_target",
     "parse_responses_identity",
     "parse_responses_request",
 ]

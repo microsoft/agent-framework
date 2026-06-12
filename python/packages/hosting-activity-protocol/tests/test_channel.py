@@ -9,7 +9,7 @@ streaming edits and certificate paths are out of scope here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,15 +18,13 @@ from agent_framework_hosting import (
     AgentFrameworkHost,
     ChannelCommand,
     ChannelCommandContext,
-    ChannelIdentity,
     ChannelRequest,
-    ChannelSession,
     HostedRunResult,
 )
 from starlette.testclient import TestClient
 
 from agent_framework_hosting_activity_protocol import ActivityProtocolChannel, activity_protocol_isolation_key
-from agent_framework_hosting_activity_protocol._channel import _command_text, _parse_activity, _text_result
+from agent_framework_hosting_activity_protocol._channel import _command_text, _parse_activity
 
 
 def test_activity_protocol_isolation_key_format() -> None:
@@ -139,6 +137,26 @@ class _FakeAgentResponse:
     text: str
 
 
+@dataclass
+class _FakeUpdate:
+    text: str
+
+
+class _FakeStream:
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self) -> Any:
+        async def gen() -> Any:
+            for chunk in self._chunks:
+                yield _FakeUpdate(chunk)
+
+        return gen()
+
+    async def get_final_response(self) -> _FakeAgentResponse:
+        return _FakeAgentResponse(text="".join(self._chunks))
+
+
 class _FakeAgent:
     def __init__(self, reply: str = "ok") -> None:
         self._reply = reply
@@ -149,6 +167,8 @@ class _FakeAgent:
 
     def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
         self.runs.append({"messages": messages, "stream": stream, "kwargs": kwargs})
+        if stream:
+            return _FakeStream([self._reply])
 
         async def _coro() -> _FakeAgentResponse:
             return _FakeAgentResponse(text=self._reply)
@@ -183,9 +203,7 @@ _VALID_ACTIVITY: dict[str, Any] = {
     "serviceUrl": "https://smba.trafficmanager.net/amer/",
 }
 
-# Minimal request envelope for direct ``_stream_to_conversation`` calls. The
-# channel only consults it for cross-channel fan-out, which is skipped when
-# ``_ctx`` is unset (as in these unit tests).
+# Minimal request envelope for direct ``_stream_to_conversation`` calls.
 _VALID_REQUEST = ChannelRequest(channel="activity", operation="message.create", input=[])
 
 
@@ -214,10 +232,10 @@ class TestTeamsWebhook:
         assert agent.runs, "expected the agent to be invoked"
 
     def test_response_hook_can_rewrite_originating_reply(self) -> None:
-        contexts: list[Any] = []
+        seen_kwargs: list[dict[str, Any]] = []
 
         def hook(result: HostedRunResult, **kwargs: Any) -> HostedRunResult:
-            contexts.append(kwargs["context"])
+            seen_kwargs.append(dict(kwargs))
             return HostedRunResult(_FakeAgentResponse(text=result.result.text.upper()), session=result.session)
 
         ch, agent = _make_teams()
@@ -231,9 +249,8 @@ class TestTeamsWebhook:
         assert ch._http is not None
         body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
         assert body["text"] == "HI THERE"
-        assert contexts
-        assert contexts[0].channel_name == "activity"
-        assert contexts[0].originating is True
+        assert seen_kwargs
+        assert seen_kwargs[0]["channel_name"] == "activity"
 
     def test_non_message_activities_are_acked(self) -> None:
         ch, agent = _make_teams()
@@ -346,10 +363,7 @@ class TestCommands:
         assert r.status_code == 200
         assert not agent.runs
 
-    def test_run_hook_applied_to_command_request(self) -> None:
-        def hook(request: ChannelRequest, **_: Any) -> ChannelRequest:
-            return replace(request, session=ChannelSession(isolation_key="resolved-key"))
-
+    def test_command_request_uses_activity_session(self) -> None:
         captured: list[str] = []
 
         async def handle(ctx: ChannelCommandContext) -> None:
@@ -358,7 +372,6 @@ class TestCommands:
 
         agent = _FakeAgent("hi")
         ch = ActivityProtocolChannel(send_typing_action=False, commands=[ChannelCommand("todos", "x", handle)])
-        ch._hook = hook
         fake_http = MagicMock()
         response_mock = MagicMock()
         response_mock.raise_for_status = MagicMock()
@@ -370,7 +383,7 @@ class TestCommands:
         with TestClient(host.app) as client:
             r = client.post("/activity/messages", json=dict(_VALID_ACTIVITY, text="/todos"))
         assert r.status_code == 200
-        assert captured == ["resolved-key"]
+        assert captured == [activity_protocol_isolation_key("19:meeting_xyz@thread.v2")]
 
 
 class TestOutbound:
@@ -385,79 +398,9 @@ class TestOutbound:
         assert body["text"] == "hi"
 
 
-class TestPush:
-    """The channel implements ``host.ChannelPush`` so it can be a
-    non-originating destination for cross-channel fan-out / echo replay."""
-
-    def test_is_channel_push_instance(self) -> None:
-        from agent_framework_hosting import ChannelPush
-
-        ch, _agent = _make_teams()
-        assert isinstance(ch, ChannelPush)
-
-    def _identity(self) -> ChannelIdentity:
-        return ChannelIdentity(
-            channel="activity",
-            native_id="19:meeting_xyz@thread.v2",
-            attributes={
-                "service_url": "https://smba.trafficmanager.net/amer/",
-                "conversation": {"id": "19:meeting_xyz@thread.v2"},
-                "bot": {"id": "bot-1"},
-                "user": {"id": "user-1"},
-                "channel_id": "msteams",
-                "locale": "en-US",
-            },
-        )
-
-    async def test_push_posts_proactive_activity(self) -> None:
-        ch, _agent = _make_teams()
-        await ch.push(self._identity(), _text_result("broadcast hello"))
-        assert ch._http is not None
-        ch._http.post.assert_called()  # type: ignore[attr-defined]
-        url = ch._http.post.call_args[0][0]  # type: ignore[attr-defined]
-        assert url == ("https://smba.trafficmanager.net/amer/v3/conversations/19:meeting_xyz@thread.v2/activities")
-        body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
-        assert body["text"] == "broadcast hello"
-        # Outbound activity speaks AS the bot: inbound recipient -> from,
-        # inbound from -> recipient.
-        assert body["from"] == {"id": "bot-1"}
-        assert body["recipient"] == {"id": "user-1"}
-        assert body["conversation"] == {"id": "19:meeting_xyz@thread.v2"}
-
-    async def test_push_requires_service_url(self) -> None:
-        ch, _agent = _make_teams()
-        identity = ChannelIdentity(
-            channel="activity",
-            native_id="conv-x",
-            attributes={"conversation": {"id": "conv-x"}},
-        )
-        with pytest.raises(ValueError, match="service_url"):
-            await ch.push(identity, _text_result("hi"))
-
-    async def test_push_rejects_disallowed_service_url(self) -> None:
-        # ``push`` runs out-of-band against a persisted identity, so it must
-        # re-validate the service_url against the allow-list rather than trust
-        # the value captured (possibly hours) earlier.
-        ch, _agent = _make_teams()
-        identity = ChannelIdentity(
-            channel="activity",
-            native_id="conv-x",
-            attributes={
-                "service_url": "https://attacker.example.com/",
-                "conversation": {"id": "conv-x"},
-                "bot": {"id": "bot-1"},
-                "user": {"id": "user-1"},
-            },
-        )
-        with pytest.raises(ValueError, match="not in the allowed hosts"):
-            await ch.push(identity, _text_result("hi"))
-        assert ch._http is not None
-        ch._http.post.assert_not_called()  # type: ignore[attr-defined]
-
-
 class TestIdentityRecording:
     """``_process_activity`` must stamp the inbound conversation reference
-    onto ``ChannelRequest.identity`` so the host can record it for fan-out."""
+    onto ``ChannelRequest.identity`` so hooks and commands can inspect it."""
 
     async def test_inbound_sets_request_identity(self) -> None:
         ch, agent = _make_teams()
@@ -792,56 +735,6 @@ class TestStreaming:
         ch._http.put.assert_not_called()  # type: ignore[attr-defined]
         body = ch._http.post.call_args[1]["json"]  # type: ignore[attr-defined]
         assert body["text"] == "(no response)"
-
-    async def test_buffer_empty_stream_consults_host_and_can_suppress(self) -> None:
-        # Empty streamed replies must still consult the host so that
-        # ``ResponseTarget.none`` (deliver_response -> False) suppresses the
-        # originating message instead of posting "(no response)".
-        ch, _agent = _make_teams(stream=True)
-        webchat_activity = {**_VALID_ACTIVITY, "channelId": "directline"}
-        ctx = MagicMock()
-        ctx.deliver_response = AsyncMock(return_value=False)
-        ch._ctx = ctx
-
-        class _EmptyStream:
-            def __aiter__(self) -> Any:
-                async def gen() -> Any:
-                    if False:
-                        yield None  # type: ignore[unreachable]
-
-                return gen()
-
-            async def get_final_response(self) -> Any:
-                return _FakeAgentResponse(text="")
-
-        ch._stream_edit_min_interval = 0.0
-        await ch._stream_to_conversation(webchat_activity, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
-        assert ch._http is not None
-        ctx.deliver_response.assert_awaited_once()
-        ch._http.post.assert_not_called()  # type: ignore[attr-defined]
-        ch._http.put.assert_not_called()  # type: ignore[attr-defined]
-
-    async def test_edit_empty_stream_consults_host_and_can_suppress(self) -> None:
-        # Same contract for the edit-capable (Teams) progressive path.
-        ch, _agent = _make_teams(stream=True)
-        ctx = MagicMock()
-        ctx.deliver_response = AsyncMock(return_value=False)
-        ch._ctx = ctx
-
-        class _EmptyStream:
-            def __aiter__(self) -> Any:
-                async def gen() -> Any:
-                    if False:
-                        yield None  # type: ignore[unreachable]
-
-                return gen()
-
-            async def get_final_response(self) -> Any:
-                return _FakeAgentResponse(text="")
-
-        ch._stream_edit_min_interval = 0.0
-        await ch._stream_to_conversation(_VALID_ACTIVITY, _VALID_REQUEST, _EmptyStream())  # type: ignore[arg-type]
-        ctx.deliver_response.assert_awaited_once()
 
     async def test_edit_405_falls_back_to_single_post(self) -> None:
         # Defensive: a channel advertised as edit-capable that nonetheless

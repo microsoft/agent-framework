@@ -162,7 +162,6 @@ def build_host() -> AgentFrameworkHost:
     # 3. Register Telegram at /invocations and keep Responses available for sanity checks.
     return AgentFrameworkHost(
         target=agent,
-        allow_in_process_runner=True,
         channels=[
             ResponsesChannel(response_id_factory=foundry_response_id),
             TelegramChannel(

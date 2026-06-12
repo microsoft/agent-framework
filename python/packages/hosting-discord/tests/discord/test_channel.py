@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from typing import Any
 
 import httpx
@@ -13,7 +13,6 @@ from agent_framework_hosting import (
     ChannelCommand,
     ChannelCommandContext,
     ChannelRequest,
-    ChannelResponseContext,
     HostedRunResult,
 )
 from nacl.signing import SigningKey
@@ -60,39 +59,95 @@ def _headers(signing_key: SigningKey, body: bytes) -> dict[str, str]:
 
 
 class _FakeContext:
-    def __init__(self, *, text: str = "agent reply", include_originating: bool = True) -> None:
+    def __init__(self, *, text: str = "agent reply") -> None:
         self.target = object()
         self.text = text
-        self.include_originating = include_originating
         self.requests: list[ChannelRequest] = []
-        self.delivered: list[tuple[ChannelRequest, HostedRunResult[Any]]] = []
-        self.stream: _FakeStream | None = None
+        self.fake_stream: _FakeStream | None = None
 
-    async def run(self, request: ChannelRequest) -> HostedRunResult[AgentResponse]:
+    async def run(
+        self,
+        request: ChannelRequest,
+        *,
+        run_hook: Any | None = None,
+        protocol_request: Any | None = None,
+        response_hook: Any | None = None,
+        channel_name: str | None = None,
+    ) -> HostedRunResult[AgentResponse]:
+        if run_hook is not None:
+            maybe_request = run_hook(request, target=self.target, protocol_request=protocol_request)
+            if isinstance(maybe_request, Awaitable):
+                request = await maybe_request
+            else:
+                request = maybe_request
         self.requests.append(request)
-        return _run_result(self.text)
+        result = _run_result(self.text)
+        if response_hook is not None:
+            maybe_result = response_hook(result, request=request, channel_name=channel_name or request.channel)
+            if isinstance(maybe_result, Awaitable):
+                return await maybe_result
+            return maybe_result
+        return result
 
-    def run_stream(self, request: ChannelRequest) -> _FakeStream:
+    async def run_stream(
+        self,
+        request: ChannelRequest,
+        *,
+        run_hook: Any | None = None,
+        protocol_request: Any | None = None,
+        stream_update_hook: Any | None = None,
+        response_hook: Any | None = None,
+        channel_name: str | None = None,
+    ) -> _FakeStream:
+        if run_hook is not None:
+            maybe_request = run_hook(request, target=self.target, protocol_request=protocol_request)
+            if isinstance(maybe_request, Awaitable):
+                request = await maybe_request
+            else:
+                request = maybe_request
         self.requests.append(request)
-        if self.stream is None:
-            self.stream = _FakeStream(["a", "b"])
-        return self.stream
-
-    async def deliver_response(self, request: ChannelRequest, payload: HostedRunResult[Any]) -> bool:
-        self.delivered.append((request, payload))
-        return self.include_originating
+        if self.fake_stream is None:
+            self.fake_stream = _FakeStream(["a", "b"])
+        if stream_update_hook is not None:
+            self.fake_stream.transform = stream_update_hook
+        if response_hook is not None:
+            self.fake_stream.response_hook = response_hook
+            self.fake_stream.request = request
+            self.fake_stream.channel_name = channel_name or request.channel
+        return self.fake_stream
 
 
 class _FakeStream:
     def __init__(self, chunks: list[str]) -> None:
         self._chunks = chunks
+        self.transform: Any | None = None
+        self.response_hook: Any | None = None
+        self.request: ChannelRequest | None = None
+        self.channel_name: str | None = None
 
     def __aiter__(self) -> AsyncIterator[AgentResponseUpdate]:
         return self._iter()
 
     async def _iter(self) -> AsyncIterator[AgentResponseUpdate]:
         for chunk in self._chunks:
-            yield AgentResponseUpdate(contents=[Content.from_text(text=chunk)], role="assistant")
+            update = AgentResponseUpdate(contents=[Content.from_text(text=chunk)], role="assistant")
+            if self.transform is not None:
+                transformed = self.transform(update)
+                if isinstance(transformed, Awaitable):
+                    transformed = await transformed
+                if transformed is None:
+                    continue
+                update = transformed
+            yield update
+
+    async def get_final_response(self) -> AgentResponse:
+        result = _run_result("".join(self._chunks))
+        if self.response_hook is None:
+            return result.result
+        shaped = self.response_hook(result, request=self.request, channel_name=self.channel_name)
+        if isinstance(shaped, Awaitable):
+            shaped = await shaped
+        return shaped.result
 
 
 class _DiscordRecorder:
@@ -212,7 +267,6 @@ async def test_agent_command_runs_host_and_edits_original_response() -> None:
     assert context.requests[0].identity is not None
     assert context.requests[0].identity.native_id == "user-1"
     assert context.requests[0].identity.attributes["channel_id"] == "channel-1"
-    assert len(context.delivered) == 1
     assert recorder.requests[0].method == "PATCH"
     assert recorder.requests[0].url.path == "/webhooks/app-1/token/messages/@original"
     assert recorder.json_payloads[0] == {"content": "agent says hi"}
@@ -232,7 +286,6 @@ async def test_run_hook_can_rewrite_agent_request() -> None:
             attributes=request.attributes,
             stream=request.stream,
             identity=request.identity,
-            response_target=request.response_target,
         )
 
     channel = DiscordChannel(
@@ -254,9 +307,9 @@ async def test_response_hook_rewrites_originating_reply() -> None:
     recorder = _DiscordRecorder()
     context = _FakeContext(text="original")
 
-    async def hook(result: HostedRunResult[Any], *, context: ChannelResponseContext) -> HostedRunResult[Any]:
-        assert context.originating is True
+    async def hook(result: HostedRunResult[Any], **kwargs: Any) -> HostedRunResult[Any]:
         assert result.result.text == "original"
+        assert kwargs["channel_name"] == "discord"
         return _run_result("rewritten")
 
     channel = DiscordChannel(
@@ -272,23 +325,6 @@ async def test_response_hook_rewrites_originating_reply() -> None:
     await channel._run_agent_command(_interaction(), "token")
 
     assert recorder.json_payloads[-1] == {"content": "rewritten"}
-
-
-async def test_deliver_response_false_acknowledges_without_originating_payload() -> None:
-    recorder = _DiscordRecorder()
-    context = _FakeContext(text="fanout only", include_originating=False)
-    channel = DiscordChannel(
-        application_id="app-1",
-        public_key=SigningKey.generate().verify_key.encode().hex(),
-        register_commands=False,
-        api_base_url="https://discord.test",
-    )
-    channel.contribute(context)  # type: ignore[arg-type]
-    channel._http = httpx.AsyncClient(base_url="https://discord.test", transport=recorder.transport())
-
-    await channel._run_agent_command(_interaction(), "token")
-
-    assert recorder.json_payloads[-1] == {"content": "Sent."}
 
 
 async def test_missing_prompt_edits_original_without_calling_host() -> None:
@@ -513,75 +549,6 @@ async def test_originating_reply_sends_followup_chunks() -> None:
     assert [len(payload["content"]) for payload in recorder.json_payloads] == [2000, 1]
 
 
-async def test_push_requires_channel_id_and_sends_chunked_messages() -> None:
-    recorder = _DiscordRecorder()
-    channel = DiscordChannel(
-        application_id="app-1",
-        public_key=SigningKey.generate().verify_key.encode().hex(),
-        bot_token="bot-token",
-        register_commands=False,
-        api_base_url="https://discord.test",
-    )
-    channel._http = httpx.AsyncClient(base_url="https://discord.test", transport=recorder.transport())
-
-    await channel.push(
-        identity=channel._identity_from_interaction(_interaction()),  # pyright: ignore[reportPrivateUsage]
-        payload=_run_result("a" * 2001),
-    )
-
-    assert [request.url.path for request in recorder.requests] == [
-        "/channels/channel-1/messages",
-        "/channels/channel-1/messages",
-    ]
-    assert [len(payload["content"]) for payload in recorder.json_payloads] == [2000, 1]
-
-
-async def test_push_renders_no_response_for_unknown_payload_shape() -> None:
-    recorder = _DiscordRecorder()
-    channel = DiscordChannel(
-        application_id="app-1",
-        public_key=SigningKey.generate().verify_key.encode().hex(),
-        bot_token="bot-token",
-        register_commands=False,
-        api_base_url="https://discord.test",
-    )
-    channel._http = httpx.AsyncClient(base_url="https://discord.test", transport=recorder.transport())
-
-    await channel.push(
-        identity=channel._identity_from_interaction(_interaction()),  # pyright: ignore[reportPrivateUsage]
-        payload=HostedRunResult(object()),
-    )
-
-    assert recorder.json_payloads == [{"content": "(no response)"}]
-
-
-async def test_push_requires_bot_token_and_channel_id() -> None:
-    identity = DiscordChannel(
-        application_id="app-1",
-        public_key=SigningKey.generate().verify_key.encode().hex(),
-        register_commands=False,
-    )._identity_from_interaction(_interaction())  # pyright: ignore[reportPrivateUsage]
-    no_bot_token = DiscordChannel(
-        application_id="app-1",
-        public_key=SigningKey.generate().verify_key.encode().hex(),
-        register_commands=False,
-    )
-    no_channel_id = DiscordChannel(
-        application_id="app-1",
-        public_key=SigningKey.generate().verify_key.encode().hex(),
-        bot_token="bot-token",
-        register_commands=False,
-    )
-
-    with pytest.raises(RuntimeError, match="bot_token"):
-        await no_bot_token.push(identity=identity, payload=_run_result("hello"))
-    with pytest.raises(ValueError, match="channel_id"):
-        await no_channel_id.push(
-            identity=type(identity)(channel=identity.channel, native_id=identity.native_id, attributes={}),
-            payload=_run_result("hello"),
-        )
-
-
 async def test_streaming_edits_original_and_delivers_final_response() -> None:
     recorder = _DiscordRecorder()
     context = _FakeContext()
@@ -599,14 +566,12 @@ async def test_streaming_edits_original_and_delivers_final_response() -> None:
     await channel._run_agent_command(_interaction(), "token")
 
     assert [payload["content"] for payload in recorder.json_payloads] == ["a", "ab", "ab"]
-    assert len(context.delivered) == 1
-    assert context.delivered[0][1].result.text == "ab"
 
 
 async def test_streaming_preview_is_limited_and_final_reply_is_chunked() -> None:
     recorder = _DiscordRecorder()
     context = _FakeContext()
-    context.stream = _FakeStream(["a" * 2001])
+    context.fake_stream = _FakeStream(["a" * 2001])
     channel = DiscordChannel(
         application_id="app-1",
         public_key=SigningKey.generate().verify_key.encode().hex(),
@@ -622,12 +587,11 @@ async def test_streaming_preview_is_limited_and_final_reply_is_chunked() -> None
 
     assert [request.method for request in recorder.requests] == ["PATCH", "PATCH", "POST"]
     assert [len(payload["content"]) for payload in recorder.json_payloads] == [2000, 2000, 1]
-    assert len(context.delivered[0][1].result.text) == 2001
 
 
-async def test_stream_transform_hook_can_drop_updates_and_disable_originating_reply() -> None:
+async def test_stream_update_hook_can_drop_updates() -> None:
     recorder = _DiscordRecorder()
-    context = _FakeContext(include_originating=False)
+    context = _FakeContext()
 
     async def hook(update: AgentResponseUpdate) -> AgentResponseUpdate | None:
         if update.text == "a":
@@ -639,7 +603,7 @@ async def test_stream_transform_hook_can_drop_updates_and_disable_originating_re
         public_key=SigningKey.generate().verify_key.encode().hex(),
         register_commands=False,
         streaming=True,
-        stream_transform_hook=hook,
+        stream_update_hook=hook,
         edit_interval=0,
         api_base_url="https://discord.test",
     )
@@ -648,11 +612,10 @@ async def test_stream_transform_hook_can_drop_updates_and_disable_originating_re
 
     await channel._run_agent_command(_interaction(), "token")
 
-    assert [payload["content"] for payload in recorder.json_payloads] == ["b", "Sent."]
-    assert context.delivered[0][1].result.text == "b"
+    assert [payload["content"] for payload in recorder.json_payloads] == ["b", "ab"]
 
 
-async def test_stream_transform_hook_can_synchronously_rewrite_updates() -> None:
+async def test_stream_update_hook_can_synchronously_rewrite_updates() -> None:
     recorder = _DiscordRecorder()
     context = _FakeContext()
 
@@ -664,7 +627,7 @@ async def test_stream_transform_hook_can_synchronously_rewrite_updates() -> None
         public_key=SigningKey.generate().verify_key.encode().hex(),
         register_commands=False,
         streaming=True,
-        stream_transform_hook=hook,
+        stream_update_hook=hook,
         edit_interval=0,
         api_base_url="https://discord.test",
     )
@@ -673,7 +636,7 @@ async def test_stream_transform_hook_can_synchronously_rewrite_updates() -> None
 
     await channel._run_agent_command(_interaction(), "token")
 
-    assert [payload["content"] for payload in recorder.json_payloads] == ["x", "xx", "xx"]
+    assert [payload["content"] for payload in recorder.json_payloads] == ["x", "xx", "ab"]
 
 
 async def _noop() -> None:

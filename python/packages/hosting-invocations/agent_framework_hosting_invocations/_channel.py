@@ -9,21 +9,17 @@ get an answer back — no OpenAI-style envelope, no Responses item lattice.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
     ChannelRequest,
-    ChannelResponseContext,
     ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
-    ChannelStreamTransformHook,
-    HostedRunResult,
-    apply_response_hook,
-    apply_run_hook,
+    ChannelStreamUpdateHook,
     logger,
 )
 from starlette.requests import Request
@@ -47,7 +43,7 @@ class InvocationsChannel:
         path: str = "/invocations",
         run_hook: ChannelRunHook | None = None,
         response_hook: ChannelResponseHook | None = None,
-        stream_transform_hook: ChannelStreamTransformHook | None = None,
+        stream_update_hook: ChannelStreamUpdateHook | None = None,
     ) -> None:
         """Configure the invocations endpoint.
 
@@ -58,13 +54,13 @@ class InvocationsChannel:
         translate the wire payload into ``Message`` instances.
         ``response_hook`` may rewrite the :class:`HostedRunResult` before
         the channel serializes it to JSON for the originating caller.
-        ``stream_transform_hook`` lets callers map or drop individual
+        ``stream_update_hook`` lets callers map or drop individual
         ``AgentResponseUpdate`` chunks while streaming.
         """
         self.path = path
         self._hook = run_hook
         self.response_hook = response_hook
-        self._stream_transform_hook = stream_transform_hook
+        self._stream_update_hook = stream_update_hook
         self._ctx: ChannelContext | None = None
 
     def contribute(self, context: ChannelContext) -> ChannelContribution:
@@ -115,43 +111,23 @@ class InvocationsChannel:
             attributes=attributes,
         )
 
-        if self._hook is not None:
-            channel_request = await apply_run_hook(
-                self._hook,
-                channel_request,
-                target=self._ctx.target,
-                protocol_request=body_map,
-            )
-
         if channel_request.stream:
             return StreamingResponse(
-                self._stream(channel_request),
+                self._stream(channel_request, body_map),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-        result = await self._ctx.run(channel_request)
-        result = await self._apply_response_hook(result, channel_request)
+        result = await self._ctx.run(
+            channel_request,
+            run_hook=self._hook,
+            protocol_request=body_map,
+            response_hook=self.response_hook,
+            channel_name=self.name,
+        )
         return JSONResponse({"response": result.result.text, "session_id": session_id})
 
-    async def _apply_response_hook(
-        self,
-        result: HostedRunResult[Any],
-        request: ChannelRequest,
-    ) -> HostedRunResult[Any]:
-        """Apply the channel-level response hook for an originating reply."""
-        if self.response_hook is None:
-            return result
-        context = ChannelResponseContext(
-            request=request,
-            channel_name=self.name,
-            destination_identity=None,
-            originating=True,
-            is_echo=False,
-        )
-        return await apply_response_hook(self.response_hook, result, context=context)
-
-    async def _stream(self, request: ChannelRequest) -> AsyncIterator[str]:
+    async def _stream(self, request: ChannelRequest, protocol_request: dict[str, Any]) -> AsyncIterator[str]:
         r"""Yield bare ``data:`` SSE lines for each text chunk + a final ``[DONE]``.
 
         SSE protocol notes:
@@ -171,15 +147,13 @@ class InvocationsChannel:
             yield "event: error\ndata: channel not initialized\n\n"
             return
         try:
-            stream = self._ctx.run_stream(request)
+            stream = await self._ctx.run_stream(
+                request,
+                run_hook=self._hook,
+                protocol_request=protocol_request,
+                stream_update_hook=self._stream_update_hook,
+            )
             async for update in stream:
-                if self._stream_transform_hook is not None:
-                    transformed = self._stream_transform_hook(update)
-                    if isinstance(transformed, Awaitable):
-                        transformed = await transformed
-                    if transformed is None:
-                        continue
-                    update = transformed
                 chunk = getattr(update, "text", None)
                 if chunk:
                     # Each text chunk is its own SSE event so curl-friendly

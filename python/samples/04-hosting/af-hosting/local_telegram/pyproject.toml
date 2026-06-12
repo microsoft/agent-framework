@@ -1,7 +1,7 @@
 [project]
 name = "agent-framework-hosting-sample-advanced"
 version = "0.0.1"
-description = "Advanced multi-channel hosting sample (Responses + Telegram with @tool, FileHistoryProvider, hooks, ResponseTarget multicast)."
+description = "Advanced multi-channel hosting sample (Responses + Telegram with @tool, FileHistoryProvider, hooks)."
 requires-python = ">=3.10"
 dependencies = [
     "agent-framework-foundry",
