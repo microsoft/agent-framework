@@ -619,6 +619,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
             startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT"] = openAiDeployment;
         }
 
+        startInfo.EnvironmentVariables["FUNCTIONS_WORKER_RUNTIME"] = "dotnet-isolated";
         startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =
             $"Endpoint=http://localhost:{DtsPort};TaskHub=default;Authentication=None";
         startInfo.EnvironmentVariables["AzureWebJobsStorage"] = "UseDevelopmentStorage=true";

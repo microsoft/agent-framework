@@ -25,6 +25,7 @@ from agent_framework import (
     prepend_agent_framework_to_user_agent,
     tool,
 )
+from agent_framework._serialization import make_json_safe
 from agent_framework.observability import (
     ROLE_EVENT_MAP,
     AgentTelemetryLayer,
@@ -759,6 +760,115 @@ def test_get_exporters_from_env_missing_grpc_dependency(monkeypatch):
 
     with pytest.raises(ImportError, match="opentelemetry-exporter-otlp-proto-grpc"):
         _get_exporters_from_env()
+
+
+# region Test OTLP endpoint computation (base-URL auto-append for HTTP)
+
+
+def test_get_exporters_from_env_http_base_endpoint_appends_signal_paths(monkeypatch):
+    """OTEL_EXPORTER_OTLP_ENDPOINT is a base URL for HTTP; SDK auto-appends
+    /v1/{traces,metrics,logs}. Because we read the env var and forward it as the
+    constructor ``endpoint=`` arg (which the SDK treats as a full URL), we must
+    replicate the auto-append ourselves.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["protocol"] == "http/protobuf"
+    assert kwargs["traces_endpoint"] == "http://localhost:4318/v1/traces"
+    assert kwargs["metrics_endpoint"] == "http://localhost:4318/v1/metrics"
+    assert kwargs["logs_endpoint"] == "http://localhost:4318/v1/logs"
+
+
+def test_get_exporters_from_env_http_base_endpoint_trailing_slash(monkeypatch):
+    """A trailing slash on the base endpoint should not produce a doubled slash."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["traces_endpoint"] == "http://localhost:4318/v1/traces"
+    assert kwargs["metrics_endpoint"] == "http://localhost:4318/v1/metrics"
+    assert kwargs["logs_endpoint"] == "http://localhost:4318/v1/logs"
+
+
+def test_get_exporters_from_env_http_signal_specific_used_verbatim(monkeypatch):
+    """Signal-specific endpoint env vars are full URLs and must be used verbatim,
+    even when a base endpoint is also set.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://traces.example.com/custom/path")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+    for key in (
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    # Signal-specific is verbatim — no path appended
+    assert kwargs["traces_endpoint"] == "http://traces.example.com/custom/path"
+    # Others fall back to base, with path appended
+    assert kwargs["metrics_endpoint"] == "http://localhost:4318/v1/metrics"
+    assert kwargs["logs_endpoint"] == "http://localhost:4318/v1/logs"
+
+
+def test_get_exporters_from_env_grpc_base_endpoint_unchanged(monkeypatch):
+    """For gRPC, the base endpoint applies to all signals as-is (no path append)."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["protocol"] == "grpc"
+    assert kwargs["traces_endpoint"] == "http://localhost:4317"
+    assert kwargs["metrics_endpoint"] == "http://localhost:4317"
+    assert kwargs["logs_endpoint"] == "http://localhost:4317"
 
 
 # region Test create_resource
@@ -1689,6 +1799,65 @@ def test_to_otel_part_function_call():
         "name": "test_function",
         "arguments": '{"arg1": "value1"}',
     }
+
+
+def test_to_otel_part_function_call_reuses_prepared_arguments():
+    """Test _to_otel_part does not re-serialize function-call arguments in the observability hot path."""
+    from agent_framework import Content
+    from agent_framework.observability import _to_otel_part
+
+    arguments = {"payload": object()}
+    content = Content(type="function_call", call_id="call_789", name="handoff", arguments=arguments)
+    result = _to_otel_part(content)
+
+    assert result is not None
+    assert result["arguments"] is arguments
+
+
+def test_make_json_safe_non_callable_method_attribute():
+    """Test make_json_safe handles objects where model_dump/to_dict/dict are non-callable attributes."""
+    from agent_framework._serialization import make_json_safe
+
+    class ObjWithNonCallableModelDump:
+        model_dump = 42  # not callable
+
+    obj = ObjWithNonCallableModelDump()
+    result = make_json_safe(obj)
+    assert result == {}
+
+
+def test_make_json_safe_callable_method_type_error_falls_through():
+    """Test make_json_safe falls through when serializer-like methods require arguments."""
+    from agent_framework._serialization import make_json_safe
+
+    class ObjWithRequiredArgModelDump:
+        def __init__(self) -> None:
+            self.value = "fallback"
+
+        def model_dump(self, required: str) -> dict[str, str]:
+            return {"required": required}
+
+    obj = ObjWithRequiredArgModelDump()
+    result = make_json_safe(obj)
+    assert result == {"value": "fallback"}
+
+
+def test_make_json_safe_dict_with_non_string_keys():
+    """Test make_json_safe converts non-primitive dict keys to strings."""
+    import json
+    from datetime import datetime
+
+    from agent_framework._serialization import make_json_safe
+
+    dt_key = datetime(2024, 1, 1)
+    obj = {dt_key: "value", 42: "num_value", "str_key": "normal"}
+    result = make_json_safe(obj)
+    # json.dumps must not raise TypeError
+    serialized = json.dumps(result)
+    parsed = json.loads(serialized)
+    assert parsed[str(dt_key)] == "value"
+    assert parsed["42"] == "num_value"
+    assert parsed["str_key"] == "normal"
 
 
 def test_to_otel_part_function_result():
@@ -3017,6 +3186,47 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
 
     input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
     assert [msg.get("role") for msg in input_messages] == ["user"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_with_prepared_request_info_function_call_arguments(span_exporter: InMemorySpanExporter):
+    """Test _capture_messages handles request-info function-call arguments prepared at Content creation."""
+    import dataclasses
+    import json
+
+    from opentelemetry import trace
+
+    @dataclasses.dataclass
+    class HandoffRequest:
+        target_agent: str
+        reason: str
+
+    arguments = {
+        "request_id": "call_dc",
+        "data": make_json_safe(HandoffRequest(target_agent="helper", reason="overflow")),
+    }
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content(
+                type="function_call",
+                call_id="call_dc",
+                name="request_info",
+                arguments=arguments,
+            )
+        ],
+    )
+    span_exporter.clear()
+    tracer = trace.get_tracer("test")
+    with tracer.start_as_current_span("test_span") as span:
+        _capture_messages(span=span, provider_name="test_provider", messages=[msg])
+
+    spans = span_exporter.get_finished_spans()
+    span = spans[0]
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    tool_part = input_messages[0]["parts"][0]
+    assert tool_part["type"] == "tool_call"
+    assert tool_part["arguments"]["data"] == {"target_agent": "helper", "reason": "overflow"}
 
 
 def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_messages(

@@ -1973,11 +1973,97 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
     contents.extend(coalesced_contents)
 
 
+def _content_items_text(items: Any) -> str | None:
+    """Return concatenated text when a content item list only contains text."""
+    if not isinstance(items, list):
+        return None
+    text_parts: list[str] = []
+    content_items = cast(list[object], items)
+    for item in content_items:
+        if not isinstance(item, Content) or item.type != "text":
+            return None
+        text_parts.append(item.text or "")
+    return "".join(text_parts)
+
+
+def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
+    """Merge streamed nested content lists, replacing deltas with a later full value when present."""
+    if incoming is None:
+        return existing
+    if existing is None:
+        return deepcopy(incoming)
+
+    existing_text = _content_items_text(existing)
+    incoming_text = _content_items_text(incoming)
+    if existing_text is not None and incoming_text is not None:
+        if incoming_text.startswith(existing_text):
+            return deepcopy(incoming)
+        if existing_text.startswith(incoming_text):
+            return existing
+
+        existing_items = cast(list[Content], existing)
+        merged = deepcopy(existing_items[0])
+        merged.text = existing_text + incoming_text
+        return [merged]
+
+    if isinstance(existing, list) and isinstance(incoming, list):
+        existing_list = cast(list[object], existing)
+        incoming_list = cast(list[object], incoming)
+        return [*existing_list, *deepcopy(incoming_list)]
+    return deepcopy(incoming)
+
+
+def _merge_code_interpreter_content(existing: Content, incoming: Content) -> None:
+    """Merge two code interpreter content items for the same logical call."""
+    existing.inputs = _merge_content_item_lists(existing.inputs, incoming.inputs)
+    existing.outputs = _merge_content_item_lists(existing.outputs, incoming.outputs)
+    existing.annotations = _combine_annotations(existing.annotations, incoming.annotations)
+    existing.additional_properties = {**existing.additional_properties, **incoming.additional_properties}
+    existing.raw_representation = _combine_raw_representations(existing.raw_representation, incoming.raw_representation)
+
+
+def _code_interpreter_key(content: Content) -> tuple[str, str] | None:
+    """Return the aggregation key for code interpreter call/result content."""
+    if content.type not in {"code_interpreter_tool_call", "code_interpreter_tool_result"}:
+        return None
+    call_id = content.call_id or content.additional_properties.get("item_id")
+    if not isinstance(call_id, str) or not call_id:
+        return None
+    return content.type, call_id
+
+
+def _coalesce_code_interpreter_content(contents: list[Content]) -> None:
+    """Coalesce streaming code interpreter chunks by call id."""
+    if not contents:
+        return
+
+    coalesced_contents: list[Content] = []
+    seen: dict[tuple[str, str], Content] = {}
+    for content in contents:
+        key = _code_interpreter_key(content)
+        if key is None:
+            coalesced_contents.append(content)
+            continue
+
+        existing = seen.get(key)
+        if existing is None:
+            copied = deepcopy(content)
+            seen[key] = copied
+            coalesced_contents.append(copied)
+            continue
+
+        _merge_code_interpreter_content(existing, content)
+
+    contents.clear()
+    contents.extend(coalesced_contents)
+
+
 def _finalize_response(response: ChatResponse | AgentResponse) -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
+        _coalesce_code_interpreter_content(msg.contents)
 
 
 # region ContinuationToken

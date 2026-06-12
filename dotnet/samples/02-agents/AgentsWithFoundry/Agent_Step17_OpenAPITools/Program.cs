@@ -9,8 +9,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.

@@ -20,8 +20,8 @@ using Harness.Shared.Console.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4";
 
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
@@ -30,6 +30,9 @@ const string TracingSourceName = "Harness.SubAgents";
 // Set up OpenTelemetry tracing that writes spans to a text file.
 using var tracerProvider = HarnessTracing.CreateFileTracerProvider(TracingSourceName);
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Create the AIProjectClient for communicating with the Foundry responses service.
 var projectClient = new AIProjectClient(
     new Uri(endpoint),
@@ -44,8 +47,10 @@ AIAgent webSearchAgent =
     .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
-    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    .AsHarnessAgent(new HarnessAgentOptions
     {
+        MaxContextWindowTokens = MaxContextWindowTokens,
+        MaxOutputTokens = MaxOutputTokens,
         Name = "WebSearchAgent",
         Description = "An agent that can search the web to find information.",
         OpenTelemetrySourceName = TracingSourceName,
@@ -92,8 +97,10 @@ AIAgent parentAgent =
     .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
-    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    .AsHarnessAgent(new HarnessAgentOptions
     {
+        MaxContextWindowTokens = MaxContextWindowTokens,
+        MaxOutputTokens = MaxOutputTokens,
         Name = "StockPriceResearcher",
         Description = "An agent that researches stock prices using background agents.",
         OpenTelemetrySourceName = TracingSourceName,

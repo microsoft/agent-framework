@@ -13,6 +13,35 @@ during deserialization.  The default built-in safe set covers common Python
 value types (primitives, datetime, uuid, ...), all ``agent_framework`` internal
 types, and all ``openai.types`` types.  Callers can extend the set by passing
 additional ``"module:qualname"`` strings.
+
+Security Model
+--------------
+Checkpoint storage is treated as a **trusted data source**.  The serialization
+format uses Python's ``pickle`` module which can execute arbitrary code during
+deserialization.  The ``RestrictedUnpickler`` provides a defense-in-depth
+allowlist that limits instantiable classes, but it is **not** a security
+boundary — certain allowlisted builtins (e.g. ``getattr``) are required for
+legitimate object reconstruction (enums, named tuples) and cannot be removed
+without breaking compatibility.
+
+Developers **must** ensure that:
+
+1. The checkpoint storage backend (file system, Cosmos DB, Azure Blob, Durable
+   Functions storage) is access-controlled and not writable by untrusted
+   parties.
+2. Data flowing into ``decode_checkpoint_value`` originates exclusively from
+   the application's own checkpoint storage — never from user-supplied HTTP
+   requests, message payloads, or other untrusted sources.
+3. The ``allowed_types`` parameter is specified whenever possible to restrict
+   the set of reconstructible types to the minimum required by the application.
+4. Never pass untrusted external input to ``decode_checkpoint_value``. If you
+   must accept external JSON that might contain checkpoint markers, sanitize it
+   first (for example, :func:`agent_framework_azurefunctions._serialization.strip_pickle_markers`).
+
+The allowlist is a mitigation that reduces attack surface but does not
+eliminate the inherent risks of deserializing untrusted pickle data.  Treat
+your checkpoint storage with the same access controls you would apply to
+application secrets or database credentials.
 """
 
 from __future__ import annotations

@@ -788,13 +788,13 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
         """Get metadata from a chat response."""
         return {
-            "system_fingerprint": response.system_fingerprint,
+            "system_fingerprint": getattr(response, "system_fingerprint", None),
         }
 
     def _get_metadata_from_streaming_chat_response(self, response: ChatCompletionChunk) -> dict[str, Any]:
         """Get metadata from a streaming chat response."""
         return {
-            "system_fingerprint": response.system_fingerprint,
+            "system_fingerprint": getattr(response, "system_fingerprint", None),
         }
 
     def _get_metadata_from_chat_choice(self, choice: Choice | ChunkChoice) -> dict[str, Any]:

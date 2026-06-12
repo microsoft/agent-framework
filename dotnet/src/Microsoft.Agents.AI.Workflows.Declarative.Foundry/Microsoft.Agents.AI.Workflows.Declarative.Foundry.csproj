@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleaseCandidate>true</IsReleaseCandidate>
+    <!-- Preview while Microsoft.Agents.AI.Foundry is preview (blocked by Azure.AI.Projects 2.1.0-beta). Flip to IsReleased=true once that ships stable. -->
     <NoWarn>$(NoWarn);MEAI001;OPENAI001</NoWarn>
   </PropertyGroup>
 

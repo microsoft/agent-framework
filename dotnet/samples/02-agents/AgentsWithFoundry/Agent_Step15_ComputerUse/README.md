@@ -1,4 +1,4 @@
-# Computer Use with the Responses API
+﻿# Computer Use with the Responses API
 
 This sample shows how to use the Computer Use tool with `AIProjectClient.AsAIAgent(...)`.
 
@@ -39,12 +39,12 @@ The model receives a screenshot as input, analyzes it, and responds with a compu
 
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
 $env:AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME="computer-use-preview"
 ```
 

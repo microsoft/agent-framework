@@ -221,8 +221,30 @@ class ClaudeAgentOptions(TypedDict, total=False):
     thinking: ThinkingConfig
     """Extended thinking configuration (adaptive, enabled, or disabled)."""
 
-    effort: Literal["low", "medium", "high", "max"]
+    effort: Literal["low", "medium", "high", "xhigh", "max"]
     """Effort level for thinking depth."""
+
+    skills: list[str] | Literal["all"]
+    """Skills to enable for the main session. Use ``"all"`` for every discovered skill,
+    a list of named skills, or ``[]`` to suppress all skills."""
+
+    session_id: str
+    """Use a specific session ID (must be a valid UUID) instead of auto-generated."""
+
+    task_budget: dict[str, int]
+    """API-side task budget in tokens for pacing tool use."""
+
+    include_hook_events: bool
+    """When True, hook lifecycle events are emitted in the message stream."""
+
+    strict_mcp_config: bool
+    """When True, only use MCP servers passed via ``mcp_servers``, ignoring all others."""
+
+    continue_conversation: bool
+    """Continue the most recent conversation instead of starting a new one."""
+
+    fork_session: bool
+    """When True, resumed sessions fork to a new session ID."""
 
     on_function_approval: FunctionApprovalCallback
     """Approval callback for ``FunctionTool`` instances declared with

@@ -3,6 +3,7 @@
 import contextlib
 import inspect
 import json
+import logging
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,6 +42,8 @@ from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_ag
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework.exceptions import AgentInvalidRequestException, ChatClientInvalidResponseException
+
+from .conftest import MockBaseChatClient
 
 
 class _FixedTokenizer:
@@ -609,6 +612,7 @@ async def test_streaming_per_service_call_persistence_hides_response_id_from_aft
 
 async def test_per_service_call_persistence_uses_real_service_storage_when_client_stores_by_default(
     chat_client_base: SupportsChatGetResponse,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     provider = _RecordingHistoryProvider()
 
@@ -649,15 +653,22 @@ async def test_per_service_call_persistence_uses_real_service_storage_when_clien
         require_per_service_call_history_persistence=True,
     )
 
-    result = await agent.run("What's the weather in Seattle?", session=session)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        result = await agent.run("What's the weather in Seattle?", session=session)
 
     provider_state = session.state[provider.source_id]
 
     assert result.text == "It is sunny in Seattle."
     assert result.response_id == "resp_call_2"
     assert chat_client_base.call_count == 2
+    # The service owns the conversation, so the provider never loads (issue #5798).
     assert "get_call_count" not in provider_state
-    assert "save_call_count" not in provider_state
+    # Persistence is owned by the per-service-call middleware: it persists once per service call
+    # (issue #5798: the provider must never be silently bypassed when the service stores history).
+    # This run makes two service calls (function call + final answer), so it persists twice.
+    assert provider_state["save_call_count"] == 2
+    # load_messages=True while the service stores history surfaces a warning.
+    assert any("load_messages" in record.message for record in caplog.records)
     assert session.service_session_id == "resp_service_managed"
 
 
@@ -1996,6 +2007,19 @@ def test_merge_options_none_values_ignored():
     assert result["key2"] == "value2"
 
 
+def test_merge_options_drops_none_base_values():
+    """Test _merge_options strips None values so unset options are never forwarded."""
+    base = {"store": None, "temperature": 0.5}
+    override = {"top_p": 0.9}
+
+    result = _merge_options(base, override)
+
+    # An unset base value (e.g. store=None from default_options) must not survive the merge.
+    assert "store" not in result
+    assert result["temperature"] == 0.5
+    assert result["top_p"] == 0.9
+
+
 def test_merge_options_runtime_model_overrides_default_model() -> None:
     """Test _merge_options lets a runtime model override a default model."""
     result = _merge_options({"model": "default-model"}, {"model": "runtime-model"})
@@ -2658,3 +2682,449 @@ async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetRespo
     assert len(exc_info.value.contents) == 1
     assert exc_info.value.contents[0].type == "oauth_consent_request"
     assert exc_info.value.contents[0].consent_link == "https://login.microsoftonline.com/consent"
+
+
+# region Per-service-call history persistence scenario matrix
+#
+# The driving field is ``require_per_service_call_history_persistence``. Every scenario runs a
+# single agent run that makes **two service calls** -- a function call followed by a final
+# completion -- so the *timing* of persistence is observable:
+#
+# * When the flag is ``True``, the per-service-call middleware persists the provider **after each
+#   service call**. So the function-call turn is already saved by the time the second (final)
+#   service call starts. This holds regardless of whether the chat client stores history
+#   server-side (the bug in issue #5798 was that a storing client silently bypassed persistence).
+# * When the flag is ``False``, the provider persists **once, at the end of the run** -- nothing is
+#   saved between the two service calls.
+#
+# ``SpyChatClient.saves_before_call`` records ``provider.save_calls`` at the start of every service
+# call, so ``[0, 1]`` means "the function-call turn was persisted before the final call" and
+# ``[0, 0]`` means "no persistence happened mid-run". The client's ``store`` / ``STORES_BY_DEFAULT``
+# only selects *how* the middleware behaves -- never *whether* the provider persists.
+
+_PSC_SERVICE_CONVERSATION_ID = "svc-conversation"
+
+_psc_stream_params = pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
+
+
+@tool(name="lookup_weather", approval_mode="never_require")
+def _psc_lookup_weather(location: str) -> str:
+    return f"Weather in {location}: sunny"
+
+
+def _psc_function_call_script() -> list[tuple[str, ...]]:
+    """A fresh function-call-then-final-completion script (the client mutates it)."""
+    return [
+        ("call", "call_1", "lookup_weather", '{"location": "Seattle"}'),
+        ("text", "It is sunny in Seattle."),
+    ]
+
+
+class _PscSpyHistoryProvider(HistoryProvider):
+    """In-memory history provider that records load/save calls for assertions."""
+
+    def __init__(self, source_id: str = "spy_history", **kwargs: Any) -> None:
+        super().__init__(source_id, **kwargs)
+        self._messages: list[Message] = []
+        self.get_calls: int = 0
+        self.save_calls: int = 0
+        self.saved_batches: list[list[Message]] = []
+
+    async def get_messages(
+        self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[Message]:
+        self.get_calls += 1
+        return list(self._messages)
+
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.save_calls += 1
+        self.saved_batches.append(list(messages))
+        self._messages.extend(messages)
+
+    @property
+    def stored_messages(self) -> list[Message]:
+        return list(self._messages)
+
+
+class _PscSpyChatClient(MockBaseChatClient):
+    """Chat client that scripts a function-call/final-completion sequence.
+
+    It records, at the start of each service call, how many provider saves have already happened
+    (``saves_before_call``), what messages it received, and what options it saw. When the effective
+    ``store`` is truthy it returns a stable ``conversation_id`` to mimic a server-managed
+    conversation, so the framework propagates ``session.service_session_id``.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: _PscSpyHistoryProvider,
+        stores_by_default: bool = False,
+        script: list[tuple[str, ...]] | None = None,
+        echo_conversation_id: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.STORES_BY_DEFAULT = stores_by_default  # type: ignore[attr-defined]
+        self._provider = provider
+        self._script = list(script) if script is not None else [("text", "ok")]
+        self._echo_conversation_id = echo_conversation_id
+        self.received_messages: list[list[Message]] = []
+        self.received_options: list[dict[str, Any]] = []
+        self.saves_before_call: list[int] = []
+
+    def _effective_store(self, options: dict[str, Any]) -> bool:
+        store = options.get("store")
+        if store is None:
+            return bool(self.STORES_BY_DEFAULT)
+        return bool(store)
+
+    def _next_contents(self) -> list[Content]:
+        turn = self._script.pop(0) if self._script else ("text", "ok")
+        if turn[0] == "call":
+            _, call_id, name, args = turn
+            return [Content.from_function_call(call_id=call_id, name=name, arguments=args)]
+        return [Content.from_text(turn[1])]
+
+    def _inner_get_response(  # type: ignore[override]
+        self,
+        *,
+        messages: MutableSequence[Message],
+        stream: bool,
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.received_messages.append(list(messages))
+        self.received_options.append(dict(options))
+        self.saves_before_call.append(self._provider.save_calls)
+        store_and_echo = self._effective_store(options) and self._echo_conversation_id
+        conv_id = _PSC_SERVICE_CONVERSATION_ID if store_and_echo else None
+        contents = self._next_contents()
+
+        if stream:
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                self.call_count += 1
+                yield ChatResponseUpdate(
+                    contents=contents,
+                    role="assistant",
+                    finish_reason="stop",
+                    conversation_id=conv_id,
+                )
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                response = ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
+                if conv_id:
+                    response.conversation_id = conv_id
+                return response
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+        async def _get() -> ChatResponse:
+            self.call_count += 1
+            return ChatResponse(
+                messages=Message(role="assistant", contents=contents),
+                conversation_id=conv_id,
+            )
+
+        return _get()
+
+
+def _psc_build_agent(
+    client: _PscSpyChatClient,
+    provider: _PscSpyHistoryProvider,
+    *,
+    require_per_service_call_history_persistence: bool,
+    default_options: dict[str, Any] | None = None,
+) -> Agent:
+    kwargs: dict[str, Any] = {}
+    if default_options is not None:
+        kwargs["default_options"] = default_options
+    return Agent(
+        client=client,
+        tools=[_psc_lookup_weather],
+        context_providers=[provider],
+        require_per_service_call_history_persistence=require_per_service_call_history_persistence,
+        **kwargs,
+    )
+
+
+async def _psc_run(agent: Agent, text: str, session: AgentSession, *, stream: bool) -> str:
+    if stream:
+        chunks: list[str] = []
+        async for update in agent.run(text, session=session, stream=True):
+            chunks.append(update.text or "")
+        return "".join(chunks)
+    result = await agent.run(text, session=session)
+    return result.text
+
+
+# driver=True (the contract under test): persistence happens per service call
+
+
+@_psc_stream_params
+async def test_psc_flag_on_store_false_persists_after_each_service_call(stream: bool) -> None:
+    """Mode A (flag on, service does not store): function-call turn is persisted before the final call."""
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(provider=provider, stores_by_default=False, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    text = await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert text == "It is sunny in Seattle."
+    # Two service calls: function call, then final completion.
+    assert client.call_count == 2
+    # The contract: the function-call turn was persisted *before* the second service call started.
+    assert client.saves_before_call == [0, 1]
+    assert provider.save_calls == 2
+    # Mode A loads local history (the middleware injects it before each service call).
+    assert provider.get_calls >= 1
+    # No service-side storage, so no conversation id is propagated.
+    assert session.service_session_id is None
+
+
+@_psc_stream_params
+async def test_psc_flag_on_stores_by_default_persists_after_each_service_call(
+    stream: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Mode B (flag on, service stores by default): still persists per service call, but skips load (issue #5798)."""
+    provider = _PscSpyHistoryProvider()  # load_messages=True by default
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        text = await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert text == "It is sunny in Seattle."
+    assert client.call_count == 2
+    # The invariant the bug violated: persistence still happens per service call when the service stores.
+    assert client.saves_before_call == [0, 1]
+    assert provider.save_calls == 2
+    # The service owns loading, so the provider is never asked to load.
+    assert provider.get_calls == 0
+    # A warning surfaces the bypassed load (load_messages=True).
+    assert any("load_messages" in record.message for record in caplog.records)
+    # The real service conversation id propagates to the session.
+    assert session.service_session_id == _PSC_SERVICE_CONVERSATION_ID
+
+
+@_psc_stream_params
+async def test_psc_flag_on_store_only_provider_no_load_no_warning(
+    stream: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Mode B with a store-only provider (load_messages=False): persists per call, no load, no warning."""
+    provider = _PscSpyHistoryProvider(load_messages=False)
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert client.saves_before_call == [0, 1]
+    assert provider.save_calls == 2
+    assert provider.get_calls == 0
+    assert not any("load_messages" in record.message for record in caplog.records)
+
+
+@_psc_stream_params
+async def test_psc_flag_on_store_false_override_behaves_as_mode_a(stream: bool) -> None:
+    """Flag on + storing client but store=False override: falls back to Mode A (local, per call)."""
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(
+        client, provider, require_per_service_call_history_persistence=True, default_options={"store": False}
+    )
+    session = agent.create_session()
+
+    await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert client.saves_before_call == [0, 1]
+    assert provider.save_calls == 2
+    assert provider.get_calls >= 1
+    # store=False forces local handling, so no real service conversation id.
+    assert session.service_session_id is None
+
+
+@_psc_stream_params
+async def test_psc_flag_on_store_none_treated_as_absent(stream: bool, caplog: pytest.LogCaptureFixture) -> None:
+    """Flag on + storing client + explicit store=None: None is "unset", so the storing default applies (Mode B)."""
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(
+        client, provider, require_per_service_call_history_persistence=True, default_options={"store": None}
+    )
+    session = agent.create_session()
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert client.saves_before_call == [0, 1]
+    assert provider.save_calls == 2
+    assert provider.get_calls == 0
+    assert session.service_session_id == _PSC_SERVICE_CONVERSATION_ID
+    assert any("load_messages" in record.message for record in caplog.records)
+    # store=None must not be forwarded to the client; the service decides its own default.
+    assert all("store" not in options for options in client.received_options)
+
+
+@_psc_stream_params
+async def test_psc_flag_on_respects_store_outputs_flag(stream: bool) -> None:
+    """Flag on: the provider's store_inputs/store_outputs flags still apply per service call."""
+    provider = _PscSpyHistoryProvider(store_inputs=True, store_outputs=False)
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert provider.save_calls == 2
+    # Outputs disabled, so no assistant/tool-call messages were stored, only user/tool inputs.
+    assert provider.stored_messages
+    assert all(message.role != "assistant" for message in provider.stored_messages)
+
+
+# driver=False (control): persistence happens once, at the end of the run
+
+
+@_psc_stream_params
+async def test_psc_flag_off_store_false_persists_once_at_end(stream: bool) -> None:
+    """Flag off + non-storing client: nothing is persisted mid-run; one save at the end."""
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(provider=provider, stores_by_default=False, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=False)
+    session = agent.create_session()
+
+    text = await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert text == "It is sunny in Seattle."
+    assert client.call_count == 2
+    # The control contract: no save happened between the function call and the final completion.
+    assert client.saves_before_call == [0, 0]
+    assert provider.save_calls == 1
+
+
+@_psc_stream_params
+async def test_psc_flag_off_stores_by_default_persists_once_at_end(stream: bool) -> None:
+    """Flag off + storing client: once-per-run persistence, and the service conversation id propagates."""
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=False)
+    session = agent.create_session()
+
+    await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert client.saves_before_call == [0, 0]
+    assert provider.save_calls == 1
+    assert session.service_session_id == _PSC_SERVICE_CONVERSATION_ID
+
+
+@_psc_stream_params
+async def test_psc_flag_on_storing_with_existing_conversation_id_does_not_raise(stream: bool) -> None:
+    """Allow side of the guard: flag on + storing client + an existing conversation_id resumes (no raise).
+
+    The non-storing path raises on an existing service-managed conversation id, but with a storing
+    client the run must proceed and the service conversation id must propagate to the session.
+    """
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    if stream:
+        chunks: list[str] = []
+        async for update in agent.run(
+            "What's the weather in Seattle?",
+            session=session,
+            stream=True,
+            options={"conversation_id": "existing_conversation"},
+        ):
+            chunks.append(update.text or "")
+        text = "".join(chunks)
+    else:
+        result = await agent.run(
+            "What's the weather in Seattle?",
+            session=session,
+            options={"conversation_id": "existing_conversation"},
+        )
+        text = result.text
+
+    assert text == "It is sunny in Seattle."
+    # Persistence still happens per service call, and the real service id propagates to the session.
+    assert provider.save_calls == 2
+    assert provider.get_calls == 0
+    assert session.service_session_id == _PSC_SERVICE_CONVERSATION_ID
+
+
+@_psc_stream_params
+async def test_psc_flag_on_storing_two_runs_same_session(stream: bool) -> None:
+    """Storing mode across two runs on one session: persistence keeps happening, id is stable, no load.
+
+    The second run exercises the precedence branch where the session already carries a
+    service_session_id, which must continue to skip provider loading and keep persisting.
+    """
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(provider=provider, stores_by_default=True, script=_psc_function_call_script())
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    assert provider.save_calls == 2
+    assert provider.get_calls == 0
+    first_run_service_id = session.service_session_id
+    assert first_run_service_id == _PSC_SERVICE_CONVERSATION_ID
+
+    # Reset the scripted client for a second run on the same session.
+    client._script = _psc_function_call_script()
+    client.call_count = 0
+    client.saves_before_call = []
+
+    await _psc_run(agent, "And in Portland?", session, stream=stream)
+
+    # Persistence keeps happening on the second run (two more saves), still per service call.
+    assert client.saves_before_call == [2, 3]
+    assert provider.save_calls == 4
+    # Loading stays skipped and the service conversation id stays stable across runs.
+    assert provider.get_calls == 0
+    assert session.service_session_id == first_run_service_id
+
+
+@_psc_stream_params
+async def test_psc_flag_on_storing_without_conversation_id_warns_every_call(
+    stream: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Storing mode but the client returns no conversation_id: warn on every service call.
+
+    Without an echoed conversation id the next run has nothing to resume from, so cross-turn
+    history can be lost silently. The warning fires per service call (no dedup) so the uncommon
+    failure mode cannot pass unnoticed.
+    """
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=_psc_function_call_script(),
+        echo_conversation_id=False,
+    )
+    agent = _psc_build_agent(client, provider, require_per_service_call_history_persistence=True)
+    session = agent.create_session()
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        await _psc_run(agent, "What's the weather in Seattle?", session, stream=stream)
+
+    # Persistence still happens, but no service id is captured to resume from.
+    assert provider.save_calls == 2
+    assert session.service_session_id is None
+    # Two service calls -> the warning is emitted twice (one per call, not deduped).
+    missing_id_warnings = [r for r in caplog.records if "returned no conversation_id" in r.message]
+    assert len(missing_id_warnings) == 2

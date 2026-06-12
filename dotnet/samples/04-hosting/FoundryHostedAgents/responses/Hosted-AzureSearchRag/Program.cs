@@ -23,15 +23,18 @@ using OpenAI.Chat;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string projectEndpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+string projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
 
 string searchEndpoint = Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_SEARCH_ENDPOINT is not set.");
 string searchIndexName = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX_NAME")
     ?? throw new InvalidOperationException("AZURE_SEARCH_INDEX_NAME is not set.");
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential. Try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in
 // production). The dev credential is scope aware so a single instance serves both Foundry and

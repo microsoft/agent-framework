@@ -11,7 +11,7 @@
   Prerequisites:
     - Docker
     - az login (token is fetched from the host)
-    - .env populated with AZURE_AI_PROJECT_ENDPOINT and model deployments
+    - .env populated with FOUNDRY_PROJECT_ENDPOINT and model deployments
 .NOTES
   This script is for local Docker debugging only. The Foundry platform supplies the isolation
   keys for every inbound request in production and the dev fallback used here must not be
@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot/..
 
 if (-not (Test-Path .env)) {
-    throw '.env not found. Copy .env.example to .env and fill in AZURE_AI_PROJECT_ENDPOINT.'
+    throw '.env not found. Copy .env.example to .env and fill in FOUNDRY_PROJECT_ENDPOINT.'
 }
 
 Write-Host '==> Publishing sample for linux-musl-x64 ...'

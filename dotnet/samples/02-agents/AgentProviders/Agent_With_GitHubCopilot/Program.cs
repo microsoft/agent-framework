@@ -2,21 +2,22 @@
 
 // This sample shows how to create a GitHub Copilot agent with shell command permissions.
 
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 using Microsoft.Agents.AI;
 
 // Permission handler that prompts the user for approval
-static Task<PermissionRequestResult> PromptPermission(PermissionRequest request, PermissionInvocation invocation)
+static Task<PermissionDecision> PromptPermission(PermissionRequest request, PermissionInvocation invocation)
 {
     Console.WriteLine($"\n[Permission Request: {request.Kind}]");
     Console.Write("Approve? (y/n): ");
 
     string? input = Console.ReadLine()?.Trim().ToUpperInvariant();
-    PermissionRequestResultKind kind = input is "Y" or "YES"
-                                     ? PermissionRequestResultKind.Approved
-                                     : PermissionRequestResultKind.Rejected;
+    PermissionDecision decision = input is "Y" or "YES"
+                                     ? PermissionDecision.ApproveOnce()
+                                     : PermissionDecision.Reject();
 
-    return Task.FromResult(new PermissionRequestResult { Kind = kind });
+    return Task.FromResult(decision);
 }
 
 // Create and start a Copilot client

@@ -27,6 +27,7 @@ public class HarnessAgentOptionsTests
         Assert.Null(options.ChatHistoryProvider);
         Assert.Null(options.AIContextProviders);
         Assert.False(options.DisableToolApproval);
+        Assert.False(options.DisableNonApprovalRequiredFunctionBypassing);
         Assert.False(options.DisableFileMemory);
         Assert.False(options.DisableFileAccess);
         Assert.False(options.DisableWebSearch);
@@ -80,6 +81,7 @@ public class HarnessAgentOptionsTests
             AIContextProviders = contextProviders,
             MaximumIterationsPerRequest = 42,
             DisableToolApproval = true,
+            DisableNonApprovalRequiredFunctionBypassing = true,
             DisableFileMemory = true,
             FileMemoryStore = fileMemoryStore,
             DisableFileAccess = true,
@@ -112,6 +114,7 @@ public class HarnessAgentOptionsTests
         Assert.Same(contextProviders, options.AIContextProviders);
         Assert.Equal(42, options.MaximumIterationsPerRequest);
         Assert.True(options.DisableToolApproval);
+        Assert.True(options.DisableNonApprovalRequiredFunctionBypassing);
         Assert.True(options.DisableFileMemory);
         Assert.Same(fileMemoryStore, options.FileMemoryStore);
         Assert.True(options.DisableFileAccess);

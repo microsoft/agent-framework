@@ -2765,7 +2765,7 @@ class TestLongMessageTextHandling:
         assert temp_var is None
 
     async def test_long_message_text_stored_in_temp_variable(self, mock_state):
-        """Test that long MessageText results are stored in temp variables."""
+        """Long MessageText results round-trip and the temp key is removed after eval."""
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
@@ -2777,9 +2777,9 @@ class TestLongMessageTextHandling:
         result = state.eval("=Upper(MessageText(Local.Messages))")
         assert result == "A" * 600  # Upper on 'A' is still 'A'
 
-        # A temp variable should have been created
-        temp_var = state.get("Local._TempMessageText0")
-        assert temp_var == long_text
+        local = state.get_state_data().get("Local", {})
+        remaining = sorted(k for k in local if k.startswith("_TempMessageText"))
+        assert not remaining, f"Temporary keys remain in Local: {remaining}"
 
     async def test_find_with_long_message_text(self, mock_state):
         """Test Find function works with long MessageText stored in temp variable."""

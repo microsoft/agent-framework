@@ -1352,6 +1352,70 @@ async def test_workflow_run_approval_via_messages_approved() -> None:
     assert not resumed_finished.get("interrupt")
 
 
+async def test_workflow_run_approval_argument_mismatch_keeps_interrupt_pending() -> None:
+    """Workflow approval responses must not resume with changed function arguments."""
+
+    handled_responses: list[dict[str, Any]] = []
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request
+            if response.function_call is not None:
+                handled_responses.append(response.function_call.parse_arguments() or {})
+            await ctx.yield_output("handled")
+
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    first_events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()
+    interrupt_payload = cast(list[dict[str, Any]], first_finished.get("interrupt"))
+    assert isinstance(interrupt_payload, list) and len(interrupt_payload) == 1
+
+    resumed_events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "",
+                        "function_approvals": [
+                            {
+                                "approved": True,
+                                "id": "approval-1",
+                                "call_id": "refund-call",
+                                "name": "submit_refund",
+                                "arguments": {"order_id": "99999", "amount": "$1000.00"},
+                            }
+                        ],
+                    }
+                ],
+            },
+            workflow,
+        )
+    ]
+
+    assert handled_responses == []
+    resumed_finished = [event for event in resumed_events if event.type == "RUN_FINISHED"][0].model_dump()
+    assert resumed_finished.get("interrupt")
+
+
 async def test_workflow_run_approval_via_messages_denied() -> None:
     """Denied approval response sent via messages (function_approvals) should satisfy the pending request."""
 
