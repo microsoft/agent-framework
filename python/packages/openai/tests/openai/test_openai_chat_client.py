@@ -3301,6 +3301,7 @@ def test_usage_details_with_cached_tokens() -> None:
     assert details is not None
     assert details["input_token_count"] == 200
     assert details["openai.cached_input_tokens"] == 25
+    assert details["cache_read_input_token_count"] == 25
 
 
 def test_usage_details_with_reasoning_tokens() -> None:
@@ -3319,6 +3320,28 @@ def test_usage_details_with_reasoning_tokens() -> None:
     assert details is not None
     assert details["output_token_count"] == 80
     assert details["openai.reasoning_tokens"] == 30
+    assert details["reasoning_output_token_count"] == 30
+
+
+def test_usage_details_with_zero_cached_and_reasoning_tokens() -> None:
+    """Test _parse_usage_from_openai preserves zero-valued mapped usage details."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.input_tokens = 150
+    mock_usage.output_tokens = 80
+    mock_usage.total_tokens = 230
+    mock_usage.input_tokens_details = MagicMock()
+    mock_usage.input_tokens_details.cached_tokens = 0
+    mock_usage.output_tokens_details = MagicMock()
+    mock_usage.output_tokens_details.reasoning_tokens = 0
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore
+    assert details is not None
+    assert details["openai.cached_input_tokens"] == 0
+    assert details["cache_read_input_token_count"] == 0
+    assert details["openai.reasoning_tokens"] == 0
+    assert details["reasoning_output_token_count"] == 0
 
 
 def test_get_metadata_from_response() -> None:
