@@ -60,23 +60,6 @@ MEDIA_TYPE_ANALYZER_MAP: dict[str, str] = {
 }
 DEFAULT_ANALYZER: str = "prebuilt-documentSearch"
 
-# Defensive filter for rai_warnings telemetry noise (decision C1).
-# The SDK helper may emit internal telemetry strings such as
-# ``LLMStats: completion calls: 2; embedding calls: 1; completion latency: 7.71s``
-# inside the ``rai_warnings:`` YAML list. These are not real RAI warnings; strip
-# any matching list items before injecting the rendered string. Tracked as a
-# follow-up SDK issue (decision C2).
-_RAI_TELEMETRY_LINE_RE: re.Pattern[str] = re.compile(r"^[ \t]*-[ \t]+LLMStats:.*(?:\r?\n|$)", flags=re.MULTILINE)
-
-# Matches the ``rai_warnings:`` YAML mapping and its indented child lines,
-# stopping at the next top-level key or the closing front-matter ``---``.
-# Used to confine ``_RAI_TELEMETRY_LINE_RE`` to that sub-block so legitimate
-# markdown bullets like ``- LLMStats: ...`` in the body are never touched.
-_RAI_WARNINGS_BLOCK_RE: re.Pattern[str] = re.compile(
-    r"^rai_warnings:[ \t]*\r?\n(?:[ \t]+.*(?:\r?\n|$))*",
-    flags=re.MULTILINE,
-)
-
 # Matches the leading YAML front-matter block emitted by ``to_llm_input``.
 # A rendered text with no markdown body (e.g. when the CU result has empty
 # ``markdown`` and no fields) is recognised by an empty tail after this match.
@@ -97,33 +80,6 @@ def _has_renderable_body(text: str) -> bool:
     if match is None:
         return bool(text.strip())
     return bool(text[match.end() :].strip())
-
-
-def _strip_rai_telemetry(rendered: str) -> str:
-    """Remove ``LLMStats:`` telemetry list items from the front-matter ``rai_warnings:`` block.
-
-    The substitution is scoped to the YAML front-matter block — and within it,
-    to the ``rai_warnings:`` mapping — so user content in the rendered body
-    that happens to start with ``- LLMStats:`` is preserved verbatim.
-    """
-    fm_match = _FRONT_MATTER_RE.match(rendered)
-    if fm_match is None:
-        return rendered
-    fm_end = fm_match.end()
-    front_matter = rendered[:fm_end]
-    body = rendered[fm_end:]
-
-    block_match = _RAI_WARNINGS_BLOCK_RE.search(front_matter)
-    if block_match is None:
-        return rendered
-
-    block_text = block_match.group(0)
-    cleaned_block = _RAI_TELEMETRY_LINE_RE.sub("", block_text)
-    if cleaned_block == block_text:
-        return rendered
-
-    new_front_matter = front_matter[: block_match.start()] + cleaned_block + front_matter[block_match.end() :]
-    return new_front_matter + body
 
 
 class ContentUnderstandingSettings(TypedDict, total=False):
@@ -798,17 +754,12 @@ class ContentUnderstandingContextProvider(ContextProvider):
             A YAML-front-matter-prefixed text block ready for direct LLM
             consumption or vector store upload.
         """
-        rendered: str = to_llm_input(
+        return to_llm_input(
             result,
             include_markdown="markdown" in self.output_sections,
             include_fields="fields" in self.output_sections,
             metadata={"source": filename},
         )
-        # Defensive filter for telemetry strings emitted into rai_warnings.
-        # Scoped to the front-matter block so body bullets that happen to
-        # start with ``- LLMStats:`` are preserved. See decision C1; tracked
-        # as an SDK follow-up (decision C2).
-        return _strip_rai_telemetry(rendered)
 
     # ------------------------------------------------------------------
     # Tool Registration

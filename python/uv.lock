@@ -255,7 +255,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-foundry", editable = "packages/foundry" },
     { name = "aiohttp", specifier = ">=3.9,<4" },
-    { name = "azure-ai-contentunderstanding", specifier = ">=1.2.0b1,<2" },
+    { name = "azure-ai-contentunderstanding", specifier = ">=1.2.0b2,<2" },
     { name = "filetype", specifier = ">=1.2,<2" },
 ]
 
@@ -1212,16 +1212,16 @@ wheels = [
 
 [[package]]
 name = "azure-ai-contentunderstanding"
-version = "1.2.0b1"
+version = "1.2.0b2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/16/81/5b2436b6f727fd8ec53a5b99a9857688cde9a974e8a89242942df3a285e3/azure_ai_contentunderstanding-1.2.0b1.tar.gz", hash = "sha256:0379f3e5d7ae75fd7b5a4275d036935a9341965d946f46c902fe3ba641be41a0", size = 261344, upload-time = "2026-04-30T02:06:52.754Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/6c/f9af836a30b5299b10304d6b5ec645f8dbb1857429fa0191e41f86825d70/azure_ai_contentunderstanding-1.2.0b2.tar.gz", hash = "sha256:0ccef3c8087759ca788aabcc9af7b22cd8ada2df0236bf63563f4974c2d8cfcd", size = 265922, upload-time = "2026-06-11T02:24:56.951Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/02/202c4a8468e28587558036af9dce002710e8289ee9068c7174585a42f217/azure_ai_contentunderstanding-1.2.0b1-py3-none-any.whl", hash = "sha256:ad493bd8021887f937734d769cbedc04c04f495b101479b0ac3d74ede6203e4f", size = 111017, upload-time = "2026-04-30T02:06:54.371Z" },
+    { url = "https://files.pythonhosted.org/packages/12/08/bbe98d886deeeae320bb2d54b6cf132b1d811478232076d6e0d16d1aafaa/azure_ai_contentunderstanding-1.2.0b2-py3-none-any.whl", hash = "sha256:284885c9a45ef50f3938714cb6636c675c1ce9436dc0d561ff425fc124990379", size = 113072, upload-time = "2026-06-11T02:24:58.47Z" },
 ]
 
 [[package]]
