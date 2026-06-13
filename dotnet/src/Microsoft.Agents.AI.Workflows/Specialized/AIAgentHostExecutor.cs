@@ -221,7 +221,10 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         AgentResponse response;
         AIAgentUnservicedRequestsCollector collector = new(this._userInputHandler, this._functionCallHandler);
         AgentSession session = await this.EnsureSessionAsync(context, cancellationToken).ConfigureAwait(false);
-        List<ChatMessage>? historyBefore = await this.GetStoredChatHistorySnapshotAsync(session, cancellationToken).ConfigureAwait(false);
+        bool shouldCaptureEnrichedRequestMessages = this.HasAIContextProviders();
+        List<ChatMessage>? historyBefore = shouldCaptureEnrichedRequestMessages
+            ? await this.GetStoredChatHistorySnapshotAsync(session, cancellationToken).ConfigureAwait(false)
+            : null;
         List<ChatMessage> requestMessages = messages as List<ChatMessage> ?? messages.ToList();
 
         if (emitUpdateEvents)
@@ -258,12 +261,19 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
             await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
-        await this.EmitEnrichedRequestMessagesAsync(historyBefore, session, context, cancellationToken).ConfigureAwait(false);
+        if (shouldCaptureEnrichedRequestMessages)
+        {
+            await this.EmitEnrichedRequestMessagesAsync(historyBefore, session, context, cancellationToken).ConfigureAwait(false);
+        }
 
         await collector.SubmitAsync(context, cancellationToken).ConfigureAwait(false);
 
         return response;
     }
+
+    private bool HasAIContextProviders()
+        => this._agent.GetService<ChatClientAgent>()?.AIContextProviders is { Count: > 0 }
+        || this._agent.GetService<ChatClientAgentOptions>()?.AIContextProviders?.Any() == true;
 
     /// <summary>
     /// Get a snapshot of the chat history for the given session.
