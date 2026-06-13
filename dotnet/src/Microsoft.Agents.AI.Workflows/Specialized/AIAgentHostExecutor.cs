@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
@@ -219,13 +220,16 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
     {
         AgentResponse response;
         AIAgentUnservicedRequestsCollector collector = new(this._userInputHandler, this._functionCallHandler);
+        AgentSession session = await this.EnsureSessionAsync(context, cancellationToken).ConfigureAwait(false);
+        List<ChatMessage>? historyBefore = await this.GetStoredChatHistorySnapshotAsync(session, cancellationToken).ConfigureAwait(false);
+        List<ChatMessage> requestMessages = messages as List<ChatMessage> ?? messages.ToList();
 
         if (emitUpdateEvents)
         {
             // Run the agent in streaming mode only when agent run update events are to be emitted.
             IAsyncEnumerable<AgentResponseUpdate> agentStream = this._agent.RunStreamingAsync(
-                messages,
-                await this.EnsureSessionAsync(context, cancellationToken).ConfigureAwait(false),
+                requestMessages,
+                session,
                 cancellationToken: cancellationToken);
 
             List<AgentResponseUpdate> updates = [];
@@ -241,8 +245,8 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         else
         {
             // Otherwise, run the agent in non-streaming mode.
-            response = await this._agent.RunAsync(messages,
-                                                  await this.EnsureSessionAsync(context, cancellationToken).ConfigureAwait(false),
+            response = await this._agent.RunAsync(requestMessages,
+                                                  session,
                                                   cancellationToken: cancellationToken)
                                         .ConfigureAwait(false);
 
@@ -254,9 +258,93 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
             await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
+        await this.EmitEnrichedRequestMessagesAsync(historyBefore, session, context, cancellationToken).ConfigureAwait(false);
+
         await collector.SubmitAsync(context, cancellationToken).ConfigureAwait(false);
 
         return response;
+    }
+
+    /// <summary>
+    /// Get a snapshot of the chat history for the given session.
+    /// </summary>
+    /// <param name="session"> The session to get the chat history for. </param>
+    /// <param name="cancellationToken"> Cancellation token. </param>
+    /// <returns></returns>
+    private async ValueTask<List<ChatMessage>?> GetStoredChatHistorySnapshotAsync(AgentSession session, CancellationToken cancellationToken)
+    {
+        ChatHistoryProvider? provider = this._agent.GetService<ChatHistoryProvider>();
+        if (provider is null)
+        {
+            return null;
+        }
+        // if the provider is InMemoryChatHistoryProvider, get the messages directly
+        if (provider is InMemoryChatHistoryProvider inMemoryProvider)
+        {
+            return [.. inMemoryProvider.GetMessages(session)];
+        }
+
+        // otherwise, invoke the provider to get the messages
+#pragma warning disable MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+        ChatHistoryProvider.InvokingContext invokingContext = new(this._agent, session, []);
+#pragma warning restore MAAI001
+        IEnumerable<ChatMessage> messages = await provider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
+        return [.. messages];
+    }
+
+    /// <summary>
+    /// Detects request messages that were injected by <see cref="AIContextProvider"/> during the
+    /// latest agent invocation and raises them as <see cref="AgentAIContextProviderMsgEvent"/> so that
+    /// the workflow layer can persist them into its chat history.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This method compares the agent's stored chat history before and after the agent run.
+    /// Any newly-added messages whose <see cref="AgentRequestMessageSourceType"/> equals
+    /// <see cref="AgentRequestMessageSourceType.AIContextProvider"/> are considered enriched
+    /// request messages and are forwarded to the workflow event stream.
+    /// </para>
+    /// <para>
+    /// If <paramref name="historyBefore"/> is <see langword="null"/> (e.g. the agent does not
+    /// expose a <see cref="ChatHistoryProvider"/>), this method performs no work.
+    /// </para>
+    /// </remarks>
+    /// <param name="historyBefore">
+    /// Snapshot of the agent's stored chat history taken before the agent was invoked.
+    /// </param>
+    /// <param name="session">The agent session used for the invocation.</param>
+    /// <param name="context">The current workflow context used to emit events.</param>
+    /// <param name="cancellationToken">
+    /// The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// </param>
+    private async ValueTask EmitEnrichedRequestMessagesAsync(
+        List<ChatMessage>? historyBefore,
+        AgentSession session,
+        IWorkflowContext context,
+        CancellationToken cancellationToken)
+    {
+        if (historyBefore is null)
+        {
+            return;
+        }
+
+        List<ChatMessage>? historyAfter = await this.GetStoredChatHistorySnapshotAsync(session, cancellationToken).ConfigureAwait(false);
+        if (historyAfter is null || historyAfter.Count <= historyBefore.Count)
+        {
+            return;
+        }
+
+        List<ChatMessage> enrichedRequestMessages =
+        [
+            .. historyAfter
+                .Skip(historyBefore.Count)
+                .Where(message => message.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.AIContextProvider)
+        ];
+
+        if (enrichedRequestMessages.Count > 0)
+        {
+            await context.AddEventAsync(new AgentAIContextProviderMsgEvent(enrichedRequestMessages), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>

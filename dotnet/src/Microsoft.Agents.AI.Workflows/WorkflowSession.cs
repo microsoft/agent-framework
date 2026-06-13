@@ -477,6 +477,11 @@ internal sealed class WorkflowSession : AgentSession
                     yield return update;
                     break;
 
+                case AgentAIContextProviderMsgEvent requestMessages:
+                    // Add the message in the AIContentProvider to the ChatHistoryProvider of the Workflow.
+                    this.ChatHistoryProvider.AddMessages(this, requestMessages.Messages);
+                    break;
+
                 case WorkflowErrorEvent workflowError:
                     Exception? exception = workflowError.Exception;
                     if (exception is TargetInvocationException tie && tie.InnerException != null)
