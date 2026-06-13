@@ -339,7 +339,13 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         }
 
         List<ChatMessage>? historyAfter = await this.GetStoredChatHistorySnapshotAsync(session, cancellationToken).ConfigureAwait(false);
-        if (historyAfter is null || historyAfter.Count <= historyBefore.Count)
+        if (historyAfter is null)
+        {
+            return;
+        }
+
+        int firstNewMessageIndex = FindFirstDivergenceIndex(historyBefore, historyAfter);
+        if (firstNewMessageIndex >= historyAfter.Count)
         {
             return;
         }
@@ -347,7 +353,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         List<ChatMessage> enrichedRequestMessages =
         [
             .. historyAfter
-                .Skip(historyBefore.Count)
+                .Skip(firstNewMessageIndex)
                 .Where(message => message.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.AIContextProvider)
         ];
 
@@ -355,6 +361,45 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         {
             await context.AddEventAsync(new AgentAIContextProviderMsgEvent(enrichedRequestMessages), cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Finds the first index where <paramref name="historyAfter"/> diverges from <paramref name="historyBefore"/>.
+    /// Ensure that the messages can be properly filled in when they are being truncated.
+    /// </summary>
+    /// <returns>The index of the first new or changed message.</returns>
+    private static int FindFirstDivergenceIndex(List<ChatMessage> historyBefore, List<ChatMessage> historyAfter)
+    {
+        int commonLength = Math.Min(historyBefore.Count, historyAfter.Count);
+        for (int i = 0; i < commonLength; i++)
+        {
+            if (!MessagesCompare(historyBefore[i], historyAfter[i]))
+            {
+                return i;
+            }
+        }
+
+        return commonLength;
+    }
+
+    /// <summary>
+    /// Compare two messages
+    /// </summary>
+    /// <param name="before">Previous messages</param>
+    /// <param name="after">Cuurrent messages</param>
+    /// <returns></returns>
+    private static bool MessagesCompare(ChatMessage before, ChatMessage after)
+    {
+        if (before.MessageId is not null && after.MessageId is not null)
+        {
+            return string.Equals(before.MessageId, after.MessageId, StringComparison.Ordinal);
+        }
+
+        return before.Role == after.Role
+            && string.Equals(before.AuthorName, after.AuthorName, StringComparison.Ordinal)
+            && string.Equals(before.Text, after.Text, StringComparison.Ordinal)
+            && before.GetAgentRequestMessageSourceType() == after.GetAgentRequestMessageSourceType()
+            && string.Equals(before.GetAgentRequestMessageSourceId(), after.GetAgentRequestMessageSourceId(), StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 /// Validates that messages injected by <see cref="AIContextProvider"/> into an inner agent
 /// are correctly persisted into the workflow's chat history, without leaking to downstream agents.
 /// </summary>
-public class AIContextProviderWorkflow
+public class AIContextProviderWorkflowTests
 {
     private const string UserText = "Where is Taggia?";
     private const string ContextText = "Taggia is a city in Liguria.";
@@ -55,6 +55,32 @@ public class AIContextProviderWorkflow
     }
 
     /// <summary>
+    /// Ensures that AIContextProvider-injected messages are still persisted when inner chat history is pruned.
+    /// </summary>
+    [Fact]
+    public async Task Test_WorkflowAsAgent_SerializesAIContextProviderRequestMessagesWhenInnerHistoryIsPrunedAsync()
+    {
+        // Arrange
+        RetainingChatHistoryProvider chatHistoryProvider = new(maxStoredMessages: 2);
+        chatHistoryProvider.Add(new ChatMessage(ChatRole.User, "Previous question") { MessageId = "previous-user" });
+        chatHistoryProvider.Add(new ChatMessage(ChatRole.Assistant, "Previous answer") { MessageId = "previous-assistant" });
+        ChatClientAgent innerAgent = CreateContextAwareAgent(chatHistoryProvider);
+        AIAgent workflowAgent = AgentWorkflowBuilder.BuildSequential(innerAgent).AsAIAgent();
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+
+        // Act
+        await workflowAgent.RunAsync(new ChatMessage(ChatRole.User, UserText), session);
+
+        // Assert
+        WorkflowSession workflowSession = session.Should().BeOfType<WorkflowSession>().Subject;
+        workflowSession.ChatHistoryProvider
+            .GetAllMessages(workflowSession)
+            .Select(message => message.Text)
+            .Should()
+            .Contain(ContextText);
+    }
+
+    /// <summary>
     /// Ensures that AIContextProvider-injected messages are saved to workflow history
     /// but are NOT forwarded as part of the input to subsequent agents in the workflow.
     /// </summary>
@@ -77,13 +103,14 @@ public class AIContextProviderWorkflow
     }
 
     /// <summary>Builds an agent whose IChatClient always replies with <see cref="FirstAgentResponseText"/>, prepopulated with a <see cref="StaticAIContextProvider"/>.</summary>
-    private static ChatClientAgent CreateContextAwareAgent()
+    private static ChatClientAgent CreateContextAwareAgent(ChatHistoryProvider? chatHistoryProvider = null)
     {
         return new ChatClientAgent(
             new StubChatClient(_ => new ChatResponse([new ChatMessage(ChatRole.Assistant, FirstAgentResponseText)])),
             new ChatClientAgentOptions
             {
                 Name = "inner",
+                ChatHistoryProvider = chatHistoryProvider,
                 AIContextProviders = [new StaticAIContextProvider(ContextText)]
             });
     }
@@ -97,6 +124,37 @@ public class AIContextProviderWorkflow
             {
                 Messages = [new ChatMessage(ChatRole.System, text)]
             });
+        }
+    }
+
+    private sealed class RetainingChatHistoryProvider(int maxStoredMessages) : ChatHistoryProvider
+    {
+        private readonly List<ChatMessage> _messages = [];
+
+        public void Add(ChatMessage message)
+        {
+            this._messages.Add(message);
+        }
+
+        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        {
+            return new(this._messages.Concat(context.RequestMessages));
+        }
+
+        protected override ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        {
+            this._messages.AddRange(context.RequestMessages);
+            if (context.ResponseMessages is not null)
+            {
+                this._messages.AddRange(context.ResponseMessages);
+            }
+
+            if (this._messages.Count > maxStoredMessages)
+            {
+                this._messages.RemoveRange(0, this._messages.Count - maxStoredMessages);
+            }
+
+            return default;
         }
     }
 
