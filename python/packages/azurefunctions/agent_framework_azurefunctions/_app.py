@@ -298,8 +298,8 @@ class AgentFunctionApp(DFAppBase):
             if not executor:
                 raise ValueError(f"Unknown executor: {captured_executor_id}")
 
-            # Reconstruct message - deserialize_value restores the original typed objects
-            # from the encoded data (with type markers)
+            # Reconstruct message: strip untrusted pickle/type markers first
+            # (defense-in-depth), then deserialize_value restores typed objects.
             message = deserialize_value(strip_pickle_markers(message_data))
 
             # Check if this is a HITL response message by examining source_executor_ids
