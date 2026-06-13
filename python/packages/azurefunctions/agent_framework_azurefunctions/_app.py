@@ -300,7 +300,7 @@ class AgentFunctionApp(DFAppBase):
 
             # Reconstruct message - deserialize_value restores the original typed objects
             # from the encoded data (with type markers)
-            message = deserialize_value(message_data)
+            message = deserialize_value(strip_pickle_markers(message_data))
 
             # Check if this is a HITL response message by examining source_executor_ids
             is_hitl_response = any(s.startswith(SOURCE_HITL_RESPONSE) for s in source_executor_ids)
@@ -324,7 +324,7 @@ class AgentFunctionApp(DFAppBase):
 
                 # Deserialize shared state values to reconstruct dataclasses/Pydantic models
                 deserialized_state: dict[str, Any] = {
-                    str(k): deserialize_value(v) for k, v in shared_state_snapshot.items()
+                    str(k): deserialize_value(strip_pickle_markers(v)) for k, v in shared_state_snapshot.items()
                 }
                 original_snapshot = _create_state_snapshot(deserialized_state)
                 shared_state.import_state(deserialized_state)
