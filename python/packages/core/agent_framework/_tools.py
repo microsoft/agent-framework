@@ -1821,6 +1821,8 @@ async def _try_execute_function_calls(
                 False,
             )
 
+    # Create each task inside a copied context so the active agent span is
+    # preserved for every parallel tool invocation.
     execution_tasks = [
         contextvars.copy_context().run(
             asyncio.create_task,

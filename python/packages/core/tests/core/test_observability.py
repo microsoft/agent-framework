@@ -4317,7 +4317,7 @@ async def test_parallel_function_call_spans_nested_under_agent_span(span_exporte
 
     assert len(invoke_spans) == 1
     assert len(tool_spans) == 2
-    assert {s.attributes.get(OtelAttr.TOOL_NAME) for s in tool_spans} == {"first_tool", "second_tool"}
+    assert {s.attributes.get(OtelAttr.TOOL_NAME.value) for s in tool_spans} == {"first_tool", "second_tool"}
 
     agent_span = invoke_spans[0]
     for tool_span in tool_spans:
