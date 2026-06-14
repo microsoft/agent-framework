@@ -1,4 +1,4 @@
-# Hosted-McpTools
+﻿# Hosted-McpTools
 
 A hosted agent demonstrating **two layers of MCP (Model Context Protocol) tool integration**:
 
@@ -33,8 +33,8 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_MODEL=gpt-4o
 ```
 
 ## Running directly (contributors)

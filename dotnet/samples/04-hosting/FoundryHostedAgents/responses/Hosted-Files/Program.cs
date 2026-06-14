@@ -20,8 +20,8 @@
 // indirect prompt injection in an uploaded file.
 //
 // Required environment variables:
-//   AZURE_AI_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME    - Model deployment name (default: gpt-4o)
+//   FOUNDRY_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
+//   FOUNDRY_MODEL    - Model deployment name (default: gpt-4o)
 //
 // Optional:
 //   AGENT_NAME                        - Agent name (default: hosted-files)
@@ -46,10 +46,13 @@ Env.TraversePath().Load();
 // Bypass SampleEnvironment alias (which prompts on missing env vars) for optional values.
 string? GetOptionalEnv(string key) => System.Environment.GetEnvironmentVariable(key);
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = GetOptionalEnv("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = GetOptionalEnv("FOUNDRY_MODEL") ?? "gpt-4o";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
 TokenCredential credential = new ChainedTokenCredential(

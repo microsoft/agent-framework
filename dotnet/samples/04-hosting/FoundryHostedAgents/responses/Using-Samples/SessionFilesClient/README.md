@@ -1,4 +1,4 @@
-# SessionFilesClient
+﻿# SessionFilesClient
 
 A thin chat REPL that connects to a deployed [`Hosted-Files`](../../Hosted-Files/) agent via `FoundryAgent` and lets you ask questions whose answers come from the files bundled with that agent. Same shape as [`SimpleAgent`](../SimpleAgent/) — point it at an `AGENT_ENDPOINT`, build a `FoundryAgent`, run.
 
@@ -13,17 +13,17 @@ The agent's container-side `ListFiles` and `ReadFile` tools surface the bundled 
 ## Configuration
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<host>/api/projects/<project>
+FOUNDRY_PROJECT_ENDPOINT=https://<host>/api/projects/<project>
 AZURE_AI_AGENT_NAME=hosted-files
 ```
 
-Both are required. `AZURE_AI_PROJECT_ENDPOINT` is the Foundry project endpoint URL and `AZURE_AI_AGENT_NAME` is the registered server-side agent name. The sample builds the per-agent OpenAI endpoint URL from these.
+Both are required. `FOUNDRY_PROJECT_ENDPOINT` is the Foundry project endpoint URL and `AZURE_AI_AGENT_NAME` is the registered server-side agent name. The sample builds the per-agent OpenAI endpoint URL from these.
 
 ## Run
 
 ```bash
 cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SessionFilesClient
-$env:AZURE_AI_PROJECT_ENDPOINT = "http://localhost:8088/api/projects/local"
+$env:FOUNDRY_PROJECT_ENDPOINT = "http://localhost:8088/api/projects/local"
 $env:AZURE_AI_AGENT_NAME = "hosted-files"
 dotnet run
 ```

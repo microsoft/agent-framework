@@ -28,8 +28,8 @@ template:
     cpu: "0.25"
     memory: 0.5Gi
   environment_variables:
-    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
-      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+    - name: FOUNDRY_MODEL
+      value: "{{FOUNDRY_MODEL}}"
     - name: FOUNDRY_TOOLBOX_NAME
       value: "{{FOUNDRY_TOOLBOX_NAME}}"
 parameters:
@@ -40,4 +40,4 @@ parameters:
 resources:
   - kind: model
     id: gpt-5
-    name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+    name: FOUNDRY_MODEL
