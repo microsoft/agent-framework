@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using Microsoft.Agents.AI.Hyperlight.Internal;
 using Microsoft.Extensions.AI;
 
