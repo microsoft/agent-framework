@@ -40,6 +40,13 @@ def _content_texts(contents: list[Content]) -> list[str]:
     return [content.text or "" for content in contents if content.type == "text"]
 
 
+def _symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        pytest.skip(f"Symlink creation is not available in this environment: {exc}")
+
+
 def test_tool_construction_defaults() -> None:
     local_tool = LocalExecuteCodeTool()
     assert local_tool.name == "execute_code"
@@ -209,7 +216,7 @@ async def test_file_capture_skips_symlinks_and_returns_written_files(tmp_path: P
     mounted.mkdir()
     outside = tmp_path / "outside.txt"
     outside.write_text("secret", encoding="utf-8")
-    (mounted / "link.txt").symlink_to(outside)
+    _symlink_or_skip(mounted / "link.txt", outside)
 
     local_tool = LocalExecuteCodeTool(
         file_mounts=[FileMount(mounted, "/output", mode="read-write")],
@@ -257,7 +264,7 @@ def test_symlinked_mount_root_is_rejected(tmp_path: Path) -> None:
     real_dir = tmp_path / "real"
     real_dir.mkdir()
     link = tmp_path / "link"
-    link.symlink_to(real_dir)
+    _symlink_or_skip(link, real_dir, target_is_directory=True)
 
     with pytest.raises(ValueError, match="symbolic link"):
         LocalExecuteCodeTool(workspace_root=link)
