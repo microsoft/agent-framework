@@ -31,11 +31,12 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// This provider exposes the following tools to the agent:
 /// <list type="bullet">
-/// <item><description><c>SaveFile</c> — Save a file with the given name and content.</description></item>
-/// <item><description><c>ReadFile</c> — Read the content of a file by name.</description></item>
-/// <item><description><c>DeleteFile</c> — Delete a file by name.</description></item>
-/// <item><description><c>ListFiles</c> — List all file names.</description></item>
-/// <item><description><c>SearchFiles</c> — Search file contents using a regular expression pattern.</description></item>
+/// <item><description><c>file_access_save_file</c> — Save a file with the given name and content.</description></item>
+/// <item><description><c>file_access_read_file</c> — Read the content of a file by name.</description></item>
+/// <item><description><c>file_access_delete_file</c> — Delete a file by name.</description></item>
+/// <item><description><c>file_access_list_files</c> — List the direct child file names in a directory.</description></item>
+/// <item><description><c>file_access_list_subdirectories</c> — List the direct child subdirectory names in a directory.</description></item>
+/// <item><description><c>file_access_search_files</c> — Recursively search file contents using a regular expression pattern.</description></item>
 /// </list>
 /// </para>
 /// </remarks>
@@ -45,11 +46,13 @@ public sealed class FileAccessProvider : AIContextProvider
     private const string DefaultInstructions =
         """
         ## File Access
-        You have access to a shared file storage area via the `FileAccess_*` tools for reading, writing, and managing files.
+        You have access to a shared file storage area via the `file_access_*` tools for reading, writing, and managing files.
         These files persist beyond the current session and may be shared across sessions or agents.
         Use these tools to read input data provided by the user, write output artifacts, and manage any files the user has asked you to work with.
 
         - Never delete or overwrite existing files unless the user has explicitly asked you to do so.
+        - Files may be organized into subdirectories. Use `file_access_list_files` and `file_access_list_subdirectories` to explore the tree level by level,
+          or `file_access_search_files` to search file contents recursively across the whole store.
         """;
 
     private readonly AgentFileStore _fileStore;
@@ -137,30 +140,56 @@ public sealed class FileAccessProvider : AIContextProvider
     }
 
     /// <summary>
-    /// List all file names.
+    /// List the direct child file names of a directory. Omit <paramref name="directory"/> (or pass an empty string)
+    /// to list the store root. To enumerate files in a subdirectory, pass its relative path.
     /// </summary>
+    /// <param name="directory">The relative directory path to list. Omit or pass an empty string to list the store root.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A list of file names.</returns>
-    [Description("List all file names.")]
-    private async Task<List<string>> ListFilesAsync(CancellationToken cancellationToken = default)
+    [Description("List the direct child file names of a directory. Omit the directory (or pass an empty string) to list the root. To enumerate files in a subdirectory, pass its relative path, for example \"reports\" or \"reports/2024\".")]
+    private async Task<List<string>> ListFilesAsync(string? directory = null, CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<string> fileNames = await this._fileStore.ListFilesAsync(string.Empty, cancellationToken).ConfigureAwait(false);
+        string target = string.IsNullOrWhiteSpace(directory) ? string.Empty : directory;
+        IReadOnlyList<string> fileNames = await this._fileStore.ListFilesAsync(target, cancellationToken).ConfigureAwait(false);
         return new List<string>(fileNames);
     }
 
     /// <summary>
-    /// Search file contents using a regular expression pattern (case-insensitive).
+    /// List the direct child subdirectory names of a directory. Omit <paramref name="directory"/> (or pass an empty string)
+    /// to list the store root. To enumerate subdirectories of a subdirectory, pass its relative path.
+    /// </summary>
+    /// <param name="directory">The relative directory path to list. Omit or pass an empty string to list the store root.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>A list of subdirectory names.</returns>
+    [Description("List the direct child subdirectory names of a directory. Omit the directory (or pass an empty string) to list the root. To enumerate subdirectories of a subdirectory, pass its relative path, for example \"reports\" or \"reports/2024\". Use this together with file_access_list_files to explore the directory tree level by level.")]
+    private async Task<List<string>> ListSubdirectoriesAsync(string? directory = null, CancellationToken cancellationToken = default)
+    {
+        string target = string.IsNullOrWhiteSpace(directory) ? string.Empty : directory;
+        IReadOnlyList<string> directoryNames = await this._fileStore.ListDirectoriesAsync(target, cancellationToken).ConfigureAwait(false);
+        return new List<string>(directoryNames);
+    }
+
+    /// <summary>
+    /// Search the contents of all files in the store (recursively) using a regular expression pattern (case-insensitive).
     /// Optionally filter which files to search using a glob pattern.
     /// </summary>
     /// <param name="regexPattern">A regular expression pattern to match against file contents (case-insensitive).</param>
-    /// <param name="filePattern">An optional glob pattern to filter which files to search (e.g., "*.md", "research*"). Leave empty or omit to search all files.</param>
+    /// <param name="filePattern">An optional glob pattern to filter which files to search, matched against each file's path relative to the store root. Use <c>**</c> to match across subdirectories (e.g., "**/*.md"). Leave empty or omit to search all files.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>A list of search results with matching file names, snippets, and matching lines.</returns>
-    [Description("Search file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a glob pattern (e.g., \"*.md\", \"research*\"). Returns matching file names, snippets, and matching lines with line numbers.")]
+    /// <returns>A list of search results whose file names are paths relative to the store root.</returns>
+    [Description(
+        """
+        Search the contents of all files in the store (recursively, across all subdirectories) using a regular expression pattern (case-insensitive).
+        Optionally filter which files to search using a glob pattern matched against each file's path relative to the store root:
+        - '*' matches within a single path segment
+        - '**' matches across subdirectories, so use \"**/*.md\" to match markdown files at any depth, or \"reports/**\" to restrict the search to the 'reports' subtree.
+        
+        Returns matching results whose file names are paths relative to the store root (usable with file_access_read_file), along with snippets and matching lines with line numbers.
+        """)]
     private async Task<List<FileSearchResult>> SearchFilesAsync(string regexPattern, string? filePattern = null, CancellationToken cancellationToken = default)
     {
         string? pattern = string.IsNullOrWhiteSpace(filePattern) ? null : filePattern;
-        IReadOnlyList<FileSearchResult> results = await this._fileStore.SearchFilesAsync(string.Empty, regexPattern, pattern, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FileSearchResult> results = await this._fileStore.SearchFilesAsync(string.Empty, regexPattern, pattern, recursive: true, cancellationToken).ConfigureAwait(false);
         return new List<FileSearchResult>(results);
     }
 
@@ -170,11 +199,12 @@ public sealed class FileAccessProvider : AIContextProvider
 
         return
         [
-            AIFunctionFactory.Create(this.SaveFileAsync, new AIFunctionFactoryOptions { Name = "FileAccess_SaveFile", SerializerOptions = serializerOptions }),
-            AIFunctionFactory.Create(this.ReadFileAsync, new AIFunctionFactoryOptions { Name = "FileAccess_ReadFile", SerializerOptions = serializerOptions }),
-            AIFunctionFactory.Create(this.DeleteFileAsync, new AIFunctionFactoryOptions { Name = "FileAccess_DeleteFile", SerializerOptions = serializerOptions }),
-            AIFunctionFactory.Create(this.ListFilesAsync, new AIFunctionFactoryOptions { Name = "FileAccess_ListFiles", SerializerOptions = serializerOptions }),
-            AIFunctionFactory.Create(this.SearchFilesAsync, new AIFunctionFactoryOptions { Name = "FileAccess_SearchFiles", SerializerOptions = serializerOptions }),
+            AIFunctionFactory.Create(this.SaveFileAsync, new AIFunctionFactoryOptions { Name = "file_access_save_file", SerializerOptions = serializerOptions }),
+            AIFunctionFactory.Create(this.ReadFileAsync, new AIFunctionFactoryOptions { Name = "file_access_read_file", SerializerOptions = serializerOptions }),
+            AIFunctionFactory.Create(this.DeleteFileAsync, new AIFunctionFactoryOptions { Name = "file_access_delete_file", SerializerOptions = serializerOptions }),
+            AIFunctionFactory.Create(this.ListFilesAsync, new AIFunctionFactoryOptions { Name = "file_access_list_files", SerializerOptions = serializerOptions }),
+            AIFunctionFactory.Create(this.ListSubdirectoriesAsync, new AIFunctionFactoryOptions { Name = "file_access_list_subdirectories", SerializerOptions = serializerOptions }),
+            AIFunctionFactory.Create(this.SearchFilesAsync, new AIFunctionFactoryOptions { Name = "file_access_search_files", SerializerOptions = serializerOptions }),
         ];
     }
 }
