@@ -7,24 +7,25 @@ namespace Microsoft.Agents.AI.LocalCodeAct.UnitTests;
 public sealed class LocalCodeActProviderOptionsTests
 {
     [Fact]
-    public void Constructor_RequiresPythonExecutablePath()
+    public void ProviderConstructor_RequiresPythonExecutablePath()
     {
-        Assert.Throws<ArgumentException>(() => new LocalCodeActProviderOptions(""));
-        Assert.Throws<ArgumentException>(() => new LocalCodeActProviderOptions("   "));
-        _ = Assert.Throws<ArgumentNullException>(() => new LocalCodeActProviderOptions(null!));
+        Assert.Throws<ArgumentException>(() => new LocalCodeActProvider(""));
+        Assert.Throws<ArgumentException>(() => new LocalCodeActProvider("   "));
+        _ = Assert.Throws<ArgumentNullException>(() => new LocalCodeActProvider(null!));
     }
 
     [Fact]
-    public void Constructor_AssignsPythonExecutablePath()
+    public void ExecuteCodeFunctionConstructor_RequiresPythonExecutablePath()
     {
-        var options = new LocalCodeActProviderOptions("/usr/bin/python3");
-        Assert.Equal("/usr/bin/python3", options.PythonExecutablePath);
+        Assert.Throws<ArgumentException>(() => new LocalExecuteCodeFunction(""));
+        Assert.Throws<ArgumentException>(() => new LocalExecuteCodeFunction("   "));
+        _ = Assert.Throws<ArgumentNullException>(() => new LocalExecuteCodeFunction(null!));
     }
 
     [Fact]
-    public void ValidationEnabled_DefaultsToTrue()
+    public void ValidationDisabled_DefaultsToFalse()
     {
-        var options = new LocalCodeActProviderOptions("/usr/bin/python3");
-        Assert.True(options.ValidationEnabled);
+        var options = new LocalCodeActProviderOptions();
+        Assert.False(options.ValidationDisabled);
     }
 }

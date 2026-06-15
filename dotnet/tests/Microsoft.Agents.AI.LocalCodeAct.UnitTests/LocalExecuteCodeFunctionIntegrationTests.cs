@@ -31,7 +31,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     {
         SkipIfNoPython();
 
-        var function = new LocalExecuteCodeFunction(new LocalCodeActProviderOptions(s_python!));
+        var function = new LocalExecuteCodeFunction(s_python!);
 
         var args = new AIFunctionArguments
         {
@@ -52,7 +52,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     {
         SkipIfNoPython();
 
-        var function = new LocalExecuteCodeFunction(new LocalCodeActProviderOptions(s_python!));
+        var function = new LocalExecuteCodeFunction(s_python!);
 
         var args = new AIFunctionArguments
         {
@@ -71,7 +71,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         var hostDir = Directory.CreateTempSubdirectory("localcodeact-mount-").FullName;
         try
         {
-            var options = new LocalCodeActProviderOptions(s_python!)
+            var options = new LocalCodeActProviderOptions
             {
                 FileMounts = new[]
                 {
@@ -79,7 +79,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
                 },
             };
 
-            var function = new LocalExecuteCodeFunction(options);
+            var function = new LocalExecuteCodeFunction(s_python!, options);
 
             // Use os.path.join via the actual host path - the mount path is descriptive metadata only
             var escapedPath = hostDir.Replace("\\", "\\\\", StringComparison.Ordinal);
@@ -107,7 +107,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
 
         // No tools are registered, so any call_tool from generated code resolves to
         // the "Unknown tool" branch in ProcessBridge.HandleToolCallAsync.
-        var function = new LocalExecuteCodeFunction(new LocalCodeActProviderOptions(s_python!));
+        var function = new LocalExecuteCodeFunction(s_python!);
 
         var args = new AIFunctionArguments
         {
@@ -138,11 +138,11 @@ except Exception as exc:
         Func<string, string> faulty = message => throw new InvalidOperationException("intentional: " + message);
         var faultyTool = AIFunctionFactory.Create(faulty, name: "faulty");
 
-        var options = new LocalCodeActProviderOptions(s_python!)
+        var options = new LocalCodeActProviderOptions
         {
             Tools = new[] { faultyTool },
         };
-        var function = new LocalExecuteCodeFunction(options);
+        var function = new LocalExecuteCodeFunction(s_python!, options);
 
         var args = new AIFunctionArguments
         {

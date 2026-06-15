@@ -10,24 +10,6 @@ namespace Microsoft.Agents.AI.LocalCodeAct;
 /// </summary>
 public sealed class LocalCodeActProviderOptions
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="LocalCodeActProviderOptions"/> class.
-    /// </summary>
-    /// <param name="pythonExecutablePath">Path to the Python interpreter used for execution and validation.</param>
-    public LocalCodeActProviderOptions(string pythonExecutablePath)
-    {
-        Shared.Diagnostics.Throw.IfNull(pythonExecutablePath);
-        if (string.IsNullOrWhiteSpace(pythonExecutablePath))
-        {
-            throw new System.ArgumentException("Python executable path must not be empty.", nameof(pythonExecutablePath));
-        }
-
-        this.PythonExecutablePath = pythonExecutablePath;
-    }
-
-    /// <summary>Gets the path to the Python interpreter used for execution and validation.</summary>
-    public string PythonExecutablePath { get; }
-
     /// <summary>Gets or sets the resource limits applied to subprocess execution and capture.</summary>
     public ProcessExecutionLimits? ExecutionLimits { get; set; }
 
@@ -74,13 +56,13 @@ public sealed class LocalCodeActProviderOptions
     public string? ValidatorScriptPath { get; set; }
 
     /// <summary>
-    /// Gets or sets whether AST allow-list validation is enabled. Defaults to <see langword="true"/>.
+    /// Gets or sets whether AST allow-list validation is disabled. Defaults to <see langword="false"/>.
     /// </summary>
     /// <remarks>
     /// Disabling validation removes a critical defense-in-depth control. Only disable when the
     /// generated code is trusted or when running inside a strong external sandbox.
     /// </remarks>
-    public bool ValidationEnabled { get; set; } = true;
+    public bool ValidationDisabled { get; set; }
 
     /// <summary>
     /// Gets or sets the set of imports allowed by the validator. When <see langword="null"/>

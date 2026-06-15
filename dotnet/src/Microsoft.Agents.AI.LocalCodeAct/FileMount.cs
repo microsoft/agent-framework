@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Shared.Diagnostics;
+
 namespace Microsoft.Agents.AI.LocalCodeAct;
 
 /// <summary>
@@ -42,20 +44,8 @@ public sealed class FileMount
     /// </param>
     public FileMount(string hostPath, string mountPath, FileMountMode mode = FileMountMode.ReadWrite, long? writeBytesLimit = null)
     {
-        Shared.Diagnostics.Throw.IfNull(hostPath);
-        Shared.Diagnostics.Throw.IfNull(mountPath);
-        if (string.IsNullOrWhiteSpace(hostPath))
-        {
-            throw new System.ArgumentException("Host path must not be empty.", nameof(hostPath));
-        }
-
-        if (string.IsNullOrWhiteSpace(mountPath))
-        {
-            throw new System.ArgumentException("Mount path must not be empty.", nameof(mountPath));
-        }
-
-        this.HostPath = hostPath;
-        this.MountPath = mountPath;
+        this.HostPath = Throw.IfNullOrWhitespace(hostPath);
+        this.MountPath = Throw.IfNullOrWhitespace(mountPath);
         this.Mode = mode;
         this.WriteBytesLimit = writeBytesLimit;
     }

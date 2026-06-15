@@ -5,8 +5,6 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
-    <RootNamespace>HostedLocalCodeAct</RootNamespace>
-    <AssemblyName>HostedLocalCodeAct</AssemblyName>
     <NoWarn>$(NoWarn);</NoWarn>
   </PropertyGroup>
 

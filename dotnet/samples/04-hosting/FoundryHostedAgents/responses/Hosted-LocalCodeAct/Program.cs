@@ -73,7 +73,7 @@ static IReadOnlyList<IReadOnlyDictionary<string, object>> FetchData(
 
 // ── LocalCodeAct provider with sandbox-only host tools ───────────────────────
 
-var codeActOptions = new LocalCodeActProviderOptions(pythonExecutable)
+var codeActOptions = new LocalCodeActProviderOptions
 {
     Tools =
     [
@@ -83,7 +83,7 @@ var codeActOptions = new LocalCodeActProviderOptions(pythonExecutable)
     ExecutionLimits = new ProcessExecutionLimits { TimeoutSeconds = 5 },
 };
 
-var codeAct = new LocalCodeActProvider(codeActOptions);
+var codeAct = new LocalCodeActProvider(pythonExecutable, codeActOptions);
 
 // ── Build the hosted agent ───────────────────────────────────────────────────
 

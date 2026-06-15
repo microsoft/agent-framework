@@ -1,4 +1,4 @@
-# Microsoft.Agents.AI.LocalCodeAct
+﻿# Microsoft.Agents.AI.LocalCodeAct
 
 Local CodeAct integration for Microsoft Agent Framework.
 
@@ -27,12 +27,12 @@ This is a preview package.
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.LocalCodeAct;
 
-var options = new LocalCodeActProviderOptions("/usr/bin/python3")
+var options = new LocalCodeActProviderOptions()
 {
     ExecutionLimits = new ProcessExecutionLimits { TimeoutSeconds = 5 },
 };
 
-using var provider = new LocalCodeActProvider(options);
+using var provider = new LocalCodeActProvider("/usr/bin/python3", options);
 
 // Register provider with your AIAgent's context providers.
 ```
@@ -42,7 +42,7 @@ using var provider = new LocalCodeActProvider(options);
 - **AST validation** (default on): Validates generated code against allow-lists
   before execution.
 - **Subprocess execution**: Runs generated code in a child Python process.
-- **Explicit Python path**: `PythonExecutablePath` is required (no default).
+- **Explicit Python path**: the provider and standalone function constructors require a Python executable path (no default).
 - **Isolated environment**: Does not inherit host environment variables unless
   explicitly provided.
 - **No shell invocation**: Launches Python directly without a shell.
@@ -78,7 +78,7 @@ var addFunction = AIFunctionFactory.Create(
     name: "add",
     description: "Adds two integers.");
 
-using var provider = new LocalCodeActProvider(new LocalCodeActProviderOptions("/usr/bin/python3")
+using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeActProviderOptions
 {
     Tools = new[] { addFunction },
 });
@@ -116,7 +116,7 @@ allow-lists.
 Override the default lists:
 
 ```csharp
-using var provider = new LocalCodeActProvider(new LocalCodeActProviderOptions("/usr/bin/python3")
+using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeActProviderOptions
 {
     AllowedImports = new[] { "math", "datetime", "mymodule" },
     BlockedImports = new[] { "subprocess", "sys" },
@@ -129,7 +129,7 @@ Custom lists **replace** the defaults (not augment).
 
 ### Disabling Validation
 
-Set `ValidationEnabled = false` to skip the AST validator entirely. Doing so
+Set `ValidationDisabled = true` to skip the AST validator entirely. Doing so
 removes a critical defense-in-depth control. Only disable when the generated
 code is trusted or when running inside a strong external sandbox.
 
@@ -138,7 +138,7 @@ code is trusted or when running inside a strong external sandbox.
 Mount host directories to expose them to generated code:
 
 ```csharp
-using var provider = new LocalCodeActProvider(new LocalCodeActProviderOptions("/usr/bin/python3")
+using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeActProviderOptions
 {
     FileMounts = new[]
     {
@@ -159,7 +159,7 @@ Pass environment variables explicitly. The subprocess does NOT inherit the host
 environment by default:
 
 ```csharp
-using var provider = new LocalCodeActProvider(new LocalCodeActProviderOptions("/usr/bin/python3")
+using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeActProviderOptions
 {
     Environment = new Dictionary<string, string>
     {
@@ -174,7 +174,7 @@ using var provider = new LocalCodeActProvider(new LocalCodeActProviderOptions("/
 If you do not want the provider machinery you can expose `execute_code` directly:
 
 ```csharp
-var function = new LocalExecuteCodeFunction(new LocalCodeActProviderOptions("/usr/bin/python3"));
+var function = new LocalExecuteCodeFunction("/usr/bin/python3");
 ```
 
 `LocalExecuteCodeFunction` snapshots tools and mounts at construction time and

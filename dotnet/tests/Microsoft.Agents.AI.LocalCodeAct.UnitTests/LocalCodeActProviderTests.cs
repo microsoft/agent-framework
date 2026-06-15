@@ -15,15 +15,15 @@ public sealed class LocalCodeActProviderTests
         new(s_mockAgent, session: null, new AIContext());
 
     private static LocalCodeActProviderOptions Options() =>
-        new("/usr/bin/python3")
+        new()
         {
-            ValidationEnabled = false, // No subprocess will be launched in these tests
+            ValidationDisabled = true, // No subprocess will be launched in these tests
         };
 
     [Fact]
     public async Task ProvideAIContextAsync_ReturnsExecuteCodeToolAndInstructionsAsync()
     {
-        using var provider = new LocalCodeActProvider(Options());
+        using var provider = new LocalCodeActProvider("/usr/bin/python3", Options());
 
         var context = await provider.InvokingAsync(NewInvokingContext());
 
@@ -39,7 +39,7 @@ public sealed class LocalCodeActProviderTests
     [Fact]
     public void AddAndRemoveTools_RoundTrips()
     {
-        using var provider = new LocalCodeActProvider(Options());
+        using var provider = new LocalCodeActProvider("/usr/bin/python3", Options());
 
         var tool = new TestTool("ping");
         provider.AddTools(tool);
@@ -53,7 +53,7 @@ public sealed class LocalCodeActProviderTests
     [Fact]
     public void AddAndRemoveFileMounts_RoundTrips()
     {
-        using var provider = new LocalCodeActProvider(Options());
+        using var provider = new LocalCodeActProvider("/usr/bin/python3", Options());
 
         var tempDir = System.IO.Directory.CreateTempSubdirectory("localcodeact-test-").FullName;
         try
@@ -75,7 +75,7 @@ public sealed class LocalCodeActProviderTests
     [Fact]
     public void ClearMethods_EmptyState()
     {
-        using var provider = new LocalCodeActProvider(Options());
+        using var provider = new LocalCodeActProvider("/usr/bin/python3", Options());
 
         var tempDir1 = System.IO.Directory.CreateTempSubdirectory("localcodeact-test-").FullName;
         var tempDir2 = System.IO.Directory.CreateTempSubdirectory("localcodeact-test-").FullName;

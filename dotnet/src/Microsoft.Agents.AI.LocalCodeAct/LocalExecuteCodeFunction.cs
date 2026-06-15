@@ -43,24 +43,22 @@ public sealed class LocalExecuteCodeFunction : AIFunction
     private readonly string _description;
 
     /// <summary>Initializes a new instance of the <see cref="LocalExecuteCodeFunction"/> class.</summary>
-    /// <param name="options">Configuration including the Python executable path.</param>
-    public LocalExecuteCodeFunction(LocalCodeActProviderOptions options)
+    /// <param name="pythonExecutablePath">Path to the Python interpreter used for execution and validation.</param>
+    /// <param name="options">Optional function configuration.</param>
+    public LocalExecuteCodeFunction(string pythonExecutablePath, LocalCodeActProviderOptions? options = null)
     {
-        _ = Throw.IfNull(options);
-        if (string.IsNullOrWhiteSpace(options.PythonExecutablePath))
-        {
-            throw new ArgumentException("PythonExecutablePath must not be empty.", nameof(options));
-        }
+        _ = Throw.IfNullOrWhitespace(pythonExecutablePath);
+        options ??= new LocalCodeActProviderOptions();
 
         var limits = options.ExecutionLimits ?? new ProcessExecutionLimits();
         var runnerScript = options.RunnerScriptPath ?? EmbeddedScripts.GetRunnerScriptPath();
 
         CodeValidator? validator = null;
-        if (options.ValidationEnabled)
+        if (!options.ValidationDisabled)
         {
             var validatorScript = options.ValidatorScriptPath ?? EmbeddedScripts.GetValidatorScriptPath();
             validator = new CodeValidator(
-                options.PythonExecutablePath,
+                pythonExecutablePath,
                 validatorScript,
                 TimeSpan.FromSeconds(limits.ValidationTimeoutSeconds),
                 options.AllowedImports?.ToList(),
@@ -73,7 +71,7 @@ public sealed class LocalExecuteCodeFunction : AIFunction
         var fileMounts = options.FileMounts?.Where(m => m is not null).Select(FileMountHelper.Normalize).ToList() ?? new List<FileMount>();
 
         this._executor = new CodeExecutor(
-            options.PythonExecutablePath,
+            pythonExecutablePath,
             runnerScript,
             validator,
             limits,
