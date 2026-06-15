@@ -91,6 +91,41 @@ re-evaluate it per request.
 - Bad, measures installation, not usage; cannot capture feature combinations —
   does not solve the problem.
 
+### Accumulation scope
+
+#### P. Process-global, monotonic mask (chosen)
+
+A single mask per process; bits are OR-ed in as features are first used and never
+cleared. The token reflects "what this process has used so far."
+
+- Good, fits our **mixed feature lifecycle**: many features are *not* bound to an
+  outbound request — an `Agent`, a workflow/orchestration, or a context/history
+  provider is constructed once and lives for the session/process. A process-wide
+  mask is the only scope that can represent them at all.
+- Good, trivial and cheap: one OR under a lock (Python) / `Interlocked.Or`
+  (.NET); no per-request state plumbing.
+- Neutral, coarser than per-call — early requests carry fewer bits than later
+  ones, and the token says "this process used X", not "this call used X".
+
+#### Q. Per-request set, reset between calls (botocore's model — rejected)
+
+AWS botocore scopes its `m/` feature codes to a `contextvars` set that is reset
+between requests, giving exact per-call attribution (and it deliberately no-ops
+when called outside a request context to avoid features bleeding across requests).
+See [Prior art](#prior-art).
+
+- Good, exact per-call attribution directly in the User-Agent.
+- Bad, **assumes every feature is exercised inside a single service request** —
+  true for botocore (an SDK natively bound to AWS service calls), but *not* for
+  us. Our features split into request-scoped ones (a chat call, an MCP tool
+  invocation) and decidedly non-request ones (agent/workflow/provider
+  construction, session setup). The latter have no request to attach to, so a
+  per-request set would simply miss them.
+- Bad, needs `contextvars` propagation through every async/threaded path and a
+  reset discipline; the bleed-guard botocore documents is the warning sign.
+- Note, per-call attribution for the request-scoped subset is better served by
+  the deferred OTel span path (option C) than by reshaping the UA token.
+
 ### Granularity
 
 #### F. Per package, with core broken out per feature/provider (chosen)
@@ -184,22 +219,27 @@ the Python v1 list) = decimal `138477573`.
 ## Decision Outcome
 
 Chosen: **a per-request, first-party-only User-Agent `(feat=...)` token (A),
-with per-package granularity (F), per-language bit lists (H), hand-written enums
-kept honest by a parity test (J), rendered as lowercase hex (M).**
+with a process-global monotonic accumulator (P), per-package granularity (F),
+per-language bit lists (H), hand-written enums kept honest by a parity test (J),
+rendered as lowercase hex (M).**
 
-This is the smallest design that answers the question. A 64-bit mask accumulates
-from universal `mark_feature_used()` calls; the token is stamped per request only
-on Azure/Foundry clients (live, no third-party leak); each SDK owns an
-independent bit list selected by the language already in the UA; the mask is
-rendered as hex (`feat=v1.8410005`). **Two opt-out env vars are provided:** a
-dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops only the mask while
-keeping the base SDK identity/version User-Agent, and the existing
+This is the smallest design that answers the question. A 64-bit
+**process-global, monotonic** mask accumulates from universal
+`mark_feature_used()` calls (so it spans construction-time and session-scoped
+features that aren't bound to any request — the per-request set model (Q) can't);
+the token is **stamped per request** only on Azure/Foundry clients, so it reflects
+the live mask without freezing at construction (live, no third-party leak); each
+SDK owns an independent bit list selected by the language already in the UA; the
+mask is rendered as hex (`feat=v1.8410005`). **Two opt-out env vars are
+provided:** a dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops only
+the mask while keeping the base SDK identity/version User-Agent, and the existing
 `AGENT_FRAMEWORK_USER_AGENT_DISABLED` that drops the whole contribution. OTel (C)
 is deferred — mainly because a broadly-emitted span attribute would leak the
 fingerprint into the user's general telemetry, against the first-party-only
-stance — but left open behind the version prefix. Per-construct granularity (G),
-a shared registry (I), codegen (K), and the decimal/binary/base-N representations
-(L, N, O) are rejected as complexity or length the problem does not require.
+stance — but left open behind the version prefix. Per-request scoping (Q),
+per-construct granularity (G), a shared registry (I), codegen (K), and the
+decimal/binary/base-N representations (L, N, O) are rejected as complexity or
+length the problem does not require.
 
 ### Consequences
 
@@ -239,13 +279,32 @@ Takeaways that shaped (or validate) our choices:
   allocation). We keep the bitmask for boundedness and trivial AND-decoding;
   AWS's short-code set is recorded as a viable alternative if bit-position
   coordination ever becomes painful (it would also drop the 64-bit ceiling).
+- **A fixed-width bitmask gives bounded token size for free.** botocore must cap
+  the `m/` component at 1024 bytes and truncate at delimiter boundaries (with a
+  fallback log) precisely *because* its short-code set is unbounded. Our 64-bit
+  hex is ≤16 chars by construction — no size cap, no truncation logic.
+- **Scope is where we diverge most — and deliberately.** botocore collects
+  features into a per-request `contextvars` set that is **reset between
+  requests**, and no-ops outside a request context to prevent cross-request
+  bleed. That works because every botocore feature is exercised *inside* an AWS
+  service request. We are more general: some features are request-scoped (a chat
+  call, an MCP tool invocation) but many are **not bound to any request**
+  (agent / workflow / provider construction, session setup). So we use a
+  **process-global, monotonic** mask (option P), which is the only scope that can
+  represent the non-request features. Our mask therefore intentionally "bleeds"
+  (accumulates) for the life of the process — the opposite of botocore's reset —
+  and that is the intended semantic, not the bug botocore guards against.
+- **The mechanism is private; the wire format is the contract.** botocore marks
+  its whole user-agent module private and "subject to abrupt breaking changes."
+  Same for us: the Python/.NET helpers are internal, and only the emitted token +
+  the per-language registry tables are the stable, decodable contract.
 - **First-party-only emission** is stricter than any of the above; the closest in
   spirit is Stainless headers, which only reach the owning API. We make the
   hostname/endpoint allowlist explicit (Azure/Foundry only).
 - **Opt-out naming.** `AZURE_TELEMETRY_DISABLED` is the family precedent for our
-  `AGENT_FRAMEWORK_*_DISABLED` names. Separately, the cross-tool
-  the cross-tool `DO_NOT_TRACK` convention (honored by e.g.
-  HuggingFace Hub) is worth considering — see Open Questions.
+  `AGENT_FRAMEWORK_*_DISABLED` names. Separately, the cross-tool `DO_NOT_TRACK`
+  convention (honored by e.g. HuggingFace Hub) is worth considering — see Open
+  Questions.
 
 Sources: botocore [`useragent.py`](https://github.com/boto/botocore/blob/develop/botocore/useragent.py)
 (`_USERAGENT_FEATURE_MAPPINGS`, `register_feature_id`, `_build_feature_metadata`);
@@ -291,7 +350,7 @@ independent for Python and .NET.
 | **No signal for self-hosted or third-party-only traffic.** If a process never calls Azure/Foundry, we see nothing. | First-party-only emission (A) | We can't read third-party logs anyway, and must not leak a fingerprint into them. Reach traded for privacy. |
 | **No OTel / per-call signal in v1.** | OTel deferred (C) — primarily on **privacy** grounds | A broadly-emitted span attribute would push the fingerprint into the user's general telemetry / third-party APM vendors, undoing the first-party-only scoping. Left open to add later if there is a compelling reason to add. |
 | **Mask reflects "usage so far," not the whole session.** Early requests carry fewer bits than later ones. | Process-global accumulator + per-request stamping | Honest and still useful; the team aggregates across requests. The per-request design is what makes it *grow* rather than freeze. |
-| **No per-agent / per-call attribution.** The mask is one process-wide value — "this process used X", not "this agent/call used X". | Single global accumulator (simplicity) | Per-call attribution is what the deferred OTel span path would add; not needed for portfolio-level questions. |
+| **No per-agent / per-call attribution.** The mask is one process-wide value — "this process used X", not "this agent/call used X". | Process-global monotonic scope (P) | A deliberate choice, not a transport limit: botocore *does* per-call attribution in the UA via a per-request `contextvars` set (Q), but that assumes every feature lives inside a service request. Many of ours don't (agent/workflow/provider construction, session setup), so process-global is the only scope that captures them. Per-call detail for the request-scoped subset is left to the deferred OTel path. |
 | **Coarse granularity.** Can't distinguish sub-features (e.g. openai chat vs embeddings, which shell tool). | Per-package granularity (F) + 64-bit (keeps .NET lock-free) | Matches the actual questions; finer bits can be promoted later behind the version prefix. |
 | **Fingerprinting risk is reduced, not eliminated.** A feature-combination mask is still a deployment signature, and it transits intermediaries (proxies/CDNs) even when first-party-scoped. | Emitting any feature-combination value | Scope + opt-out + coarse granularity mitigate it; residual risk is the subject of the privacy review below. |
 
