@@ -46,7 +46,7 @@ internal sealed class SandboxExecutor : IDisposable
             IReadOnlyList<FileMount> fileMounts,
             IReadOnlyList<AllowedDomain> allowedDomains,
             string? hostInputDirectory,
-            long toolRegistryVersion = 0)
+            Guid toolRegistryVersion = default)
         {
             this.Tools = tools;
             this.FileMounts = fileMounts;
@@ -69,7 +69,7 @@ internal sealed class SandboxExecutor : IDisposable
 
         public string? HostInputDirectory { get; }
 
-        public long ToolRegistryVersion { get; }
+        public Guid ToolRegistryVersion { get; }
 
         /// <summary>
         /// Stable fingerprint of the configuration that materially affects how
@@ -84,7 +84,7 @@ internal sealed class SandboxExecutor : IDisposable
             IReadOnlyList<FileMount> fileMounts,
             IReadOnlyList<AllowedDomain> allowedDomains,
             string? hostInputDirectory,
-            long toolRegistryVersion = 0)
+            Guid toolRegistryVersion = default)
         {
             var sb = new StringBuilder();
             sb.Append("tools=");
@@ -93,7 +93,7 @@ internal sealed class SandboxExecutor : IDisposable
                 sb.Append(name).Append('|');
             }
 
-            sb.Append(";toolVersion=").Append(toolRegistryVersion.ToString(CultureInfo.InvariantCulture));
+            sb.Append(";toolVersion=").Append(toolRegistryVersion.ToString("D", CultureInfo.InvariantCulture));
 
             sb.Append(";mounts=");
             foreach (var m in fileMounts

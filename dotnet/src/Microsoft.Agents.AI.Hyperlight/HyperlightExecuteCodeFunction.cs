@@ -76,7 +76,7 @@ public sealed class HyperlightExecuteCodeFunction : AIFunction, IDisposable
             fileMounts,
             allowedDomains,
             effective.HostInputDirectory,
-            toolRegistryVersion: 0);
+            toolRegistryVersion: Guid.Empty);
 
         this._description = InstructionBuilder.BuildExecuteCodeDescription(
             this._snapshot.Tools,

@@ -38,11 +38,13 @@ public sealed class SandboxExecutorTests
     }
 
     [Fact]
-    public void Fingerprint_SameNameDifferentToolRegistryVersions_DifferentFingerprints()
+    public void Fingerprint_SameNameDifferentToolRegistryVersionIds_DifferentFingerprints()
     {
         // Arrange
         var t1 = AIFunctionFactory.Create(() => "a", name: "t");
         var t2 = AIFunctionFactory.Create(() => "b", name: "t");
+        var firstVersion = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var secondVersion = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
         // Act
         var fp1 = SandboxExecutor.RunSnapshot.ComputeFingerprint(
@@ -50,13 +52,13 @@ public sealed class SandboxExecutorTests
             [],
             [],
             hostInputDirectory: null,
-            toolRegistryVersion: 1);
+            toolRegistryVersion: firstVersion);
         var fp2 = SandboxExecutor.RunSnapshot.ComputeFingerprint(
             [t2],
             [],
             [],
             hostInputDirectory: null,
-            toolRegistryVersion: 2);
+            toolRegistryVersion: secondVersion);
 
         // Assert
         Assert.NotEqual(fp1, fp2);

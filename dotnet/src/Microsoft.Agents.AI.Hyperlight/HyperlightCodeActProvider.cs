@@ -59,7 +59,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
     private readonly Dictionary<string, AIFunction> _tools = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FileMount> _fileMounts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AllowedDomain> _allowedDomains = new(StringComparer.Ordinal);
-    private long _toolRegistryVersion;
+    private Guid _toolRegistryVersion;
     private bool _disposed;
 
     /// <summary>
@@ -126,10 +126,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
 
             if (changed)
             {
-                unchecked
-                {
-                    this._toolRegistryVersion++;
-                }
+                this._toolRegistryVersion = Guid.NewGuid();
             }
         }
     }
