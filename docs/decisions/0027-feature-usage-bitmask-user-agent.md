@@ -216,6 +216,47 @@ a shared registry (I), codegen (K), and the decimal/binary/base-N representation
 - Bad, each feature must add a `mark_feature_used()` call, and first-party clients
   need a per-request hook (small, mirrors existing patterns).
 
+## Prior art
+
+SDK telemetry-in-the-User-Agent is well-established; this design is closest to
+AWS's, and conventional in the rest. Summary of what comparable SDKs do:
+
+| SDK | What's in the UA / headers | Usage-based? | Opt-out | Closest to ours? |
+| --- | --- | --- | --- | --- |
+| **AWS botocore** | structured UA with an `m/` token: a per-request set of **short feature codes** for features actually exercised (`WAITER`→`B`, `PAGINATOR`→`C`, retry mode, checksums, credential source, …) | **Yes** — registered at call time via `register_feature_id`, contextvar-scoped per request | `AWS_SDK_UA_APP_ID` sets app id (no opt-out for `m/`) | **Yes — direct analog** |
+| **OpenAI / Anthropic** (Stainless) | sidecar `X-Stainless-*` headers: lang, package version, OS, arch, runtime, runtime version; plus per-request `x-stainless-retry-count`, `x-stainless-read-timeout` | Mostly static identity (retry/timeout are per-request) | none | No (static identity) |
+| **Azure SDK** (`azure-core`) | `User-Agent: azsdk-python-{pkg}/{ver} Python/{pyver} ({platform})` | No | `AZURE_TELEMETRY_DISABLED` (tracing spans only, **not** the UA) | No |
+| **Google API core** | `x-goog-api-client: gl-python/… grpc/… gax/… gapic/…` | No | none | No |
+| **LangSmith** | `User-Agent: langsmith-py/{ver}`; usage lives in trace payloads | No (header) | opt-in via `LANGSMITH_TRACING_V2`/`LANGCHAIN_TRACING_V2`; `…HIDE_INPUTS/OUTPUTS` | No |
+
+Takeaways that shaped (or validate) our choices:
+
+- **AWS `m/` is the precedent for usage-based feature flags in a first-party
+  User-Agent.** It validates the core idea. Its key *difference* is the encoding:
+  AWS uses a **comma-separated set of 1–2 char short codes** (open-ended, no bit
+  coordination, but variable length), whereas we use a fixed-width **hex
+  bitmask** (compact, bounded, decode-by-AND, but needs per-language bit
+  allocation). We keep the bitmask for boundedness and trivial AND-decoding;
+  AWS's short-code set is recorded as a viable alternative if bit-position
+  coordination ever becomes painful (it would also drop the 64-bit ceiling).
+- **First-party-only emission** is stricter than any of the above; the closest in
+  spirit is Stainless headers, which only reach the owning API. We make the
+  hostname/endpoint allowlist explicit (Azure/Foundry only).
+- **Opt-out naming.** `AZURE_TELEMETRY_DISABLED` is the family precedent for our
+  `AGENT_FRAMEWORK_*_DISABLED` names. Separately, the cross-tool
+  the cross-tool `DO_NOT_TRACK` convention (honored by e.g.
+  HuggingFace Hub) is worth considering — see Open Questions.
+
+Sources: botocore [`useragent.py`](https://github.com/boto/botocore/blob/develop/botocore/useragent.py)
+(`_USERAGENT_FEATURE_MAPPINGS`, `register_feature_id`, `_build_feature_metadata`);
+openai-python [`_base_client.py` `platform_headers()`](https://github.com/openai/openai-python/blob/main/src/openai/_base_client.py);
+anthropic-sdk-python [`_base_client.py`](https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/_base_client.py);
+azure-core [`_universal.py` `UserAgentPolicy`](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/core/azure-core/azure/core/pipeline/policies/_universal.py);
+google-api-core [`client_info.py`](https://github.com/googleapis/python-api-core/blob/main/google/api_core/client_info.py);
+langsmith-sdk [`client.py`](https://github.com/langchain-ai/langsmith-sdk/blob/main/python/langsmith/client.py) /
+[`utils.py`](https://github.com/langchain-ai/langsmith-sdk/blob/main/python/langsmith/utils.py);
+huggingface_hub [`constants.py`](https://github.com/huggingface/huggingface_hub/blob/main/src/huggingface_hub/constants.py).
+
 ## Registry versioning and migration (v1 → v2)
 
 The token carries a **per-language** version (`feat=v1.<hex>`); a version bump is
@@ -270,6 +311,12 @@ These are unresolved and should be decided before/at approval:
    stance. It also carries a metric-cardinality hazard. Would the privacy review
    allow a broadly-emitted mask, a scoped/redacted variant, or none? Decide if/when
    to revisit.
+3. **Honor the cross-tool `DO_NOT_TRACK` convention?** Several ecosystems treat
+   `DO_NOT_TRACK=1` as a universal telemetry opt-out (HuggingFace Hub honors it;
+   see [Prior art](#prior-art)). Should our opt-out also respect `DO_NOT_TRACK`
+   (in addition to the two `AGENT_FRAMEWORK_*` flags)? Cheap to add and
+   community-friendly, but it widens the opt-out surface and needs a clear
+   precedence rule. Recommend yes; confirm with the deciders.
 
 ### Decided
 
