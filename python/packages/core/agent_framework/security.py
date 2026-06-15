@@ -106,22 +106,100 @@ class IntegrityLabel(str, Enum):
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
-class ConfidentialityLabel(str, Enum):
+class ConfidentialityLabel:
     """Represents the confidentiality level of content.
 
+    Two levels: ``PUBLIC`` and ``PRIVATE``.  ``PRIVATE`` can optionally carry a
+    *readers* list restricting who may access the content.
+
+    Construction::
+
+        ConfidentialityLabel("public")           # PUBLIC
+        ConfidentialityLabel("private")           # PRIVATE, no readers
+        ConfidentialityLabel(["Alice", "Bob"])     # PRIVATE with readers
+
+    When a list of reader identities is provided the level is implicitly
+    ``PRIVATE``.  The *readers* frozenset tracks the allowed audience.
+
     Attributes:
-        PUBLIC: Content can be shared publicly.
-        PRIVATE: Content is private and should not be shared.
-        USER_IDENTITY: Content is restricted to specific user identities only.
+        PUBLIC: Singleton for public content.
+        PRIVATE: Singleton for private content with no specific readers.
     """
 
-    PUBLIC = "public"
-    PRIVATE = "private"
-    USER_IDENTITY = "user_identity"
+    PUBLIC: "ConfidentialityLabel"   # set after class body
+    PRIVATE: "ConfidentialityLabel"  # set after class body
+
+    __slots__ = ("_level", "_readers")
+
+    def __init__(self, value: "str | list[str]" = "public", *, readers: "frozenset[str] | None" = None) -> None:
+        if isinstance(value, list):
+            self._level = "private"
+            self._readers: frozenset[str] | None = frozenset(value)
+        elif value in ("public", "private"):
+            self._level: str = value
+            self._readers = readers if value == "private" else None
+        else:
+            raise ValueError(f"Invalid confidentiality value: {value!r}")
+
+    # -- properties ----------------------------------------------------------
+
+    @property
+    def value(self) -> str:
+        """Return the level string (``'public'`` or ``'private'``)."""
+        return self._level
+
+    @property
+    def readers(self) -> "frozenset[str] | None":
+        """Return the readers frozenset, or ``None`` if unrestricted."""
+        return self._readers
+
+    @property
+    def is_private(self) -> bool:
+        """Return ``True`` if the level is private."""
+        return self._level == "private"
+
+    # -- dunder methods ------------------------------------------------------
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, ConfidentialityLabel):
+            return self._level == other._level and self._readers == other._readers
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash((self._level, self._readers))
 
     def __str__(self) -> str:
-        """Return the string value of the confidentiality label."""
-        return self.value
+        """Return a human-readable string.
+
+        Examples::
+
+            str(ConfidentialityLabel.PUBLIC)        # "public"
+            str(ConfidentialityLabel.PRIVATE)        # "private"
+            str(ConfidentialityLabel(["A", "B"]))    # "private: (A, B)"
+        """
+        if self._level == "public":
+            return "public"
+        if self._readers:
+            readers_str = ", ".join(sorted(self._readers))
+            return f"private: ({readers_str})"
+        return "private"
+
+    def __repr__(self) -> str:
+        if self._readers:
+            return f"ConfidentialityLabel('private', readers={{{', '.join(repr(r) for r in sorted(self._readers))}}})"
+        return f"ConfidentialityLabel('{self._level}')"
+
+    # -- ordering helpers (for hierarchy comparisons) ------------------------
+
+    @property
+    def _priority(self) -> int:
+        """Return numeric priority: PUBLIC=0, PRIVATE=1."""
+        return 0 if self._level == "public" else 1
+
+
+# Singletons for the two basic levels
+ConfidentialityLabel.PUBLIC = ConfidentialityLabel("public")
+ConfidentialityLabel.PRIVATE = ConfidentialityLabel("private")
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -141,11 +219,10 @@ class ContentLabel(SerializationMixin):
             # Create a label for trusted public content
             label = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
 
-            # Create a label with user identity
+            # Create a label with private readers
             user_label = ContentLabel(
                 integrity=IntegrityLabel.TRUSTED,
-                confidentiality=ConfidentialityLabel.USER_IDENTITY,
-                metadata={"user_id": "user-123"},
+                confidentiality=ConfidentialityLabel(["Alice", "Bob"]),
             )
     """
 
@@ -184,9 +261,14 @@ class ContentLabel(SerializationMixin):
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert to dictionary representation."""
+        conf = self.confidentiality
+        if conf.readers:
+            conf_value: str | list[str] = sorted(conf.readers)
+        else:
+            conf_value = conf.value
         result: dict[str, Any] = {
             "integrity": str(self.integrity),
-            "confidentiality": str(self.confidentiality),
+            "confidentiality": conf_value,
         }
         if self.metadata:
             result["metadata"] = self.metadata
@@ -202,9 +284,12 @@ class ContentLabel(SerializationMixin):
     ) -> ContentLabel:
         """Create ContentLabel from dictionary."""
         del dependencies
+        raw_conf = data.get("confidentiality", "public")
+        # Support both string ("public"/"private") and list (["Alice", "Bob"])
+        confidentiality = ConfidentialityLabel(raw_conf)
         return cls(
             integrity=IntegrityLabel(data.get("integrity", "trusted")),
-            confidentiality=ConfidentialityLabel(data.get("confidentiality", "public")),
+            confidentiality=confidentiality,
             metadata=data.get("metadata"),
         )
 
@@ -214,7 +299,9 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
 
     The combined label will be:
     - UNTRUSTED if any input is UNTRUSTED
-    - Most restrictive confidentiality level (USER_IDENTITY > PRIVATE > PUBLIC)
+    - Most restrictive confidentiality level (PRIVATE > PUBLIC)
+    - When multiple PRIVATE labels carry readers lists, the readers are
+      *intersected* (only readers common to all labels remain)
     - Merged metadata from all labels
 
     Args:
@@ -244,14 +331,28 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
         else IntegrityLabel.TRUSTED
     )
 
-    # Most restrictive confidentiality
-    confidentiality_priority = {
-        ConfidentialityLabel.PUBLIC: 0,
-        ConfidentialityLabel.PRIVATE: 1,
-        ConfidentialityLabel.USER_IDENTITY: 2,
-    }
+    # Most restrictive confidentiality: PRIVATE > PUBLIC
+    any_private = any(label.confidentiality._priority >= 1 for label in labels)
 
-    confidentiality = max((label.confidentiality for label in labels), key=lambda c: confidentiality_priority[c])
+    if any_private:
+        # Intersect readers lists from all PRIVATE labels that carry them.
+        # PRIVATE(None) means "no reader restriction" and does not constrain
+        # the intersection.  If no PRIVATE label has a readers list the
+        # combined result is PRIVATE(None).
+        readers_sets: list[frozenset[str]] = [
+            label.confidentiality.readers
+            for label in labels
+            if label.confidentiality._priority >= 1 and label.confidentiality.readers is not None
+        ]
+        if readers_sets:
+            combined_readers: frozenset[str] | None = readers_sets[0]
+            for rs in readers_sets[1:]:
+                combined_readers = combined_readers & rs  # type: ignore[union-attr]
+            confidentiality = ConfidentialityLabel("private", readers=combined_readers)
+        else:
+            confidentiality = ConfidentialityLabel.PRIVATE
+    else:
+        confidentiality = ConfidentialityLabel.PUBLIC
 
     # Merge metadata
     merged_metadata: dict[str, Any] = {}
@@ -275,7 +376,7 @@ def check_confidentiality_allowed(
     from being sent to PUBLIC endpoints.
 
     The check passes if context_label.confidentiality <= max_allowed in the hierarchy:
-        PUBLIC (0) < PRIVATE (1) < USER_IDENTITY (2)
+        PUBLIC (0) < PRIVATE (1)
 
     Args:
         context_label: The label tracking the confidentiality of data in the current context.
@@ -310,13 +411,7 @@ def check_confidentiality_allowed(
                     )
                 # Proceed with sending...
     """
-    conf_hierarchy = {
-        ConfidentialityLabel.PUBLIC: 0,
-        ConfidentialityLabel.PRIVATE: 1,
-        ConfidentialityLabel.USER_IDENTITY: 2,
-    }
-
-    return conf_hierarchy[context_label.confidentiality] <= conf_hierarchy[max_allowed]
+    return context_label.confidentiality._priority <= max_allowed._priority
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -817,15 +912,15 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
 
         if old_label != self._context_label:
             logger.info(
-                f">>> CONTEXT TAINT: [{old_label.integrity.value}, {old_label.confidentiality.value}] "
-                f"-> [{self._context_label.integrity.value}, {self._context_label.confidentiality.value}] "
-                f"(new content: [{new_content_label.integrity.value}, {new_content_label.confidentiality.value}])"
+                f">>> CONTEXT TAINT: [{old_label.integrity}, {old_label.confidentiality}] "
+                f"-> [{self._context_label.integrity}, {self._context_label.confidentiality}] "
+                f"(new content: [{new_content_label.integrity}, {new_content_label.confidentiality}])"
             )
         else:
             logger.debug(
                 "Context label unchanged: [%s, %s]",
-                self._context_label.integrity.value,
-                self._context_label.confidentiality.value,
+                self._context_label.integrity,
+                self._context_label.confidentiality,
             )
 
     @staticmethod
@@ -1364,6 +1459,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     def _get_function_confidentiality(self, context: FunctionInvocationContext) -> ConfidentialityLabel:
         """Get confidentiality label from function metadata.
 
+        Supports both string values (``"public"``, ``"private"``) and a list of
+        reader identities (e.g. ``["Alice", "Bob"]``), which implies ``PRIVATE``
+        with a readers restriction.
+
         Args:
             context: The function invocation context.
 
@@ -1372,14 +1471,14 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         """
         # Check function's additional_properties for confidentiality setting
         function_props = _get_additional_properties(context.function)
-        confidentiality_str = function_props.get("confidentiality", None)
+        confidentiality_raw = function_props.get("confidentiality", None)
 
-        if confidentiality_str:
+        if confidentiality_raw is not None:
             try:
-                return ConfidentialityLabel(confidentiality_str)
-            except ValueError:
+                return ConfidentialityLabel(confidentiality_raw)
+            except (ValueError, TypeError):
                 logger.warning(
-                    f"Invalid confidentiality label '{confidentiality_str}' "
+                    f"Invalid confidentiality label '{confidentiality_raw}' "
                     f"for function '{context.function.name}', using default"
                 )
 
@@ -1979,12 +2078,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         """
         function_props = _get_additional_properties(context.function)
 
-        conf_hierarchy = {
-            ConfidentialityLabel.PUBLIC: 0,
-            ConfidentialityLabel.PRIVATE: 1,
-            ConfidentialityLabel.USER_IDENTITY: 2,
-        }
-
         # Check max_allowed_confidentiality (output restriction / data exfiltration prevention)
         # Context confidentiality must be <= max allowed level
         # This prevents PRIVATE data from being written to PUBLIC destinations
@@ -1992,7 +2085,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         if max_allowed_conf is not None:
             try:
                 max_allowed_level = ConfidentialityLabel(max_allowed_conf)
-                if conf_hierarchy[label.confidentiality] > conf_hierarchy[max_allowed_level]:
+                if label.confidentiality._priority > max_allowed_level._priority:
                     return {
                         "passed": False,
                         "failure_type": "max_allowed_confidentiality",
@@ -2001,7 +2094,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                             f"{max_allowed_level.value.upper()} destination (data exfiltration blocked)"
                         ),
                     }
-            except ValueError:
+            except (ValueError, TypeError):
                 logger.warning(f"Invalid max_allowed_confidentiality: {max_allowed_conf}")
 
         return {"passed": True, "failure_type": None, "reason": None}
@@ -2632,7 +2725,7 @@ def _inspect_variable_result_parser(result: Any) -> list[Content]:
     """Parse ``inspect_variable``'s dict result while preserving its security label.
 
     ``inspect_variable`` returns a dict whose ``security_label`` field carries the
-    label of the inspected content (which may be ``USER_IDENTITY`` or any other
+    label of the inspected content (which may be ``PRIVATE`` with readers or any other
     confidentiality level). The default :meth:`FunctionTool.parse_result`
     serializes that dict to plain text, dropping the label from
     ``Content.additional_properties``. The middleware's Tier 1 label extraction
@@ -3085,8 +3178,13 @@ def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
     if not isinstance(ifc, dict):
         return None
     ifc_map = cast(dict[str, Any], ifc)
-    integ_raw = ifc_map.get("integrity")
-    conf_raw = ifc_map.get("confidentiality")
+    if "$" in ifc_map:  # gateway uses jsonpath format
+        dollar = cast(dict[str, Any], ifc_map.get("$") or {})
+        integ_raw = dollar.get("integrity")
+        conf_raw = dollar.get("confidentiality")
+    else:
+        integ_raw = ifc_map.get("integrity")
+        conf_raw = ifc_map.get("confidentiality")
     try:
         integrity = IntegrityLabel(integ_raw) if integ_raw is not None else None
         confidentiality = ConfidentialityLabel(conf_raw) if conf_raw is not None else None
