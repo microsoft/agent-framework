@@ -2027,6 +2027,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     @classmethod
     def _enrich_streamed_azure_ai_search_citations(cls, updates: Sequence[ChatResponseUpdate]) -> None:
         """Enrich streamed Azure AI Search citation annotations with per-document REST URLs."""
+        # Azure AI Search citations are numbered with global `doc_N` ordinals across the
+        # whole streamed response, so concatenate `get_urls` in event order before resolving them.
         get_urls: list[str] = []
         for update in updates:
             get_urls.extend(cls._extract_azure_ai_search_get_urls(update.raw_representation))

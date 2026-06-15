@@ -362,6 +362,31 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_ho
     assert result["extra_body"]["agent_reference"] == {"name": "test-agent", "type": "agent_reference"}
 
 
+async def test_raw_foundry_agent_chat_client_prepare_options_preserves_explicit_model_first_turn() -> None:
+    """First-turn calls should keep an explicit caller-supplied model override."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={"model": "gpt-4.1"},
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"model": "gpt-4.1"},
+        )
+
+    assert result["model"] == "gpt-4.1"
+    assert result["extra_body"] == {"agent_reference": {"name": "test-agent", "type": "agent_reference"}}
+
+
 async def test_raw_foundry_agent_chat_client_prepare_options_injects_agent_reference_first_turn() -> None:
     """First-turn (no conversation_id) Prompt Agent calls must carry agent_reference in extra_body.
 

@@ -3728,6 +3728,41 @@ def test_streaming_azure_ai_search_output_does_not_overwrite_existing_get_url() 
     assert annotation["additional_properties"]["get_url"] == existing_get_url
 
 
+def test_streaming_azure_ai_search_output_uses_global_doc_index_across_search_events() -> None:
+    """Azure AI Search `doc_N` URLs are resolved against the concatenated stream order of all search events."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    citation_update = client._parse_chunk_from_openai(
+        _make_url_citation_event(title="doc_2"),
+        chat_options,
+        function_call_ids,
+    )
+    search_update_one = client._parse_chunk_from_openai(
+        _make_azure_ai_search_output_event(json.dumps({"get_urls": ["https://example.search.windows.net/docs/one"]})),
+        chat_options,
+        function_call_ids,
+    )
+    search_update_two = client._parse_chunk_from_openai(
+        _make_azure_ai_search_output_event(
+            json.dumps({
+                "get_urls": [
+                    "https://example.search.windows.net/docs/two",
+                    "https://example.search.windows.net/docs/three",
+                ]
+            })
+        ),
+        chat_options,
+        function_call_ids,
+    )
+
+    response = client._finalize_response_updates([citation_update, search_update_one, search_update_two])
+
+    annotation = response.messages[0].contents[0].annotations[0]
+    assert annotation["additional_properties"]["get_url"] == "https://example.search.windows.net/docs/three"
+
+
 def test_streaming_azure_ai_search_output_normalizes_non_dict_additional_properties() -> None:
     """Existing non-dict additional_properties should be normalized before enriching get_url."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
