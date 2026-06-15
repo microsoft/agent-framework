@@ -41,10 +41,6 @@ logger = logging.getLogger(__name__)
 # at runtime are discoverable by both agent-based and function-based tool executors.
 FUNCTION_TOOL_REGISTRY_KEY = TOOL_REGISTRY_KEY
 
-# State key prefix for storing approval state during yield/resume.
-# The executor's ID is appended to create a per-executor key.
-TOOL_APPROVAL_STATE_KEY = "_tool_approval_state"
-
 
 # ============================================================================
 # Request/Response Types for Approval Flow
@@ -85,26 +81,6 @@ class ToolApprovalResponse:
 
     approved: bool
     reason: str | None = None
-
-
-# ============================================================================
-# State Types for Approval Flow
-# ============================================================================
-
-
-@dataclass
-class ToolApprovalState:
-    """State saved during approval yield for resumption.
-
-    Stored in State under a per-executor key when requireApproval=true.
-    Retrieved by handle_approval_response() to continue execution.
-    """
-
-    function_name: str
-    arguments: dict[str, Any]
-    output_messages_var: str | None
-    output_result_var: str | None
-    auto_send: bool
 
 
 # ============================================================================
@@ -501,25 +477,16 @@ class BaseToolExecutor(DeclarativeActionExecutor):
         require_approval = self._action_def.get("requireApproval", False)
 
         if require_approval:
-            # Save state for resumption (keyed by executor ID to avoid collisions)
-            approval_state = ToolApprovalState(
-                function_name=function_name,
-                arguments=arguments,
-                output_messages_var=messages_var,
-                output_result_var=result_var,
-                auto_send=auto_send,
-            )
-            approval_key = f"{TOOL_APPROVAL_STATE_KEY}_{self.id}"
-            ctx.state.set(approval_key, approval_state)
-
-            # Emit approval request - workflow yields here
+            # Emit approval request - the request payload is the source of
+            # truth for resumed invocation; no side-channel state is written.
+            request_id = str(uuid.uuid4())
             request = ToolApprovalRequest(
-                request_id=str(uuid.uuid4()),
+                request_id=request_id,
                 function_name=function_name,
                 arguments=arguments,
             )
             logger.info(f"{self.__class__.__name__}: requesting approval for '{function_name}'")
-            await ctx.request_info(request, ToolApprovalResponse)
+            await ctx.request_info(request, ToolApprovalResponse, request_id=request_id)
             # Workflow yields - will resume in handle_approval_response
             return
 
@@ -545,36 +512,16 @@ class BaseToolExecutor(DeclarativeActionExecutor):
     ) -> None:
         """Handle response to a ToolApprovalRequest.
 
-        Called when the workflow resumes after yielding for approval.
-        Either executes the tool (if approved) or stores rejection status.
+        Resumes after the workflow yielded for approval. The invocation
+        ``function_name`` and ``arguments`` are sourced from
+        ``original_request`` (the payload the reviewer approved); output
+        configuration is re-derived from the executor's action definition.
         """
         state = self._get_state(ctx.state)
-        approval_key = f"{TOOL_APPROVAL_STATE_KEY}_{self.id}"
 
-        # Retrieve saved invocation state
-        try:
-            approval_state: ToolApprovalState = ctx.state.get(approval_key)
-        except KeyError:
-            error_msg = "Approval state not found, cannot resume tool invocation"
-            logger.error(f"{self.__class__.__name__}: {error_msg}")
-            # Try to store error - get output config from action def as fallback
-            _, result_var, _ = self._get_output_config()
-            if result_var and state:
-                state.set(_normalize_variable_path(result_var), {"error": error_msg})
-            await ctx.send_message(ActionComplete())
-            return
-
-        # Clean up approval state
-        try:
-            ctx.state.delete(approval_key)
-        except KeyError:
-            logger.warning(f"{self.__class__.__name__}: approval state already deleted")
-
-        function_name = approval_state.function_name
-        arguments = approval_state.arguments
-        messages_var = approval_state.output_messages_var
-        result_var = approval_state.output_result_var
-        auto_send = approval_state.auto_send
+        function_name = original_request.function_name
+        arguments = original_request.arguments
+        messages_var, result_var, auto_send = self._get_output_config()
 
         # Check if approved
         if not response.approved:

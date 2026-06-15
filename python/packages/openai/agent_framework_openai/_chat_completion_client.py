@@ -765,15 +765,17 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                 details["completion/accepted_prediction_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
             if tokens := usage.completion_tokens_details.audio_tokens:
                 details["completion/audio_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
-            if tokens := usage.completion_tokens_details.reasoning_tokens:
+            if (tokens := usage.completion_tokens_details.reasoning_tokens) is not None:
                 details["completion/reasoning_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
+                details["reasoning_output_token_count"] = tokens
             if tokens := usage.completion_tokens_details.rejected_prediction_tokens:
                 details["completion/rejected_prediction_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
         if usage.prompt_tokens_details:
             if tokens := usage.prompt_tokens_details.audio_tokens:
                 details["prompt/audio_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
-            if tokens := usage.prompt_tokens_details.cached_tokens:
+            if (tokens := usage.prompt_tokens_details.cached_tokens) is not None:
                 details["prompt/cached_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
+                details["cache_read_input_token_count"] = tokens
         return details
 
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:

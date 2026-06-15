@@ -34,10 +34,10 @@ using var tracerProvider = HarnessTracing.CreateFileTracerProvider(TracingSource
 
 var instructions =
     """
-    You are a data analyst assistant. You have access to a folder of data files via the FileAccess_* tools.
+    You are a data analyst assistant. You have access to a folder of data files via the file_access_* tools.
 
     ## Getting started
-    - Start by listing available files with FileAccess_ListFiles to see what data is available.
+    - Start by listing available files with file_access_list_files to see what data is available.
     - Read the files to understand their structure and contents.
 
     ## Working with data
@@ -46,7 +46,7 @@ var instructions =
     - When calculations are needed, work through them step by step and show your reasoning.
 
     ## Writing output
-    - When asked to produce output files (e.g., reports, summaries, filtered data), use FileAccess_SaveFile to write them.
+    - When asked to produce output files (e.g., reports, summaries, filtered data), use file_access_save_file to write them.
     - Use appropriate file formats: CSV for tabular data, Markdown for reports.
     - Confirm what you wrote and where.
 
