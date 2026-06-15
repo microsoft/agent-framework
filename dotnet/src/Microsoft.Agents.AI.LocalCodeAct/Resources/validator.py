@@ -230,16 +230,20 @@ ALLOWED_AST_NODES: set[type[ast.AST]] = {
     ast.arg,
     # Lambda expressions
     ast.Lambda,
+    # Match statements (Python 3.10+)
+    ast.Match,
+    ast.match_case,
+    ast.MatchValue,
+    ast.MatchSingleton,
+    ast.MatchSequence,
+    ast.MatchMapping,
+    ast.MatchClass,
+    ast.MatchStar,
+    ast.MatchAs,
+    ast.MatchOr,
     # Starred expressions
     ast.Starred,
 }
-
-# Match statements (Python 3.10+) - added conditionally for older Python compatibility.
-for _name in ("Match", "match_case", "MatchValue", "MatchSingleton", "MatchSequence",
-              "MatchMapping", "MatchClass", "MatchStar", "MatchAs", "MatchOr"):
-    _node = getattr(ast, _name, None)
-    if _node is not None:
-        ALLOWED_AST_NODES.add(_node)
 
 
 class CodeValidationError(ValueError):
@@ -313,8 +317,8 @@ class _CodeValidator(ast.NodeVisitor):
         elif module_name not in self._allowed_imports:
             self._errors.append(f"Import from '{node.module}' is not allowed (not in allow-list)")
         elif module_name == "os":
-            # Mirror the os.* attribute allow-list for `from os import X`,
-            # otherwise `from os import system` would bypass visit_Attribute.
+            # Mirror the os.* attribute allow-list for ``from os import X``,
+            # otherwise ``from os import system`` would bypass visit_Attribute.
             for alias_node in node.names:
                 if alias_node.name not in self._allowed_os_attrs:
                     self._errors.append(f"Import from 'os' of '{alias_node.name}' is not allowed")
@@ -350,7 +354,9 @@ class _CodeValidator(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         """Validate attribute access."""
-        # Check for dangerous os module operations
+        # Enforce the `os` attribute allow-list. Anything outside `ALLOWED_OS_ATTRS`
+        # (file I/O, process control, mutating helpers, etc.) is rejected so the
+        # validator matches the documented `os.environ` / `os.path`-only contract.
         if isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr not in self._allowed_os_attrs:
             self._errors.append(f"Access to os.{node.attr} is not allowed")
 
