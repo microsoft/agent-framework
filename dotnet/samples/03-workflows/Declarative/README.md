@@ -18,8 +18,8 @@ The configuraton required by the samples is:
 
 |Setting Name| Description|
 |:--|:--|
-|AZURE_AI_PROJECT_ENDPOINT| The endpoint URL of your Microsoft Foundry Project.|
-|AZURE_AI_MODEL_DEPLOYMENT_NAME| The name of the model deployment to use
+|FOUNDRY_PROJECT_ENDPOINT| The endpoint URL of your Microsoft Foundry Project.|
+|FOUNDRY_MODEL| The name of the model deployment to use
 |AZURE_AI_BING_CONNECTION_ID| The name of the Bing Grounding connection configured in your Microsoft Foundry Project.|
 
 To set your secrets with .NET Secret Manager:
@@ -45,13 +45,13 @@ To set your secrets with .NET Secret Manager:
 4. Define setting that identifies your Microsoft Foundry Project (endpoint):
 
     ```
-    dotnet user-secrets set "AZURE_AI_PROJECT_ENDPOINT" "https://..."
+    dotnet user-secrets set "FOUNDRY_PROJECT_ENDPOINT" "https://..."
     ```
 
 5. Define setting that identifies your Microsoft Foundry Model Deployment (endpoint):
 
     ```
-    dotnet user-secrets set "AZURE_AI_MODEL_DEPLOYMENT_NAME" "gpt-5"
+    dotnet user-secrets set "FOUNDRY_MODEL" "gpt-5"
     ```
 
 6. Define setting that identifies your Bing Grounding connection:
@@ -63,8 +63,8 @@ To set your secrets with .NET Secret Manager:
 You may alternatively set your secrets as an environment variable (PowerShell):
 
 ```pwsh
-$env:AZURE_AI_PROJECT_ENDPOINT="https://..."
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://..."
+$env:FOUNDRY_MODEL="gpt-5"
 $env:AZURE_AI_BING_CONNECTION_ID="mybinggrounding"
 ```
 

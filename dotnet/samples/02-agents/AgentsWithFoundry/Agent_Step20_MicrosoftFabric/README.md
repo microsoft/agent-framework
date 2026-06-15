@@ -12,14 +12,14 @@ This sample shows how to use the Microsoft Fabric tool with a `ChatClientAgent` 
 
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (`az login`)
+- An authenticated Azure identity (for example, sign in with `az login`)
 - Microsoft Fabric connection configured in your Microsoft Foundry project
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-5.4-mini"
 $env:FABRIC_PROJECT_CONNECTION_ID="your-fabric-connection-id"  # The full ARM resource URI, e.g., "/subscriptions/.../connections/FabricTestTool"
 ```
 

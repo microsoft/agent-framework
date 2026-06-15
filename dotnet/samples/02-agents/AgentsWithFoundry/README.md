@@ -4,12 +4,12 @@ These samples demonstrate how to use Microsoft Foundry with Agent Framework.
 
 ## Quick start
 
-The simplest way to create a Foundry agent is using the `FoundryAgent` type directly:
+You can create a Foundry agent directly with the `FoundryAgent` type:
 
 ```csharp
 FoundryAgent agent = new(
     new Uri(endpoint),
-    new AzureCliCredential(),
+    new DefaultAzureCredential(),
     model: "gpt-5.4-mini",
     instructions: "You are good at telling jokes.",
     name: "JokerAgent");
@@ -32,13 +32,13 @@ FoundryAgent agent = aiProjectClient.AsAIAgent(
 
 - .NET 10 SDK or later
 - Foundry project endpoint
-- Azure CLI installed and authenticated
+- An authenticated Azure identity (for example, sign in with `az login`)
 
 Set:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-5.4-mini"
 ```
 
 Some samples require extra tool-specific environment variables. See each sample for details.
@@ -78,7 +78,11 @@ Some samples require extra tool-specific environment variables. See each sample 
 
 ## Running the samples
 
+Use the basics sample for a quick smoke test:
+
 ```powershell
 cd dotnet/samples/02-agents/AgentsWithFoundry
-dotnet run --project .\FoundryAgent_Step01
+dotnet run --project .\Agent_Step01_Basics
 ```
+
+If you want to exercise the full create-run-delete lifecycle, run `Agent_Step00_FoundryAgentLifecycle`.

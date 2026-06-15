@@ -52,19 +52,6 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
-            Name = "Agent_With_AzureAIAgentsPersistent",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_AzureAIAgentsPersistent",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            ExpectedOutputDescription =
-            [
-                "The output should contain a joke about a pirate.",
-                "The output should not contain error messages or stack traces.",
-            ],
-        },
-
-        new SampleDefinition
-        {
             Name = "Agent_With_AzureAIProject",
             ProjectPath = "samples/02-agents/AgentProviders/Agent_With_AzureAIProject",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],

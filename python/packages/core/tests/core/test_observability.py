@@ -25,6 +25,7 @@ from agent_framework import (
     prepend_agent_framework_to_user_agent,
     tool,
 )
+from agent_framework._serialization import make_json_safe
 from agent_framework.observability import (
     ROLE_EVENT_MAP,
     AgentTelemetryLayer,
@@ -2153,6 +2154,58 @@ def test_get_response_attributes_with_usage():
     assert result[OtelAttr.OUTPUT_TOKENS] == 50
 
 
+def test_get_response_attributes_with_additional_usage():
+    """Test _get_response_attributes maps additional usage details to OTel attributes."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import OtelAttr, _get_response_attributes
+
+    response = Mock()
+    response.response_id = None
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = {
+        "input_token_count": 0,
+        "output_token_count": 50,
+        "cache_creation_input_token_count": 10,
+        "cache_read_input_token_count": 0,
+        "reasoning_output_token_count": 30,
+    }
+
+    attrs = {}
+    result = _get_response_attributes(attrs, response)
+
+    assert result[OtelAttr.INPUT_TOKENS] == 0
+    assert result[OtelAttr.OUTPUT_TOKENS] == 50
+    assert result[OtelAttr.CACHE_CREATION_INPUT_TOKENS] == 10
+    assert result[OtelAttr.CACHE_READ_INPUT_TOKENS] == 0
+    assert result[OtelAttr.REASONING_OUTPUT_TOKENS] == 30
+
+
+def test_get_response_attributes_maps_legacy_usage_keys():
+    """Test _get_response_attributes maps legacy provider usage keys to standard OTel attributes."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import OtelAttr, _get_response_attributes
+
+    response = Mock()
+    response.response_id = None
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = {
+        "anthropic.cache_creation_input_tokens": 12,
+        "openai.cached_input_tokens": 0,
+        "completion/reasoning_tokens": 34,
+    }
+
+    attrs = {}
+    result = _get_response_attributes(attrs, response)
+
+    assert result[OtelAttr.CACHE_CREATION_INPUT_TOKENS] == 12
+    assert result[OtelAttr.CACHE_READ_INPUT_TOKENS] == 0
+    assert result[OtelAttr.REASONING_OUTPUT_TOKENS] == 34
+
+
 def test_get_response_attributes_capture_usage_false():
     """Test _get_response_attributes skips usage when capture_usage is False."""
     from unittest.mock import Mock
@@ -2163,13 +2216,22 @@ def test_get_response_attributes_capture_usage_false():
     response.response_id = None
     response.finish_reason = None
     response.raw_representation = None
-    response.usage_details = {"input_token_count": 100, "output_token_count": 50}
+    response.usage_details = {
+        "input_token_count": 100,
+        "output_token_count": 50,
+        "cache_creation_input_token_count": 10,
+        "cache_read_input_token_count": 20,
+        "reasoning_output_token_count": 30,
+    }
 
     attrs = {}
     result = _get_response_attributes(attrs, response, capture_usage=False)
 
     assert OtelAttr.INPUT_TOKENS not in result
     assert OtelAttr.OUTPUT_TOKENS not in result
+    assert OtelAttr.CACHE_CREATION_INPUT_TOKENS not in result
+    assert OtelAttr.CACHE_READ_INPUT_TOKENS not in result
+    assert OtelAttr.REASONING_OUTPUT_TOKENS not in result
 
 
 def test_get_response_attributes_capture_response_id_false():
@@ -2932,6 +2994,23 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
     assert spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
 
 
+def test_capture_response_records_zero_token_usage():
+    """Test _capture_response records zero-valued token usage."""
+    from agent_framework.observability import OtelAttr, _capture_response
+
+    span = Mock()
+    token_histogram = Mock()
+    attrs = {
+        OtelAttr.INPUT_TOKENS: 0,
+        OtelAttr.OUTPUT_TOKENS: 0,
+    }
+
+    _capture_response(span=span, attributes=attrs, token_usage_histogram=token_histogram)
+
+    span.set_attributes.assert_called_once_with(attrs)
+    assert token_histogram.record.call_count == 2
+
+
 async def test_layer_ordering_span_sequence_with_function_calling(span_exporter: InMemorySpanExporter):
     """Test that with correct layer ordering, spans appear in the expected sequence.
 
@@ -3195,17 +3274,15 @@ def test_capture_messages_with_prepared_request_info_function_call_arguments(spa
 
     from opentelemetry import trace
 
-    from agent_framework import WorkflowAgent
-
     @dataclasses.dataclass
     class HandoffRequest:
         target_agent: str
         reason: str
 
-    arguments = WorkflowAgent.RequestInfoFunctionArgs(
-        request_id="call_dc",
-        data=HandoffRequest(target_agent="helper", reason="overflow"),
-    ).to_dict()
+    arguments = {
+        "request_id": "call_dc",
+        "data": make_json_safe(HandoffRequest(target_agent="helper", reason="overflow")),
+    }
     msg = Message(
         role="assistant",
         contents=[
@@ -3938,11 +4015,21 @@ async def test_agent_invoke_span_aggregates_usage_across_tool_calls(span_exporte
                     Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city": "Seattle"}')
                 ],
             ),
-            usage_details=UsageDetails(input_token_count=2239, output_token_count=192),
+            usage_details=UsageDetails(
+                input_token_count=2239,
+                output_token_count=192,
+                cache_read_input_token_count=100,
+                reasoning_output_token_count=25,
+            ),
         ),
         ChatResponse(
             messages=Message(role="assistant", contents=["The weather in Seattle is sunny."]),
-            usage_details=UsageDetails(input_token_count=2569, output_token_count=99),
+            usage_details=UsageDetails(
+                input_token_count=2569,
+                output_token_count=99,
+                cache_read_input_token_count=200,
+                reasoning_output_token_count=0,
+            ),
         ),
     ]
 
@@ -3966,12 +4053,18 @@ async def test_agent_invoke_span_aggregates_usage_across_tool_calls(span_exporte
     # Individual chat spans retain their own usage
     assert chat_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 2239
     assert chat_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 192
+    assert chat_spans[0].attributes.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100
+    assert chat_spans[0].attributes.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
     assert chat_spans[1].attributes.get(OtelAttr.INPUT_TOKENS) == 2569
     assert chat_spans[1].attributes.get(OtelAttr.OUTPUT_TOKENS) == 99
+    assert chat_spans[1].attributes.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 200
+    assert chat_spans[1].attributes.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 0
 
     # The invoke_agent span must report the aggregate across all LLM round-trips
     assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 2239 + 2569
     assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 192 + 99
+    assert agent_span.attributes.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100 + 200
+    assert agent_span.attributes.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)

@@ -1,4 +1,4 @@
-# Harness Step 02 — BackgroundAgents (Stock Price Research)
+﻿# Harness Step 02 — BackgroundAgents (Stock Price Research)
 
 This sample demonstrates how to use the **BackgroundAgentsProvider** to delegate work from a parent agent to background agents. Both agents use `HarnessAgent` for pre-configured function invocation, per-service-call persistence, and context-window compaction.
 
@@ -35,7 +35,7 @@ A parent agent receives a list of stock tickers and uses a web-search background
 - An Azure AI Foundry endpoint with an OpenAI model deployment
 - Set the following environment variables:
   - `AZURE_FOUNDRY_OPENAI_ENDPOINT` — Your Foundry OpenAI endpoint URL
-  - `AZURE_AI_MODEL_DEPLOYMENT_NAME` — Model deployment name (defaults to `gpt-5.4`)
+  - `FOUNDRY_MODEL` — Model deployment name (defaults to `gpt-5.4`)
 
 ## Running the Sample
 

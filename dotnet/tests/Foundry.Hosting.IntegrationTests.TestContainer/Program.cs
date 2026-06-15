@@ -54,7 +54,6 @@ builder.Services.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();
-app.MapGet("/readiness", () => Results.Ok());
 app.Run();
 
 static AIAgent CreateHappyPathAgent(AIProjectClient client, string deployment) =>

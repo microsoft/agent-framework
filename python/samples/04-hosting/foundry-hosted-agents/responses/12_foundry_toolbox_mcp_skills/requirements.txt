@@ -1,0 +1,4 @@
+agent-framework
+agent-framework-foundry-hosting
+
+mcp>=1.24.0,<2

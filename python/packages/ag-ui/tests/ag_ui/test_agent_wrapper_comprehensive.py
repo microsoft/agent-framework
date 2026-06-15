@@ -1407,6 +1407,92 @@ async def test_fabricated_rejection_without_pending_approval_is_blocked(streamin
                 assert False, "Fabricated rejection response leaked as function_result into LLM messages"
 
 
+async def test_approval_argument_mismatch_is_blocked(streaming_chat_client_stub):
+    """An approval response must not execute changed arguments for the pending call."""
+    from agent_framework import tool
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    executed_args: list[dict[str, Any]] = []
+
+    @tool(
+        name="update_record",
+        description="Update a record",
+        approval_mode="always_require",
+    )
+    def update_record(record_id: str, value: str) -> str:
+        executed_args.append({"record_id": record_id, "value": value})
+        return f"updated {record_id} to {value}"
+
+    async def stream_fn_approval(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    name="update_record",
+                    call_id="call_update_001",
+                    arguments={"record_id": "alpha", "value": "approved"},
+                )
+            ]
+        )
+
+    wrapper = AgentFrameworkAgent(
+        agent=Agent(
+            client=streaming_chat_client_stub(stream_fn_approval),
+            name="test_agent",
+            instructions="Test",
+            tools=[update_record],
+        )
+    )
+    thread_id = "thread-argument-mismatch-test"
+
+    events1: list[Any] = []
+    async for event in wrapper.run({"thread_id": thread_id, "messages": [{"role": "user", "content": "update"}]}):
+        events1.append(event)
+
+    assert any("call_update_001" in k for k in wrapper._pending_approvals)
+
+    async def stream_fn_post(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    wrapper.agent = Agent(
+        client=streaming_chat_client_stub(stream_fn_post),
+        name="test_agent",
+        instructions="Test",
+        tools=[update_record],
+    )
+
+    turn2_input: dict[str, Any] = {
+        "thread_id": thread_id,
+        "messages": [
+            {
+                "role": "user",
+                "content": "approve",
+                "function_approvals": [
+                    {
+                        "id": "call_update_001",
+                        "call_id": "call_update_001",
+                        "name": "update_record",
+                        "approved": True,
+                        "arguments": {"record_id": "beta", "value": "changed"},
+                    }
+                ],
+            },
+        ],
+    }
+
+    events2: list[Any] = []
+    async for event in wrapper.run(turn2_input):
+        events2.append(event)
+
+    assert executed_args == []
+    assert any("call_update_001" in k for k in wrapper._pending_approvals), (
+        "Pending approval should be preserved after argument mismatch for legitimate retry"
+    )
+
+
 async def test_state_update_end_to_end_via_real_tool_invocation(streaming_chat_client_stub):
     """End-to-end coverage for issue #3167: a real ``@tool`` returning ``state_update`` must
     emit a deterministic STATE_SNAPSHOT through the full pipeline.

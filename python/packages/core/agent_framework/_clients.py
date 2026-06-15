@@ -604,10 +604,13 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 and dict literals are accepted without specialized option typing.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            require_per_service_call_history_persistence: Whether to require per-service-call
-                chat history persistence. When enabled, history providers are invoked around
-                each model call instead of once per ``run()`` when the service is not already
-                storing history.
+            require_per_service_call_history_persistence: When enabled (and a HistoryProvider is
+                present), the provider always persists history after each model call. If the
+                client does not store history server-side, history providers are also loaded and
+                injected around each model call; if it does, provider loading is skipped and the
+                service-managed conversation is the source of truth (persistence still happens
+                after each model call). When no HistoryProvider is present, this flag has no
+                effect (no middleware is installed and nothing is persisted).
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level compaction override. When omitted,
                 client-level compaction defaults remain in effect for each call.
@@ -806,6 +809,36 @@ class SupportsFileSearchTool(Protocol):
     @staticmethod
     def get_file_search_tool(**kwargs: Any) -> Any:
         """Create a file search tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsShellTool(Protocol):
+    """Protocol for clients that support shell tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports executing shell commands.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsShellTool
+
+            if isinstance(client, SupportsShellTool):
+                tool = client.get_shell_tool(func=shell.as_function())
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_shell_tool(**kwargs: Any) -> Any:
+        """Create a shell tool configuration.
 
         Keyword Args:
             **kwargs: Provider-specific configuration options.

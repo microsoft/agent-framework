@@ -80,6 +80,7 @@ __all__ = [
     "EmbeddingTelemetryLayer",
     "OtelAttr",
     "configure_otel_providers",
+    "create_mcp_client_span",
     "create_metric_views",
     "create_resource",
     "disable_instrumentation",
@@ -87,6 +88,7 @@ __all__ = [
     "enable_sensitive_telemetry",
     "get_meter",
     "get_tracer",
+    "set_mcp_span_error",
 ]
 
 
@@ -109,7 +111,6 @@ INNER_USAGE_CAPTURED_FIELD: Final[str] = "usage"
 INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = contextvars.ContextVar(
     "inner_accumulated_usage", default=None
 )
-
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
 TOKEN_USAGE_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
@@ -200,6 +201,9 @@ class OtelAttr(str, Enum):
     # Usage attributes
     INPUT_TOKENS = "gen_ai.usage.input_tokens"
     OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+    CACHE_CREATION_INPUT_TOKENS = "gen_ai.usage.cache_creation.input_tokens"
+    CACHE_READ_INPUT_TOKENS = "gen_ai.usage.cache_read.input_tokens"
+    REASONING_OUTPUT_TOKENS = "gen_ai.usage.reasoning.output_tokens"
     # Tool attributes
     TOOL_CALL_ID = "gen_ai.tool.call.id"
     TOOL_DESCRIPTION = "gen_ai.tool.description"
@@ -292,6 +296,14 @@ class OtelAttr(str, Enum):
     AGENT_CREATE_OPERATION = "create_agent"
     AGENT_INVOKE_OPERATION = "invoke_agent"
 
+    # MCP attributes (https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/)
+    MCP_METHOD_NAME = "mcp.method.name"
+    MCP_PROTOCOL_VERSION = "mcp.protocol.version"
+    MCP_SESSION_ID = "mcp.session.id"
+    PROMPT_NAME = "gen_ai.prompt.name"
+    NETWORK_TRANSPORT = "network.transport"
+    NETWORK_PROTOCOL_NAME = "network.protocol.name"
+
     # Agent Framework specific attributes
     MEASUREMENT_FUNCTION_TAG_NAME = "agent_framework.function.name"
     MEASUREMENT_FUNCTION_INVOCATION_DURATION = "agent_framework.function.invocation.duration"
@@ -318,6 +330,20 @@ FINISH_REASON_MAP = {
     "tool_calls": "tool_call",
     "length": "length",
 }
+USAGE_DETAIL_TO_OTEL_ATTR: Final[tuple[tuple[str, OtelAttr], ...]] = (
+    ("input_token_count", OtelAttr.INPUT_TOKENS),
+    ("output_token_count", OtelAttr.OUTPUT_TOKENS),
+    ("cache_creation_input_token_count", OtelAttr.CACHE_CREATION_INPUT_TOKENS),
+    ("cache_read_input_token_count", OtelAttr.CACHE_READ_INPUT_TOKENS),
+    ("reasoning_output_token_count", OtelAttr.REASONING_OUTPUT_TOKENS),
+    ("anthropic.cache_creation_input_tokens", OtelAttr.CACHE_CREATION_INPUT_TOKENS),
+    ("anthropic.cache_read_input_tokens", OtelAttr.CACHE_READ_INPUT_TOKENS),
+    ("openai.cached_input_tokens", OtelAttr.CACHE_READ_INPUT_TOKENS),
+    ("prompt/cached_tokens", OtelAttr.CACHE_READ_INPUT_TOKENS),
+    ("openai.reasoning_tokens", OtelAttr.REASONING_OUTPUT_TOKENS),
+    ("completion/reasoning_tokens", OtelAttr.REASONING_OUTPUT_TOKENS),
+    ("reasoning_tokens", OtelAttr.REASONING_OUTPUT_TOKENS),
+)
 
 
 # region Telemetry utils
@@ -2013,6 +2039,61 @@ def get_function_span(
     )
 
 
+# region MCP span helpers
+
+
+@contextlib.contextmanager
+def create_mcp_client_span(
+    method_name: str,
+    target: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> Generator[trace.Span, Any, Any]:
+    """Create an MCP client span per OTel MCP semantic conventions.
+
+    Span name follows the format ``{mcp.method.name} {target}`` when a target
+    is available, otherwise just ``{mcp.method.name}``.
+
+    See: https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#client
+
+    Args:
+        method_name: The MCP method name (e.g. ``initialize``, ``tools/call``).
+        target: Optional low-cardinality target (tool name, prompt name).
+        attributes: Additional span attributes.
+    """
+    span_name = f"{method_name} {target}" if target else method_name
+    attrs: dict[str, Any] = {OtelAttr.MCP_METHOD_NAME: method_name}
+    if attributes:
+        attrs.update(attributes)
+    tracer = get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
+    span = tracer.start_span(span_name, kind=trace.SpanKind.CLIENT, attributes=attrs)
+    with trace.use_span(
+        span=span,
+        end_on_exit=True,
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as current_span:
+        yield current_span
+
+
+def set_mcp_span_error(
+    span: trace.Span,
+    error_type: str,
+    description: str | None = None,
+) -> None:
+    """Set error status and ``error.type`` on an MCP span.
+
+    Args:
+        span: The span to mark as errored.
+        error_type: The error type string (e.g. ``tool_error``, exception class name).
+        description: Optional description (e.g. JSON-RPC error message).
+    """
+    span.set_attribute(OtelAttr.ERROR_TYPE, error_type)
+    span.set_status(trace.StatusCode.ERROR, description=description)
+
+
+# endregion
+
+
 @contextlib.contextmanager
 def _activate_span(span: trace.Span) -> Generator[None]:
     """Attach ``span`` as the current span in the OpenTelemetry context.
@@ -2286,12 +2367,16 @@ def _apply_accumulated_usage(attributes: dict[str, Any], captured_fields: set[st
     accumulated = INNER_ACCUMULATED_USAGE.get()
     if not accumulated:
         return
-    input_tokens = accumulated.get("input_token_count")
-    if input_tokens:
-        attributes[OtelAttr.INPUT_TOKENS] = input_tokens
-    output_tokens = accumulated.get("output_token_count")
-    if output_tokens:
-        attributes[OtelAttr.OUTPUT_TOKENS] = output_tokens
+    _apply_usage_attributes(attributes, accumulated)
+
+
+def _apply_usage_attributes(attributes: dict[str, Any], usage: Mapping[str, Any]) -> None:
+    """Apply known usage details as standard OTel GenAI attributes."""
+    for usage_key, otel_attr in USAGE_DETAIL_TO_OTEL_ATTR:
+        value = usage.get(usage_key)
+        if value is None or isinstance(value, bool) or not isinstance(value, int):
+            continue
+        attributes.setdefault(otel_attr, value)
 
 
 def _get_response_attributes(
@@ -2314,12 +2399,7 @@ def _get_response_attributes(
     if model := getattr(response, "model", None):
         attributes[OtelAttr.RESPONSE_MODEL] = model
     if capture_usage and (usage := response.usage_details):
-        input_tokens = usage.get("input_token_count")
-        if input_tokens:
-            attributes[OtelAttr.INPUT_TOKENS] = input_tokens
-        output_tokens = usage.get("output_token_count")
-        if output_tokens:
-            attributes[OtelAttr.OUTPUT_TOKENS] = output_tokens
+        _apply_usage_attributes(attributes, usage)
     return attributes
 
 
@@ -2343,9 +2423,9 @@ def _capture_response(
     """Set the response for a given span."""
     span.set_attributes(attributes)
     attrs: dict[str, Any] = {k: v for k, v in attributes.items() if k in GEN_AI_METRIC_ATTRIBUTES}
-    if token_usage_histogram and (input_tokens := attributes.get(OtelAttr.INPUT_TOKENS)):
+    if token_usage_histogram and (input_tokens := attributes.get(OtelAttr.INPUT_TOKENS)) is not None:
         token_usage_histogram.record(input_tokens, attributes={**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_INPUT})
-    if token_usage_histogram and (output_tokens := attributes.get(OtelAttr.OUTPUT_TOKENS)):
+    if token_usage_histogram and (output_tokens := attributes.get(OtelAttr.OUTPUT_TOKENS)) is not None:
         token_usage_histogram.record(output_tokens, {**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_OUTPUT})
     if operation_duration_histogram and duration is not None:
         if OtelAttr.ERROR_TYPE in attributes:
