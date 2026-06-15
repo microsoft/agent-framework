@@ -201,6 +201,7 @@ class OtelAttr(str, Enum):
     # Usage attributes
     INPUT_TOKENS = "gen_ai.usage.input_tokens"
     OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+    TOTAL_TOKENS = "gen_ai.usage.total_tokens"
     # Tool attributes
     TOOL_CALL_ID = "gen_ai.tool.call.id"
     TOOL_DESCRIPTION = "gen_ai.tool.description"
@@ -1679,8 +1680,7 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
             duration = perf_counter() - start_time_stamp
             response_attributes: dict[str, Any] = {**attributes}
             usage = result.usage or {}
-            if (input_tokens := usage.get("input_token_count")) is not None:
-                response_attributes[OtelAttr.INPUT_TOKENS] = input_tokens
+            _apply_usage_details(response_attributes, usage)
             _capture_response(
                 span=span,
                 attributes=response_attributes,
@@ -2343,6 +2343,23 @@ def _mark_inner_response_telemetry_captured(response: ChatResponse | AgentRespon
             INNER_ACCUMULATED_USAGE.set(add_usage_details(accumulated, response.usage_details))
 
 
+_USAGE_ATTR_MAP: dict[str, str] = {
+    "input_token_count": OtelAttr.INPUT_TOKENS,
+    "output_token_count": OtelAttr.OUTPUT_TOKENS,
+    "total_token_count": OtelAttr.TOTAL_TOKENS,
+}
+
+
+def _apply_usage_details(attributes: dict[str, Any], usage: Mapping[str, Any]) -> None:
+    for usage_key, otel_attr in _USAGE_ATTR_MAP.items():
+        value = usage.get(usage_key)
+        if value is not None:
+            attributes[otel_attr] = value
+    for usage_key, value in usage.items():
+        if usage_key not in _USAGE_ATTR_MAP and value is not None:
+            attributes[f"gen_ai.usage.{usage_key}"] = value
+
+
 def _apply_accumulated_usage(attributes: dict[str, Any], captured_fields: set[str]) -> None:
     """Apply accumulated usage from inner chat spans to the invoke_agent span attributes."""
     if INNER_USAGE_CAPTURED_FIELD not in captured_fields:
@@ -2350,12 +2367,7 @@ def _apply_accumulated_usage(attributes: dict[str, Any], captured_fields: set[st
     accumulated = INNER_ACCUMULATED_USAGE.get()
     if not accumulated:
         return
-    input_tokens = accumulated.get("input_token_count")
-    if input_tokens:
-        attributes[OtelAttr.INPUT_TOKENS] = input_tokens
-    output_tokens = accumulated.get("output_token_count")
-    if output_tokens:
-        attributes[OtelAttr.OUTPUT_TOKENS] = output_tokens
+    _apply_usage_details(attributes, accumulated)
 
 
 def _get_response_attributes(
@@ -2378,12 +2390,7 @@ def _get_response_attributes(
     if model := getattr(response, "model", None):
         attributes[OtelAttr.RESPONSE_MODEL] = model
     if capture_usage and (usage := response.usage_details):
-        input_tokens = usage.get("input_token_count")
-        if input_tokens:
-            attributes[OtelAttr.INPUT_TOKENS] = input_tokens
-        output_tokens = usage.get("output_token_count")
-        if output_tokens:
-            attributes[OtelAttr.OUTPUT_TOKENS] = output_tokens
+        _apply_usage_details(attributes, usage)
     return attributes
 
 

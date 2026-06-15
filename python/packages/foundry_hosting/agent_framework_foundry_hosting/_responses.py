@@ -1701,6 +1701,14 @@ async def _to_outputs(
             max_output_length=content.max_output_length,
         ):
             yield event
+    elif content.type == "oauth_consent_request":
+        server_label = (content.additional_properties or {}).get("server_label", "")
+        text = (
+            f"OAuth consent required for MCP server '{server_label}'. "
+            f"Please visit:\n{content.consent_link}"
+        )
+        async for event in stream.aoutput_item_message(text):
+            yield event
     elif content.type == "function_approval_request":
         function_call: Content = content.function_call  # type: ignore
         server_label = function_call.additional_properties.get("server_label", "agent_framework")
