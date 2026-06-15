@@ -56,13 +56,13 @@ class TestContentLabel:
         """Test label serialization to dict."""
         label = ContentLabel(
             integrity=IntegrityLabel.UNTRUSTED,
-            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            confidentiality=ConfidentialityLabel(["Alice", "Bob"]),
             metadata={"source": "external"},
         )
 
         data = label.to_dict()
         assert data["integrity"] == "untrusted"
-        assert data["confidentiality"] == "user_identity"
+        assert data["confidentiality"] == ["Alice", "Bob"]
         assert data["metadata"]["source"] == "external"
 
     def test_label_deserialization(self):
@@ -127,11 +127,11 @@ class TestCombineLabels:
     def test_combine_most_restrictive_confidentiality(self):
         """Test most restrictive confidentiality is selected."""
         label1 = ContentLabel(confidentiality=ConfidentialityLabel.PUBLIC)
-        label2 = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
+        label2 = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
         label3 = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
 
         result = combine_labels(label1, label2, label3)
-        assert result.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert result.confidentiality == ConfidentialityLabel.PRIVATE
 
     def test_combine_metadata_merged(self):
         """Test that metadata is merged from all labels."""
@@ -1037,8 +1037,8 @@ class TestAutomaticHiding:
         assert payload["content"] == "raw untrusted payload"
 
     @pytest.mark.asyncio
-    async def test_inspect_variable_propagates_user_identity(self, middleware_no_auto_hide):
-        """inspect_variable must propagate a USER_IDENTITY label, not downgrade it.
+    async def test_inspect_variable_propagates_private_with_readers(self, middleware_no_auto_hide):
+        """inspect_variable must propagate a PRIVATE-with-readers label, not downgrade it.
 
         The tool returns a dict whose ``security_label`` carries the inspected
         content's confidentiality. A custom result parser stamps that label onto
@@ -1052,14 +1052,14 @@ class TestAutomaticHiding:
             "secret",
             ContentLabel(
                 integrity=IntegrityLabel.UNTRUSTED,
-                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                confidentiality=ConfidentialityLabel(["Alice", "Bob"]),
                 metadata={"user_id": "user-123"},
             ),
         )
 
         context = FunctionInvocationContext(
             function=inspect_tool,
-            arguments={"variable_id": var_id, "reason": "propagate user identity"},
+            arguments={"variable_id": var_id, "reason": "propagate private readers"},
         )
 
         async def next_fn():
@@ -1068,8 +1068,8 @@ class TestAutomaticHiding:
         await middleware_no_auto_hide.process(context, next_fn)
 
         result_label = context.metadata["result_label"]
-        assert result_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
-        assert middleware_no_auto_hide.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert result_label.confidentiality == ConfidentialityLabel(["Alice", "Bob"])
+        assert middleware_no_auto_hide.get_context_label().confidentiality == ConfidentialityLabel(["Alice", "Bob"])
 
     @pytest.mark.asyncio
     async def test_inspect_variable_propagates_private(self, middleware_no_auto_hide):
@@ -2639,16 +2639,16 @@ class TestMaxAllowedConfidentiality:
         assert "exfiltration" in context.result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_user_identity_data_blocked_from_private_destination(
+    async def test_private_with_readers_data_blocked_from_public_destination(
         self, label_middleware, policy_middleware, create_function_with_max_confidentiality
     ):
-        """Test USER_IDENTITY data cannot be written to PRIVATE destination."""
-        # Context contains USER_IDENTITY data
+        """Test PRIVATE data with readers cannot be written to PUBLIC destination."""
+        # Context contains PRIVATE data with readers
         label_middleware._update_context_label(
-            ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.USER_IDENTITY)
+            ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel(["Alice", "Bob"]))
         )
 
-        function = create_function_with_max_confidentiality("send_to_private", "private")
+        function = create_function_with_max_confidentiality("send_to_public", "public")
         args = function.args_schema()
         context = FunctionInvocationContext(function=function, arguments=args)
 
@@ -2747,12 +2747,12 @@ class TestCheckConfidentialityAllowed:
         public_label = ContentLabel(confidentiality=ConfidentialityLabel.PUBLIC)
         assert check_confidentiality_allowed(public_label, ConfidentialityLabel.PRIVATE) is True
 
-    def test_public_to_user_identity_allowed(self):
-        """Test PUBLIC data can be written to USER_IDENTITY destination."""
+    def test_public_to_private_with_readers_allowed(self):
+        """Test PUBLIC data can be written to PRIVATE-with-readers destination."""
         from agent_framework.security import check_confidentiality_allowed
 
         public_label = ContentLabel(confidentiality=ConfidentialityLabel.PUBLIC)
-        assert check_confidentiality_allowed(public_label, ConfidentialityLabel.USER_IDENTITY) is True
+        assert check_confidentiality_allowed(public_label, ConfidentialityLabel(["Alice"])) is True
 
     def test_private_to_public_blocked(self):
         """Test PRIVATE data cannot be written to PUBLIC destination."""
@@ -2768,33 +2768,19 @@ class TestCheckConfidentialityAllowed:
         private_label = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
         assert check_confidentiality_allowed(private_label, ConfidentialityLabel.PRIVATE) is True
 
-    def test_private_to_user_identity_allowed(self):
-        """Test PRIVATE data can be written to USER_IDENTITY destination."""
+    def test_private_with_readers_to_private_allowed(self):
+        """Test PRIVATE data with readers can be written to PRIVATE destination."""
         from agent_framework.security import check_confidentiality_allowed
 
-        private_label = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
-        assert check_confidentiality_allowed(private_label, ConfidentialityLabel.USER_IDENTITY) is True
+        readers_label = ContentLabel(confidentiality=ConfidentialityLabel(["Alice", "Bob"]))
+        assert check_confidentiality_allowed(readers_label, ConfidentialityLabel.PRIVATE) is True
 
-    def test_user_identity_to_public_blocked(self):
-        """Test USER_IDENTITY data cannot be written to PUBLIC destination."""
+    def test_private_with_readers_to_public_blocked(self):
+        """Test PRIVATE data with readers cannot be written to PUBLIC destination."""
         from agent_framework.security import check_confidentiality_allowed
 
-        ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
-        assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.PUBLIC) is False
-
-    def test_user_identity_to_private_blocked(self):
-        """Test USER_IDENTITY data cannot be written to PRIVATE destination."""
-        from agent_framework.security import check_confidentiality_allowed
-
-        ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
-        assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.PRIVATE) is False
-
-    def test_user_identity_to_user_identity_allowed(self):
-        """Test USER_IDENTITY data can be written to USER_IDENTITY destination."""
-        from agent_framework.security import check_confidentiality_allowed
-
-        ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
-        assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.USER_IDENTITY) is True
+        readers_label = ContentLabel(confidentiality=ConfidentialityLabel(["Alice", "Bob"]))
+        assert check_confidentiality_allowed(readers_label, ConfidentialityLabel.PUBLIC) is False
 
 
 if __name__ == "__main__":
