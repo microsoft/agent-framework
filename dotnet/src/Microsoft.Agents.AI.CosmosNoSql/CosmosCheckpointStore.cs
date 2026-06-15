@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Azure.Core;
+using Microsoft.Agents.AI.CosmosNoSql;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Shared.Diagnostics;
 using Newtonsoft.Json;
@@ -37,7 +38,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosCheckpointStore(string connectionString, string databaseId, string containerId)
     {
-        var cosmosClientOptions = new CosmosClientOptions();
+        var cosmosClientOptions = CosmosOptionsHelper.CreateOptions(nameof(CosmosCheckpointStore));
 
         this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(connectionString), cosmosClientOptions);
         this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
@@ -55,12 +56,10 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosCheckpointStore(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId)
     {
-        var cosmosClientOptions = new CosmosClientOptions
+        var cosmosClientOptions = CosmosOptionsHelper.CreateOptions(nameof(CosmosCheckpointStore));
+        cosmosClientOptions.SerializerOptions = new CosmosSerializationOptions
         {
-            SerializerOptions = new CosmosSerializationOptions
-            {
-                PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
-            }
+            PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
         };
 
         this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential), cosmosClientOptions);
@@ -79,6 +78,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     public CosmosCheckpointStore(CosmosClient cosmosClient, string databaseId, string containerId)
     {
         this._cosmosClient = Throw.IfNull(cosmosClient);
+        CosmosOptionsHelper.EnsureApplicationName(this._cosmosClient, nameof(CosmosCheckpointStore));
 
         this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
         this._ownsClient = false;

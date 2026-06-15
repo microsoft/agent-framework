@@ -102,6 +102,12 @@ from ._harness._file_access import (
     FileSystemAgentFileStore,
     InMemoryAgentFileStore,
 )
+from ._harness._loop import (
+    AgentLoopMiddleware,
+    JudgeVerdict,
+    background_tasks_running,
+    todos_remaining,
+)
 from ._harness._memory import (
     DEFAULT_MEMORY_SOURCE_ID,
     MemoryContextProvider,
@@ -363,6 +369,7 @@ __all__ = [
     "AgentExecutorResponse",
     "AgentFileStore",
     "AgentFrameworkException",
+    "AgentLoopMiddleware",
     "AgentMiddleware",
     "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
@@ -455,6 +462,7 @@ __all__ = [
     "InlineSkill",
     "InlineSkillResource",
     "InlineSkillScript",
+    "JudgeVerdict",
     "LocalEvaluator",
     "MCPSkill",
     "MCPSkillResource",
@@ -558,6 +566,7 @@ __all__ = [
     "agent_middleware",
     "annotate_message_groups",
     "apply_compaction",
+    "background_tasks_running",
     "chat_middleware",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
@@ -588,6 +597,7 @@ __all__ = [
     "response_handler",
     "set_agent_mode",
     "step",
+    "todos_remaining",
     "tool",
     "tool_call_args_match",
     "tool_called_check",

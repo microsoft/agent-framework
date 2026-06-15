@@ -38,7 +38,9 @@ the file_access_* tools.
 
 ## Getting started
 - Start by listing available files with file_access_list_files to see what data
-  is available.
+  is available. Files may be organized into subdirectories — use
+  file_access_list_subdirectories to discover folders and explore the tree level
+  by level.
 - Read the files to understand their structure and contents.
 
 ## Working with data
@@ -86,7 +88,7 @@ async def main() -> None:
 
     # 3. Wire up the file access provider against a file-system-backed store
     #    rooted at the sample's working/ folder. The provider injects its
-    #    default instructions plus exposes five file_access_* tools to the
+    #    default instructions plus exposes six file_access_* tools to the
     #    agent for the duration of each run.
     file_access = FileAccessProvider(store=FileSystemAgentFileStore(working_dir))
 

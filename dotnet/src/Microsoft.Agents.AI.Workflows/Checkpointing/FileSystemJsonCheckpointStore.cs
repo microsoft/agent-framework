@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -11,7 +12,11 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 
-internal record CheckpointFileIndexEntry(CheckpointInfo CheckpointInfo, string FileName);
+internal record CheckpointFileIndexEntry(
+    CheckpointInfo CheckpointInfo,
+    string FileName,
+    string? ParentCheckpointId = null,
+    bool HasParentMetadata = false);
 
 /// <summary>
 /// Provides a file system-based implementation of a JSON checkpoint store that persists checkpoint data and index
@@ -30,6 +35,8 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
 
     internal DirectoryInfo Directory { get; }
     internal HashSet<CheckpointInfo> CheckpointIndex { get; }
+    private Dictionary<CheckpointInfo, string?> CheckpointParents { get; } = [];
+    private HashSet<CheckpointInfo> CheckpointsWithKnownParent { get; } = [];
 
     private static JsonTypeInfo<CheckpointFileIndexEntry> EntryTypeInfo => WorkflowsJsonUtilities.JsonContext.Default.CheckpointFileIndexEntry;
 
@@ -74,6 +81,11 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
                     // We never actually use the file names from the index entries since they can be derived from the CheckpointInfo, but it is useful to
                     // have the UrlEncoded file names in the index file for human readability
                     this.CheckpointIndex.Add(entry.CheckpointInfo);
+                    this.CheckpointParents[entry.CheckpointInfo] = entry.ParentCheckpointId;
+                    if (entry.HasParentMetadata)
+                    {
+                        this.CheckpointsWithKnownParent.Add(entry.CheckpointInfo);
+                    }
                 }
             }
         }
@@ -137,7 +149,11 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
             using Utf8JsonWriter jsonWriter = new(checkpointStream, new JsonWriterOptions() { Indented = false });
             value.WriteTo(jsonWriter);
 
-            CheckpointFileIndexEntry entry = new(key, fileName);
+            string? parentCheckpointId = parent?.CheckpointId;
+            this.CheckpointParents[key] = parentCheckpointId;
+            this.CheckpointsWithKnownParent.Add(key);
+
+            CheckpointFileIndexEntry entry = new(key, fileName, parentCheckpointId, HasParentMetadata: true);
             JsonSerializer.Serialize(this._indexFile!, entry, EntryTypeInfo);
             byte[] bytes = Encoding.UTF8.GetBytes(Environment.NewLine);
             await this._indexFile!.WriteAsync(bytes, 0, bytes.Length, CancellationToken.None).ConfigureAwait(false);
@@ -148,6 +164,8 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         catch (Exception ex)
         {
             this.CheckpointIndex.Remove(key);
+            this.CheckpointParents.Remove(key);
+            this.CheckpointsWithKnownParent.Remove(key);
 
             try
             {
@@ -184,6 +202,12 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     {
         this.CheckDisposed();
 
-        return new(this.CheckpointIndex);
+        return new(this.CheckpointIndex
+            .Where(checkpoint => checkpoint.SessionId == sessionId &&
+                (withParent is null ||
+                    !this.CheckpointsWithKnownParent.Contains(checkpoint) ||
+                    (this.CheckpointParents.TryGetValue(checkpoint, out string? parentCheckpointId) &&
+                        parentCheckpointId == withParent.CheckpointId)))
+            .ToArray());
     }
 }

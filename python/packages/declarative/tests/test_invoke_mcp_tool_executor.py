@@ -403,7 +403,6 @@ class TestApprovalFlow:
     async def test_approval_required_emits_request_and_yields(self, mock_state, mock_context) -> None:  # type: ignore[no-untyped-def]
         from agent_framework_declarative._workflows._declarative_base import ActionTrigger
         from agent_framework_declarative._workflows._executors_mcp import (
-            _MCP_APPROVAL_STATE_KEY,
             InvokeMcpToolActionExecutor,
             MCPToolApprovalRequest,
         )
@@ -439,18 +438,12 @@ class TestApprovalFlow:
         # Handler not invoked yet.
         assert handler.call_count == 0
 
-        # Approval state stored.
-        approval_key = f"{_MCP_APPROVAL_STATE_KEY}_mcp_action"
-        assert approval_key in mock_state._data
-
     @pytest.mark.asyncio
     async def test_approval_response_approved_invokes_handler(self, mock_state, mock_context) -> None:  # type: ignore[no-untyped-def]
         from agent_framework_declarative._workflows import ActionComplete, ToolApprovalResponse
         from agent_framework_declarative._workflows._executors_mcp import (
-            _MCP_APPROVAL_STATE_KEY,
             InvokeMcpToolActionExecutor,
             MCPToolApprovalRequest,
-            _MCPToolApprovalState,
         )
 
         _seed_state(mock_state)
@@ -458,23 +451,10 @@ class TestApprovalFlow:
         executor = InvokeMcpToolActionExecutor(
             _action(
                 require_approval=True,
+                headers={"Authorization": "Bearer tk"},
                 output={"result": "Local.Result"},
             ),
             mcp_tool_handler=handler,
-        )
-        # Pre-populate approval state.
-        approval_key = f"{_MCP_APPROVAL_STATE_KEY}_mcp_action"
-        mock_state._data[approval_key] = _MCPToolApprovalState(
-            server_url="https://mcp.example/api",
-            tool_name="search",
-            server_label=None,
-            arguments={"q": "x"},
-            connection_name=None,
-            headers_def={"Authorization": "Bearer tk"},
-            auto_send=False,
-            conversation_id_expr=None,
-            output_messages_path=None,
-            output_result_path="Local.Result",
         )
         await executor.handle_approval_response(
             MCPToolApprovalRequest(
@@ -491,10 +471,12 @@ class TestApprovalFlow:
         assert handler.call_count == 1
         inv = handler.last_invocation
         assert inv is not None
-        # Headers are re-evaluated from headers_def.
+        # Invocation fields source from the approval request payload.
+        assert inv.tool_name == "search"
+        assert inv.server_url == "https://mcp.example/api"
+        assert inv.arguments == {"q": "x"}
+        # Headers are re-evaluated from the action definition on resume.
         assert inv.headers == {"Authorization": "Bearer tk"}
-        # Approval state was cleaned up.
-        assert approval_key not in mock_state._data
         # ActionComplete was sent.
         mock_context.send_message.assert_called_once()
         sent = mock_context.send_message.call_args[0][0]
@@ -504,10 +486,8 @@ class TestApprovalFlow:
     async def test_approval_response_rejected_assigns_error(self, mock_state, mock_context) -> None:  # type: ignore[no-untyped-def]
         from agent_framework_declarative._workflows import ToolApprovalResponse
         from agent_framework_declarative._workflows._executors_mcp import (
-            _MCP_APPROVAL_STATE_KEY,
             InvokeMcpToolActionExecutor,
             MCPToolApprovalRequest,
-            _MCPToolApprovalState,
         )
 
         _seed_state(mock_state)
@@ -518,19 +498,6 @@ class TestApprovalFlow:
                 output={"result": "Local.Result"},
             ),
             mcp_tool_handler=handler,
-        )
-        approval_key = f"{_MCP_APPROVAL_STATE_KEY}_mcp_action"
-        mock_state._data[approval_key] = _MCPToolApprovalState(
-            server_url="https://mcp.example/api",
-            tool_name="search",
-            server_label=None,
-            arguments={},
-            connection_name=None,
-            headers_def=None,
-            auto_send=True,
-            conversation_id_expr=None,
-            output_messages_path=None,
-            output_result_path="Local.Result",
         )
         await executor.handle_approval_response(
             MCPToolApprovalRequest(
