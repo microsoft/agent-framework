@@ -84,8 +84,9 @@ function addTitlePrefix(title, prefix, bracketPrefixes = Object.values(DEFAULT_B
   }
 
   if (!title.startsWith(`${prefix}: `)) {
-    if (title.match(new RegExp(`^${prefixPattern}`, 'i'))) {
-      return title.replace(new RegExp(`^${prefixPattern}`, 'i'), prefix);
+    const existingTitlePrefix = new RegExp(`^${prefixPattern}:\\s*`, 'i');
+    if (existingTitlePrefix.test(title)) {
+      return title.replace(existingTitlePrefix, `${prefix}: `);
     }
 
     return `${prefix}: ${title}`;
