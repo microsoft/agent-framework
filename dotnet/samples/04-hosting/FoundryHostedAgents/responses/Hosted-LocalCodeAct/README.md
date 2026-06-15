@@ -35,10 +35,10 @@ cp .env.example .env
 Edit `.env` and set your Azure AI Foundry project endpoint:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 LOCAL_CODEACT_PYTHON=python3
 ```
 
@@ -132,6 +132,24 @@ The provider-owned host tools in this sample:
 by `ProcessExecutionLimits` (5 second timeout in this sample) and the
 default-on AST allow-list validator that rejects disallowed imports, builtins,
 and dynamic-eval constructs before execution.
+
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent
+spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-local-codeact && cd hosted-local-codeact
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalCodeAct/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
 
 ## NuGet package users
 

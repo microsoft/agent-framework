@@ -24,9 +24,9 @@ using Microsoft.Extensions.AI;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
 string pythonExecutable = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON")
     ?? (OperatingSystem.IsWindows() ? "python.exe" : "python3");
 
