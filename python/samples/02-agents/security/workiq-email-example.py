@@ -16,7 +16,7 @@ from agent_framework.security import SecureAgentConfig, SecureMCPToolProxy
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
-FOUNDRY_MODEL = os.getenv("FOUNDRY_MODEL", "o4-mini")
+FOUNDRY_MODEL = os.getenv("FOUNDRY_MODEL", "gpt-5")
 
 def configure_logging(*, debug: bool) -> None:
     """Configure optional verbose logging for the sample.
@@ -121,7 +121,7 @@ def _load_env_and_validate() -> tuple[str, str]:
 
 _AGENT_INSTRUCTIONS = (
     "Act as my high-autonomy productivity agent: read amd respond to my emails/teams messages, infer intent, "
-    "and complete tasks using available workiq mcp server tools without asking unnecessary questions."
+    "and complete tasks using available workiq mcp server tools without asking unnecessary questions. Reply if you have to, do not ask me for confirmation."
 )
 
 
@@ -143,9 +143,8 @@ async def run_cli_async(*, debug: bool = False) -> None:
                     url="http://localhost:9090/mcp/WorkIQ-TeamsServer",
                     description="WorkIQ Teams MCP server via local proxy",
                     tool_name_prefix="teams",
-                    terminate_on_close=False,
-                    load_prompts=False,
                 ),
+                gateway_policy=True,
             )
         )
         print("Connected to MCP proxy: http://localhost:9090/mcp/WorkIQ-TeamsServer")
@@ -159,9 +158,8 @@ async def run_cli_async(*, debug: bool = False) -> None:
                     url="http://localhost:9091/mcp/WorkIQ-MailTools",
                     description="WorkIQ Email MCP server via local proxy",
                     tool_name_prefix="mail",
-                    terminate_on_close=False,
-                    load_prompts=False,
                 ),
+                gateway_policy=True,
             )
         )
         print("Connected to MCP proxy: http://localhost:9091/mcp/WorkIQ-MailTools")
@@ -187,7 +185,8 @@ async def run_cli_async(*, debug: bool = False) -> None:
             )
         )
 
-        query = "Read my latest emails and summarize them."
+        # query = "Read my latest emails and summarize them."
+        query = "Handle my recent unread emails."
         print("\nUser:", query)
         result = await agent.run(query)
         print("\nAgent:", result.text)
@@ -231,6 +230,7 @@ async def run_devui_async(*, debug: bool = False) -> None:
                     terminate_on_close=False,
                     load_prompts=False,
                 ),
+                gateway_policy=True,
             )
         )
         print("Connected to MCP proxy: http://localhost:9090/mcp/WorkIQ-TeamsServer")
@@ -247,6 +247,7 @@ async def run_devui_async(*, debug: bool = False) -> None:
                     terminate_on_close=False,
                     load_prompts=False,
                 ),
+                gateway_policy=True,
             )
         )
         print("Connected to MCP proxy: http://localhost:9091/mcp/WorkIQ-MailTools")
