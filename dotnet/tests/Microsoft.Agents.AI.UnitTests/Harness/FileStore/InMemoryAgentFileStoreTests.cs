@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.UnitTests.Harness.FileMemory;
@@ -519,5 +520,118 @@ public class InMemoryAgentFileStoreTests
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(() => store.ListFilesAsync("../other"));
+    }
+
+    [Fact]
+    public async Task ListDirectories_PathTraversal_ThrowsAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() => store.ListDirectoriesAsync("../other"));
+    }
+
+    [Fact]
+    public async Task SearchFiles_Recursive_FindsDescendantsAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("notes.md", "Match here");
+        await store.WriteFileAsync("reports/q1.md", "Match here too");
+        await store.WriteFileAsync("reports/2024/q2.md", "Match here as well");
+
+        // Act
+        var results = await store.SearchFilesAsync("", "Match", filePattern: null, recursive: true);
+
+        // Assert
+        Assert.Equal(3, results.Count);
+        var names = string.Join(",", results.Select(r => r.FileName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal("notes.md,reports/2024/q2.md,reports/q1.md", names);
+    }
+
+    [Fact]
+    public async Task SearchFiles_Recursive_GlobScopesToSubtreeAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("notes.md", "Match here");
+        await store.WriteFileAsync("reports/q1.md", "Match here too");
+        await store.WriteFileAsync("reports/2024/q2.md", "Match here as well");
+
+        // Act
+        var results = await store.SearchFilesAsync("", "Match", filePattern: "reports/**", recursive: true);
+
+        // Assert
+        Assert.Equal(2, results.Count);
+        var names = string.Join(",", results.Select(r => r.FileName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal("reports/2024/q2.md,reports/q1.md", names);
+    }
+
+    [Fact]
+    public async Task SearchFiles_Recursive_GlobMatchesNestedExtensionAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("notes.md", "Match here");
+        await store.WriteFileAsync("reports/q1.txt", "Match here too");
+        await store.WriteFileAsync("reports/2024/q2.md", "Match here as well");
+
+        // Act
+        var results = await store.SearchFilesAsync("", "Match", filePattern: "**/*.md", recursive: true);
+
+        // Assert
+        Assert.Equal(2, results.Count);
+        var names = string.Join(",", results.Select(r => r.FileName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal("notes.md,reports/2024/q2.md", names);
+    }
+
+    [Fact]
+    public async Task ListDirectories_ReturnsDirectChildSubdirectoriesAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("root.md", "x");
+        await store.WriteFileAsync("reports/q1.md", "x");
+        await store.WriteFileAsync("reports/2024/q2.md", "x");
+        await store.WriteFileAsync("images/logo.png", "x");
+
+        // Act
+        var directories = await store.ListDirectoriesAsync("");
+
+        // Assert
+        var sorted = string.Join(",", directories.OrderBy(d => d, StringComparer.Ordinal));
+        Assert.Equal("images,reports", sorted);
+    }
+
+    [Fact]
+    public async Task ListDirectories_NestedDirectory_ReturnsChildrenAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("reports/q1.md", "x");
+        await store.WriteFileAsync("reports/2024/q2.md", "x");
+        await store.WriteFileAsync("reports/2025/q3.md", "x");
+
+        // Act
+        var directories = await store.ListDirectoriesAsync("reports");
+
+        // Assert
+        var sorted = string.Join(",", directories.OrderBy(d => d, StringComparer.Ordinal));
+        Assert.Equal("2024,2025", sorted);
+    }
+
+    [Fact]
+    public async Task ListDirectories_NoSubdirectories_ReturnsEmptyAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("root.md", "x");
+
+        // Act
+        var directories = await store.ListDirectoriesAsync("");
+
+        // Assert
+        Assert.Empty(directories);
     }
 }

@@ -63,6 +63,9 @@ logger = logging.getLogger(__name__)
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
 
+# Allowed identifier shape for object-attribute steps in declarative state paths
+_SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
 
 @dataclass(frozen=True)
 class DeclarativeEnvConfig:
@@ -266,6 +269,9 @@ class DeclarativeWorkflowState:
     - Conversation: Conversation history
     """
 
+    # Sentinel marking "no prior value" for temporary-key bookkeeping.
+    _MISSING: Any = object()
+
     def __init__(self, state: State, env_config: DeclarativeEnvConfig | None = None):
         """Initialize with a State instance.
 
@@ -331,16 +337,21 @@ class DeclarativeWorkflowState:
     def get(self, path: str, default: Any = None) -> Any:
         """Get a value from the state using a dot-notated path.
 
+        Dict-keyed segments may use arbitrary string keys (e.g. UUIDs in
+        ``System.conversations.<id>.messages``). Segments that would resolve
+        via object-attribute access must be valid declarative identifiers
+        (``[A-Za-z][A-Za-z0-9_]*``); other shapes return ``default``.
+
         Args:
             path: Dot-notated path like 'Local.results' or 'Workflow.Inputs.query'
             default: Default value if path doesn't exist
 
         Returns:
-            The value at the path, or default if not found
+            The value at the path, or default if not found or unreachable.
         """
         state_data = self.get_state_data()
         parts = path.split(".")
-        if not parts:
+        if not parts or any(not p for p in parts):
             return default
 
         namespace = parts[0]
@@ -377,10 +388,19 @@ class DeclarativeWorkflowState:
                 obj = obj.get(part, default)  # type: ignore[union-attr]
                 if obj is default:
                     return default
-            elif hasattr(obj, part):  # type: ignore[arg-type]
-                obj = getattr(obj, part)  # type: ignore[arg-type]
             else:
-                return default
+                # Attribute access is only allowed for safe declarative identifiers.
+                if not _SAFE_PATH_SEGMENT_RE.match(part):
+                    logger.warning(
+                        "DeclarativeWorkflowState.get: rejecting attribute segment %r in path %r",
+                        part,
+                        path,
+                    )
+                    return default
+                if hasattr(obj, part):  # type: ignore[arg-type]
+                    obj = getattr(obj, part)  # type: ignore[arg-type]
+                else:
+                    return default
 
         return obj  # type: ignore[return-value]
 
@@ -392,12 +412,14 @@ class DeclarativeWorkflowState:
             value: The value to set
 
         Raises:
-            ValueError: If attempting to set Workflow.Inputs (which is read-only)
+            ValueError: If ``path`` is empty or contains empty segments
+                (e.g. ``"Local."``, ``"Local..foo"``), or if attempting to set
+                ``Workflow.Inputs`` (which is read-only).
         """
         state_data = self.get_state_data()
         parts = path.split(".")
-        if not parts:
-            return
+        if not parts or any(not p for p in parts):
+            raise ValueError(f"Invalid path {path!r}: empty segments are not allowed")
 
         namespace = parts[0]
         remaining = parts[1:]
@@ -453,7 +475,16 @@ class DeclarativeWorkflowState:
         Args:
             path: Dot-notated path to a list
             value: The value to append
+
+        Raises:
+            ValueError: If ``path`` is empty or contains empty segments
+                (e.g. ``"Local."``, ``"Local..foo"``), or if the existing
+                value at ``path`` is not a list.
         """
+        parts = path.split(".")
+        if not parts or any(not p for p in parts):
+            raise ValueError(f"Invalid path {path!r}: empty segments are not allowed")
+
         existing = self.get(path)
         if existing is None:
             self.set(path, [value])
@@ -463,6 +494,15 @@ class DeclarativeWorkflowState:
             self.set(path, existing_list)
         else:
             raise ValueError(f"Cannot append to non-list at path '{path}'")
+
+    def _clear_local_path(self, name: str) -> None:
+        """Remove ``name`` from the ``Local`` namespace, if present."""
+        state_data = self.get_state_data()
+        local = state_data.get("Local")
+        if local is None or name not in local:
+            return
+        local.pop(name, None)
+        self.set_state_data(state_data)
 
     def eval(self, expression: str) -> Any:
         """Evaluate a PowerFx expression with the current state.
@@ -504,53 +544,64 @@ class DeclarativeWorkflowState:
             return result
 
         # Pre-process nested custom functions (e.g., Upper(MessageText(...)))
-        # Replace them with their evaluated results before sending to PowerFx
-        formula = self._preprocess_custom_functions(formula)
+        # and run PowerFx. The finally below restores any temporary state
+        # written during preprocessing, regardless of where execution exits.
+        temp_writes: list[tuple[str, Any]] = []
 
-        if Engine is None:
-            raise RuntimeError(
-                f"PowerFx is not available (dotnet runtime not installed). "
-                f"Expression '={formula[:80]}' cannot be evaluated. "
-                f"Install dotnet and the powerfx package for full PowerFx support."
-            )
-
-        symbols = self._to_powerfx_symbols()
-        # Use setlocale(category) query form so we can restore the exact prior value.
-        # getlocale() returns a normalized tuple and is not always a lossless
-        # round-trip for setlocale across platforms/locales.
-        original_numeric_locale = locale.setlocale(locale.LC_NUMERIC)
         try:
-            for locale_candidate in _POWERFX_NUMERIC_LOCALE_CANDIDATES:
-                try:
-                    locale.setlocale(locale.LC_NUMERIC, locale_candidate)
-                    break
-                except locale.Error:
-                    continue
+            formula = self._preprocess_custom_functions(formula, temp_writes)
 
-            engine = Engine()
-            try:
-                from System.Globalization import (  # pyright: ignore[reportMissingImports]
-                    CultureInfo,  # pyright: ignore[reportUnknownVariableType]
+            if Engine is None:
+                raise RuntimeError(
+                    f"PowerFx is not available (dotnet runtime not installed). "
+                    f"Expression '={formula[:80]}' cannot be evaluated. "
+                    f"Install dotnet and the powerfx package for full PowerFx support."
                 )
-            except ImportError:
-                return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
 
-            original_culture = cast(Any, CultureInfo.CurrentCulture)  # pyright: ignore[reportUnknownMemberType]
+            symbols = self._to_powerfx_symbols()
+            # Use setlocale(category) query form so we can restore the exact prior value.
+            # getlocale() returns a normalized tuple and is not always a lossless
+            # round-trip for setlocale across platforms/locales.
+            original_numeric_locale = locale.setlocale(locale.LC_NUMERIC)
             try:
-                CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
+                for locale_candidate in _POWERFX_NUMERIC_LOCALE_CANDIDATES:
+                    try:
+                        locale.setlocale(locale.LC_NUMERIC, locale_candidate)
+                        break
+                    except locale.Error:
+                        continue
+
+                engine = Engine()
+                try:
+                    from System.Globalization import (  # pyright: ignore[reportMissingImports]
+                        CultureInfo,  # pyright: ignore[reportUnknownVariableType]
+                    )
+                except ImportError:
+                    return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
+
+                original_culture = cast(Any, CultureInfo.CurrentCulture)  # pyright: ignore[reportUnknownMemberType]
+                try:
+                    CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
+                finally:
+                    CultureInfo.CurrentCulture = original_culture  # pyright: ignore[reportUnknownMemberType]
+            except ValueError as e:
+                error_msg = str(e)
+                # Handle undefined variable errors gracefully by returning None
+                # This matches the behavior of the legacy fallback parser
+                if "isn't recognized" in error_msg or "Name isn't valid" in error_msg:
+                    logger.debug(f"PowerFx: undefined variable in expression '{formula}', returning None")
+                    return None
+                raise
             finally:
-                CultureInfo.CurrentCulture = original_culture  # pyright: ignore[reportUnknownMemberType]
-        except ValueError as e:
-            error_msg = str(e)
-            # Handle undefined variable errors gracefully by returning None
-            # This matches the behavior of the legacy fallback parser
-            if "isn't recognized" in error_msg or "Name isn't valid" in error_msg:
-                logger.debug(f"PowerFx: undefined variable in expression '{formula}', returning None")
-                return None
-            raise
+                locale.setlocale(locale.LC_NUMERIC, original_numeric_locale)
         finally:
-            locale.setlocale(locale.LC_NUMERIC, original_numeric_locale)
+            # Restore each temporary key to its prior value (or remove it).
+            for path, previous in reversed(temp_writes):
+                if previous is self._MISSING:
+                    self._clear_local_path(path.removeprefix("Local."))
+                else:
+                    self.set(path, previous)
 
     def _eval_custom_function(self, formula: str) -> Any | None:
         """Handle custom functions not supported by the Python PowerFx library.
@@ -609,7 +660,7 @@ class DeclarativeWorkflowState:
 
         return None
 
-    def _preprocess_custom_functions(self, formula: str) -> str:
+    def _preprocess_custom_functions(self, formula: str, temp_writes: list[tuple[str, Any]]) -> str:
         """Pre-process custom functions nested inside other PowerFx functions.
 
         Custom functions like MessageText() are not supported by the PowerFx engine.
@@ -624,9 +675,14 @@ class DeclarativeWorkflowState:
 
         Args:
             formula: The PowerFx formula to pre-process
+            temp_writes: Caller-owned list. Each write to a temporary key
+                appends a ``(path, previous_value)`` entry where
+                ``previous_value`` is the value at ``path`` before the write
+                or :attr:`_MISSING` if none. The caller must restore every
+                entry, including when this method raises mid-write.
 
         Returns:
-            The formula with custom function calls replaced by their evaluated results
+            The rewritten formula.
         """
         import re
 
@@ -635,7 +691,6 @@ class DeclarativeWorkflowState:
         # We use 500 to leave room for the rest of the expression around the replaced value.
         MAX_INLINE_LENGTH = 500
 
-        # Counter for generating unique temp variable names
         temp_var_counter = 0
 
         # Custom functions that need pre-processing: (regex pattern, handler)
@@ -691,11 +746,14 @@ class DeclarativeWorkflowState:
                 # Replace in formula
                 if isinstance(replacement, str):
                     if len(replacement) > MAX_INLINE_LENGTH:
-                        # Store long strings in a temp variable to avoid PowerFx expression limit
+                        # Store long results in an underscore-prefixed temp key;
+                        # record the prior value so eval() can restore it.
                         temp_var_name = f"_TempMessageText{temp_var_counter}"
                         temp_var_counter += 1
-                        self.set(f"Local.{temp_var_name}", replacement)
-                        replacement_str = f"Local.{temp_var_name}"
+                        temp_var_path = f"Local.{temp_var_name}"
+                        temp_writes.append((temp_var_path, self.get(temp_var_path, default=self._MISSING)))
+                        self.set(temp_var_path, replacement)
+                        replacement_str = temp_var_path
                         logger.debug(
                             f"Stored long MessageText result ({len(replacement)} chars) "
                             f"in temp variable {temp_var_name}"
@@ -847,11 +905,13 @@ class DeclarativeWorkflowState:
         return value
 
     def interpolate_string(self, text: str) -> str:
-        """Interpolate {Variable.Path} references in a string.
+        """Interpolate ``{Variable.Path}`` references in a string.
 
-        This handles template-style variable substitution like:
-        - "Created ticket #{Local.TicketParameters.TicketId}"
-        - "Routing to {Local.RoutingParameters.TeamName}"
+        Captures brace-delimited tokens whose root segment is an identifier
+        (``[A-Za-z][A-Za-z0-9_]*``) followed by zero or more ``.`` separated
+        dict-key segments. Resolution is delegated to :meth:`get`; unresolved
+        tokens are replaced with the empty string. Tokens that do not look
+        like state paths (e.g. ``{foo-bar}``, ``{Ctrl+C}``) are left literal.
 
         Args:
             text: Text that may contain {Variable.Path} references
@@ -866,10 +926,11 @@ class DeclarativeWorkflowState:
             value = self.get(var_path)
             return str(value) if value is not None else ""
 
-        # Match {Variable.Path} patterns
-        pattern = r"\{([A-Za-z][A-Za-z0-9_.]*)\}"
+        # Root segment must be an identifier; follow-on segments accept any
+        # non-empty dict-key (e.g. ``_id``, ``1``, UUIDs). ``get()`` enforces
+        # per-segment safety on attribute traversal.
+        pattern = r"\{([A-Za-z][A-Za-z0-9_]*(?:\.[^{}\s.]+)*)\}"
 
-        # Replace all matches
         result = text
         for match in re.finditer(pattern, text):
             replacement = replace_var(match)
