@@ -838,6 +838,16 @@ class Workflow(DictConvertible):
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
 
+        # Capture the weakref instance ``run()`` installed for *this* run. We
+        # compare by object identity in the finally so a stale finalizer (e.g.
+        # the caller dropped this stream after partial iteration, then started
+        # a new run before async-gen finalization throws ``GeneratorExit`` into
+        # us) does not clobber a successor run's freshly installed weakref.
+        # ``run()`` runs synchronously and assigns ``self._active_run`` before
+        # this generator's body is first iterated, so by the time we read it
+        # here it already points at our own ``ResponseStream``.
+        my_active_run = self._active_run
+
         try:
             # Async validation: a fresh-message run is only allowed when the
             # runner context has fully drained from any prior run. If it still
@@ -879,14 +889,14 @@ class Workflow(DictConvertible):
                     continue
                 yield event
         finally:
-            # Clear the active-run weakref so a subsequent ``run()`` is allowed.
-            # ``run()`` set this synchronously after constructing the ResponseStream;
-            # we clear it here once the run has finished (success, error, early
-            # close, or partial iteration). This is in-band, so by the time the
-            # caller's stream is later garbage collected, ``_active_run`` is already
-            # ``None`` (or has been replaced by a newer run's weakref) - no GC-time
-            # finalizer is needed.
-            self._active_run = None
+            # Clear the active-run weakref so a subsequent ``run()`` is allowed,
+            # but only if the slot still holds *our* weakref. If the caller
+            # dropped this stream after partial iteration and a new ``run()``
+            # already installed its own weakref before our async-gen finalizer
+            # ran, ``self._active_run`` now points at the successor; clearing
+            # it would silently break the successor's concurrency guard.
+            if self._active_run is my_active_run:
+                self._active_run = None
             if checkpoint_storage is not None:
                 self._runner.context.clear_runtime_checkpoint_storage()
 
