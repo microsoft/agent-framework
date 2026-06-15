@@ -151,19 +151,35 @@ internal static class ResponsesRawBase64Workaround
             return false;
         }
 
-        using JsonDocument doc = JsonDocument.Parse(body);
-        if (!ContainsRawFileData(doc.RootElement))
+        // A Try* method must never throw: a malformed body (the content-type header can lie)
+        // would otherwise bubble a JsonException out of the middleware and 500 the request —
+        // including requests that need no rewriting. On parse failure, leave the body untouched
+        // and let the downstream endpoint handle (and properly reject) it.
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(body);
+        }
+        catch (JsonException)
         {
             return false;
         }
 
-        using MemoryStream stream = new();
-        using (Utf8JsonWriter writer = new(stream))
+        using (doc)
         {
-            RewriteElement(doc.RootElement, writer);
+            if (!ContainsRawFileData(doc.RootElement))
+            {
+                return false;
+            }
+
+            using MemoryStream stream = new();
+            using (Utf8JsonWriter writer = new(stream))
+            {
+                RewriteElement(doc.RootElement, writer);
+            }
+            rewritten = Encoding.UTF8.GetString(stream.ToArray());
+            return true;
         }
-        rewritten = Encoding.UTF8.GetString(stream.ToArray());
-        return true;
     }
 
     private static bool ContainsRawFileData(JsonElement element)
