@@ -3736,6 +3736,7 @@ async def test_agent_instructions_not_overwritten_by_unrelated_nested_chat(
             await self.nested_client.get_response(
                 messages=[Message(role="user", contents=["Nested request"])],
                 options={"model": "NestedModel", "instructions": "Unrelated nested instructions."},
+                client_kwargs={"session": session},
             )
 
     agent = Agent(

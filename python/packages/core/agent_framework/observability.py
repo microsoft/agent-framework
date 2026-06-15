@@ -112,10 +112,6 @@ INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = co
     "inner_accumulated_usage", default=None
 )
 
-ACTIVE_AGENT_SPAN: Final[contextvars.ContextVar[trace.Span | None]] = contextvars.ContextVar(
-    "active_agent_span", default=None
-)
-
 OTEL_METRICS: Final[str] = "__otel_metrics__"
 TOKEN_USAGE_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
     1,
@@ -1492,14 +1488,15 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         )
 
         if stream:
+            agent_span = trace.get_current_span()
             span = _start_streaming_span(attributes, OtelAttr.REQUEST_MODEL)
 
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                 system_instructions = _get_instructions_from_options(opts)
-                _capture_active_agent_system_instructions(
+                _capture_current_agent_system_instructions(
+                    agent_span,
                     span,
                     system_instructions,
-                    is_agent_chat_call=merged_client_kwargs.get("session") is not None,
                 )
                 _capture_messages(
                     span=span,
@@ -1595,13 +1592,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             return wrapped_stream
 
         async def _get_response() -> ChatResponse:
+            agent_span = trace.get_current_span()
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                     system_instructions = _get_instructions_from_options(opts)
-                    _capture_active_agent_system_instructions(
+                    _capture_current_agent_system_instructions(
+                        agent_span,
                         span,
                         system_instructions,
-                        is_agent_chat_call=merged_client_kwargs.get("session") is not None,
                     )
                     _capture_messages(
                         span=span,
@@ -1777,10 +1775,8 @@ class AgentTelemetryLayer:
             inner_response_telemetry_captured_fields
         )
         inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
-
         if stream:
             span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
-            active_agent_span_token = ACTIVE_AGENT_SPAN.set(span)
 
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                 _capture_messages(
@@ -1815,7 +1811,6 @@ class AgentTelemetryLayer:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                 INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
-                ACTIVE_AGENT_SPAN.reset(active_agent_span_token)
                 _close_span()
                 raise
 
@@ -1857,7 +1852,6 @@ class AgentTelemetryLayer:
                 finally:
                     INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                     INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
-                    ACTIVE_AGENT_SPAN.reset(active_agent_span_token)
                     _close_span()
 
             # The pull context manager attaches the span around each underlying iterator pull so
@@ -1878,7 +1872,6 @@ class AgentTelemetryLayer:
         async def _run() -> AgentResponse[Any]:
             try:
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
-                    active_agent_span_token = ACTIVE_AGENT_SPAN.set(span)
                     try:
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                             _capture_messages(
@@ -1917,8 +1910,6 @@ class AgentTelemetryLayer:
                     except Exception as exception:
                         capture_exception(span=span, exception=exception, timestamp=time_ns())
                         raise
-                    finally:
-                        ACTIVE_AGENT_SPAN.reset(active_agent_span_token)
             finally:
                 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                 INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
@@ -2295,24 +2286,29 @@ def _capture_system_instructions(span: trace.Span, system_instructions: str | li
     """Capture system instructions on a span."""
     if not system_instructions:
         return
-    if not isinstance(system_instructions, list):
-        system_instructions = [system_instructions]
-    otel_sys_instructions = [{"type": "text", "content": instruction} for instruction in system_instructions]
+    otel_sys_instructions = [
+        {"type": "text", "content": instruction} for instruction in _normalize_instructions(system_instructions)
+    ]
     span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions, ensure_ascii=False))
 
 
-def _capture_active_agent_system_instructions(
+def _capture_current_agent_system_instructions(
+    agent_span: trace.Span,
     chat_span: trace.Span,
     system_instructions: str | list[str] | None,
-    *,
-    is_agent_chat_call: bool,
 ) -> None:
-    """Capture final chat instructions on the active agent span when the chat span belongs to it."""
-    if not is_agent_chat_call:
+    """Capture final chat instructions on the current agent span when the chat span belongs to it."""
+    if not system_instructions or not agent_span.is_recording():
         return
 
-    agent_span = ACTIVE_AGENT_SPAN.get()
-    if agent_span is None or not agent_span.is_recording():
+    agent_attributes_obj = getattr(agent_span, "attributes", None)
+    if not isinstance(agent_attributes_obj, Mapping):
+        return
+    agent_attributes = cast(Mapping[str, Any], agent_attributes_obj)
+    if agent_attributes.get(OtelAttr.OPERATION.value) != OtelAttr.AGENT_INVOKE_OPERATION:
+        return
+
+    if not _instructions_preserve_existing_agent_instructions(agent_attributes, system_instructions):
         return
 
     chat_parent = getattr(chat_span, "parent", None)
@@ -2325,6 +2321,42 @@ def _capture_active_agent_system_instructions(
         return
 
     _capture_system_instructions(agent_span, system_instructions)
+
+
+def _normalize_instructions(system_instructions: str | list[str]) -> list[str]:
+    """Normalize system instructions to telemetry text items."""
+    return system_instructions if isinstance(system_instructions, list) else [system_instructions]
+
+
+def _instructions_preserve_existing_agent_instructions(
+    agent_attributes: Mapping[str, Any],
+    system_instructions: str | list[str],
+) -> bool:
+    """Return True when chat instructions preserve the agent span's existing instructions."""
+    existing = agent_attributes.get(OtelAttr.SYSTEM_INSTRUCTIONS)
+    if not isinstance(existing, str):
+        return True
+
+    try:
+        existing_items_obj = json.loads(existing)
+    except json.JSONDecodeError:
+        return False
+
+    if not isinstance(existing_items_obj, list):
+        return False
+    existing_items = cast(list[Any], existing_items_obj)
+
+    existing_contents: list[str] = []
+    for item in existing_items:
+        if not isinstance(item, Mapping):
+            continue
+        content = cast(Mapping[str, Any], item).get("content")
+        if isinstance(content, str):
+            existing_contents.append(content)
+
+    existing_text = "\n".join(existing_contents)
+    new_text = "\n".join(_normalize_instructions(system_instructions))
+    return new_text == existing_text or new_text.startswith(f"{existing_text}\n")
 
 
 def _capture_messages(
