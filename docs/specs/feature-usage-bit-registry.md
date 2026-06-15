@@ -11,7 +11,8 @@ mask back into feature names. Keep the enum and the matching table in sync in th
 same PR — review is the check; there is no generated artifact.
 
 This telemetry is intentionally **transparent**: this registry is public, the
-emitted value is human-decodable, and the existing User-Agent opt-out disables it.
+emitted value is human-decodable, and two env vars disable it (mask-only or the
+whole User-Agent — see [Opt-out](#opt-out)).
 
 ## What is collected
 
@@ -183,14 +184,16 @@ orchestration patterns 16–21, provider/integration packages from 22.
 
 ## Opt-out
 
-The mask is part of the User-Agent contribution, so the existing flag covers it —
-no dedicated flag in v1:
+Two independent environment variables disable the mask:
 
-- `AGENT_FRAMEWORK_USER_AGENT_DISABLED=true|1` — suppresses the entire Agent
+- `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED=true|1` — drops **only** the feature
+  mask; the base `agent-framework-<lang>/{version}` User-Agent is still sent.
+- `AGENT_FRAMEWORK_USER_AGENT_DISABLED=true|1` — suppresses the **entire** Agent
   Framework User-Agent contribution (mask included).
 
-(If a privacy review later requires keeping the base UA while dropping only the
-mask, a dedicated flag can be added then.)
+The dedicated flag lets a privacy-conscious user keep contributing SDK
+identity/version (useful for support and compatibility triage) while withholding
+the feature-usage signal.
 
 ## Governance
 

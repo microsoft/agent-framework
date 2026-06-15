@@ -191,18 +191,22 @@ This is the smallest design that answers the question. A 64-bit mask accumulates
 from universal `mark_feature_used()` calls; the token is stamped per request only
 on Azure/Foundry clients (live, no third-party leak); each SDK owns an
 independent bit list selected by the language already in the UA; the mask is
-rendered as hex (`feat=v1.8410005`). OTel (C) is deferred — mainly because a
-broadly-emitted span attribute would leak the fingerprint into the user's general
-telemetry, against the first-party-only stance — but left open behind the version
-prefix. Per-construct granularity (G), a shared registry (I), codegen (K), and the
-decimal/binary/base-N representations (L, N, O) are rejected as complexity or
-length the problem does not require.
+rendered as hex (`feat=v1.8410005`). **Two opt-out env vars are provided:** a
+dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops only the mask while
+keeping the base SDK identity/version User-Agent, and the existing
+`AGENT_FRAMEWORK_USER_AGENT_DISABLED` that drops the whole contribution. OTel (C)
+is deferred — mainly because a broadly-emitted span attribute would leak the
+fingerprint into the user's general telemetry, against the first-party-only
+stance — but left open behind the version prefix. Per-construct granularity (G),
+a shared registry (I), codegen (K), and the decimal/binary/base-N representations
+(L, N, O) are rejected as complexity or length the problem does not require.
 
 ### Consequences
 
 - Good, adds usage signal at near-zero cost, no new data flow, few moving parts.
-- Good, transparent (public registry, human-decodable token) and disabled by the
-  existing User-Agent opt-out.
+- Good, transparent (public registry, human-decodable token) and disabled by
+  **two** opt-out env vars: a dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`
+  (mask only) and the existing `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (whole UA).
 - Good, first-party-only + per-request emission gives a live mask and no
   third-party fingerprint leak.
 - Good, 64-bit keeps .NET lock-free; per-language lists remove all cross-language
@@ -257,19 +261,24 @@ These are unresolved and should be decided before/at approval:
 1. **Privacy / telemetry-acceptance review (blocking).** Is a coarse,
    first-party-only, opt-out-able feature-combination mask acceptable telemetry?
    Even scoped, it transits intermediaries and is a deployment fingerprint. This
-   is a **release precondition**. Possible outcomes that would change the design:
-   require a dedicated opt-out flag (Q2), coarser granularity, hashing, or
-   explicit opt-in.
-2. **Dedicated opt-out flag?** v1 reuses `AGENT_FRAMEWORK_USER_AGENT_DISABLED`
-   (mask dies with the whole UA). Do we add a mask-only flag now (keep base UA,
-   drop the fingerprint), or wait until asked / until the privacy review requires
-   it?
-3. **When (if ever) to add the OTel path?** Held back mainly for **privacy**: a
+   is a **release precondition**. Possible outcomes that would further change the
+   design: coarser granularity, hashing, or explicit opt-in (a dedicated mask-only
+   opt-out flag is already included — see below).
+2. **When (if ever) to add the OTel path?** Held back mainly for **privacy**: a
    span attribute broadcasts the fingerprint into the user's general telemetry
    and onward to third-party APM vendors, contradicting the first-party-only
    stance. It also carries a metric-cardinality hazard. Would the privacy review
    allow a broadly-emitted mask, a scoped/redacted variant, or none? Decide if/when
    to revisit.
+
+### Decided
+
+- **Dedicated opt-out flag — included.** In addition to the existing
+  `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (drops the whole UA), v1 ships
+  `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`, which drops **only** the feature mask
+  while keeping the base SDK identity/version User-Agent. This lets a
+  privacy-conscious user withhold the usage signal without losing the
+  support/compat value of the SDK-version header.
 
 ## More Information
 
