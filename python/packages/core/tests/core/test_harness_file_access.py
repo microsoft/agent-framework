@@ -158,6 +158,69 @@ async def test_in_memory_store_search_returns_matches_with_snippets() -> None:
     assert {result.file_name for result in results_all} == {"a.md", "notes.txt"}
 
 
+async def test_in_memory_store_search_is_recursive_with_root_relative_names() -> None:
+    """Recursive search should find files at any depth and return root-relative names."""
+    store = InMemoryAgentFileStore()
+    await store.write_file("top.md", "ERROR at top")
+    await store.write_file("reports/q1.md", "ERROR in q1")
+    await store.write_file("reports/2024/q2.md", "ERROR in q2")
+    await store.write_file("reports/2024/data.txt", "ERROR wrong extension")
+
+    # Non-recursive (default) only sees the direct child.
+    direct = await store.search_files("", "error")
+    assert {result.file_name for result in direct} == {"top.md"}
+
+    # Recursive sees every descendant, with store-root-relative file names.
+    recursive = await store.search_files("", "error", recursive=True)
+    assert {result.file_name for result in recursive} == {
+        "top.md",
+        "reports/q1.md",
+        "reports/2024/q2.md",
+        "reports/2024/data.txt",
+    }
+
+    # Subtree scoping via the glob (``*`` crosses ``/`` with fnmatch).
+    scoped = await store.search_files("", "error", "reports/*", recursive=True)
+    assert {result.file_name for result in scoped} == {
+        "reports/q1.md",
+        "reports/2024/q2.md",
+        "reports/2024/data.txt",
+    }
+
+    # Extension glob matches markdown at any depth but not other extensions.
+    markdown = await store.search_files("", "error", "*.md", recursive=True)
+    assert {result.file_name for result in markdown} == {
+        "top.md",
+        "reports/q1.md",
+        "reports/2024/q2.md",
+    }
+
+
+async def test_in_memory_store_list_directories() -> None:
+    """``list_directories`` should return direct child subdirectories only, preserving casing."""
+    store = InMemoryAgentFileStore()
+    await store.write_file("top.md", "x")
+    await store.write_file("Reports/q1.md", "x")
+    await store.write_file("Reports/2024/q2.md", "x")
+    await store.write_file("data/raw.csv", "x")
+
+    assert sorted(await store.list_directories()) == ["Reports", "data"]
+    assert sorted(await store.list_directories("Reports")) == ["2024"]
+    # A directory with no subdirectories returns an empty list.
+    assert await store.list_directories("data") == []
+    # A missing directory returns an empty list.
+    assert await store.list_directories("missing") == []
+
+
+async def test_in_memory_store_list_directories_rejects_traversal() -> None:
+    """``list_directories`` must reject traversal inputs the way ``list_files`` does."""
+    store = InMemoryAgentFileStore()
+    await store.write_file("reports/q1.md", "x")
+    for bad in ("../escape", "/abs/path", ".."):
+        with pytest.raises(ValueError):
+            await store.list_directories(bad)
+
+
 async def test_in_memory_store_search_rejects_invalid_and_oversize_regex() -> None:
     """``search_files`` should surface clean errors for bad regex input."""
     store = InMemoryAgentFileStore()
@@ -267,6 +330,78 @@ async def test_filesystem_store_search_matches_lines_and_filters_globs(tmp_path:
     assert {result.file_name for result in results_all} == {"a.md", "b.txt"}
 
 
+async def test_filesystem_store_search_is_recursive_with_root_relative_names(tmp_path: Path) -> None:
+    """Recursive filesystem search should walk the subtree and return root-relative names."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write_file("top.md", "ERROR at top")
+    await store.write_file("reports/q1.md", "ERROR in q1")
+    await store.write_file("reports/2024/q2.md", "ERROR in q2")
+
+    direct = await store.search_files("", "error")
+    assert {result.file_name for result in direct} == {"top.md"}
+
+    recursive = await store.search_files("", "error", recursive=True)
+    assert {result.file_name for result in recursive} == {
+        "top.md",
+        "reports/q1.md",
+        "reports/2024/q2.md",
+    }
+
+    scoped = await store.search_files("", "error", "reports/*", recursive=True)
+    assert {result.file_name for result in scoped} == {
+        "reports/q1.md",
+        "reports/2024/q2.md",
+    }
+
+
+async def test_filesystem_store_list_directories(tmp_path: Path) -> None:
+    """``list_directories`` should list direct child subdirectories only."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write_file("top.md", "x")
+    await store.write_file("reports/q1.md", "x")
+    await store.write_file("reports/2024/q2.md", "x")
+    await store.write_file("data/raw.csv", "x")
+
+    assert sorted(await store.list_directories()) == ["data", "reports"]
+    assert sorted(await store.list_directories("reports")) == ["2024"]
+    assert await store.list_directories("data") == []
+    assert await store.list_directories("missing") == []
+
+
+async def test_filesystem_store_list_directories_rejects_traversal(tmp_path: Path) -> None:
+    """``list_directories`` is security-critical and must reject paths that escape the root."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write_file("reports/q1.md", "x")
+    for bad in ("../escape", "/etc", "C:/Windows", ".."):
+        with pytest.raises(ValueError):
+            await store.list_directories(bad)
+
+
+async def test_filesystem_store_search_and_list_skip_symlinked_directories(tmp_path: Path) -> None:
+    """Recursive search must not descend into symlinked dirs and ``list_directories`` must exclude them."""
+    target = tmp_path / "outside"
+    target.mkdir()
+    (target / "secret.md").write_text("ERROR outside the root", encoding="utf-8")
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "inside.md").write_text("ERROR inside", encoding="utf-8")
+    link = root / "linked"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Symbolic links are not supported in this environment: {exc!r}")
+
+    store = FileSystemAgentFileStore(root)
+
+    # ``list_directories`` excludes the symlinked directory.
+    assert await store.list_directories() == []
+
+    # Recursive search does not follow the symlink out of the root.
+    results = await store.search_files("", "error", recursive=True)
+    assert {result.file_name for result in results} == {"inside.md"}
+
+
 async def test_filesystem_store_search_skips_non_utf8_files(tmp_path: Path) -> None:
     """The filesystem store should silently skip non-UTF-8 files instead of aborting the search."""
     store = FileSystemAgentFileStore(tmp_path)
@@ -303,7 +438,7 @@ def test_filesystem_store_requires_non_empty_root() -> None:
 async def test_file_access_provider_registers_tools_and_instructions(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    """``FileAccessProvider.before_run`` should add the canonical instructions and five tools."""
+    """``FileAccessProvider.before_run`` should add the canonical instructions and six tools."""
     session = AgentSession(session_id="session-1")
     store = InMemoryAgentFileStore()
     provider = FileAccessProvider(store=store)
@@ -321,6 +456,7 @@ async def test_file_access_provider_registers_tools_and_instructions(
         "file_access_read_file",
         "file_access_delete_file",
         "file_access_list_files",
+        "file_access_list_subdirectories",
         "file_access_search_files",
     }
     assert {getattr(tool, "name", None) for tool in tools} >= expected_names
@@ -354,6 +490,7 @@ async def test_file_access_provider_delete_approval_defaults_to_always_require(
         "file_access_save_file",
         "file_access_read_file",
         "file_access_list_files",
+        "file_access_list_subdirectories",
         "file_access_search_files",
     ):
         assert _tool_by_name(tools, name).approval_mode == "never_require"
@@ -396,6 +533,7 @@ async def test_file_access_provider_tools_round_trip_files(
     read_file = _tool_by_name(tools, "file_access_read_file")
     delete_file = _tool_by_name(tools, "file_access_delete_file")
     list_files = _tool_by_name(tools, "file_access_list_files")
+    list_subdirectories = _tool_by_name(tools, "file_access_list_subdirectories")
     search_files = _tool_by_name(tools, "file_access_search_files")
 
     saved = await save_file.invoke(arguments={"file_name": "plan.md", "content": "step 1\nERROR step 2"})
@@ -426,6 +564,15 @@ async def test_file_access_provider_tools_round_trip_files(
     listed_blank = await list_files.invoke(arguments={"directory": "   "})
     assert sorted(json.loads(listed_blank[0].text)) == ["plan.md"]
 
+    # The subdirectory-discovery tool surfaces child directories (not files).
+    listed_dirs = await list_subdirectories.invoke()
+    assert json.loads(listed_dirs[0].text) == ["reports"]
+    listed_dirs_blank = await list_subdirectories.invoke(arguments={"directory": "   "})
+    assert json.loads(listed_dirs_blank[0].text) == ["reports"]
+    # A leaf directory with no child directories returns an empty list.
+    listed_dirs_nested = await list_subdirectories.invoke(arguments={"directory": "reports"})
+    assert json.loads(listed_dirs_nested[0].text) == []
+
     missing = await read_file.invoke(arguments={"file_name": "missing.md"})
     assert "not found" in missing[0].text
 
@@ -434,14 +581,12 @@ async def test_file_access_provider_tools_round_trip_files(
     assert parsed[0]["file_name"] == "plan.md"
     assert parsed[0]["matching_lines"][0]["line"] == "ERROR replaced"
 
-    # The search tool should likewise accept an optional directory argument so
-    # agents can scope a search to a subfolder.
+    # The search tool is recursive from the store root; scope to a subtree using
+    # the glob (``*`` crosses ``/`` with fnmatch). Results use root-relative names.
     await save_file.invoke(arguments={"file_name": "reports/issues.md", "content": "ERROR nested"})
-    scoped = await search_files.invoke(
-        arguments={"regex_pattern": "error", "file_pattern": "*.md", "directory": "reports"}
-    )
+    scoped = await search_files.invoke(arguments={"regex_pattern": "error", "file_pattern": "reports/*"})
     scoped_parsed = json.loads(scoped[0].text)
-    assert [entry["file_name"] for entry in scoped_parsed] == ["issues.md"]
+    assert [entry["file_name"] for entry in scoped_parsed] == ["reports/issues.md"]
 
     deleted = await delete_file.invoke(arguments={"file_name": "plan.md"})
     assert "deleted" in deleted[0].text

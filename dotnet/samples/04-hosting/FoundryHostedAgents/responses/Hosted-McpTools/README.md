@@ -1,4 +1,4 @@
-# Hosted-McpTools
+﻿# Hosted-McpTools
 
 A hosted agent demonstrating **two layers of MCP (Model Context Protocol) tool integration**:
 
@@ -33,8 +33,8 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_MODEL=gpt-4o
 ```
 
 ## Running directly (contributors)
@@ -109,3 +109,9 @@ For end-to-end hosted agent deployment guidance, see the [official deployment gu
 ## NuGet package users
 
 Use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented section in `HostedMcpTools.csproj` for the `PackageReference` alternative.
+
+## Related samples
+
+- [`Hosted-Toolbox/`](../Hosted-Toolbox/) — connects to a single Foundry Toolbox via the AF Foundry hosting bridge (`AddFoundryToolboxes` + `FoundryAITool.CreateHostedMcpToolbox`).
+- [`Hosted-Toolbox-AuthPaths/`](../Hosted-Toolbox-AuthPaths/) — same hosting bones as `Hosted-Toolbox/`, but the toolbox bundles three MCP tools each authenticated differently (key, Entra agent identity, inline `Authorization`), driven by the shared `Using-Samples/SimpleAgent/` REPL.
+

@@ -1,4 +1,4 @@
-# Hosted-ChatClientAgent
+﻿# Hosted-ChatClientAgent
 
 A simple general-purpose AI assistant hosted as a Foundry Hosted Agent using the Agent Framework instance hosting pattern. The agent is created inline via `AIProjectClient.AsAIAgent(model, instructions)` and served using the Responses protocol.
 
@@ -19,10 +19,10 @@ cp .env.example .env
 Edit `.env` and set your Azure AI Foundry project endpoint:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 ```
 
 > **Note:** `.env` is gitignored. The `.env.example` template is checked in as a reference.

@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -196,5 +197,132 @@ public sealed class FileSystemJsonCheckpointStoreTests
         // Assert
         retrieved.GetProperty("name").GetString().Should().Be("test");
         retrieved.GetProperty("value").GetInt32().Should().Be(42);
+    }
+
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldOnlyReturnCheckpointsForRequestedSessionAsync()
+    {
+        // Arrange
+        using TempDirectory tempDirectory = new();
+        string firstSessionId = Guid.NewGuid().ToString("N");
+        string secondSessionId = Guid.NewGuid().ToString("N");
+        CheckpointInfo firstCheckpoint;
+        CheckpointInfo secondCheckpoint;
+
+        using (FileSystemJsonCheckpointStore store = new(tempDirectory))
+        {
+            firstCheckpoint = await store.CreateCheckpointAsync(firstSessionId, TestData);
+            secondCheckpoint = await store.CreateCheckpointAsync(secondSessionId, TestData);
+
+            // Act
+            CheckpointInfo[] firstSessionIndex = (await store.RetrieveIndexAsync(firstSessionId)).ToArray();
+
+            // Assert
+            firstSessionIndex.Should().ContainSingle().Which.Should().Be(firstCheckpoint);
+            firstSessionIndex.Should().NotContain(secondCheckpoint);
+        }
+
+        using (FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory))
+        {
+            CheckpointInfo[] secondSessionIndex = (await reopenedStore.RetrieveIndexAsync(secondSessionId)).ToArray();
+
+            secondSessionIndex.Should().ContainSingle().Which.Should().Be(secondCheckpoint);
+            secondSessionIndex.Should().NotContain(firstCheckpoint);
+        }
+    }
+
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldFilterByParentCheckpointAsync()
+    {
+        // Arrange
+        using TempDirectory tempDirectory = new();
+        string sessionId = Guid.NewGuid().ToString("N");
+        CheckpointInfo parentCheckpoint;
+        CheckpointInfo childCheckpoint;
+        CheckpointInfo unrelatedCheckpoint;
+
+        using (FileSystemJsonCheckpointStore store = new(tempDirectory))
+        {
+            parentCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+            childCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData, parentCheckpoint);
+            unrelatedCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+
+            // Act
+            CheckpointInfo[] childIndex = (await store.RetrieveIndexAsync(sessionId, parentCheckpoint)).ToArray();
+
+            // Assert
+            childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
+            childIndex.Should().NotContain(parentCheckpoint);
+            childIndex.Should().NotContain(unrelatedCheckpoint);
+        }
+
+        using (FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory))
+        {
+            CheckpointInfo[] childIndex = (await reopenedStore.RetrieveIndexAsync(sessionId, parentCheckpoint)).ToArray();
+
+            childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
+            childIndex.Should().NotContain(parentCheckpoint);
+            childIndex.Should().NotContain(unrelatedCheckpoint);
+        }
+    }
+
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldKeepLegacyEntriesDiscoverableWithParentFilterAsync()
+    {
+        // Arrange
+        using TempDirectory tempDirectory = new();
+        string sessionId = Guid.NewGuid().ToString("N");
+        CheckpointInfo parentCheckpoint;
+        CheckpointInfo childCheckpoint;
+        string childFileName;
+
+        using (FileSystemJsonCheckpointStore store = new(tempDirectory))
+        {
+            parentCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+            childCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData, parentCheckpoint);
+            childFileName = store.GetFileNameForCheckpoint(sessionId, childCheckpoint);
+        }
+
+        string indexPath = Path.Combine(tempDirectory.FullName, "index.jsonl");
+        string legacyEntry = JsonSerializer.Serialize(new CheckpointFileIndexEntry(childCheckpoint, childFileName));
+        File.WriteAllText(indexPath, legacyEntry + Environment.NewLine);
+
+        // Act
+        using FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory);
+        CheckpointInfo[] childIndex = (await reopenedStore.RetrieveIndexAsync(sessionId, parentCheckpoint)).ToArray();
+
+        // Assert
+        childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
+    }
+
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldKeepLegacyChildDiscoverableWithUnrelatedParentFilterAsync()
+    {
+        // Arrange
+        using TempDirectory tempDirectory = new();
+        string sessionId = Guid.NewGuid().ToString("N");
+        CheckpointInfo parentCheckpoint;
+        CheckpointInfo childCheckpoint;
+        CheckpointInfo unrelatedCheckpoint;
+        string childFileName;
+
+        using (FileSystemJsonCheckpointStore store = new(tempDirectory))
+        {
+            parentCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+            childCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData, parentCheckpoint);
+            unrelatedCheckpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+            childFileName = store.GetFileNameForCheckpoint(sessionId, childCheckpoint);
+        }
+
+        string indexPath = Path.Combine(tempDirectory.FullName, "index.jsonl");
+        string legacyEntry = JsonSerializer.Serialize(new CheckpointFileIndexEntry(childCheckpoint, childFileName));
+        File.WriteAllText(indexPath, legacyEntry + Environment.NewLine);
+
+        // Act
+        using FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory);
+        CheckpointInfo[] childIndex = (await reopenedStore.RetrieveIndexAsync(sessionId, unrelatedCheckpoint)).ToArray();
+
+        // Assert
+        childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
     }
 }

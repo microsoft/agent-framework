@@ -1099,6 +1099,31 @@ def test_usage_content_in_streaming_response(
     assert usage_content.usage_details["total_token_count"] == 150
 
 
+def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None:
+    """Test _parse_usage_from_openai emits standard and legacy mapped token details."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 50
+    mock_usage.total_tokens = 150
+    mock_usage.completion_tokens_details = MagicMock()
+    mock_usage.completion_tokens_details.accepted_prediction_tokens = None
+    mock_usage.completion_tokens_details.audio_tokens = None
+    mock_usage.completion_tokens_details.reasoning_tokens = 0
+    mock_usage.completion_tokens_details.rejected_prediction_tokens = None
+    mock_usage.prompt_tokens_details = MagicMock()
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 0
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    assert details["completion/reasoning_tokens"] == 0
+    assert details["reasoning_output_token_count"] == 0
+    assert details["prompt/cached_tokens"] == 0
+    assert details["cache_read_input_token_count"] == 0
+
+
 def test_streaming_chunk_with_usage_and_text(
     openai_unit_test_env: dict[str, str],
 ) -> None:

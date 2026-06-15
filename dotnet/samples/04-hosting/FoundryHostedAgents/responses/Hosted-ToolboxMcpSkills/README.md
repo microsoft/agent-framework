@@ -1,4 +1,4 @@
-# Hosted-ToolboxMcpSkills
+﻿# Hosted-ToolboxMcpSkills
 
 A hosted agent that discovers **MCP-based skills from a Foundry Toolbox** and makes them available to the agent using `AgentSkillsProviderBuilder.UseMcpSkills(mcpClient)`.
 
@@ -28,10 +28,10 @@ cp .env.example .env
 Edit `.env` and set your Azure AI Foundry project endpoint and toolbox name:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-5
+FOUNDRY_MODEL=gpt-5
 FOUNDRY_TOOLBOX_NAME=my-toolbox
 ```
 

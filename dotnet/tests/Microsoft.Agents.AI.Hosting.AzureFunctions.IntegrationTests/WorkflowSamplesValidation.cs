@@ -62,7 +62,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         return default;
     }
 
-    [Fact(Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [Fact]
     public async Task SequentialWorkflowSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "01_SequentialWorkflow");
@@ -168,7 +168,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         });
     }
 
-    [Fact(Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [Fact]
     public async Task HITLWorkflowSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "03_WorkflowHITL");
@@ -277,7 +277,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         });
     }
 
-    [Fact(Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [Fact]
     public async Task WorkflowMcpToolSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "04_WorkflowMcpTool");
@@ -333,7 +333,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         });
     }
 
-    [Fact(Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [Fact]
     public async Task WorkflowAndAgentsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_WorkflowAndAgents");
@@ -385,7 +385,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         });
     }
 
-    [Fact(Skip = "Azure Functions Core Tools v4 cannot auto-detect worker runtime in CI. See https://github.com/microsoft/agent-framework/issues/6402")]
+    [Fact]
     public async Task ConcurrentWorkflowSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "02_ConcurrentWorkflow");
@@ -619,6 +619,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
             startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT"] = openAiDeployment;
         }
 
+        startInfo.EnvironmentVariables["FUNCTIONS_WORKER_RUNTIME"] = "dotnet-isolated";
         startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =
             $"Endpoint=http://localhost:{DtsPort};TaskHub=default;Authentication=None";
         startInfo.EnvironmentVariables["AzureWebJobsStorage"] = "UseDevelopmentStorage=true";

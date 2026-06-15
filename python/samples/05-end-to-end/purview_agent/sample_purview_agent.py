@@ -70,9 +70,7 @@ async def run_policy_flow(
         ("good (warm cache)", GOOD_PROMPT_FOLLOWUP),
     ]
     for tag, text in prompts:
-        response: AgentResponse = await agent.run(
-            Message("user", [text], additional_properties={"user_id": user_id})
-        )
+        response: AgentResponse = await agent.run(Message("user", [text], additional_properties={"user_id": user_id}))
         outcome = "BLOCKED" if blocked_marker in str(response).lower() else "ALLOWED"
         print(f"[{label}] {tag}: {outcome}\n{response}\n")
 
@@ -207,9 +205,7 @@ async def run_with_chat_middleware() -> None:
         model=deployment,
         project_endpoint=endpoint,
         credential=AzureCliCredential(),
-        middleware=[
-            PurviewChatPolicyMiddleware(build_credential(), settings)
-        ],
+        middleware=[PurviewChatPolicyMiddleware(build_credential(), settings)],
     )
 
     agent = Agent(

@@ -15,7 +15,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from .._agents import Agent, SupportsAgentRun
-from .._clients import SupportsWebSearchTool
+from .._clients import SupportsShellTool, SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy, ToolResultCompactionStrategy
 from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider
@@ -27,6 +27,8 @@ from ._todo import TodoProvider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from agent_framework_tools.shell import ShellEnvironmentProviderOptions, ShellExecutor
 
     from .._clients import SupportsChatGetResponse
     from .._compaction import CompactionStrategy, TokenizerProtocol
@@ -66,23 +68,45 @@ def _assemble_instructions(
 def _assemble_compaction_provider(
     *,
     disable_compaction: bool,
-    max_context_window_tokens: int,
-    max_output_tokens: int,
+    max_context_window_tokens: int | None,
+    max_output_tokens: int | None,
     history_source_id: str,
     before_compaction_strategy: CompactionStrategy | None,
     after_compaction_strategy: CompactionStrategy | None,
     tokenizer: TokenizerProtocol | None,
 ) -> CompactionProvider | None:
-    """Build the compaction provider from parameters or defaults."""
+    """Build the compaction provider from parameters or defaults.
+
+    The token-budget defaults (``ContextWindowCompactionStrategy`` for the before phase and
+    ``ToolResultCompactionStrategy`` for the after phase) are only applied when the token
+    params are provided. Caller-supplied strategies are always honored. Either phase may end
+    up ``None``, which ``CompactionProvider`` interprets as "skip that phase".
+
+    Returns None when compaction is explicitly disabled, or when neither phase has a strategy
+    (no custom strategies and no token budget to build the defaults).
+    """
     if disable_compaction:
         return None
 
-    before_strategy = before_compaction_strategy or ContextWindowCompactionStrategy(
-        max_context_window_tokens=max_context_window_tokens,
-        max_output_tokens=max_output_tokens,
-        tokenizer=tokenizer,
-    )
-    after_strategy = after_compaction_strategy or ToolResultCompactionStrategy(keep_last_tool_call_groups=2)
+    # Resolve the before-strategy: custom strategy wins; otherwise fall back to the
+    # token-budget-aware default when token params are available.
+    before_strategy = before_compaction_strategy
+    if before_strategy is None and max_context_window_tokens is not None and max_output_tokens is not None:
+        before_strategy = ContextWindowCompactionStrategy(
+            max_context_window_tokens=max_context_window_tokens,
+            max_output_tokens=max_output_tokens,
+            tokenizer=tokenizer,
+        )
+
+    # Resolve the after-strategy: custom strategy wins; otherwise fall back to the default
+    # when token params are available.
+    after_strategy = after_compaction_strategy
+    if after_strategy is None and max_context_window_tokens is not None and max_output_tokens is not None:
+        after_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=2)
+
+    # Nothing to compact in either phase: skip the provider entirely.
+    if before_strategy is None and after_strategy is None:
+        return None
 
     return CompactionProvider(
         before_strategy=before_strategy,
@@ -106,6 +130,7 @@ def _assemble_context_providers(
     skills_paths: Sequence[str] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
     background_agents_instructions: str | None,
+    shell_context_provider: ContextProvider | None,
     extra_context_providers: Sequence[ContextProvider] | None,
 ) -> list[ContextProvider]:
     """Assemble the ordered list of context providers."""
@@ -137,11 +162,59 @@ def _assemble_context_providers(
     if background_agents:
         providers.append(BackgroundAgentsProvider(background_agents, instructions=background_agents_instructions))
 
+    # Shell environment provider is opt-in: only added when a shell tool was wired.
+    if shell_context_provider is not None:
+        providers.append(shell_context_provider)
+
     # Append any user-supplied additional providers.
     if extra_context_providers:
         providers.extend(extra_context_providers)
 
     return providers
+
+
+def _assemble_shell(
+    client: SupportsChatGetResponse[Any],
+    shell_executor: ShellExecutor | None,
+    shell_environment_provider_options: ShellEnvironmentProviderOptions | None,
+) -> tuple[ToolTypes | None, ContextProvider | None]:
+    """Build the shell tool and environment provider when a shell executor is supplied.
+
+    Returns a ``(tool, provider)`` tuple. Both are ``None`` when no shell executor is
+    provided, or when the client does not support shell tools (a warning is logged in the
+    latter case, since the environment provider is not useful without an execution path).
+
+    Raises:
+        TypeError: If ``shell_executor`` does not expose a callable ``as_function()`` method.
+    """
+    if shell_executor is None:
+        return None, None
+
+    # ShellExecutor is a protocol without ``as_function()``, so the
+    # contract is validated at runtime: a shell tool such as LocalShellTool/DockerShellTool exposes it.
+    as_function = getattr(shell_executor, "as_function", None)
+    if not callable(as_function):
+        raise TypeError(
+            f"shell_executor must expose a callable 'as_function()' method "
+            f"(e.g. a LocalShellTool or DockerShellTool from agent-framework-tools), "
+            f"but got {type(shell_executor).__name__}."
+        )
+
+    if not isinstance(client, SupportsShellTool):
+        logger.warning(
+            "Shell tool not available: client %r does not implement SupportsShellTool. "
+            "Skipping the shell tool and environment provider.",
+            type(client).__name__,
+        )
+        return None, None
+
+    # Imported lazily: the shell types live in the separate agent-framework-tools package,
+    # which depends on core, so core cannot import them at module load time.
+    from agent_framework_tools.shell import ShellEnvironmentProvider
+
+    shell_tool = client.get_shell_tool(func=as_function())
+    shell_provider = ShellEnvironmentProvider(shell_executor, shell_environment_provider_options)
+    return shell_tool, shell_provider
 
 
 HARNESS_AGENT_PROVIDER_NAME = "microsoft.agent_framework.harness"
@@ -157,8 +230,8 @@ def create_harness_agent(
     harness_instructions: str | None = None,
     agent_instructions: str | None = None,
     tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-    max_context_window_tokens: int,
-    max_output_tokens: int,
+    max_context_window_tokens: int | None = None,
+    max_output_tokens: int | None = None,
     history_provider: HistoryProvider | None = None,
     disable_compaction: bool = False,
     before_compaction_strategy: CompactionStrategy | None = None,
@@ -174,6 +247,8 @@ def create_harness_agent(
     skills_paths: Sequence[str] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
     background_agents_instructions: str | None = None,
+    shell_executor: ShellExecutor | None = None,
+    shell_environment_provider_options: ShellEnvironmentProviderOptions | None = None,
     disable_web_search: bool = False,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
@@ -206,8 +281,6 @@ def create_harness_agent(
 
             agent = create_harness_agent(
                 OpenAIChatClient(model="gpt-4o"),
-                max_context_window_tokens=128_000,
-                max_output_tokens=16_384,
             )
             session = agent.create_session()
             response = await agent.run("Plan a weekend trip to Seattle", session=session)
@@ -243,13 +316,21 @@ def create_harness_agent(
             (e.g., "You are a research assistant focused on academic sources.").
         tools: Additional tools to include in the agent's toolset.
         max_context_window_tokens: Maximum tokens the model's context window supports.
+            Used to construct the default token-budget-aware compaction strategies. When None
+            (default) and no custom ``before_compaction_strategy`` / ``after_compaction_strategy``
+            is provided, compaction is automatically disabled.
         max_output_tokens: Maximum output tokens per response.
+            Used to construct the default compaction strategies and sets a default max_tokens
+            chat option. When None (default), no default max_tokens option is set, and unless a
+            custom compaction strategy is provided, compaction is automatically disabled.
         history_provider: Custom history provider. When None, an InMemoryHistoryProvider is used.
         disable_compaction: When True, skip compaction provider setup.
-        before_compaction_strategy: Custom before-run compaction strategy.
-            Defaults to ContextWindowCompactionStrategy (token-budget aware).
-        after_compaction_strategy: Custom after-run compaction strategy.
-            Defaults to ToolResultCompactionStrategy.
+        before_compaction_strategy: Custom before-run compaction strategy. When provided,
+            compaction runs even if token params are omitted. Defaults to
+            ContextWindowCompactionStrategy (token-budget aware) when token params are provided.
+        after_compaction_strategy: Custom after-run compaction strategy. When provided,
+            compaction runs even if token params are omitted. Defaults to
+            ToolResultCompactionStrategy when token params are provided.
         tokenizer: Custom tokenizer for compaction strategies.
         disable_todo: When True, skip the TodoProvider.
         todo_provider: Custom TodoProvider instance. Ignored when disable_todo is True.
@@ -270,6 +351,15 @@ def create_harness_agent(
         background_agents_instructions: Optional instruction override for the
             ``BackgroundAgentsProvider``. May include ``{background_agents}`` placeholder
             which will be replaced with the agent listing.
+        shell_executor: Optional shell tool that enables shell command execution. When
+            provided, the shell tool and a ``ShellEnvironmentProvider`` are automatically
+            added (provided the client supports shell tools; otherwise a warning is logged
+            and both are skipped). The object must expose ``as_function()`` and satisfy the
+            ``ShellExecutor`` protocol -- e.g. a ``LocalShellTool`` or ``DockerShellTool`` from
+            the ``agent-framework-tools`` package. The caller owns the executor's lifecycle.
+        shell_environment_provider_options: Optional ``ShellEnvironmentProviderOptions``
+            (from ``agent-framework-tools``) used to customize the ``ShellEnvironmentProvider``
+            environment probing and instructions. Only used when ``shell_executor`` is provided.
         disable_web_search: When True, skip automatic web search tool inclusion.
             When False (default), the web search tool is automatically added if the
             client implements SupportsWebSearchTool. A warning is logged if the client
@@ -283,14 +373,19 @@ def create_harness_agent(
         A fully configured :class:`~agent_framework.Agent` instance.
 
     Raises:
-        ValueError: If max_context_window_tokens <= 0 or max_output_tokens < 0
-            or max_output_tokens >= max_context_window_tokens.
+        ValueError: If max_context_window_tokens is provided and <= 0, or
+            max_output_tokens is provided and <= 0, or max_output_tokens >=
+            max_context_window_tokens when both are provided.
     """
-    if max_context_window_tokens <= 0:
+    if max_context_window_tokens is not None and max_context_window_tokens <= 0:
         raise ValueError("max_context_window_tokens must be positive.")
-    if max_output_tokens < 0:
-        raise ValueError("max_output_tokens must be non-negative.")
-    if max_output_tokens >= max_context_window_tokens:
+    if max_output_tokens is not None and max_output_tokens <= 0:
+        raise ValueError("max_output_tokens must be positive.")
+    if (
+        max_context_window_tokens is not None
+        and max_output_tokens is not None
+        and max_output_tokens >= max_context_window_tokens
+    ):
         raise ValueError("max_output_tokens must be less than max_context_window_tokens.")
 
     # Build history provider.
@@ -307,6 +402,13 @@ def create_harness_agent(
         tokenizer=tokenizer,
     )
 
+    # Build the shell tool and environment provider (opt-in via shell_executor).
+    shell_tool, shell_provider = _assemble_shell(
+        client,
+        shell_executor,
+        shell_environment_provider_options,
+    )
+
     # Build context providers.
     assembled_providers = _assemble_context_providers(
         history_provider=resolved_history,
@@ -321,6 +423,7 @@ def create_harness_agent(
         skills_paths=skills_paths,
         background_agents=background_agents,
         background_agents_instructions=background_agents_instructions,
+        shell_context_provider=shell_provider,
         extra_context_providers=context_providers,
     )
 
@@ -338,6 +441,8 @@ def create_harness_agent(
                 "Set disable_web_search=True to suppress this warning.",
                 type(client).__name__,
             )
+    if shell_tool is not None:
+        assembled_tools.append(shell_tool)
     if tools is not None:
         if isinstance(tools, Sequence):
             assembled_tools.extend(tools)  # pyright: ignore[reportUnknownArgumentType]
@@ -347,7 +452,8 @@ def create_harness_agent(
 
     # Build default options dict.
     default_opts: dict[str, Any] = dict(default_options) if default_options else {}
-    default_opts.setdefault("max_tokens", max_output_tokens)
+    if max_output_tokens is not None:
+        default_opts.setdefault("max_tokens", max_output_tokens)
 
     agent = Agent(
         client,
