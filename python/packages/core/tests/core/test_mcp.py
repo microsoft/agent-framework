@@ -353,6 +353,7 @@ def test_parse_tool_result_from_mcp_structured_content_only():
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0].type == "text"
+    assert result[0].text is not None
     parsed = json.loads(result[0].text)
     assert parsed == {"Tables": [{"Name": "Sales", "Columns": ["Amount", "Date"]}]}
 
@@ -370,6 +371,7 @@ def test_parse_tool_result_from_mcp_structured_content_with_text():
     assert result[0].type == "text"
     assert result[0].text == "Summary"
     assert result[1].type == "text"
+    assert result[1].text is not None
     parsed = json.loads(result[1].text)
     assert parsed == {"data": [1, 2, 3]}
 
@@ -399,6 +401,7 @@ def test_parse_tool_result_from_mcp_structured_content_non_serializable():
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0].type == "text"
+    assert result[0].text is not None
     parsed = json.loads(result[0].text)
     assert parsed["count"] == 42
     # bytes should be converted to string representation via default=str
@@ -1985,6 +1988,7 @@ async def test_mcp_tool_sampling_callback_async_approval():
     result = await tool.sampling_callback(Mock(), params)
 
     assert isinstance(result, types.CreateMessageResult)
+    assert isinstance(result.content, types.TextContent)
     assert result.content.text == "ok"
     mock_chat_client.get_response.assert_awaited_once()
 

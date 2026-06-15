@@ -1730,7 +1730,7 @@ async def _try_execute_function_calls(
                 id=fcc.call_id,  # type: ignore[arg-type]
                 function_call=fcc,
             )
-            tool_name = fcc.name  # type: ignore[attr-defined]
+            tool_name = fcc.name
             if tool_name is None:
                 visible_requests.append(approval_request)
                 continue

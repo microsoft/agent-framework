@@ -3,7 +3,7 @@
 """Tests for FastAPI endpoint creation (_endpoint.py)."""
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from ag_ui.core import MessagesSnapshotEvent, RunStartedEvent, StateSnapshotEvent
@@ -82,7 +82,7 @@ async def test_add_endpoint_with_workflow_protocol():
     """Test adding endpoint with native Workflow support."""
 
     @executor(id="start")
-    async def start(message: Any, ctx: WorkflowContext) -> None:
+    async def start(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         await ctx.yield_output("Workflow response")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     app = FastAPI()
@@ -695,7 +695,7 @@ async def test_agent_endpoint_hydrates_snapshots_by_scope_and_thread(streaming_c
         path="/snapshots",
         state_schema={"tenant": {"type": "string"}},
         snapshot_store=store,
-        snapshot_scope_resolver=lambda request: request.forwarded_props["tenant"],
+        snapshot_scope_resolver=lambda request: cast("dict[str, Any]", request.forwarded_props)["tenant"],
     )
     client = TestClient(app)
 
@@ -994,14 +994,16 @@ async def test_workflow_endpoint_hydrates_emitted_snapshots_without_invoking_wor
     call_count = 0
 
     @executor(id="snapshotter")
-    async def snapshotter(message: Any, ctx: WorkflowContext) -> None:
+    async def snapshotter(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         nonlocal call_count
         del message
         call_count += 1
         await ctx.yield_output(StateSnapshotEvent(snapshot={"active_agent": "flights"}))
         await ctx.yield_output(
             MessagesSnapshotEvent(
-                messages=[{"id": "assistant-snapshot", "role": "assistant", "content": "Stored workflow reply"}]
+                messages=cast(
+                    Any, [{"id": "assistant-snapshot", "role": "assistant", "content": "Stored workflow reply"}]
+                )
             )
         )
 
@@ -1046,7 +1048,7 @@ async def test_workflow_endpoint_hydrates_synthesized_text_and_tool_snapshot():
     call_count = 0
 
     @executor(id="responder")
-    async def responder(message: Any, ctx: WorkflowContext) -> None:
+    async def responder(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         nonlocal call_count
         del message
         call_count += 1
@@ -1114,7 +1116,7 @@ async def test_workflow_endpoint_hydrates_interrupted_thread_without_invoking_wo
     call_count = 0
 
     @executor(id="requester")
-    async def requester(message: Any, ctx: WorkflowContext) -> None:
+    async def requester(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         nonlocal call_count
         del message
         call_count += 1
@@ -1167,7 +1169,7 @@ async def test_workflow_endpoint_run_error_does_not_overwrite_previous_snapshot(
     call_count = 0
 
     @executor(id="responder")
-    async def responder(message: Any, ctx: WorkflowContext) -> None:
+    async def responder(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         nonlocal call_count
         del message
         call_count += 1
@@ -1464,7 +1466,7 @@ async def test_workflow_preserves_history_across_turns():
     call_count = 0
 
     @executor(id="responder")
-    async def responder(message: Any, ctx: WorkflowContext) -> None:
+    async def responder(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         nonlocal call_count
         del message
         call_count += 1
@@ -1688,7 +1690,7 @@ async def test_workflow_resume_preserves_persisted_history(monkeypatch):
     monkeypatch.setattr(workflow_module, "run_workflow_stream", fake_run_workflow_stream)
 
     @executor(id="noop")
-    async def noop(message: Any, ctx: WorkflowContext) -> None:
+    async def noop(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         del message, ctx
 
     runner = AgentFrameworkWorkflow(
@@ -1759,7 +1761,7 @@ async def test_workflow_endpoint_snapshot_save_failure_does_not_emit_run_error()
     """A failing snapshot save after RUN_FINISHED must not emit a second terminal RUN_ERROR."""
 
     @executor(id="responder")
-    async def responder(message: Any, ctx: WorkflowContext) -> None:
+    async def responder(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         del message
         await ctx.yield_output("Workflow reply")
 
@@ -1822,7 +1824,7 @@ def test_workflow_factory_cache_is_scoped_by_snapshot_scope():
     """The same thread id under different Snapshot Scopes must not share a workflow instance."""
 
     @executor(id="noop")
-    async def noop(message: Any, ctx: WorkflowContext) -> None:
+    async def noop(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         del message, ctx
 
     def factory(thread_id: str) -> Any:

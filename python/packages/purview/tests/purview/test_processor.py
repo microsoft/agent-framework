@@ -14,7 +14,11 @@ from agent_framework_purview._models import (
     Activity,
     DlpAction,
     DlpActionInfo,
+    ExecutionMode,
+    PolicyLocation,
+    PolicyScope,
     ProcessContentResponse,
+    ProtectionScopeActivities,
     ProtectionScopeState,
     RestrictionAction,
 )
@@ -194,10 +198,10 @@ class TestScopedContentProcessor:
         request = process_content_request_factory()
 
         block_action = DlpActionInfo(action=DlpAction.BLOCK_ACCESS, restrictionAction=RestrictionAction.BLOCK)
-        scope_location = PolicyLocation(**{
-            "@odata.type": "microsoft.graph.policyLocationApplication",
-            "value": "app-id",
-        })
+        scope_location = PolicyLocation(
+            data_type="microsoft.graph.policyLocationApplication",
+            value="app-id",
+        )
         scope = PolicyScope(
             **cast(
                 Any,
@@ -294,11 +298,11 @@ class TestScopedContentProcessor:
         request = process_content_request_factory()
         restriction_only_action = DlpActionInfo(restriction_action=RestrictionAction.BLOCK)
 
-        mock_client.get_protection_scopes = AsyncMock(return_value=ProtectionScopesResponse(**{"value": []}))
+        mock_client.get_protection_scopes = AsyncMock(return_value=ProtectionScopesResponse(scopes=[]))
         mock_client.process_content = AsyncMock(
             return_value=ProcessContentResponse(
                 id="response-123",
-                protection_scope_state="notModified",
+                protection_scope_state=ProtectionScopeState.NOT_MODIFIED,
                 policy_actions=[restriction_only_action],
             )
         )
@@ -334,16 +338,16 @@ class TestScopedContentProcessor:
             execution_mode=ExecutionMode.EVALUATE_INLINE,
         )
 
-        processor._cache.get = AsyncMock(
+        cast(Any, processor._cache).get = AsyncMock(
             side_effect=[
                 None,
                 ProtectionScopesResponse(scope_identifier="scope-123", scopes=[scope]),
             ]
-        )  # type: ignore[method-assign]
+        )
         mock_client.process_content = AsyncMock(
             return_value=ProcessContentResponse(
                 id="response-123",
-                protection_scope_state="notModified",
+                protection_scope_state=ProtectionScopeState.NOT_MODIFIED,
                 policy_actions=[process_content_action],
             )
         )
@@ -360,12 +364,12 @@ class TestScopedContentProcessor:
 
         request = process_content_request_factory()
 
-        mock_client.get_protection_scopes = AsyncMock(return_value=ProtectionScopesResponse(**{"value": []}))
+        mock_client.get_protection_scopes = AsyncMock(return_value=ProtectionScopesResponse(scopes=[]))
         # Return a valid, inline scope so we stay on the normal (non-background) path.
-        scope_location = PolicyLocation(**{
-            "@odata.type": "microsoft.graph.policyLocationApplication",
-            "value": "app-id",
-        })
+        scope_location = PolicyLocation(
+            data_type="microsoft.graph.policyLocationApplication",
+            value="app-id",
+        )
         scope = PolicyScope(
             **cast(
                 Any,
@@ -447,7 +451,7 @@ class TestScopedContentProcessor:
 
         mock_client.get_protection_scopes = AsyncMock(side_effect=PurviewPaymentRequiredError("nope"))
         mock_client.process_content = AsyncMock(
-            return_value=ProcessContentResponse(**{"id": "pc-1", "protectionScopeState": "notModified"})
+            return_value=ProcessContentResponse(id="pc-1", protection_scope_state=ProtectionScopeState.NOT_MODIFIED)
         )
 
         request = process_content_request_factory()
@@ -539,7 +543,7 @@ class TestScopedContentProcessor:
         pc_request = process_content_request_factory()
 
         mock_ps_response = ProtectionScopesResponse(scopes=[])
-        processor._cache.get = AsyncMock(side_effect=[None, mock_ps_response])  # type: ignore[method-assign]
+        cast(Any, processor._cache).get = AsyncMock(side_effect=[None, mock_ps_response])
 
         # Mock send_content_activities to return success (called in background)
         mock_ca_response = MagicMock()
@@ -573,7 +577,7 @@ class TestScopedContentProcessor:
         pc_request = process_content_request_factory()
 
         mock_ps_response = ProtectionScopesResponse(scopes=[])
-        processor._cache.get = AsyncMock(side_effect=[None, mock_ps_response])  # type: ignore[method-assign]
+        cast(Any, processor._cache).get = AsyncMock(side_effect=[None, mock_ps_response])
 
         # Mock send_content_activities to return error (called in background task)
         mock_ca_response = MagicMock()
@@ -798,7 +802,9 @@ class TestScopedContentProcessorCaching:
         mock_client.get_protection_scopes.return_value = ProtectionScopesResponse(
             scope_identifier="scope-123", scopes=[]
         )
-        mock_client.process_content.return_value = ProcessContentResponse(id="ok", protection_scope_state="notModified")
+        mock_client.process_content.return_value = ProcessContentResponse(
+            id="ok", protection_scope_state=ProtectionScopeState.NOT_MODIFIED
+        )
 
         messages = [Message(role="user", contents=["Test"])]
 
@@ -822,7 +828,9 @@ class TestScopedContentProcessorCaching:
         processor = ScopedContentProcessor(mock_client, settings, cache_provider=cache_provider)
 
         mock_client.get_protection_scopes.side_effect = PurviewPaymentRequiredError("Payment required")
-        mock_client.process_content.return_value = ProcessContentResponse(id="ok", protection_scope_state="notModified")
+        mock_client.process_content.return_value = ProcessContentResponse(
+            id="ok", protection_scope_state=ProtectionScopeState.NOT_MODIFIED
+        )
 
         messages = [Message(role="user", contents=["Test"])]
 

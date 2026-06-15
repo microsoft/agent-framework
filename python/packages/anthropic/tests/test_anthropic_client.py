@@ -2350,10 +2350,11 @@ def test_parse_usage_with_cache_tokens(mock_anthropic_client: MagicMock) -> None
     result = client._parse_usage_from_anthropic(mock_usage)
 
     assert result is not None
+    result_dict = cast("dict[str, Any]", result)
     assert result["output_token_count"] == 50
     assert result["input_token_count"] == 100
-    assert result["anthropic.cache_creation_input_tokens"] == 20
-    assert result["anthropic.cache_read_input_tokens"] == 30
+    assert result_dict["anthropic.cache_creation_input_tokens"] == 20
+    assert result_dict["anthropic.cache_read_input_tokens"] == 30
     assert result["cache_creation_input_token_count"] == 20
     assert result["cache_read_input_token_count"] == 30
 
@@ -2371,9 +2372,10 @@ def test_parse_usage_preserves_zero_cache_tokens(mock_anthropic_client: MagicMoc
     result = client._parse_usage_from_anthropic(mock_usage)
 
     assert result is not None
-    assert result["anthropic.cache_creation_input_tokens"] == 0
+    result_dict = cast("dict[str, Any]", result)
+    assert result_dict["anthropic.cache_creation_input_tokens"] == 0
     assert result["cache_creation_input_token_count"] == 0
-    assert result["anthropic.cache_read_input_tokens"] == 0
+    assert result_dict["anthropic.cache_read_input_tokens"] == 0
     assert result["cache_read_input_token_count"] == 0
 
 

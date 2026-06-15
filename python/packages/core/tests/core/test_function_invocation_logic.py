@@ -635,11 +635,11 @@ async def test_function_invocation_scenarios(
 
     messages: list[Any]
     if not streaming:
-        response = await chat_client_base.get_response([Message(role="user", contents=["hello"])], options=options)  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        response = await chat_client_base.get_response([Message(role="user", contents=["hello"])], options=options)  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
         messages = response.messages
     else:
         updates = []
-        async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
             [Message(role="user", contents=["hello"])], options=options, stream=True
         ):
             updates.append(update)

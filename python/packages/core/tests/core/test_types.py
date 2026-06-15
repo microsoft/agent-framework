@@ -1265,7 +1265,7 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
     tool_choice = merged.get("tool_choice")
     assert isinstance(tool_choice, dict)
     assert tool_choice == {"mode": "required", "required_function_name": "get_weather"}
-    assert tool_choice["required_function_name"] == "get_weather"  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert tool_choice["required_function_name"] == "get_weather"  # pyrefly: ignore[unsupported-operation]
 
 
 # region Agent Response Fixtures
@@ -1383,7 +1383,7 @@ def test_agent_run_response_update_created_at() -> None:
     )
     assert update_with_now.created_at == formatted_utc
     assert update_with_now.created_at is not None
-    assert update_with_now.created_at.endswith("Z")  # ty: ignore[unresolved-attribute]
+    assert update_with_now.created_at.endswith("Z")
 
 
 def test_agent_run_response_created_at() -> None:
@@ -1406,7 +1406,7 @@ def test_agent_run_response_created_at() -> None:
     )
     assert response_with_now.created_at == formatted_utc
     assert response_with_now.created_at is not None
-    assert response_with_now.created_at.endswith("Z")  # ty: ignore[unresolved-attribute]
+    assert response_with_now.created_at.endswith("Z")
 
 
 # region ErrorContent

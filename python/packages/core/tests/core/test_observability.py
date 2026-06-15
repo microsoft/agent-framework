@@ -2178,7 +2178,7 @@ def test_get_response_attributes_with_additional_usage():
         "reasoning_output_token_count": 30,
     }
 
-    attrs = {}
+    attrs: dict[str, Any] = {}
     result = _get_response_attributes(attrs, response)
 
     assert result[OtelAttr.INPUT_TOKENS] == 0
@@ -2204,7 +2204,7 @@ def test_get_response_attributes_maps_legacy_usage_keys():
         "completion/reasoning_tokens": 34,
     }
 
-    attrs = {}
+    attrs: dict[str, Any] = {}
     result = _get_response_attributes(attrs, response)
 
     assert result[OtelAttr.CACHE_CREATION_INPUT_TOKENS] == 12
@@ -3006,7 +3006,7 @@ def test_capture_response_records_zero_token_usage():
 
     span = Mock()
     token_histogram = Mock()
-    attrs = {
+    attrs: dict[str, Any] = {
         OtelAttr.INPUT_TOKENS: 0,
         OtelAttr.OUTPUT_TOKENS: 0,
     }
@@ -4195,21 +4195,28 @@ async def test_agent_invoke_span_aggregates_usage_across_tool_calls(span_exporte
     chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert len(chat_spans) == 2
 
+    chat_0_attrs = chat_spans[0].attributes
+    chat_1_attrs = chat_spans[1].attributes
+    agent_attrs = agent_span.attributes
+    assert chat_0_attrs is not None
+    assert chat_1_attrs is not None
+    assert agent_attrs is not None
+
     # Individual chat spans retain their own usage
-    assert chat_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 2239
-    assert chat_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 192
-    assert chat_spans[0].attributes.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100
-    assert chat_spans[0].attributes.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
-    assert chat_spans[1].attributes.get(OtelAttr.INPUT_TOKENS) == 2569
-    assert chat_spans[1].attributes.get(OtelAttr.OUTPUT_TOKENS) == 99
-    assert chat_spans[1].attributes.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 200
-    assert chat_spans[1].attributes.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 0
+    assert chat_0_attrs.get(OtelAttr.INPUT_TOKENS) == 2239
+    assert chat_0_attrs.get(OtelAttr.OUTPUT_TOKENS) == 192
+    assert chat_0_attrs.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100
+    assert chat_0_attrs.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
+    assert chat_1_attrs.get(OtelAttr.INPUT_TOKENS) == 2569
+    assert chat_1_attrs.get(OtelAttr.OUTPUT_TOKENS) == 99
+    assert chat_1_attrs.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 200
+    assert chat_1_attrs.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 0
 
     # The invoke_agent span must report the aggregate across all LLM round-trips
-    assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 2239 + 2569
-    assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 192 + 99
-    assert agent_span.attributes.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100 + 200
-    assert agent_span.attributes.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
+    assert agent_attrs.get(OtelAttr.INPUT_TOKENS) == 2239 + 2569
+    assert agent_attrs.get(OtelAttr.OUTPUT_TOKENS) == 192 + 99
+    assert agent_attrs.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100 + 200
+    assert agent_attrs.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)

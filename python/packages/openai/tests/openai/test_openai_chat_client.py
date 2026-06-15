@@ -121,7 +121,7 @@ def _as_chat_response_stream(
 
 
 def _response_id_from_token(token: Any) -> str:
-    return _response_id_from_token(token)
+    return token["response_id"]
 
 
 def _as_raw(mock_response: MagicMock, *, headers: dict[str, str] | None = None) -> MagicMock:
@@ -3328,7 +3328,7 @@ def test_usage_details_with_cached_tokens() -> None:
     assert details is not None
     details_dict = cast("dict[str, Any]", details)
     assert details["input_token_count"] == 200
-    assert details["openai.cached_input_tokens"] == 25
+    assert details_dict["openai.cached_input_tokens"] == 25
     assert details["cache_read_input_token_count"] == 25
 
 
@@ -3348,7 +3348,7 @@ def test_usage_details_with_reasoning_tokens() -> None:
     assert details is not None
     details_dict = cast("dict[str, Any]", details)
     assert details["output_token_count"] == 80
-    assert details["openai.reasoning_tokens"] == 30
+    assert details_dict["openai.reasoning_tokens"] == 30
     assert details["reasoning_output_token_count"] == 30
 
 
@@ -3367,9 +3367,10 @@ def test_usage_details_with_zero_cached_and_reasoning_tokens() -> None:
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
-    assert details["openai.cached_input_tokens"] == 0
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["openai.cached_input_tokens"] == 0
     assert details["cache_read_input_token_count"] == 0
-    assert details["openai.reasoning_tokens"] == 0
+    assert details_dict["openai.reasoning_tokens"] == 0
     assert details["reasoning_output_token_count"] == 0
 
 

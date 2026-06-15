@@ -1118,9 +1118,10 @@ def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
 
-    assert details["completion/reasoning_tokens"] == 0
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["completion/reasoning_tokens"] == 0
     assert details["reasoning_output_token_count"] == 0
-    assert details["prompt/cached_tokens"] == 0
+    assert details_dict["prompt/cached_tokens"] == 0
     assert details["cache_read_input_token_count"] == 0
 
 

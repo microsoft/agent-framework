@@ -1397,7 +1397,9 @@ def test_coerce_to_dict_with_json_string_literal() -> None:
 
 
 def _get_function_calling_mode(config: types.GenerateContentConfig) -> str:
-    return str(_function_calling_config(config).mode)
+    mode = _function_calling_config(config).mode
+    assert mode is not None
+    return mode.value
 
 
 def _make_dummy_tool() -> FunctionTool:

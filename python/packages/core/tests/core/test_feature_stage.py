@@ -46,7 +46,7 @@ class HelperReleaseCandidateFeature(str, Enum):
 
 
 @pytest.fixture(autouse=True)
-def clear_feature_warning_state() -> Generator[None]:  # type: ignore[misc]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+def clear_feature_warning_state() -> Generator[None]:  # type: ignore[misc]  # pyrefly: ignore[bad-return]
     _WARNED_FEATURES.clear()
     yield
     _WARNED_FEATURES.clear()

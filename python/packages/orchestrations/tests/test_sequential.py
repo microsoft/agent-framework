@@ -463,6 +463,7 @@ async def test_sequential_request_info_last_participant_emits_output() -> None:
     while request_events:
         responses = {req.request_id: AgentRequestInfoResponse.approve() for req in request_events}
         request_events = []
+        output_events = []
         async for ev in wf.run(stream=True, responses=responses):
             if ev.type == "request_info" and isinstance(ev.data, AgentExecutorResponse):
                 request_events.append(ev)

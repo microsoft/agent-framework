@@ -581,10 +581,10 @@ class DeclarativeWorkflowState:
 
                 original_culture = cast(Any, CultureInfo.CurrentCulture)  # pyright: ignore[reportUnknownMemberType]
                 try:
-                    CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)
                     return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
                 finally:
-                    CultureInfo.CurrentCulture = original_culture  # pyright: ignore[reportUnknownMemberType]
+                    CultureInfo.CurrentCulture = original_culture
             except ValueError as e:
                 error_msg = str(e)
                 # Handle undefined variable errors gracefully by returning None
