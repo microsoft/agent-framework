@@ -89,14 +89,14 @@ internal sealed class CodeValidator
             await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
 
             var stdout = await stdoutTask.ConfigureAwait(false);
-            _ = await stderrTask.ConfigureAwait(false);
+            var stderr = await stderrTask.ConfigureAwait(false);
 
             if (process.ExitCode == 0)
             {
                 return;
             }
 
-            throw new CodeValidationException(ExtractError(stdout));
+            throw new CodeValidationException(ExtractError(stdout, stderr));
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -110,11 +110,11 @@ internal sealed class CodeValidator
         }
     }
 
-    private static string ExtractError(string output)
+    private static string ExtractError(string output, string errorOutput)
     {
         if (string.IsNullOrWhiteSpace(output))
         {
-            return "Code validation failed.";
+            return string.IsNullOrWhiteSpace(errorOutput) ? "Code validation failed." : errorOutput;
         }
 
         try

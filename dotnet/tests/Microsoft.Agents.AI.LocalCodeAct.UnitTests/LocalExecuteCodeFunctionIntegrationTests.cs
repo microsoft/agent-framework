@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -134,9 +135,8 @@ except Exception as exc:
 
         // Tool that always throws — exercises ProcessBridge.HandleToolCallAsync exception path
         // which sends a structured error response back to the subprocess.
-        var faultyTool = AIFunctionFactory.Create(
-            (string message) => throw new InvalidOperationException("intentional: " + message),
-            name: "faulty");
+        Func<string, string> faulty = message => throw new InvalidOperationException("intentional: " + message);
+        var faultyTool = AIFunctionFactory.Create(faulty, name: "faulty");
 
         var options = new LocalCodeActProviderOptions(s_python!)
         {
@@ -197,7 +197,17 @@ except Exception as exc:
 
     private static string? FindPython()
     {
-        foreach (var name in new[] { "python3", "python" })
+        var configured = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON");
+        if (!string.IsNullOrWhiteSpace(configured) && IsUsablePython(configured))
+        {
+            return configured;
+        }
+
+        var executableNames = OperatingSystem.IsWindows()
+            ? new[] { "python3.exe", "python.exe" }
+            : new[] { "python3", "python" };
+
+        foreach (var name in executableNames)
         {
             var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
             foreach (var dir in path.Split(Path.PathSeparator))
@@ -208,7 +218,7 @@ except Exception as exc:
                 }
 
                 var candidate = Path.Combine(dir, name);
-                if (File.Exists(candidate))
+                if (File.Exists(candidate) && IsUsablePython(candidate))
                 {
                     return candidate;
                 }
@@ -216,5 +226,37 @@ except Exception as exc:
         }
 
         return null;
+    }
+
+    private static bool IsUsablePython(string candidate)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = candidate,
+                ArgumentList = { "--version" },
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            });
+            if (process is null)
+            {
+                return false;
+            }
+
+            if (!process.WaitForExit(milliseconds: 5000))
+            {
+                process.Kill(entireProcessTree: true);
+                return false;
+            }
+
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
