@@ -405,15 +405,15 @@ public sealed class ContextProviderPhase9Tests
         AnalysisSection outputSections = AnalysisSection.Default,
         FakeResumer? resumer = null) =>
         new(new ContentUnderstandingContextProviderOptions(SharedTestFixtures.TestEndpoint, new FakeTokenCredential())
+        {
+            OutputSections = outputSections,
+            FileSearchConfig = new FileSearchConfig
             {
-                OutputSections = outputSections,
-                FileSearchConfig = new FileSearchConfig
-                {
-                    Backend = backend,
-                    VectorStoreId = vectorStoreId,
-                    FileSearchTool = fileSearchTool,
-                },
-            })
+                Backend = backend,
+                VectorStoreId = vectorStoreId,
+                FileSearchTool = fileSearchTool,
+            },
+        })
         {
             ClientFactoryOverride = new CountingClientFactory(),
             AnalyzeOverride = analyzer.AnalyzeAsync,
