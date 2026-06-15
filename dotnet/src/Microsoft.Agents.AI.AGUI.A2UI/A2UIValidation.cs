@@ -96,8 +96,11 @@ public sealed class A2UIValidationCatalog
 /// </remarks>
 public static class A2UIComponentValidator
 {
-    /// <summary>The component fields that carry child references: singular <c>child</c> and plural <c>children</c>.</summary>
-    private static readonly string[] s_childReferenceFields = ["child", "children"];
+    /// <summary>Schema <c>format</c> marker tagging a property whose value is a single child reference.</summary>
+    private const string ComponentRefFormat = "componentRef";
+
+    /// <summary>Schema <c>format</c> marker tagging a property whose value is a list of child references.</summary>
+    private const string ComponentRefListFormat = "componentRefList";
 
     /// <summary>
     /// Validates a flat A2UI component array against structural rules and, optionally,
@@ -169,6 +172,9 @@ public static class A2UIComponentValidator
                     $"Component at index {i} is missing a string 'component' type"));
             }
 
+            // The component's catalog schema (when a catalog is supplied) drives both the
+            // required-prop check and the catalog-derived child-reference fields below.
+            JsonObject? componentSchema = null;
             if (catalog is not null && componentType is not null)
             {
                 if (catalog.Components[componentType] is not JsonObject schema)
@@ -178,17 +184,21 @@ public static class A2UIComponentValidator
                         $"components[{i}].component",
                         $"Component type '{componentType}' is not in the catalog"));
                 }
-                else if (schema["required"] is JsonArray required)
+                else
                 {
-                    foreach (JsonNode? requiredNode in required)
+                    componentSchema = schema;
+                    if (schema["required"] is JsonArray required)
                     {
-                        if (TryGetString(requiredNode) is string requiredProp &&
-                            component?.ContainsKey(requiredProp) != true)
+                        foreach (JsonNode? requiredNode in required)
                         {
-                            errors.Add(new A2UIValidationError(
-                                A2UIValidationErrorCodes.MissingRequiredProp,
-                                $"components[{i}].{requiredProp}",
-                                $"Component '{componentType}' (index {i}) is missing required prop '{requiredProp}'"));
+                            if (TryGetString(requiredNode) is string requiredProp &&
+                                component?.ContainsKey(requiredProp) != true)
+                            {
+                                errors.Add(new A2UIValidationError(
+                                    A2UIValidationErrorCodes.MissingRequiredProp,
+                                    $"components[{i}].{requiredProp}",
+                                    $"Component '{componentType}' (index {i}) is missing required prop '{requiredProp}'"));
+                            }
                         }
                     }
                 }
@@ -196,20 +206,18 @@ public static class A2UIComponentValidator
 
             if (component is not null)
             {
-                // Validate both the singular `child` (one-child containers such as Card and
-                // Button, which the default prompt uses) and the plural `children` so a
-                // dangling reference in either is caught and fed back to the recovery loop.
-                foreach (string field in s_childReferenceFields)
+                // Resolve every child reference the component carries: the structural
+                // `child`/`children` containers plus any catalog-marked ref-fields (including
+                // nested array-of-object refs). A dangling reference in any of them is caught
+                // here with a field-specific path and fed back to the recovery loop.
+                foreach ((string pathSuffix, string reference) in CollectComponentRefEdges(component, componentSchema))
                 {
-                    foreach (string reference in CollectChildReferences(component[field]))
+                    if (!ids.Contains(reference))
                     {
-                        if (!ids.Contains(reference))
-                        {
-                            errors.Add(new A2UIValidationError(
-                                A2UIValidationErrorCodes.UnresolvedChild,
-                                $"components[{i}].{field}",
-                                $"Child reference '{reference}' does not match any component id"));
-                        }
+                        errors.Add(new A2UIValidationError(
+                            A2UIValidationErrorCodes.UnresolvedChild,
+                            $"components[{i}].{pathSuffix}",
+                            $"Child reference '{reference}' does not match any component id"));
                     }
                 }
 
@@ -233,7 +241,7 @@ public static class A2UIComponentValidator
 
         // The child/children tree must be a DAG — a component that (transitively)
         // references itself never terminates at render time. Report each cycle once.
-        foreach (List<string> cycle in FindChildCycles(components))
+        foreach (List<string> cycle in FindChildCycles(components, catalog))
         {
             errors.Add(new A2UIValidationError(
                 A2UIValidationErrorCodes.ChildCycle,
@@ -303,51 +311,142 @@ public static class A2UIComponentValidator
         return true;
     }
 
-    private static List<string> CollectChildReferences(JsonNode? children)
+    /// <summary>
+    /// Collects every child reference a component carries, paired with the field-specific path
+    /// suffix that locates it (e.g. <c>child</c>, <c>children[2]</c>, <c>tabItems[0].child</c>).
+    /// The singular <c>child</c> and plural <c>children</c> containers are always traversed — they
+    /// are the structural child fields every catalog shares. Extended ref-fields are catalog-derived:
+    /// a property contributes references only when its schema carries the <c>componentRef</c> /
+    /// <c>componentRefList</c> format marker, and array-of-object properties are introspected so
+    /// nested refs (e.g. Tabs <c>tabItems[].child</c>) are caught. Without a catalog only the
+    /// structural fields are returned. A reference value is a bare id string or a
+    /// <c>{ componentId, ... }</c> template object.
+    /// </summary>
+    private static List<(string Path, string RefId)> CollectComponentRefEdges(JsonObject component, JsonObject? schema)
     {
-        List<string> references = [];
+        List<(string Path, string RefId)> edges = [];
 
-        void Push(JsonNode? node)
+        static string? RefId(JsonNode? node)
+            => TryGetString(node) ?? (node is JsonObject obj ? TryGetString(obj["componentId"]) : null);
+
+        void AddSingle(string path, JsonNode? value)
         {
-            if (TryGetString(node) is string id)
+            if (RefId(value) is string id)
             {
-                references.Add(id);
+                edges.Add((path, id));
             }
-            else if (node is JsonObject obj && TryGetString(obj["componentId"]) is string componentId)
+        }
+
+        void AddList(string path, JsonNode? value)
+        {
+            if (value is JsonArray array)
             {
-                references.Add(componentId);
+                for (int k = 0; k < array.Count; k++)
+                {
+                    if (RefId(array[k]) is string id)
+                    {
+                        edges.Add(($"{path}[{k}]", id));
+                    }
+                }
+            }
+            else if (RefId(value) is string single)
+            {
+                // A single template object ({ componentId, ... }) or a bare id, with no index.
+                edges.Add((path, single));
             }
         }
 
-        if (children is JsonArray array)
+        AddSingle("child", component["child"]);
+        AddList("children", component["children"]);
+
+        if (schema?["properties"] is JsonObject properties)
         {
-            foreach (JsonNode? child in array)
+            foreach (KeyValuePair<string, JsonNode?> property in properties)
             {
-                Push(child);
+                string name = property.Key;
+                if (name is "child" or "children")
+                {
+                    continue; // covered structurally above
+                }
+
+                if (property.Value is not JsonObject propertySchema)
+                {
+                    continue;
+                }
+
+                switch (TryGetString(propertySchema["format"]))
+                {
+                    case ComponentRefFormat:
+                        AddSingle(name, component[name]);
+                        continue;
+                    case ComponentRefListFormat:
+                        AddList(name, component[name]);
+                        continue;
+                }
+
+                // An array-of-object property: introspect each item sub-property for the same
+                // markers so a nested ref (e.g. Tabs `tabItems[k].child`) is traversed.
+                if (TryGetString(propertySchema["type"]) == "array" &&
+                    propertySchema["items"] is JsonObject items &&
+                    items["properties"] is JsonObject itemProperties &&
+                    component[name] is JsonArray elements)
+                {
+                    for (int k = 0; k < elements.Count; k++)
+                    {
+                        if (elements[k] is not JsonObject element)
+                        {
+                            continue;
+                        }
+
+                        foreach (KeyValuePair<string, JsonNode?> subProperty in itemProperties)
+                        {
+                            if (subProperty.Value is not JsonObject subSchema)
+                            {
+                                continue;
+                            }
+
+                            switch (TryGetString(subSchema["format"]))
+                            {
+                                case ComponentRefFormat:
+                                    AddSingle($"{name}[{k}].{subProperty.Key}", element[subProperty.Key]);
+                                    break;
+                                case ComponentRefListFormat:
+                                    AddList($"{name}[{k}].{subProperty.Key}", element[subProperty.Key]);
+                                    break;
+                            }
+                        }
+                    }
+                }
             }
         }
-        else if (children is JsonObject or JsonValue)
-        {
-            // A JsonObject template ({ componentId, ... }) or a bare string id (the singular
-            // `child` shape).
-            Push(children);
-        }
 
-        return references;
+        return edges;
     }
 
-    /// <summary>id → ordered child-id references, gathered from singular <c>child</c> + plural <c>children</c>.</summary>
-    private static Dictionary<string, List<string>> BuildChildAdjacency(JsonArray components)
+    /// <summary>
+    /// id → ordered child-id references for the cycle graph, drawn from the same
+    /// <see cref="CollectComponentRefEdges"/> edge set the dangling-ref check uses so both views of
+    /// the child graph stay consistent.
+    /// </summary>
+    private static Dictionary<string, List<string>> BuildChildAdjacency(JsonArray components, A2UIValidationCatalog? catalog)
     {
         var adjacency = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (JsonNode? node in components)
         {
             if (node is JsonObject component && TryGetString(component["id"]) is string id)
             {
-                List<string> references = [];
-                foreach (string field in s_childReferenceFields)
+                JsonObject? schema = null;
+                if (catalog is not null &&
+                    TryGetString(component["component"]) is string componentType &&
+                    catalog.Components[componentType] is JsonObject componentSchema)
                 {
-                    references.AddRange(CollectChildReferences(component[field]));
+                    schema = componentSchema;
+                }
+
+                List<string> references = [];
+                foreach ((_, string refId) in CollectComponentRefEdges(component, schema))
+                {
+                    references.Add(refId);
                 }
 
                 adjacency[id] = references;
@@ -366,9 +465,9 @@ public static class A2UIComponentValidator
     /// collapses to one finding, and the reported chain stays byte-identical across the sibling
     /// toolkits.
     /// </summary>
-    private static List<List<string>> FindChildCycles(JsonArray components)
+    private static List<List<string>> FindChildCycles(JsonArray components, A2UIValidationCatalog? catalog)
     {
-        Dictionary<string, List<string>> adjacency = BuildChildAdjacency(components);
+        Dictionary<string, List<string>> adjacency = BuildChildAdjacency(components, catalog);
         var color = new Dictionary<string, int>(StringComparer.Ordinal); // absent/0 = unvisited, 1 = on path, 2 = done
         var seenKeys = new HashSet<string>(StringComparer.Ordinal);
         var cycles = new List<List<string>>();

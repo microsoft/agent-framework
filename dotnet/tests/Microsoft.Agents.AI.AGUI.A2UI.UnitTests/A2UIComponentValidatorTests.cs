@@ -31,6 +31,53 @@ public sealed class A2UIComponentValidatorTests
         },
     });
 
+    // A catalog whose schemas carry the componentRef / componentRefList format markers that
+    // drive catalog-derived child-reference validation: Modal has single-ref `trigger`/`content`
+    // plus a plain `title`, Tabs has a nested array of `{ label, child: componentRef }`, and Stack
+    // has a `componentRefList` `items` array. (ag-ui#1948.)
+    private static A2UIValidationCatalog CreateRefMarkerCatalog() => new(new JsonObject
+    {
+        ["Modal"] = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["title"] = new JsonObject { ["type"] = "string" },
+                ["trigger"] = new JsonObject { ["type"] = "string", ["format"] = "componentRef" },
+                ["content"] = new JsonObject { ["type"] = "string", ["format"] = "componentRef" },
+            },
+        },
+        ["Tabs"] = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["tabItems"] = new JsonObject
+                {
+                    ["type"] = "array",
+                    ["items"] = new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
+                        {
+                            ["label"] = new JsonObject { ["type"] = "string" },
+                            ["child"] = new JsonObject { ["type"] = "string", ["format"] = "componentRef" },
+                        },
+                    },
+                },
+            },
+        },
+        ["Stack"] = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["items"] = new JsonObject { ["type"] = "array", ["format"] = "componentRefList" },
+            },
+        },
+        ["Text"] = new JsonObject { ["type"] = "object" },
+    });
+
     private static JsonArray CreateValidComponents() => new(
         new JsonObject
         {
@@ -259,6 +306,138 @@ public sealed class A2UIComponentValidatorTests
 
         // Assert
         Assert.DoesNotContain(A2UIValidationErrorCodes.ChildCycle, Codes(result));
+        Assert.DoesNotContain(A2UIValidationErrorCodes.UnresolvedChild, Codes(result));
+    }
+
+    [Fact]
+    public void Validate_MarkedSingleRefUnresolved_ReportsUnresolvedChildWithFieldPath()
+    {
+        // Arrange: Modal `content` is a catalog-marked single ref pointing at a missing id.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Modal", ["content"] = "ghost" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(
+            components, catalog: CreateRefMarkerCatalog());
+
+        // Assert: reported with the field-specific path, no index for a single ref.
+        Assert.Contains(result.Errors, e =>
+            e.Code == A2UIValidationErrorCodes.UnresolvedChild && e.Path == "components[0].content");
+    }
+
+    [Fact]
+    public void Validate_MarkedSingleRefResolved_NoUnresolvedChild()
+    {
+        // Arrange: Modal `content` points at a real component id.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Modal", ["content"] = "body" },
+            new JsonObject { ["id"] = "body", ["component"] = "Text" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(
+            components, catalog: CreateRefMarkerCatalog());
+
+        // Assert
+        Assert.DoesNotContain(A2UIValidationErrorCodes.UnresolvedChild, Codes(result));
+    }
+
+    [Fact]
+    public void Validate_UnmarkedDataString_NotTreatedAsChildRef()
+    {
+        // Arrange: Modal `title` is a plain (unmarked) string. Even when its value happens to
+        // look like an id that is not present, it must not be flagged as a dangling child ref.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Modal", ["title"] = "ghost" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(
+            components, catalog: CreateRefMarkerCatalog());
+
+        // Assert
+        Assert.DoesNotContain(A2UIValidationErrorCodes.UnresolvedChild, Codes(result));
+    }
+
+    [Fact]
+    public void Validate_NestedArrayRefUnresolved_ReportsIndexedFieldPath()
+    {
+        // Arrange: Tabs `tabItems` is an array of { label, child }; the second item's marked
+        // `child` ref dangles. The path carries both the array index and the sub-field.
+        var components = new JsonArray(
+            new JsonObject
+            {
+                ["id"] = "root",
+                ["component"] = "Tabs",
+                ["tabItems"] = new JsonArray(
+                    new JsonObject { ["label"] = "One", ["child"] = "panel" },
+                    new JsonObject { ["label"] = "Two", ["child"] = "ghost" }),
+            },
+            new JsonObject { ["id"] = "panel", ["component"] = "Text" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(
+            components, catalog: CreateRefMarkerCatalog());
+
+        // Assert: only the dangling ref is reported, with the nested per-index path.
+        Assert.Contains(result.Errors, e =>
+            e.Code == A2UIValidationErrorCodes.UnresolvedChild && e.Path == "components[0].tabItems[1].child");
+        Assert.DoesNotContain(result.Errors, e =>
+            e.Code == A2UIValidationErrorCodes.UnresolvedChild && e.Path == "components[0].tabItems[0].child");
+    }
+
+    [Fact]
+    public void Validate_ListRefUnresolved_ReportsIndexedFieldPath()
+    {
+        // Arrange: Stack `items` is a componentRefList; the second entry dangles.
+        var components = new JsonArray(
+            new JsonObject
+            {
+                ["id"] = "root",
+                ["component"] = "Stack",
+                ["items"] = new JsonArray("panel", "ghost"),
+            },
+            new JsonObject { ["id"] = "panel", ["component"] = "Text" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(
+            components, catalog: CreateRefMarkerCatalog());
+
+        // Assert
+        Assert.Contains(result.Errors, e =>
+            e.Code == A2UIValidationErrorCodes.UnresolvedChild && e.Path == "components[0].items[1]");
+    }
+
+    [Fact]
+    public void Validate_CycleThroughMarkedRef_ReportsSingleChildCycle()
+    {
+        // Arrange: a loop routed entirely through marked `content` refs (root -> a -> root).
+        // The cycle graph must include catalog-derived edges, not just child/children.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Modal", ["content"] = "a" },
+            new JsonObject { ["id"] = "a", ["component"] = "Modal", ["content"] = "root" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(
+            components, catalog: CreateRefMarkerCatalog());
+
+        // Assert
+        Assert.Equal(1, result.Errors.Count(e => e.Code == A2UIValidationErrorCodes.ChildCycle));
+        Assert.Contains(result.Errors, e =>
+            e.Code == A2UIValidationErrorCodes.ChildCycle && e.Message.Contains("a -> root -> a"));
+    }
+
+    [Fact]
+    public void Validate_MarkedRefFields_IgnoredWithoutCatalog()
+    {
+        // Arrange: the same dangling Modal `content` ref, but no catalog is supplied. Extended
+        // ref-fields are catalog-derived, so without a catalog only structural child/children
+        // are checked and the unknown component / marked field are left alone.
+        var components = new JsonArray(
+            new JsonObject { ["id"] = "root", ["component"] = "Modal", ["content"] = "ghost" });
+
+        // Act
+        A2UIValidationResult result = A2UIComponentValidator.Validate(components);
+
+        // Assert
         Assert.DoesNotContain(A2UIValidationErrorCodes.UnresolvedChild, Codes(result));
     }
 
