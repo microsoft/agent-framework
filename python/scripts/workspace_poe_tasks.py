@@ -10,6 +10,7 @@ aliases in one place so docs and automation can share the same command surface.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -353,12 +354,20 @@ SAMPLE_TYPING_EXCLUDES = (
 
 
 def _mypy_command(paths: list[str], *, samples: bool) -> list[str]:
+    # The test-typing fan-out runs many mypy processes concurrently. mypy defaults to a
+    # single shared ``.mypy_cache`` in the working directory; concurrent writes corrupt it
+    # and mypy aborts with ``INTERNAL ERROR``. Give each invocation an isolated cache dir
+    # keyed by its target paths so incremental caching still works per package without races.
+    cache_key = hashlib.sha1("\0".join(sorted(paths)).encode()).hexdigest()[:16]
+    cache_dir = Path(".mypy_cache") / ("samples" if samples else "tests") / cache_key
     command = [
         "uv",
         "run",
         "mypy",
         "--config-file",
         "pyproject.toml",
+        "--cache-dir",
+        str(cache_dir),
         "--explicit-package-bases",
         "--namespace-packages",
     ]
