@@ -18,7 +18,6 @@ from typing import Any
 
 from agent_framework import Workflow
 from agent_framework_durabletask._workflows.orchestrator import (
-    DEFAULT_HITL_TIMEOUT_HOURS,
     SOURCE_HITL_RESPONSE,
     SOURCE_ORCHESTRATOR,
     SOURCE_WORKFLOW_START,
@@ -42,7 +41,6 @@ logger = logging.getLogger(__name__)
 
 # Re-export shared symbols for backward compatibility
 __all__ = [
-    "DEFAULT_HITL_TIMEOUT_HOURS",
     "SOURCE_HITL_RESPONSE",
     "SOURCE_ORCHESTRATOR",
     "SOURCE_WORKFLOW_START",
@@ -63,7 +61,6 @@ def run_workflow_orchestrator(
     workflow: Workflow,
     initial_message: Any,
     shared_state: dict[str, Any] | None = None,
-    hitl_timeout_hours: float = DEFAULT_HITL_TIMEOUT_HOURS,
 ) -> Generator[Any, Any, list[Any]]:
     """Azure Functions wrapper around the shared workflow orchestrator.
 
@@ -75,10 +72,9 @@ def run_workflow_orchestrator(
         workflow: The MAF Workflow instance to execute.
         initial_message: Initial message to send to the start executor.
         shared_state: Optional dict for cross-executor state sharing.
-        hitl_timeout_hours: Timeout in hours for HITL requests.
 
     Returns:
         List of workflow outputs collected from executor activities.
     """
     af_ctx = AzureFunctionsWorkflowContext(context)
-    return _run_workflow_orchestrator_shared(af_ctx, workflow, initial_message, shared_state, hitl_timeout_hours)
+    return _run_workflow_orchestrator_shared(af_ctx, workflow, initial_message, shared_state)
