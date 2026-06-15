@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -44,13 +45,20 @@ internal sealed class SandboxExecutor : IDisposable
             IReadOnlyList<AIFunction> tools,
             IReadOnlyList<FileMount> fileMounts,
             IReadOnlyList<AllowedDomain> allowedDomains,
-            string? hostInputDirectory)
+            string? hostInputDirectory,
+            long toolRegistryVersion = 0)
         {
             this.Tools = tools;
             this.FileMounts = fileMounts;
             this.AllowedDomains = allowedDomains;
             this.HostInputDirectory = hostInputDirectory;
-            this.ConfigFingerprint = ComputeFingerprint(tools, fileMounts, allowedDomains, hostInputDirectory);
+            this.ToolRegistryVersion = toolRegistryVersion;
+            this.ConfigFingerprint = ComputeFingerprint(
+                tools,
+                fileMounts,
+                allowedDomains,
+                hostInputDirectory,
+                toolRegistryVersion);
         }
 
         public IReadOnlyList<AIFunction> Tools { get; }
@@ -60,6 +68,8 @@ internal sealed class SandboxExecutor : IDisposable
         public IReadOnlyList<AllowedDomain> AllowedDomains { get; }
 
         public string? HostInputDirectory { get; }
+
+        public long ToolRegistryVersion { get; }
 
         /// <summary>
         /// Stable fingerprint of the configuration that materially affects how
@@ -73,7 +83,8 @@ internal sealed class SandboxExecutor : IDisposable
             IReadOnlyList<AIFunction> tools,
             IReadOnlyList<FileMount> fileMounts,
             IReadOnlyList<AllowedDomain> allowedDomains,
-            string? hostInputDirectory)
+            string? hostInputDirectory,
+            long toolRegistryVersion = 0)
         {
             var sb = new StringBuilder();
             sb.Append("tools=");
@@ -81,6 +92,8 @@ internal sealed class SandboxExecutor : IDisposable
             {
                 sb.Append(name).Append('|');
             }
+
+            sb.Append(";toolVersion=").Append(toolRegistryVersion.ToString(CultureInfo.InvariantCulture));
 
             sb.Append(";mounts=");
             foreach (var m in fileMounts

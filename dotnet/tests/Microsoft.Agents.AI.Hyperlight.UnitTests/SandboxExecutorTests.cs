@@ -38,6 +38,31 @@ public sealed class SandboxExecutorTests
     }
 
     [Fact]
+    public void Fingerprint_SameNameDifferentToolRegistryVersions_DifferentFingerprints()
+    {
+        // Arrange
+        var t1 = AIFunctionFactory.Create(() => "a", name: "t");
+        var t2 = AIFunctionFactory.Create(() => "b", name: "t");
+
+        // Act
+        var fp1 = SandboxExecutor.RunSnapshot.ComputeFingerprint(
+            [t1],
+            [],
+            [],
+            hostInputDirectory: null,
+            toolRegistryVersion: 1);
+        var fp2 = SandboxExecutor.RunSnapshot.ComputeFingerprint(
+            [t2],
+            [],
+            [],
+            hostInputDirectory: null,
+            toolRegistryVersion: 2);
+
+        // Assert
+        Assert.NotEqual(fp1, fp2);
+    }
+
+    [Fact]
     public void Fingerprint_DifferentMounts_DifferentFingerprints()
     {
         // Act

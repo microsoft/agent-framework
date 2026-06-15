@@ -71,7 +71,12 @@ public sealed class HyperlightExecuteCodeFunction : AIFunction, IDisposable
         var fileMounts = (effective.FileMounts?.Where(m => m is not null) ?? []).ToList();
         var allowedDomains = (effective.AllowedDomains?.Where(d => d is not null) ?? []).ToList();
 
-        this._snapshot = new SandboxExecutor.RunSnapshot(tools, fileMounts, allowedDomains, effective.HostInputDirectory);
+        this._snapshot = new SandboxExecutor.RunSnapshot(
+            tools,
+            fileMounts,
+            allowedDomains,
+            effective.HostInputDirectory,
+            toolRegistryVersion: 0);
 
         this._description = InstructionBuilder.BuildExecuteCodeDescription(
             this._snapshot.Tools,
