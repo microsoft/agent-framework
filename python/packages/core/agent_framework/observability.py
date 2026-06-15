@@ -2344,7 +2344,7 @@ def _instructions_preserve_existing_agent_instructions(
 
     if not isinstance(existing_items_obj, list):
         return False
-    existing_items = cast(list[Any], existing_items_obj)
+    existing_items = cast(list[object], existing_items_obj)
 
     existing_contents: list[str] = []
     for item in existing_items:
