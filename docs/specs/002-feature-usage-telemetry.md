@@ -46,8 +46,10 @@ per-request requirement below). Secondary: ability to break down first-party
 traffic by feature combination (e.g. "% of Foundry traffic that also uses
 workflows").
 
-This is done **transparently**: the bit registry is public and the emitted value
-is human-decodable, and the existing User-Agent opt-out disables it.
+This is done **transparently**: the bit registry is public, the emitted value is
+human-decodable, and two env vars disable it — a dedicated
+`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` (mask only) and the existing
+`AGENT_FRAMEWORK_USER_AGENT_DISABLED` (whole User-Agent).
 
 ## What is the problem being solved?
 
@@ -66,29 +68,38 @@ we already send is far cheaper and easier to reason about for privacy.
 The accumulator and its helpers live in the existing
 `agent_framework/_telemetry.py` (alongside `get_user_agent()` /
 `prepend_agent_framework_to_user_agent()`), so the User-Agent machinery stays in
-one module. It owns a process-global 64-bit accumulator. The existing
-`AGENT_FRAMEWORK_USER_AGENT_DISABLED` flag (`IS_TELEMETRY_ENABLED` in that module)
-already gates the whole User-Agent contribution, so it gates the mask too — no
-new env var:
+one module. It owns a process-global 64-bit accumulator. Two env vars can disable
+it: the existing `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (which drops the whole
+User-Agent contribution, mask included), and a **dedicated**
+`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops **only** the feature mask while
+keeping the base `agent-framework-python/{version}` User-Agent:
 
 ```python
 # agent_framework/_telemetry.py (same module as get_user_agent)
 # IS_TELEMETRY_ENABLED already defined here (AGENT_FRAMEWORK_USER_AGENT_DISABLED)
 
+FEATURE_MASK_DISABLED_ENV_VAR = "AGENT_FRAMEWORK_FEATURE_MASK_DISABLED"
 REGISTRY_VERSION = 1
 
 _feature_mask = 0
 _feature_mask_lock = threading.Lock()
 
 
+def _feature_mask_enabled() -> bool:
+    """Mask is on unless the UA is disabled or the dedicated flag is set."""
+    if not IS_TELEMETRY_ENABLED:
+        return False
+    return os.environ.get(FEATURE_MASK_DISABLED_ENV_VAR, "false").lower() not in ("true", "1")
+
+
 def mark_feature_used(bit: int) -> None:
     """OR a feature bit into the process-global mask.
 
     Called the first time a feature is exercised. Cheap and idempotent;
-    a no-op when the User-Agent contribution is disabled.
+    a no-op when the feature mask is disabled.
     """
     global _feature_mask
-    if not IS_TELEMETRY_ENABLED:
+    if not _feature_mask_enabled():
         return
     with _feature_mask_lock:
         _feature_mask |= 1 << bit
@@ -96,7 +107,7 @@ def mark_feature_used(bit: int) -> None:
 
 def get_feature_token() -> str | None:
     """Return ``v<version>.<hex_mask>`` for the accumulated mask, or None."""
-    if not IS_TELEMETRY_ENABLED or _feature_mask == 0:
+    if not _feature_mask_enabled() or _feature_mask == 0:
         return None
     return f"v{REGISTRY_VERSION}.{_feature_mask:x}"
 ```
@@ -215,9 +226,10 @@ New public surface in `agent-framework-core` (exported from
   used by first-party per-request hooks.
 - `FeatureBit` (IntEnum) — hand-written source of truth for the Python bit list
   (see [Keeping the bitmap in sync](#keeping-the-bitmap-in-sync)).
+- `FEATURE_MASK_DISABLED_ENV_VAR` constant — the dedicated mask-only opt-out env
+  var name (`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`).
 
-No new env var: the existing `AGENT_FRAMEWORK_USER_AGENT_DISABLED` disables the
-mask along with the rest of the User-Agent contribution.
+Two independent opt-outs gate the mask; see [Opt-out](#opt-out).
 
 Behavioural change to existing API:
 
@@ -231,15 +243,17 @@ first-party client, output is byte-for-byte identical to today.
 
 ## Opt-out
 
-The mask is part of the User-Agent contribution, so the existing flag covers it —
-no new env var in v1:
+Two independent env vars, so users can drop just the mask or the whole UA:
 
 | Env var | Effect |
 | --- | --- |
+| `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` | disables **only** the feature mask; the base `agent-framework-python/{version}` User-Agent is still sent |
 | `AGENT_FRAMEWORK_USER_AGENT_DISABLED` | disables the **entire** AF User-Agent contribution, mask included |
 
-(If a privacy review later requires keeping the base UA while dropping only the
-mask, a dedicated flag can be added then — not built speculatively now.)
+Both accept `true`/`1` (case-insensitive). The dedicated flag lets a
+privacy-conscious user keep contributing the SDK identity/version (useful for
+support and compat triage) while withholding the feature-usage signal. The mask
+is also disabled implicitly whenever the whole User-Agent is.
 
 ## E2E example
 
@@ -262,7 +276,14 @@ await other.run("Hi")
 #   User-Agent: agent-framework-python/1.2.3
 ```
 
-Disabling the User-Agent contribution (mask included):
+Drop only the feature mask (keep the base User-Agent):
+
+```bash
+AGENT_FRAMEWORK_FEATURE_MASK_DISABLED=true python app.py
+# Foundry request User-Agent: agent-framework-python/1.2.3   (no (feat=...) comment)
+```
+
+Drop the entire User-Agent contribution (mask included):
 
 ```bash
 AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
@@ -281,11 +302,12 @@ AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
   `(feat=...)` comment, and register the feat-stamping policy **only on
   Azure/Foundry clients** (e.g. `FoundryChatClient`), not on third-party
   `IChatClient`s.
-- Same **wire format** (`v<version>.<hex>` comment, hex encoding) in both SDKs —
-  but the **mask is decoded per language**: indexes are not shared, so a decoder
-  must read the language from the UA product token and select that language's
-  table before decoding. (.NET's policy was already per-request, so there is no
-  Python/.NET timing asymmetry.)
+- Same **wire format** (`v<version>.<hex>` comment, hex encoding) and the same
+  two opt-out env vars (`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`,
+  `AGENT_FRAMEWORK_USER_AGENT_DISABLED`) in both SDKs — but the **mask is decoded
+  per language**: indexes are not shared, so a decoder must read the language from
+  the UA product token and select that language's table before decoding. (.NET's
+  policy was already per-request, so there is no Python/.NET timing asymmetry.)
 
 ## Keeping the bitmap in sync
 
@@ -339,15 +361,17 @@ the table) are ignored.
    the .NET table); `FeatureUsage.MarkUsed` with lock-free `Interlocked.Or`;
    extend the existing per-request UA policy to stamp `(feat=...)` **only on
    Azure/Foundry clients**. The .NET enum is **independent** of Python's.
-5. **Docs & tests** — update package `AGENTS.md`/skills; tests for the UA opt-out,
-   first-party scoping, and the live (non-frozen) UA.
+5. **Docs & tests** — update package `AGENTS.md`/skills; tests for **both**
+   opt-out env vars (mask-only and whole-UA), first-party scoping, and the live
+   (non-frozen) UA.
 
 ## Limitations & open questions
 
 The decision-level limitations and unresolved trade-offs — privacy review
 (blocking), reach, per-process (not per-call) attribution, coarse granularity,
-fingerprinting residue, and the dedicated-opt-out / OTel questions — are owned by
-the ADR. See **[ADR-0027 → Limitations](../decisions/0027-feature-usage-bitmask-user-agent.md#limitations)**
+fingerprinting residue, and the OTel question — are owned by the ADR (the
+dedicated mask-only opt-out is now decided and included). See
+**[ADR-0027 → Limitations](../decisions/0027-feature-usage-bitmask-user-agent.md#limitations)**
 and **[Open Questions](../decisions/0027-feature-usage-bitmask-user-agent.md#open-questions-for-decider-discussion)**.
 This spec is the implementation reference; it does not re-litigate those choices.
 
