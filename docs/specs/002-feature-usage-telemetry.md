@@ -116,6 +116,20 @@ def get_feature_token() -> str | None:
   time a feature is genuinely exercised — at construction of a representative
   type (e.g. `Agent`, an `MCPTool`, a provider, a Foundry surface), never at
   import time. The mask grows over the process lifetime.
+- **Process-global and monotonic — intentionally never reset.** Unlike a
+  per-request scheme (e.g. botocore's `contextvars` feature set that resets
+  between calls), our mask spans the whole process because many features are not
+  bound to any request — an agent, workflow/orchestration, or context/history
+  provider is constructed once and used across the session. The single global
+  mask is the only scope that can represent them, and its monotonic "usage so
+  far" growth is the intended semantic, not a bleed bug. Concurrency-safe via the
+  module lock (Python) / `Interlocked.Or` (.NET).
+- **Token is safe by construction.** The emitted value is `v{int}.{hex}` —
+  characters limited to `[0-9a-fv.]` — so no header-injection sanitization is
+  required (contrast botocore, which must sanitize arbitrary component strings).
+- **Private API.** `mark_feature_used`, `get_feature_token`, `apply_feature_token`
+  and the mask itself are internal helpers; only the emitted token and the
+  per-language registry tables are the stable, decodable contract.
 - **No import cycles:** the call lives in each package's own module, so `core`
   never imports optional packages. Each package references its bit via the shared
   `FeatureBit` IntEnum exported from `core`.
