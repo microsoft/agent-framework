@@ -51,6 +51,8 @@ from agent_framework_foundry_hosting._responses import (
     ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
+    PlatformHostedSessionIsolationKeyProvider,
+    _hosted_session_context_path,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _read_hosted_session_context,  # pyright: ignore[reportPrivateUsage]
@@ -136,6 +138,21 @@ class _MissingHostedSessionIsolationKeyProvider:
     async def get_keys(self, context: Any, request: Any) -> HostedSessionContext | None:
         del context, request
         return None
+
+
+@dataclass
+class _HostedSessionIsolation:
+    """Test isolation context with platform-shaped attributes."""
+
+    user_key: str | None
+    chat_key: str | None
+
+
+class _HostedSessionResponseContext:
+    """Test response context with platform isolation."""
+
+    def __init__(self, *, user_key: str | None, chat_key: str | None) -> None:
+        self.isolation = _HostedSessionIsolation(user_key=user_key, chat_key=chat_key)
 
 
 async def _post(
@@ -2972,6 +2989,30 @@ class TestCheckpointContextPathValidation:
             == "azure.ai.agentserver.responses.models._generated.sdk.models.models._enums:MessageRole"
         )
 
+    def test_hosted_session_context_rejects_whitespace_only_keys(self) -> None:
+        with pytest.raises(ValueError, match="requires non-empty"):
+            HostedSessionContext(user_id=" ", chat_id="chat-a")
+        with pytest.raises(ValueError, match="requires non-empty"):
+            HostedSessionContext(user_id="user-a", chat_id="\t")
+
+    async def test_platform_hosted_session_provider_rejects_whitespace_only_keys(self) -> None:
+        provider = PlatformHostedSessionIsolationKeyProvider()
+
+        assert (
+            await provider.get_keys(
+                _HostedSessionResponseContext(user_key=" ", chat_key="chat-a"),  # type: ignore[arg-type]
+                MagicMock(),
+            )
+            is None
+        )
+        assert (
+            await provider.get_keys(
+                _HostedSessionResponseContext(user_key="user-a", chat_key="\n"),  # type: ignore[arg-type]
+                MagicMock(),
+            )
+            is None
+        )
+
     async def test_storage_allows_azure_message_role_checkpoint_restore(self, tmp_path: Any) -> None:
         from azure.ai.agentserver.responses.models import MessageRole
 
@@ -3154,6 +3195,10 @@ class TestCheckpointContextPathValidation:
 
         assert first_created is True
         assert second_created is False
+        assert _hosted_session_context_path(checkpoint_storage).suffix != ".json"
+        assert _hosted_session_context_path(checkpoint_storage).name not in {
+            path.name for path in checkpoint_storage.storage_path.glob("*.json")
+        }
         assert await _read_hosted_session_context(checkpoint_storage) == HostedSessionContext(
             user_id="user-a",
             chat_id="chat-a",

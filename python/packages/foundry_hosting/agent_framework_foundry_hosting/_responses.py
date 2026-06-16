@@ -118,7 +118,7 @@ from typing_extensions import Any
 logger = logging.getLogger(__name__)
 
 _AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
-_HOSTED_SESSION_CONTEXT_FILE_NAME = "_hosted_session_context.json"
+_HOSTED_SESSION_CONTEXT_FILE_NAME = "_hosted_session_context.afctx"
 
 
 @dataclass(frozen=True)
@@ -135,7 +135,7 @@ class HostedSessionContext:
 
     def __post_init__(self) -> None:
         """Validate that hosted session identity values are usable as ownership keys."""
-        if not self.user_id or not self.chat_id:
+        if not self.user_id.strip() or not self.chat_id.strip():
             raise ValueError("Hosted session context requires non-empty user_id and chat_id values.")
 
 
@@ -172,7 +172,7 @@ class PlatformHostedSessionIsolationKeyProvider:
         isolation = getattr(context, "isolation", None)
         user_id = getattr(isolation, "user_key", None)
         chat_id = getattr(isolation, "chat_key", None)
-        if not isinstance(user_id, str) or not user_id or not isinstance(chat_id, str) or not chat_id:
+        if not isinstance(user_id, str) or not user_id.strip() or not isinstance(chat_id, str) or not chat_id.strip():
             return None
         return HostedSessionContext(user_id=user_id, chat_id=chat_id)
 
