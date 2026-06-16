@@ -125,7 +125,7 @@ _AGENT_INSTRUCTIONS = (
 )
 
 
-async def run_cli_async(*, debug: bool = False) -> None:
+async def run_cli_async(*, debug: bool = False, gateway_port: int = 9090) -> None:
     """Run the sample in CLI mode with two MCP proxies (WorkIQ email + teams)."""
     endpoint = _load_env_and_validate()
     credential = AzureCliCredential()
@@ -135,19 +135,22 @@ async def run_cli_async(*, debug: bool = False) -> None:
         credential=credential,
     )
 
+    teams_url = f"http://localhost:{gateway_port}/mcp/WorkIQ-TeamsServer"
+    mail_url = f"http://localhost:{gateway_port}/mcp/WorkIQ-MailTools"
+
     async with AsyncExitStack() as stack:
         secure_mcp_1 = await stack.enter_async_context(
             SecureMCPToolProxy(
                 mcp_tool=MCPStreamableHTTPTool(
                     name="WorkIQ-TeamsServer",
-                    url="http://localhost:9090/mcp/WorkIQ-TeamsServer",
+                    url=teams_url,
                     description="WorkIQ Teams MCP server via local proxy",
                     tool_name_prefix="teams",
                 ),
                 gateway_policy=True,
             )
         )
-        print("Connected to MCP proxy: http://localhost:9090/mcp/WorkIQ-TeamsServer")
+        print(f"Connected to MCP proxy: {teams_url}")
         print(f"Loaded tools (Teams): {len(secure_mcp_1.tools)}")
         _print_tool_labels(secure_mcp_1.tools, debug=debug)
 
@@ -155,14 +158,14 @@ async def run_cli_async(*, debug: bool = False) -> None:
             SecureMCPToolProxy(
                 mcp_tool=MCPStreamableHTTPTool(
                     name="WorkIQ-MailServer",
-                    url="http://localhost:9091/mcp/WorkIQ-MailTools",
+                    url=mail_url,
                     description="WorkIQ Email MCP server via local proxy",
                     tool_name_prefix="mail",
                 ),
                 gateway_policy=True,
             )
         )
-        print("Connected to MCP proxy: http://localhost:9091/mcp/WorkIQ-MailTools")
+        print(f"Connected to MCP proxy: {mail_url}")
         print(f"Loaded tools (Email): {len(secure_mcp_2.tools)}")
         _print_tool_labels(secure_mcp_2.tools, debug=debug)
 
@@ -201,7 +204,7 @@ async def run_cli_async(*, debug: bool = False) -> None:
             print(f"  - function={function_name} reason={reason}")
 
 
-async def run_devui_async(*, debug: bool = False) -> None:
+async def run_devui_async(*, debug: bool = False, gateway_port: int = 9090) -> None:
     """Launch DevUI with both MCP proxies."""
     import uvicorn
     from agent_framework_devui._server import DevServer
@@ -219,29 +222,14 @@ async def run_devui_async(*, debug: bool = False) -> None:
         credential=credential,
     )
 
-    async with AsyncExitStack() as stack:
-        secure_mcp_1 = await stack.enter_async_context(
-            SecureMCPToolProxy(
-                mcp_tool=MCPStreamableHTTPTool(
-                    name="WorkIQ-TeamsServer",
-                    url="http://localhost:9090/mcp/WorkIQ-TeamsServer",
-                    description="WorkIQ Teams MCP server via local proxy",
-                    tool_name_prefix="teams",
-                    terminate_on_close=False,
-                    load_prompts=False,
-                ),
-                gateway_policy=True,
-            )
-        )
-        print("Connected to MCP proxy: http://localhost:9090/mcp/WorkIQ-TeamsServer")
-        print(f"Loaded tools (Teams): {len(secure_mcp_1.tools)}")
-        _print_tool_labels(secure_mcp_1.tools, debug=debug)
+    mail_url = f"http://localhost:{gateway_port}/mcp/WorkIQ-MailTools"
 
-        secure_mcp_2 = await stack.enter_async_context(
+    async with AsyncExitStack() as stack:
+        secure_mcp = await stack.enter_async_context(
             SecureMCPToolProxy(
                 mcp_tool=MCPStreamableHTTPTool(
                     name="WorkIQ-MailServer",
-                    url="http://localhost:9091/mcp/WorkIQ-MailTools",
+                    url=mail_url,
                     description="WorkIQ Email MCP server via local proxy",
                     tool_name_prefix="mail",
                     terminate_on_close=False,
@@ -250,12 +238,9 @@ async def run_devui_async(*, debug: bool = False) -> None:
                 gateway_policy=True,
             )
         )
-        print("Connected to MCP proxy: http://localhost:9091/mcp/WorkIQ-MailTools")
-        print(f"Loaded tools (Email): {len(secure_mcp_2.tools)}")
-        _print_tool_labels(secure_mcp_2.tools, debug=debug)
-
-        all_tools = secure_mcp_1.tools + secure_mcp_2.tools
-        print(f"Loaded tools: {len(all_tools)}")
+        print(f"Connected to MCP proxy: {mail_url}")
+        print(f"Loaded tools (Email): {len(secure_mcp.tools)}")
+        _print_tool_labels(secure_mcp.tools, debug=debug)
 
         config = SecureAgentConfig(
             auto_hide_untrusted=False,
@@ -269,7 +254,7 @@ async def run_devui_async(*, debug: bool = False) -> None:
                 client=main_client,
                 name="WorkIQSecureAgent",
                 instructions=_AGENT_INSTRUCTIONS,
-                tools=all_tools,
+                tools=secure_mcp.tools,
                 context_providers=[config],
             )
         )
@@ -288,7 +273,7 @@ async def run_devui_async(*, debug: bool = False) -> None:
         app = server_obj.get_app()
 
         print("\n" + "=" * 70)
-        print("DevUI: WorkIQ Email + Teams MCP + FIDES")
+        print("DevUI: WorkIQ Email MCP + FIDES")
         print("=" * 70)
         print(f"URL:          http://{host}:{port}")
         print(f"Entity ID:    agent_{agent.name}")
@@ -312,20 +297,26 @@ def _parse_args(argv: list[str]) -> tuple[str, bool]:
     mode_group.add_argument("--cli", action="store_true", help="Run in command line mode.")
     mode_group.add_argument("--devui", action="store_true", help="Run with DevUI web interface.")
     parser.add_argument("--debug", action="store_true", help="Enable verbose security logging.")
+    parser.add_argument(
+        "--gateway-port",
+        type=int,
+        default=9090,
+        help="Port of the local Fides gateway (default: 9090).",
+    )
     args = parser.parse_args(argv)
     mode = "cli" if args.cli else "devui"
-    return mode, args.debug
+    return mode, args.debug, args.gateway_port
 
 
 def main() -> None:
     """Entry point for the sample script."""
-    mode, debug = _parse_args(sys.argv[1:])
+    mode, debug, gateway_port = _parse_args(sys.argv[1:])
     configure_logging(debug=debug)
     try:
         if mode == "cli":
-            asyncio.run(run_cli_async(debug=debug))
+            asyncio.run(run_cli_async(debug=debug, gateway_port=gateway_port))
         else:
-            asyncio.run(run_devui_async(debug=debug))
+            asyncio.run(run_devui_async(debug=debug, gateway_port=gateway_port))
     except RuntimeError as ex:
         print(f"\nError: {ex}", file=sys.stderr)
         raise SystemExit(1) from ex
