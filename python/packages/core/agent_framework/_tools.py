@@ -1943,6 +1943,13 @@ def _replace_approval_contents_with_results(
                 # Skip hosted tool approvals — they must pass through to the API unchanged
                 if _is_hosted_tool_approval(content):
                     continue
+                # Only process approval requests that have a matching response.
+                # Unresponded requests are kept as-is so the caller can detect
+                # pending approvals and avoid sending incomplete tool results
+                # to the model API (which rejects orphan function_calls).
+                request_id = getattr(content, "id", None)
+                if request_id is None or request_id not in fcc_todo:
+                    continue
                 # Don't add the function call if it already exists (would create duplicate)
                 if content.function_call is not None and content.function_call.call_id in existing_call_ids:
                     # Just mark for removal - the function call already exists
@@ -2234,6 +2241,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         middleware_list = categorize_middleware(middleware)
         self.function_middleware: list[FunctionMiddlewareTypes] = list(middleware_list["function"])
         self._cached_function_middleware_pipeline: FunctionMiddlewarePipeline | None = None
+        # Tracks pending (unresponded) approval request IDs across agent.run()
+        # calls.  When parallel tool calls all require approval, the first run
+        # produces N approval requests.  Each subsequent run may carry only ONE
+        # response.  The set lets us detect that more responses are still
+        # outstanding so we do NOT call the model API with incomplete outputs.
+        self._pending_approval_request_ids: set[str] = set()
+        # Accumulates processed messages (containing function_result items
+        # for approved/rejected calls) from runs that exited early because
+        # other approvals were still pending.  These are prepended to
+        # prepped_messages when the last approval resolves.
+        self._deferred_approval_messages: list[Any] = []
         self.function_invocation_configuration = normalize_function_invocation_configuration(
             function_invocation_configuration
         )
@@ -2387,6 +2405,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 loop_enabled = self.function_invocation_configuration.get("enabled", True)
                 max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
                 for attempt_idx in range(max_iterations if loop_enabled else 0):
+                    # Collect approval response IDs to remove from pending set.
+                    responded_ids: set[str] = set()
+                    if self._pending_approval_request_ids:
+                        for _m in prepped_messages:
+                            for _c in getattr(_m, "contents", []):
+                                if _c.type == "function_approval_response":
+                                    _cid = getattr(_c, "id", None)
+                                    if _cid:
+                                        responded_ids.add(_cid)
+
                     approval_result = await _process_function_requests(
                         response=None,
                         prepped_messages=prepped_messages,
@@ -2397,9 +2425,29 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         max_errors=max_errors,
                         execute_function_calls=execute_function_calls,
                     )
-                    if approval_result.get("action") == "stop":
+
+                    # Remove responded IDs from the pending set.
+                    if responded_ids:
+                        self._pending_approval_request_ids -= responded_ids
+
+                    if approval_result.get("action") in ("stop", "return"):
                         response = ChatResponse(messages=prepped_messages)
                         break
+                    # If more approvals are outstanding, break without calling
+                    # the model API (same as streaming path).
+                    if approval_result.get("action") == "continue" and self._pending_approval_request_ids:
+                        logger.debug(
+                            "Pending approval requests remain (%s), deferring LLM call.",
+                            self._pending_approval_request_ids,
+                        )
+                        self._deferred_approval_messages.extend(prepped_messages)
+                        response = ChatResponse(messages=prepped_messages)
+                        break
+
+                    # All approvals resolved — prepend deferred messages.
+                    if self._deferred_approval_messages:
+                        prepped_messages[:0] = self._deferred_approval_messages
+                        self._deferred_approval_messages.clear()
                     errors_in_a_row = approval_result.get("errors_in_a_row", errors_in_a_row)
                     total_function_calls += approval_result.get("function_call_count", 0)
 
@@ -2436,6 +2484,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         execute_function_calls=execute_function_calls,
                     )
                     if result.get("action") == "return":
+                        # Track any new approval request IDs so subsequent
+                        # runs can detect outstanding approvals.
+                        for _msg in response.messages:
+                            for _c in _msg.contents:
+                                if _c.type == "function_approval_request" and not _is_hosted_tool_approval(_c):
+                                    _cid = getattr(_c, "id", None)
+                                    if _cid:
+                                        self._pending_approval_request_ids.add(_cid)
                         response.usage_details = aggregated_usage
                         return _clear_internal_conversation_id(response)
                     total_function_calls += result.get("function_call_count", 0)
@@ -2524,6 +2580,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             loop_enabled = self.function_invocation_configuration.get("enabled", True)
             max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
             for attempt_idx in range(max_iterations if loop_enabled else 0):
+                # Before processing, collect any approval response IDs to
+                # remove from the pending set after processing.
+                responded_ids: set[str] = set()
+                if self._pending_approval_request_ids:
+                    for _m in prepped_messages:
+                        for _c in getattr(_m, "contents", []):
+                            if _c.type == "function_approval_response":
+                                _cid = getattr(_c, "id", None)
+                                if _cid:
+                                    responded_ids.add(_cid)
+
                 approval_result = await _process_function_requests(
                     response=None,
                     prepped_messages=prepped_messages,
@@ -2536,9 +2603,34 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
                 errors_in_a_row = approval_result.get("errors_in_a_row", errors_in_a_row)
                 total_function_calls += approval_result.get("function_call_count", 0)
-                if approval_result.get("action") == "stop":
-                    mutable_options["tool_choice"] = "none"
+
+                # Remove responded IDs from the pending set.
+                if responded_ids:
+                    self._pending_approval_request_ids -= responded_ids
+
+                # When approval responses were processed, check the instance-
+                # level pending set.  If there are still outstanding approvals
+                # (parallel tool call scenario with server-side storage where
+                # the history is not in prepped_messages), return early so
+                # the caller can collect more responses before calling the
+                # model API.  Save the processed messages (which now contain
+                # function_result items for the resolved call) so they can be
+                # sent together once the last approval resolves.
+                if approval_result.get("action") == "continue" and self._pending_approval_request_ids:
+                    logger.debug(
+                        "Pending approval requests remain (%s), deferring LLM call.",
+                        self._pending_approval_request_ids,
+                    )
+                    self._deferred_approval_messages.extend(prepped_messages)
                     return
+                if approval_result.get("action") in ("stop", "return"):
+                    return
+
+                # All approvals resolved — prepend any deferred messages so
+                # the model API receives ALL function_call_output items at once.
+                if self._deferred_approval_messages:
+                    prepped_messages[:0] = self._deferred_approval_messages
+                    self._deferred_approval_messages.clear()
 
                 inner_stream = cast(
                     ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
@@ -2596,6 +2688,20 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         contents=result.get("function_call_results") or [],
                         role=role,
                     )
+                # When the function invocation loop pauses for approval
+                # requests, record the outstanding IDs so the NEXT
+                # agent.run() can detect that more responses are needed
+                # even if local history is unavailable (server-side
+                # storage / conversation_id flow).
+                if result.get("action") != "continue":
+                    fcc_results = result.get("function_call_results") or []
+                    new_pending = {
+                        c.id  # type: ignore[attr-defined]
+                        for c in fcc_results
+                        if c.type == "function_approval_request" and not _is_hosted_tool_approval(c)
+                    }
+                    if new_pending:
+                        self._pending_approval_request_ids.update(new_pending)
                 if result.get("action") == "stop":
                     # Error threshold reached: submit collected function_call_output
                     # items once more with tools disabled.
