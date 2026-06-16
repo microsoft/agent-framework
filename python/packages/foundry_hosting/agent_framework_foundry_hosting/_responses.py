@@ -658,17 +658,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             write_context_id = context.conversation_id or context.response_id
             write_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, write_context_id)
 
-            # Storage that will receive checkpoints written during this turn.
-            # When the caller chains with previous_response_id, the next turn
-            # will reference the current response_id as its previous_response_id,
-            # so new checkpoints must land under the current response_id (or the
-            # conversation_id when set). When conversation_id is set, this
-            # matches restore_storage; when only previous_response_id was
-            # supplied, restore_storage points at the *prior* response's
-            # directory and write_storage points at the *current* response's.
-            write_context_id = context.conversation_id or context.response_id
-            write_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, write_context_id)
-
             if not is_streaming_request:
                 # Run the agent in non-streaming mode with the new user input.
                 response = await self._agent.run(
