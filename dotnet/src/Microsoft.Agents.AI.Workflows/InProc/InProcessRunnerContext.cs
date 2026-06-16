@@ -164,7 +164,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             if (!string.Equals(pendingRequest.PortInfo.PortId, response.PortInfo.PortId, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"Response port id '{response.PortInfo.PortId}' does not match the originating port id '{pendingRequest.PortInfo.PortId}' for request {response.RequestId}.");
+                    $"Response port id '{response.PortInfo.PortId}' does not match the originating port id for request {response.RequestId}.");
             }
 
             // Consume only after validation so a rejected response leaves the legitimate one able to complete.
