@@ -118,9 +118,16 @@ class WorkflowRunResult(list[WorkflowEvent]):
     - status_timeline(): Access the complete status event history
     """
 
-    def __init__(self, events: list[WorkflowEvent[Any]], status_events: list[WorkflowEvent[Any]] | None = None) -> None:
+    def __init__(
+        self,
+        events: list[WorkflowEvent[Any]],
+        status_events: list[WorkflowEvent[Any]] | None = None,
+        *,
+        resume_token: str | None = None,
+    ) -> None:
         super().__init__(events)
         self._status_events: list[WorkflowEvent[Any]] = status_events or []
+        self._resume_token: str | None = resume_token
 
     def get_outputs(self) -> list[Any]:
         """Get all outputs from the workflow run result.
@@ -162,6 +169,20 @@ class WorkflowRunResult(list[WorkflowEvent]):
     def status_timeline(self) -> list[WorkflowEvent[Any]]:
         """Return the list of status events emitted during the run (control-plane)."""
         return list(self._status_events)
+
+    def get_resume_token(self) -> str | None:
+        """Return the opaque token required to resume this run via ``responses=``.
+
+        Present only when the run paused with pending request_info events on a
+        workflow type that uses the in-memory replay path (currently
+        :class:`FunctionalWorkflow`).  Returns ``None`` for graph-based
+        workflows and for runs that completed without pending requests.
+
+        Pass the returned value as ``resume_token=`` on the next
+        ``workflow.run(responses=..., resume_token=...)`` call.  When resuming
+        via ``checkpoint_id=`` the token is not required.
+        """
+        return self._resume_token
 
 
 # region Workflow

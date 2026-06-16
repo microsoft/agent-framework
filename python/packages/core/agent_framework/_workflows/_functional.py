@@ -40,6 +40,7 @@ import functools
 import hashlib
 import inspect
 import logging
+import secrets
 import typing
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from contextvars import ContextVar
@@ -174,6 +175,11 @@ class RunContext:
         self._step_call_counters: dict[str, int] = {}
         # Deterministic call counter for auto-generated request_info IDs
         self._auto_request_info_index: int = 0
+        # Per-run secret namespace for auto request ids. Freshly generated for each
+        # RunContext; preserved across replays of the same run by FunctionalWorkflow
+        # so cached ids remain stable, regenerated on every new run so unrelated
+        # callers cannot guess pending ids of another run.
+        self._auto_request_info_nonce: str = secrets.token_urlsafe(16)
 
         # HITL responses (set via _set_responses before replay)
         self._responses: dict[str, Any] = {}
@@ -213,9 +219,10 @@ class RunContext:
                 needed (e.g. a Pydantic model, dict, or string prompt).
             response_type: The expected Python type of the response value.
             request_id: Optional stable identifier for this request.  If
-                omitted, a deterministic identifier is derived from the call
-                order (``auto::<index>``) so that resume works without the
-                caller needing to echo back an explicit ID.
+                omitted, a per-run-secret identifier is derived from the call
+                order (``auto::<nonce>::<index>``) so resume works without the
+                caller needing to echo back an explicit ID and the id is not
+                guessable by callers outside the originating run.
 
         Returns:
             The response value supplied during replay.  ``None`` is allowed
@@ -227,8 +234,10 @@ class RunContext:
                 (not visible to workflow authors).
         """
         if request_id is None:
-            # Deterministic id; same determinism contract as @step caching.
-            rid = f"auto::{self._auto_request_info_index}"
+            # Format: auto::<per-run-nonce>::<index>. The nonce makes the id
+            # unguessable to callers outside the originating run; the index keeps
+            # replay deterministic within a single run.
+            rid = f"auto::{self._auto_request_info_nonce}::{self._auto_request_info_index}"
             self._auto_request_info_index += 1
         else:
             rid = request_id
@@ -646,6 +655,14 @@ class FunctionalWorkflow:
     edge wiring is involved.  Native Python control flow (``if``/``else``,
     ``for``, ``asyncio.gather``) is used for branching and parallelism.
 
+    Each ``FunctionalWorkflow`` instance keeps the previous run's replay
+    state (input message, step cache, pending request ids, per-run nonce,
+    and a fresh ``resume_token``) in memory so the response-only resume
+    path works without a checkpoint store.  Treat one instance as
+    belonging to a single logical caller; multi-tenant or cross-process
+    hosts must scope per session or resume via ``checkpoint_id=`` against
+    a shared :class:`CheckpointStorage`.
+
     Args:
         func: The async function that implements the workflow logic.
         name: Display name for the workflow.  Defaults to ``func.__name__``.
@@ -687,6 +704,13 @@ class FunctionalWorkflow:
         self._last_step_cache: dict[tuple[str, int], Any] = {}
         self._last_step_cache_auto_request_info_counts: dict[tuple[str, int], int] = {}
         self._last_pending_request_ids: set[str] = set()
+        # Per-run nonce preserved across replays of the same run so auto request
+        # ids stay stable while remaining unguessable to other callers.
+        self._last_run_nonce: str | None = None
+        # Opaque secret bound to the in-memory replay state. Required on
+        # responses-only run() calls so a different caller cannot answer the
+        # current run's pending requests just by knowing the request id.
+        self._last_resume_token: str | None = None
 
         # Signature arity is validated once at decoration time.
         self._non_ctx_param_names = self._classify_signature(func)
@@ -740,6 +764,7 @@ class FunctionalWorkflow:
         *,
         stream: Literal[True],
         responses: dict[str, Any] | None = None,
+        resume_token: str | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -752,6 +777,7 @@ class FunctionalWorkflow:
         *,
         stream: Literal[False] = ...,
         responses: dict[str, Any] | None = None,
+        resume_token: str | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
@@ -764,6 +790,7 @@ class FunctionalWorkflow:
         *,
         stream: bool = False,
         responses: dict[str, Any] | None = None,
+        resume_token: str | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
@@ -787,6 +814,15 @@ class FunctionalWorkflow:
             responses: HITL responses keyed by ``request_id``, used to
                 resume a workflow that was suspended by
                 :meth:`RunContext.request_info`.
+            resume_token: Opaque token returned by the previous run's
+                :meth:`WorkflowRunResult.get_resume_token` (or
+                :attr:`FunctionalWorkflowAgent.last_resume_token` when run
+                through the agent adapter).  Required when *responses* is
+                supplied without *checkpoint_id*; binds the response to the
+                workflow instance's in-memory replay state so another caller
+                with the same Python object cannot answer a pending request
+                merely by knowing its id.  Not required when *checkpoint_id*
+                is supplied — the checkpoint id is itself the trust handle.
             checkpoint_id: Identifier of a checkpoint to restore from.
                 Requires *checkpoint_storage* to be set (here or on the
                 decorator).
@@ -806,16 +842,13 @@ class FunctionalWorkflow:
 
         Raises:
             ValueError: If the combination of *message*, *responses*, and
-                *checkpoint_id* is invalid.
+                *checkpoint_id* is invalid, or if *resume_token* is missing
+                or does not match when required.
             RuntimeError: If the workflow is already running (concurrent
                 execution is not allowed).
         """
         self._validate_run_params(message, responses, checkpoint_id)
         if responses and checkpoint_id is None:
-            # Require at least one response key to match a currently-pending
-            # request; prevents silent replay against stale state while still
-            # allowing callers to accumulate prior answers across multi-round
-            # HITL.
             if not self._last_pending_request_ids:
                 raise ValueError(
                     f"responses={list(responses)!r} do not correspond to any pending request on "
@@ -828,6 +861,14 @@ class FunctionalWorkflow:
                     f"responses={list(responses)!r} do not answer any of the currently-pending "
                     f"requests on workflow '{self.name}' ({sorted(self._last_pending_request_ids)!r}).  "
                     f"Provide a response keyed by one of the pending request_ids."
+                )
+            expected_token = self._last_resume_token
+            if not expected_token or not resume_token or not secrets.compare_digest(resume_token, expected_token):
+                raise ValueError(
+                    f"resume_token is missing or invalid for workflow '{self.name}'.  Pass the "
+                    f"token returned by the previous result's get_resume_token() to "
+                    f"run(responses=..., resume_token=...).  Use checkpoint_id=... instead to "
+                    f"resume across processes or callers."
                 )
         self._ensure_not_running()
 
@@ -930,6 +971,10 @@ class FunctionalWorkflow:
             ctx._import_step_cache(step_cache_data)
             step_cache_auto_request_info_counts = checkpoint.state.get("_step_cache_auto_request_info_counts", {})
             ctx._import_step_cache_auto_request_info_counts(step_cache_auto_request_info_counts)
+            # Restore per-run nonce so auto request ids stay stable across replay
+            saved_nonce = checkpoint.state.get("_auto_request_info_nonce")
+            if isinstance(saved_nonce, str):
+                ctx._auto_request_info_nonce = saved_nonce
             # Restore user state
             ctx._state = {k: v for k, v in checkpoint.state.items() if not k.startswith("_")}
             # Restore pending request info events
@@ -944,6 +989,8 @@ class FunctionalWorkflow:
                 message = self._last_message
             ctx._step_cache = dict(self._last_step_cache)
             ctx._step_cache_auto_request_info_counts = dict(self._last_step_cache_auto_request_info_counts)
+            if self._last_run_nonce is not None:
+                ctx._auto_request_info_nonce = self._last_run_nonce
 
         # Store message for future replays
         if message is not None:
@@ -1011,6 +1058,8 @@ class FunctionalWorkflow:
                 # Final status
                 if saw_request:
                     self._last_pending_request_ids = set(ctx._pending_requests)
+                    self._last_run_nonce = ctx._auto_request_info_nonce
+                    self._last_resume_token = secrets.token_urlsafe(32)
                     with _framework_event_origin():
                         yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
                 else:
@@ -1019,6 +1068,8 @@ class FunctionalWorkflow:
                     self._last_step_cache = {}
                     self._last_step_cache_auto_request_info_counts = {}
                     self._last_pending_request_ids = set()
+                    self._last_run_nonce = None
+                    self._last_resume_token = None
                     with _framework_event_origin():
                         yield WorkflowEvent.status(WorkflowRunState.IDLE)
 
@@ -1029,6 +1080,8 @@ class FunctionalWorkflow:
                 self._last_step_cache = dict(ctx._step_cache)
                 self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
                 self._last_pending_request_ids = set(ctx._pending_requests)
+                self._last_run_nonce = ctx._auto_request_info_nonce
+                self._last_resume_token = secrets.token_urlsafe(32)
 
                 # HITL interruption — yield events collected so far
                 for event in ctx._get_events():
@@ -1131,6 +1184,7 @@ class FunctionalWorkflow:
         state["_step_cache"] = ctx._export_step_cache()
         state["_step_cache_auto_request_info_counts"] = ctx._export_step_cache_auto_request_info_counts()
         state["_original_message"] = self._last_message
+        state["_auto_request_info_nonce"] = ctx._auto_request_info_nonce
 
         checkpoint = WorkflowCheckpoint(
             workflow_name=self.name,
@@ -1186,8 +1240,8 @@ class FunctionalWorkflow:
     # Finalize / cleanup / validation (mirrors Workflow)
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _finalize_events(
+        self,
         events: Sequence[WorkflowEvent[Any]],
         *,
         include_status_events: bool = False,
@@ -1205,7 +1259,7 @@ class FunctionalWorkflow:
                 continue
             filtered.append(ev)
 
-        return WorkflowRunResult(filtered, status_events)
+        return WorkflowRunResult(filtered, status_events, resume_token=self._last_resume_token)
 
     @staticmethod
     def _validate_run_params(
@@ -1323,7 +1377,14 @@ class FunctionalWorkflowAgent:
     ``request_info`` events emitted by the underlying workflow are surfaced
     as :class:`FunctionApprovalRequestContent` items (mirroring the graph
     :class:`WorkflowAgent`), so HITL workflows are callable via this
-    adapter.  Callers resume via ``responses=`` / ``checkpoint_id=``.
+    adapter.  Callers resume via ``responses=`` + ``resume_token=`` (read
+    from :attr:`last_resume_token` after the previous run) or via
+    ``checkpoint_id=``.
+
+    The wrapped :class:`FunctionalWorkflow` is a single Python object that
+    holds in-memory replay state on the instance.  Treat one adapter (and
+    its workflow) as belonging to a single logical caller; use checkpoint
+    storage for multi-tenant or cross-process resumption.
 
     Args:
         workflow: The :class:`FunctionalWorkflow` to wrap.
@@ -1361,6 +1422,16 @@ class FunctionalWorkflowAgent:
         """Pending request_info events emitted during the last run."""
         return self._pending_requests
 
+    @property
+    def last_resume_token(self) -> str | None:
+        """Opaque token bound to the underlying workflow's in-memory replay state.
+
+        Pass this on the next ``run(responses=..., resume_token=...)`` call to
+        prove the resumer owns the previous run's state.  Not required when
+        resuming via ``checkpoint_id=``.
+        """
+        return self._workflow._last_resume_token
+
     @overload
     def run(
         self,
@@ -1368,6 +1439,7 @@ class FunctionalWorkflowAgent:
         *,
         stream: Literal[True],
         responses: dict[str, Any] | None = None,
+        resume_token: str | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -1380,6 +1452,7 @@ class FunctionalWorkflowAgent:
         *,
         stream: Literal[False] = ...,
         responses: dict[str, Any] | None = None,
+        resume_token: str | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -1391,6 +1464,7 @@ class FunctionalWorkflowAgent:
         *,
         stream: bool = False,
         responses: dict[str, Any] | None = None,
+        resume_token: str | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -1405,6 +1479,9 @@ class FunctionalWorkflowAgent:
                 :class:`AgentResponseUpdate` items.
             responses: HITL responses keyed by ``request_id``, forwarded to
                 the underlying workflow so HITL resumes work via this agent.
+            resume_token: Token returned by the previous run via
+                :attr:`last_resume_token`.  Required when *responses* is
+                supplied without *checkpoint_id*.
             checkpoint_id: Optional checkpoint to restore from.
             checkpoint_storage: Override the workflow's default
                 :class:`CheckpointStorage` for this run.
@@ -1418,6 +1495,7 @@ class FunctionalWorkflowAgent:
             return self._run_streaming(
                 messages,
                 responses=responses,
+                resume_token=resume_token,
                 checkpoint_id=checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
                 **kwargs,
@@ -1425,6 +1503,7 @@ class FunctionalWorkflowAgent:
         return self._run_non_streaming(
             messages,
             responses=responses,
+            resume_token=resume_token,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
             **kwargs,
@@ -1435,6 +1514,7 @@ class FunctionalWorkflowAgent:
         messages: Any | None,
         *,
         responses: dict[str, Any] | None = None,
+        resume_token: str | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -1442,6 +1522,7 @@ class FunctionalWorkflowAgent:
         result = await self._workflow.run(
             messages,
             responses=responses,
+            resume_token=resume_token,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
             **kwargs,
@@ -1453,6 +1534,7 @@ class FunctionalWorkflowAgent:
         messages: Any | None,
         *,
         responses: dict[str, Any] | None = None,
+        resume_token: str | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -1466,6 +1548,7 @@ class FunctionalWorkflowAgent:
             messages,
             stream=True,
             responses=responses,
+            resume_token=resume_token,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
             **kwargs,

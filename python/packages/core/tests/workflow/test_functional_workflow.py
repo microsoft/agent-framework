@@ -252,7 +252,7 @@ class TestHITL:
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
         # Phase 2: resume with response
-        result2 = await review_wf.run(responses={"req1": "Looks great!"})
+        result2 = await review_wf.run(responses={"req1": "Looks great!"}, resume_token=result1.get_resume_token())
         outputs = result2.get_outputs()
         assert outputs == ["Final: Looks great!"]
         assert result2.get_final_state() == WorkflowRunState.IDLE
@@ -268,7 +268,7 @@ class TestHITL:
         result1 = await review_wf.run("my doc")
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
-        result2 = await review_wf.run(responses={"req1": "LGTM"})
+        result2 = await review_wf.run(responses={"req1": "LGTM"}, resume_token=result1.get_resume_token())
         assert result2.get_outputs() == ["Final: LGTM"]
 
     async def test_multiple_sequential_interrupts(self):
@@ -284,12 +284,12 @@ class TestHITL:
         assert result1.get_request_info_events()[0].request_id == "r1"
 
         # Phase 2: respond to first, hits second
-        result2 = await multi_hitl.run(responses={"r1": "A"})
+        result2 = await multi_hitl.run(responses={"r1": "A"}, resume_token=result1.get_resume_token())
         assert len(result2.get_request_info_events()) == 1
         assert result2.get_request_info_events()[0].request_id == "r2"
 
         # Phase 3: respond to second
-        result3 = await multi_hitl.run(responses={"r1": "A", "r2": "B"})
+        result3 = await multi_hitl.run(responses={"r1": "A", "r2": "B"}, resume_token=result2.get_resume_token())
         assert result3.get_outputs() == ["A+B"]
 
     async def test_request_info_auto_generates_id(self):
@@ -1143,7 +1143,7 @@ class TestRequestInfoInStep:
         assert result1.get_request_info_events()[0].request_id == "s1"
 
         # Phase 2: resume
-        result2 = await wf.run(responses={"s1": "LGTM"})
+        result2 = await wf.run(responses={"s1": "LGTM"}, resume_token=result1.get_resume_token())
         assert result2.get_outputs() == ["reviewed: LGTM"]
 
     async def test_step_works_outside_workflow_with_explicit_ctx(self):
@@ -1218,11 +1218,11 @@ class TestNoneResponseHandling:
             return f"got: {val}"
 
         # Phase 1
-        await wf.run("start")
+        result1 = await wf.run("start")
 
         # Phase 2: resume with None response — should warn but still work
         with caplog_context(logging.getLogger("agent_framework._workflows._functional")) as logs:
-            result = await wf.run(responses={"r1": None})
+            result = await wf.run(responses={"r1": None}, resume_token=result1.get_resume_token())
 
         assert result.get_outputs() == ["got: None"]
         assert any("None" in msg and "r1" in msg for msg in logs)
@@ -1235,8 +1235,8 @@ class TestNoneResponseHandling:
             val = await ctx.request_info("need data", response_type=str, request_id="r1")
             return f"value={val}"
 
-        await wf.run(1)
-        result = await wf.run(responses={"r1": None})
+        result1 = await wf.run(1)
+        result = await wf.run(responses={"r1": None}, resume_token=result1.get_resume_token())
         assert result.get_outputs() == ["value=None"]
 
 
@@ -1296,7 +1296,7 @@ class TestHITLInStepWithCaching:
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
         # Phase 2: resume — step_a should be bypassed, step_b re-executes
-        result2 = await wf.run(responses={"r1": "ok"})
+        result2 = await wf.run(responses={"r1": "ok"}, resume_token=result1.get_resume_token())
         assert call_count_a == 1  # step_a not called again
         assert result2.get_outputs() == ["6:ok"]
 
@@ -1326,7 +1326,7 @@ class TestHITLInStepWithCaching:
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
         # Phase 2: resume
-        result2 = await wf.run(responses={"rev": "LGTM"})
+        result2 = await wf.run(responses={"rev": "LGTM"}, resume_token=result1.get_resume_token())
         assert result2.get_outputs() == ["reviewed(30):LGTM"]
 
         # Phase 3: restore from latest checkpoint -- both steps should be bypassed
@@ -1351,10 +1351,10 @@ class TestHITLInStepWithCaching:
         async def wf(doc: str) -> str:
             return await needs_feedback(doc)
 
-        await wf.run("draft")
+        result1 = await wf.run("draft")
 
         with caplog_context(logging.getLogger("agent_framework._workflows._functional")) as logs:
-            result = await wf.run(responses={"r1": None})
+            result = await wf.run(responses={"r1": None}, resume_token=result1.get_resume_token())
 
         assert result.get_outputs() == ["got:None"]
         assert any("None" in msg and "r1" in msg for msg in logs)
@@ -1399,7 +1399,7 @@ class TestDeterministicAutoRequestId:
         assert rid  # non-empty
 
         # Resume with the id the caller just received.
-        result2 = await wf.run(responses={rid: "hello"})
+        result2 = await wf.run(responses={rid: "hello"}, resume_token=result1.get_resume_token())
         assert result2.get_final_state() == WorkflowRunState.IDLE
         assert result2.get_outputs() == ["got:hello"]
 
@@ -1412,10 +1412,10 @@ class TestDeterministicAutoRequestId:
 
         r1 = await wf.run(1)
         rid1 = r1.get_request_info_events()[0].request_id
-        r2 = await wf.run(responses={rid1: "A"})
+        r2 = await wf.run(responses={rid1: "A"}, resume_token=r1.get_resume_token())
         rid2 = r2.get_request_info_events()[0].request_id
         assert rid1 != rid2
-        r3 = await wf.run(responses={rid1: "A", rid2: "B"})
+        r3 = await wf.run(responses={rid1: "A", rid2: "B"}, resume_token=r2.get_resume_token())
         assert r3.get_outputs() == ["A/B"]
 
     async def test_cached_step_advances_auto_request_id_counter(self):
@@ -1439,14 +1439,20 @@ class TestDeterministicAutoRequestId:
 
         first_run = await wf.run(1)
         first_request_id = first_run.get_request_info_events()[0].request_id
-        assert first_request_id == "auto::0"
+        # auto::<nonce>::<index> — index 0 for the first request_info call
+        assert first_request_id.startswith("auto::") and first_request_id.endswith("::0")
 
-        second_run = await wf.run(responses={first_request_id: "A"})
+        second_run = await wf.run(responses={first_request_id: "A"}, resume_token=first_run.get_resume_token())
         second_request_id = second_run.get_request_info_events()[0].request_id
-        assert second_request_id == "auto::1"
+        # second request_info advances the counter; nonce stays so prefix is shared
+        assert second_request_id.endswith("::1")
+        assert second_request_id.rsplit("::", 1)[0] == first_request_id.rsplit("::", 1)[0]
         completed_call_count = call_count
 
-        final_run = await wf.run(responses={first_request_id: "A", second_request_id: "B"})
+        final_run = await wf.run(
+            responses={first_request_id: "A", second_request_id: "B"},
+            resume_token=second_run.get_resume_token(),
+        )
 
         assert call_count == completed_call_count
         assert final_run.get_outputs() == ["A/B"]
@@ -1464,9 +1470,9 @@ class TestPendingRequestsPruned:
             b = await ctx.request_info("q2", response_type=str, request_id="r2")
             return f"{a}/{b}"
 
-        await wf.run(1)
-        await wf.run(responses={"r1": "A"})
-        result = await wf.run(responses={"r1": "A", "r2": "B"})
+        r1 = await wf.run(1)
+        r2 = await wf.run(responses={"r1": "A"}, resume_token=r1.get_resume_token())
+        result = await wf.run(responses={"r1": "A", "r2": "B"}, resume_token=r2.get_resume_token())
         assert result.get_final_state() == WorkflowRunState.IDLE
         # Latest checkpoint must show no pending requests.
         checkpoints = await storage.list_checkpoints(workflow_name="wf")
@@ -1525,6 +1531,218 @@ class TestStaleResponsesRejected:
         await wf.run(1)  # interrupts with r1 pending
         with pytest.raises(ValueError, match="do not answer"):
             await wf.run(responses={"definitely_not_r1": "x"})
+
+
+class TestAutoRequestIdUnguessable:
+    """Auto-generated request ids must not be guessable by callers outside the originating run."""
+
+    async def test_auto_ids_differ_across_runs_of_same_workflow(self):
+        @workflow
+        async def wf(x: int, ctx: RunContext) -> str:
+            return await ctx.request_info("need data", response_type=str)
+
+        first = await wf.run(1)
+        rid_first = first.get_request_info_events()[0].request_id
+        # Resolve the first run to drop its replay state, then start a fresh run.
+        await wf.run(responses={rid_first: "done"}, resume_token=first.get_resume_token())
+
+        second = await wf.run(2)
+        rid_second = second.get_request_info_events()[0].request_id
+
+        # Index is the same (0) for both, so any difference must come from the nonce.
+        assert rid_first != rid_second
+        # Format sanity: auto::<nonce>::<index>
+        parts_first = rid_first.split("::")
+        parts_second = rid_second.split("::")
+        assert parts_first[0] == "auto" and parts_first[-1] == "0"
+        assert parts_second[0] == "auto" and parts_second[-1] == "0"
+        # Nonces differ between unrelated runs.
+        assert parts_first[1] != parts_second[1]
+        # Nonce must look unguessable (token_urlsafe(16) produces ~22 chars).
+        assert len(parts_first[1]) >= 16
+
+    async def test_auto_ids_stable_across_replays_of_same_run(self):
+        @workflow
+        async def wf(x: int, ctx: RunContext) -> str:
+            a = await ctx.request_info("first", response_type=str)
+            b = await ctx.request_info("second", response_type=str)
+            return f"{a}/{b}"
+
+        r1 = await wf.run(1)
+        rid_a = r1.get_request_info_events()[0].request_id
+
+        # Replay round 1: resume past the first request, hit the second.
+        r2 = await wf.run(responses={rid_a: "A"}, resume_token=r1.get_resume_token())
+        rid_b = r2.get_request_info_events()[0].request_id
+
+        # Both ids share the same nonce since they belong to the same logical run.
+        assert rid_a.rsplit("::", 1)[0] == rid_b.rsplit("::", 1)[0]
+        assert rid_a.endswith("::0")
+        assert rid_b.endswith("::1")
+
+    async def test_checkpoint_restore_replays_same_auto_ids(self):
+        storage = InMemoryCheckpointStorage()
+
+        @workflow(checkpoint_storage=storage)
+        async def wf(x: int, ctx: RunContext) -> str:
+            return await ctx.request_info("need data", response_type=str)
+
+        r1 = await wf.run(1)
+        original_rid = r1.get_request_info_events()[0].request_id
+
+        ckpt_id = (await storage.list_checkpoints(workflow_name="wf"))[0].checkpoint_id
+        r2 = await wf.run(checkpoint_id=ckpt_id)
+        restored_rid = r2.get_request_info_events()[0].request_id
+
+        assert restored_rid == original_rid
+
+
+class TestResumeTokenBinding:
+    """The in-memory response-only resume path must require the resume_token."""
+
+    async def test_missing_resume_token_raises(self):
+        @workflow
+        async def wf(x: int, ctx: RunContext) -> str:
+            return await ctx.request_info("q", response_type=str, request_id="r1")
+
+        await wf.run(1)
+        with pytest.raises(ValueError, match="resume_token"):
+            await wf.run(responses={"r1": "x"})
+
+    async def test_wrong_resume_token_raises(self):
+        @workflow
+        async def wf(x: int, ctx: RunContext) -> str:
+            return await ctx.request_info("q", response_type=str, request_id="r1")
+
+        await wf.run(1)
+        with pytest.raises(ValueError, match="resume_token"):
+            await wf.run(responses={"r1": "x"}, resume_token="not-the-real-token")
+
+    async def test_correct_resume_token_succeeds(self):
+        @workflow
+        async def wf(x: int, ctx: RunContext) -> str:
+            val = await ctx.request_info("q", response_type=str, request_id="r1")
+            return f"got:{val}"
+
+        r1 = await wf.run(1)
+        token = r1.get_resume_token()
+        assert token  # populated when there are pending requests
+        r2 = await wf.run(responses={"r1": "ok"}, resume_token=token)
+        assert r2.get_outputs() == ["got:ok"]
+
+    async def test_resume_token_rotates_across_hitl_rounds(self):
+        @workflow
+        async def wf(x: int, ctx: RunContext) -> str:
+            a = await ctx.request_info("q1", response_type=str, request_id="r1")
+            b = await ctx.request_info("q2", response_type=str, request_id="r2")
+            return f"{a}/{b}"
+
+        r1 = await wf.run(1)
+        token_1 = r1.get_resume_token()
+        r2 = await wf.run(responses={"r1": "A"}, resume_token=token_1)
+        token_2 = r2.get_resume_token()
+        assert token_1 and token_2 and token_1 != token_2
+        # The previous round's token must not work for the next round.
+        with pytest.raises(ValueError, match="resume_token"):
+            await wf.run(responses={"r1": "A", "r2": "B"}, resume_token=token_1)
+        r3 = await wf.run(responses={"r1": "A", "r2": "B"}, resume_token=token_2)
+        assert r3.get_outputs() == ["A/B"]
+
+    async def test_clean_completion_clears_resume_token(self):
+        @workflow
+        async def wf(x: int) -> int:
+            return x * 2
+
+        result = await wf.run(5)
+        assert result.get_resume_token() is None
+        with pytest.raises(ValueError, match="no pending request_info"):
+            await wf.run(responses={"anything": "x"}, resume_token="leftover")
+
+    async def test_checkpoint_id_bypasses_resume_token_requirement(self):
+        storage = InMemoryCheckpointStorage()
+
+        @workflow(checkpoint_storage=storage)
+        async def wf(x: int, ctx: RunContext) -> str:
+            val = await ctx.request_info("q", response_type=str, request_id="r1")
+            return f"got:{val}"
+
+        await wf.run(1)
+        ckpt_id = (await storage.list_checkpoints(workflow_name="wf"))[0].checkpoint_id
+        # No resume_token — checkpoint_id alone is the trust handle here.
+        result = await wf.run(checkpoint_id=ckpt_id, responses={"r1": "ok"})
+        assert result.get_outputs() == ["got:ok"]
+
+    async def test_poc_cross_caller_hitl_bypass_is_blocked(self):
+        """Regression PoC: caller B must not be able to complete caller A's pending HITL
+        even when guessing the predictable index inside the auto id."""
+
+        @workflow
+        async def hitl_pipeline(message: str, ctx: RunContext) -> str:
+            decision = await ctx.request_info(f"Approve action for: {message}?", response_type=str)
+            return f"PROCESSED [{decision}] original_msg={message}"
+
+        # Caller A pauses with sensitive input.
+        caller_a_result = await hitl_pipeline.run("SECRET_FROM_A")
+        pending_id = caller_a_result.get_request_info_events()[0].request_id
+
+        # Caller B knows the predictable suffix but not the per-run nonce.
+        with pytest.raises(ValueError, match="do not answer"):
+            await hitl_pipeline.run(responses={"auto::0": "APPROVED_BY_B"})
+
+        # Even given the exact pending id, caller B has no resume_token.
+        with pytest.raises(ValueError, match="resume_token"):
+            await hitl_pipeline.run(responses={pending_id: "APPROVED_BY_B"})
+
+    async def test_streaming_run_surfaces_resume_token(self):
+        @workflow
+        async def wf(x: int, ctx: RunContext) -> str:
+            return await ctx.request_info("q", response_type=str, request_id="r1")
+
+        stream = wf.run(1, stream=True)
+        async for _ in stream:
+            pass
+        result = await stream.get_final_response()
+        token = result.get_resume_token()
+        assert token
+        resumed = await wf.run(responses={"r1": "ok"}, resume_token=token)
+        assert resumed.get_final_state() == WorkflowRunState.IDLE
+
+
+class TestFunctionalWorkflowAgentResumeToken:
+    """The agent adapter must expose and accept the workflow's resume_token."""
+
+    async def test_agent_exposes_last_resume_token(self):
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(x, response_type=str, request_id="rid-1")
+            return f"got:{answer}"
+
+        agent = wf.as_agent()
+        await agent.run("topic")
+        assert agent.last_resume_token  # populated after the pause
+
+    async def test_agent_responses_without_token_raises(self):
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(x, response_type=str, request_id="rid-1")
+            return f"got:{answer}"
+
+        agent = wf.as_agent()
+        await agent.run("topic")
+        with pytest.raises(ValueError, match="resume_token"):
+            await agent.run(responses={"rid-1": "answered"})
+
+    async def test_agent_clears_resume_token_on_clean_completion(self):
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(x, response_type=str, request_id="rid-1")
+            return f"got:{answer}"
+
+        agent = wf.as_agent()
+        await agent.run("topic")
+        token = agent.last_resume_token
+        await agent.run(responses={"rid-1": "answered"}, resume_token=token)
+        assert agent.last_resume_token is None
 
 
 class TestReservedStateKeys:
@@ -1684,7 +1902,7 @@ class TestFunctionalWorkflowAgentHITL:
         # First phase: suspend
         await agent.run("topic")
         # Second phase: resume via the agent surface
-        response = await agent.run(responses={"rid-1": "answered"})
+        response = await agent.run(responses={"rid-1": "answered"}, resume_token=agent.last_resume_token)
         # Agent's final response should contain the workflow's text output.
         text_blobs: list[str] = []
         for message in response.messages:
