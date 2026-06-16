@@ -1,31 +1,29 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use background responses with ChatClientAgent and Azure OpenAI Responses for long-running operations.
-// It shows polling for completion using continuation tokens, function calling during background operations,
-// and persisting/restoring agent state between polling cycles.
+// Background Responses with Tools — Long-running operations with persistence
+//
+// This sample demonstrates how to use background responses with ChatClientAgent
+// for long-running operations. It shows polling for completion using continuation
+// tokens, function calling during background operations, and persisting/restoring
+// agent state between polling cycles.
 
 #pragma warning disable CA1050 // Declare types in namespaces
 
 using System.ComponentModel;
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Responses;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 var stateStore = new Dictionary<string, JsonElement?>();
 
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
+AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-     .GetResponsesClient()
      .AsAIAgent(
         model: deploymentName,
         name: "SpaceNovelWriter",

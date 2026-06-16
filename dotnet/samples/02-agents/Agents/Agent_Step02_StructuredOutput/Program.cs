@@ -1,29 +1,26 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to configure ChatClientAgent to produce structured output.
+// Structured Output — Configure agents to return typed JSON
+//
+// This sample shows how to configure a ChatClientAgent to produce
+// structured output using JSON schema constraints with Azure AI Foundry.
 
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.AI.OpenAI;
+using Azure.AI.Extensions.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 using SampleApp;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
-// Create chat client to be used by chat client agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-ChatClient chatClient = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-        .GetChatClient(deploymentName);
+// Create AI Project client to be used by chat client agents.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Demonstrates how to work with structured output via ResponseFormat with the non-generic RunAsync method.
 // This approach is useful when:
@@ -31,35 +28,36 @@ ChatClient chatClient = new AzureOpenAIClient(
 //    and passes it as text to another agent as input, without the need for the caller to directly work with the structured output.
 // b. The type of the structured output is not known at compile time, so the generic RunAsync<T> method cannot be used.
 // c. The type of the structured output is represented by JSON schema only, without a corresponding class or type in the code.
-await UseStructuredOutputWithResponseFormatAsync(chatClient);
+await UseStructuredOutputWithResponseFormatAsync(aiProjectClient, deploymentName);
 
 // Demonstrates how to work with structured output via the generic RunAsync<T> method.
 // This approach is useful when the caller needs to directly work with the structured output in the code
 // via an instance of the corresponding class or type and the type is known at compile time.
-await UseStructuredOutputWithRunAsync(chatClient);
+await UseStructuredOutputWithRunAsync(aiProjectClient, deploymentName);
 
 // Demonstrates how to work with structured output when streaming using the RunStreamingAsync method.
-await UseStructuredOutputWithRunStreamingAsync(chatClient);
+await UseStructuredOutputWithRunStreamingAsync(aiProjectClient, deploymentName);
 
 // Demonstrates how to add structured output support to agents that don't natively support it using the structured output middleware.
 // This approach is useful when working with agents that don't support structured output natively, or agents using models
 // that don't have the capability to produce structured output, allowing you to still leverage structured output features by transforming
 // the text output from the agent into structured data using a chat client.
-await UseStructuredOutputWithMiddlewareAsync(chatClient);
+await UseStructuredOutputWithMiddlewareAsync(aiProjectClient, deploymentName);
 
-static async Task UseStructuredOutputWithResponseFormatAsync(ChatClient chatClient)
+static async Task UseStructuredOutputWithResponseFormatAsync(AIProjectClient aiProjectClient, string deploymentName)
 {
     Console.WriteLine("=== Structured Output with ResponseFormat ===");
 
     // Create the agent
-    AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
+    AIAgent agent = aiProjectClient.AsAIAgent(new ChatClientAgentOptions()
     {
         Name = "HelpfulAssistant",
         ChatOptions = new()
         {
+            ModelId = deploymentName,
             Instructions = "You are a helpful assistant.",
             // Specify CityInfo as the type parameter of ForJsonSchema to indicate the expected structured output from the agent.
-            ResponseFormat = Microsoft.Extensions.AI.ChatResponseFormat.ForJsonSchema<CityInfo>()
+            ResponseFormat = ChatResponseFormat.ForJsonSchema<CityInfo>()
         }
     });
 
@@ -81,12 +79,12 @@ static async Task UseStructuredOutputWithResponseFormatAsync(ChatClient chatClie
     Console.WriteLine();
 }
 
-static async Task UseStructuredOutputWithRunAsync(ChatClient chatClient)
+static async Task UseStructuredOutputWithRunAsync(AIProjectClient aiProjectClient, string deploymentName)
 {
     Console.WriteLine("=== Structured Output with RunAsync<T> ===");
 
     // Create the agent
-    AIAgent agent = chatClient.AsAIAgent(name: "HelpfulAssistant", instructions: "You are a helpful assistant.");
+    AIAgent agent = aiProjectClient.AsAIAgent(deploymentName, name: "HelpfulAssistant", instructions: "You are a helpful assistant.");
 
     // Set CityInfo as the type parameter of RunAsync method to specify the expected structured output from the agent and invoke it with some unstructured input.
     AgentResponse<CityInfo> response = await agent.RunAsync<CityInfo>("Provide information about the capital of France.");
@@ -99,19 +97,20 @@ static async Task UseStructuredOutputWithRunAsync(ChatClient chatClient)
     Console.WriteLine();
 }
 
-static async Task UseStructuredOutputWithRunStreamingAsync(ChatClient chatClient)
+static async Task UseStructuredOutputWithRunStreamingAsync(AIProjectClient aiProjectClient, string deploymentName)
 {
     Console.WriteLine("=== Structured Output with RunStreamingAsync ===");
 
     // Create the agent
-    AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
+    AIAgent agent = aiProjectClient.AsAIAgent(new ChatClientAgentOptions()
     {
         Name = "HelpfulAssistant",
         ChatOptions = new()
         {
+            ModelId = deploymentName,
             Instructions = "You are a helpful assistant.",
             // Specify CityInfo as the type parameter of ForJsonSchema to indicate the expected structured output from the agent.
-            ResponseFormat = Microsoft.Extensions.AI.ChatResponseFormat.ForJsonSchema<CityInfo>()
+            ResponseFormat = ChatResponseFormat.ForJsonSchema<CityInfo>()
         }
     });
 
@@ -129,12 +128,12 @@ static async Task UseStructuredOutputWithRunStreamingAsync(ChatClient chatClient
     Console.WriteLine();
 }
 
-static async Task UseStructuredOutputWithMiddlewareAsync(ChatClient chatClient)
+static async Task UseStructuredOutputWithMiddlewareAsync(AIProjectClient aiProjectClient, string deploymentName)
 {
     Console.WriteLine("=== Structured Output with UseStructuredOutput Middleware ===");
 
     // Create chat client that will transform the agent text response into structured output.
-    IChatClient meaiChatClient = chatClient.AsIChatClient();
+    IChatClient meaiChatClient = aiProjectClient.GetProjectOpenAIClient().GetProjectResponsesClientForModel(deploymentName).AsIChatClientWithStoredOutputDisabled(deploymentName);
 
     // Create the agent
     AIAgent agent = meaiChatClient.AsAIAgent(name: "HelpfulAssistant", instructions: "You are a helpful assistant.");
