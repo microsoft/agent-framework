@@ -18,6 +18,7 @@ from a chat client.
 | MemoryContextProvider | File-based durable memory (when `memory_store` provided) |
 | SkillsProvider | File-based skill discovery and progressive loading |
 | Shell tool | Shell command execution + environment probing (when `shell_executor` provided) |
+| Tool approval | "Don't ask again" standing rules + heuristic auto-approval (enabled by default) |
 | OpenTelemetry | Built-in observability |
 
 Each feature can be disabled or customized via keyword arguments.
