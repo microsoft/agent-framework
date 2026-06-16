@@ -4702,6 +4702,40 @@ async def test_with_pull_context_manager_wraps_stream_resolution_via_await():
     assert events[resolve_index - 1] == "enter"  # Pull context active during resolution
 
 
+async def test_with_pull_context_manager_wraps_stream_resolution_via_get_final_response():
+    """``get_final_response`` resolves the inner stream under the pull contexts (no prior iteration)."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def cm():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    async def inner() -> AsyncIterable[int]:
+        yield 1
+
+    async def make_stream() -> ResponseStream[int, list[int]]:
+        # Record that we resolve while a pull context is active.
+        events.append("resolving")
+        return ResponseStream(inner(), finalizer=lambda updates: list(updates))
+
+    stream: ResponseStream[int, list[int]] = ResponseStream.from_awaitable(make_stream())
+    stream.with_pull_context_manager(cm)
+
+    # Drive get_final_response() directly, without any prior `async for` or `await stream`.
+    final = await stream.get_final_response()
+
+    assert final == [1]
+    assert "resolving" in events
+    resolve_index = events.index("resolving")
+    assert events[resolve_index - 1] == "enter"  # Pull context active during resolution
+
+
 # region Test streaming telemetry error paths
 
 
