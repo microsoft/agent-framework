@@ -52,7 +52,7 @@ public class ExternalResponsePortCorrelationTests
         var exception = await act.Should().ThrowAsync<System.InvalidOperationException>();
 
         string message = exception.Which.Message;
-        message.Should().Contain($"'{PortBId}'").And.Contain($"'{PortAId}'").And.Contain(pending.RequestId);
+        message.Should().Contain($"'{PortBId}'").And.Contain(pending.RequestId).And.NotContain($"'{PortAId}'");
 
         // Pending request survives the rejection so the legitimate responder can still complete it.
         ((ISuperStepRunner)runner).HasUnservicedRequests.Should().BeTrue();
