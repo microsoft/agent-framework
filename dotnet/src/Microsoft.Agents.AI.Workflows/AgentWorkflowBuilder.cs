@@ -16,7 +16,7 @@ public static partial class AgentWorkflowBuilder
     /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
     /// </summary>
     /// <param name="chainOnlyAgentResponses">
-    /// <see langword="true"/> to pass only each agent's response to the next agent in the sequence;
+    /// <see langword="true"/> to pass only each agent's output messages to the next agent in the sequence;
     /// <see langword="false"/> to pass the full accumulated conversation.
     /// When enabled, the workflow output also reflects only the final agent's messages,
     /// because the sequential builder stops forwarding the incoming messages to the
@@ -40,7 +40,7 @@ public static partial class AgentWorkflowBuilder
     /// </summary>
     /// <param name="workflowName">The name of workflow.</param>
     /// <param name="chainOnlyAgentResponses">
-    /// <see langword="true"/> to pass only each agent's response to the next agent in the sequence;
+    /// <see langword="true"/> to pass only each agent's output messages to the next agent in the sequence;
     /// <see langword="false"/> to pass the full accumulated conversation.
     /// When enabled, the workflow output also reflects only the final agent's messages,
     /// because the sequential builder stops forwarding the incoming messages to the

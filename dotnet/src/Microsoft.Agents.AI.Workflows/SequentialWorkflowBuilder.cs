@@ -44,7 +44,7 @@ public sealed class SequentialWorkflowBuilder : OrchestrationBuilderBase<Sequent
     /// instead of the full accumulated conversation.
     /// </summary>
     /// <param name="enabled">
-    /// <see langword="true"/> to pass only the previous agent response to the next agent;
+    /// <see langword="true"/> to pass only the previous agent's output messages to the next agent;
     /// <see langword="false"/> to pass the full conversation context.
     /// When enabled, the workflow's terminal output also contains only the final agent's
     /// messages, because incoming messages are no longer forwarded to the terminal
