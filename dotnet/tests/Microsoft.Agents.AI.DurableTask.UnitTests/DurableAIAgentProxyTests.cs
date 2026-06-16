@@ -9,7 +9,7 @@ public sealed class DurableAIAgentProxyTests
     // Verifies the proxy rejects a session whose agent name differs from its own,
     // and that the durable client is never called when this happens.
     [Fact]
-    public async Task RunAsync_ThrowsWhenSessionBelongsToDifferentAgent()
+    public async Task RunAsync_ThrowsWhenSessionBelongsToDifferentAgentAsync()
     {
         StubDurableAgentClient client = new();
         DurableAIAgentProxy proxy = new("agentA", client);
@@ -27,7 +27,7 @@ public sealed class DurableAIAgentProxyTests
     // Control test: when the session's agent name matches the proxy's name,
     // the request is forwarded to the durable client.
     [Fact]
-    public async Task RunAsync_AllowsSessionWhenAgentNameMatches()
+    public async Task RunAsync_AllowsSessionWhenAgentNameMatchesAsync()
     {
         AgentSessionId sessionId = new("agentA", "shared-key");
         InvalidOperationException sentinel = new("reached the client");
@@ -48,7 +48,7 @@ public sealed class DurableAIAgentProxyTests
     // Ensures the agent-name comparison is case-insensitive, so casing differences
     // are neither a false-positive rejection nor a bypass.
     [Fact]
-    public async Task RunAsync_AgentNameComparisonIsCaseInsensitive()
+    public async Task RunAsync_AgentNameComparisonIsCaseInsensitiveAsync()
     {
         AgentSessionId sessionId = new("AGENTA", "shared-key");
         InvalidOperationException sentinel = new("reached the client");
