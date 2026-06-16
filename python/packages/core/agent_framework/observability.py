@@ -2174,6 +2174,150 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
     return None
 
 
+# region OTel tool definitions
+
+
+def _tools_to_dict(
+    tools: Any,
+) -> list[dict[str, Any]] | None:
+    """Convert tools into OpenTelemetry GenAI tool definitions.
+
+    The output conforms to the OTel GenAI tool-definitions schema, where each
+    entry is either a ``FunctionToolDefinition`` (``type="function"`` with
+    ``name`` and optional ``description``/``parameters``) or a
+    ``GenericToolDefinition`` (any ``type`` plus a ``name``). See
+    https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-tool-definitions.json.
+
+    Args:
+        tools: The tools to parse. Can be a single tool or a sequence of tools.
+
+    Returns:
+        A list of OTel-conformant tool-definition dicts, or ``None`` when
+        ``tools`` is empty or no tool can be represented.
+    """
+    from ._tools import normalize_tools
+
+    normalized_tools = normalize_tools(tools)
+    if not normalized_tools:
+        return None
+    results: list[dict[str, Any]] = []
+    for tool_item in normalized_tools:
+        otel_def = _tool_to_otel_definition(tool_item)
+        if otel_def is not None:
+            results.append(otel_def)
+    return results or None
+
+
+def _tool_to_otel_definition(tool_item: Any) -> dict[str, Any] | None:
+    """Convert a single tool spec into an OTel GenAI tool-definition dict.
+
+    Returns ``None`` and emits a warning when the input cannot be represented
+    as either a ``FunctionToolDefinition`` or a ``GenericToolDefinition``.
+    """
+    from pydantic import BaseModel
+
+    from ._mcp import MCPTool
+    from ._serialization import SerializationMixin
+    from ._tools import FunctionTool
+
+    if isinstance(tool_item, FunctionTool):
+        definition: dict[str, Any] = {"type": "function", "name": tool_item.name}
+        if tool_item.description:
+            definition["description"] = tool_item.description
+        parameters = tool_item.parameters()
+        if parameters:
+            definition["parameters"] = parameters
+        return definition
+
+    if isinstance(tool_item, MCPTool):
+        definition = {"type": "mcp", "name": tool_item.name}
+        if tool_item.description:
+            definition["description"] = tool_item.description
+        return definition
+
+    raw: Mapping[str, Any] | None = None
+    if isinstance(tool_item, BaseModel):
+        raw = tool_item.model_dump(exclude_none=True)
+    elif isinstance(tool_item, SerializationMixin):
+        raw = tool_item.to_dict()
+    elif isinstance(tool_item, Mapping):
+        raw = cast("Mapping[str, Any]", tool_item)
+
+    if raw is None:
+        logger.warning(
+            "Can't parse tool to OpenTelemetry tool definition: %s",
+            type(tool_item).__name__,  # type: ignore[reportUnknownArgumentType]
+        )
+        return None
+    return _otel_definition_from_mapping(raw)
+
+
+def _otel_definition_from_mapping(raw: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Reshape a tool spec mapping into an OTel GenAI tool-definition dict.
+
+    Handles the nested OpenAI Chat Completions function shape
+    (``{"type": "function", "function": {...}}``) by flattening it into the
+    OTel shape.
+    """
+    # OpenAI Chat Completions nests the function spec one level deeper; flatten it.
+    nested_function = raw.get("function") if raw.get("type") == "function" else None
+    if isinstance(nested_function, Mapping):
+        nested = cast("Mapping[str, Any]", nested_function)
+        name = nested.get("name")
+        if not isinstance(name, str) or not name:
+            logger.warning("Can't parse tool to OpenTelemetry tool definition: missing 'name'.")
+            return None
+        definition: dict[str, Any] = {"type": "function", "name": name}
+        description = nested.get("description")
+        if description:
+            definition["description"] = description
+        parameters = nested.get("parameters")
+        if parameters:
+            definition["parameters"] = parameters
+        # Forward extra properties from both layers, preferring the inner spec.
+        for source in (nested, raw):
+            for key, value in source.items():
+                if key in {"type", "function", "name", "description", "parameters"}:
+                    continue
+                definition.setdefault(key, value)
+        return definition
+
+    type_value = raw.get("type")
+    if not isinstance(type_value, str) or not type_value:
+        logger.warning("Can't parse tool to OpenTelemetry tool definition: missing 'type'.")
+        return None
+
+    name_value = raw.get("name")
+    if not isinstance(name_value, str) or not name_value:
+        # Hosted tools sometimes omit ``name`` (e.g. ``{"type": "code_interpreter"}``);
+        # fall back to the type so the OTel definition stays valid.
+        name_value = type_value
+
+    if type_value == "function":
+        definition = {"type": "function", "name": name_value}
+        description = raw.get("description")
+        if description:
+            definition["description"] = description
+        parameters = raw.get("parameters")
+        if parameters:
+            definition["parameters"] = parameters
+        for key, value in raw.items():
+            if key in {"type", "name", "description", "parameters"}:
+                continue
+            definition.setdefault(key, value)
+        return definition
+
+    definition = {"type": type_value, "name": name_value}
+    for key, value in raw.items():
+        if key in {"type", "name"}:
+            continue
+        definition[key] = value
+    return definition
+
+
+# endregion
+
+
 # Mapping configuration for extracting span attributes
 # Each entry: source_keys -> (otel_attribute_key, transform_func, check_options_first, default_value)
 # - source_keys: single key or list of keys to check (first non-None value wins)
@@ -2209,11 +2353,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     # Tools with validation - returns None if no valid tools
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
-        lambda tools: (
-            json.dumps(tools_dict, ensure_ascii=False)
-            if (tools_dict := __import__("agent_framework._tools", fromlist=["_tools_to_dict"])._tools_to_dict(tools))
-            else None
-        ),
+        lambda tools: json.dumps(tools_dict, ensure_ascii=False) if (tools_dict := _tools_to_dict(tools)) else None,
         True,
         None,
     ),
