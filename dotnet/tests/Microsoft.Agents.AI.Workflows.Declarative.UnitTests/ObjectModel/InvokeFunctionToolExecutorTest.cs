@@ -905,7 +905,7 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
             && i.Arguments.Count >= 2
             && i.Arguments[1] is StringValue sv
-            && sv.Value.Contains("not approved by user"));
+            && sv.Value.Contains("No pending approval"));
     }
 
     /// <summary>
@@ -1003,13 +1003,13 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         // Act
         await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
 
-        // Assert - the valid approval drove invocation; no not-approved error was assigned.
+        // Assert - the valid approval drove invocation; no error was assigned.
         Assert.True(functionWasInvoked);
         Assert.DoesNotContain(mockContext.Invocations, i =>
             i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
             && i.Arguments.Count >= 2
             && i.Arguments[1] is StringValue sv
-            && sv.Value.Contains("not approved by user"));
+            && sv.Value.StartsWith("Error:", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1050,12 +1050,12 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
 
         // Assert - the registered AIFunction was invoked exactly once.
         Assert.Equal(1, invocationCount);
-        // The second delivery surfaced the not-approved error path.
+        // The second delivery surfaced the no-pending-approval error.
         Assert.Contains(mockContext.Invocations, i =>
             i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
             && i.Arguments.Count >= 2
             && i.Arguments[1] is StringValue sv
-            && sv.Value.Contains("not approved by user"));
+            && sv.Value.Contains("No pending approval"));
     }
 
     /// <summary>
@@ -1090,7 +1090,7 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
 
         // Assert - the host-computed result was assigned to Output.Result and no
-        // not-approved error was emitted.
+        // error was emitted.
         Assert.Contains(mockContext.Invocations, i =>
             i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
             && i.Arguments.Count >= 2
@@ -1100,7 +1100,7 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
             && i.Arguments.Count >= 2
             && i.Arguments[1] is StringValue sv
-            && sv.Value.Contains("not approved by user"));
+            && sv.Value.StartsWith("Error:", StringComparison.Ordinal));
     }
 
     /// <summary>

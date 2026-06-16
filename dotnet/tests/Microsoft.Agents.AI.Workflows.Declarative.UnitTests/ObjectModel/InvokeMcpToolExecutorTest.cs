@@ -1585,8 +1585,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
     /// <summary>
     /// Builds an approval response paired to the request id stamped on the emitted
-    /// <c>MCPToolApprovalRequestContent</c>. Mirrors the framework's symmetric
-    /// content-id rewriting at the envelope boundary.
+    /// <c>ToolApprovalRequestContent</c>.
     /// </summary>
     private static ExternalInputResponse CreateApprovalResponseFor(IReadOnlyList<ExternalInputRequest> emittedRequests, bool approved)
     {

@@ -171,7 +171,7 @@ internal sealed class InvokeFunctionToolExecutor(
                     this.Logger.LogWarning(
                         "Approval response '{RequestId}' did not match any pending invocation on '{ActionId}'.",
                         approval.RequestId, this.Id);
-                    await this.AssignErrorAsync(context, "Function invocation was not approved by user.").ConfigureAwait(false);
+                    await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
                 }
                 else if (!approval.Approved)
                 {
@@ -184,11 +184,10 @@ internal sealed class InvokeFunctionToolExecutor(
                 }
                 else
                 {
-                    // Snapshot was consumed by a concurrent delivery; surface the not-approved error.
                     this.Logger.LogWarning(
                         "Approval response '{RequestId}' had no remaining pending snapshot on '{ActionId}'.",
                         approval.RequestId, this.Id);
-                    await this.AssignErrorAsync(context, "Function invocation was not approved by user.").ConfigureAwait(false);
+                    await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
                 }
             }
         }

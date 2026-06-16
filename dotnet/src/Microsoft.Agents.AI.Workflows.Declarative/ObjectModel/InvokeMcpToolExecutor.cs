@@ -149,14 +149,15 @@ internal sealed class InvokeMcpToolExecutor(
             .OfType<ToolApprovalResponseContent>()
             .FirstOrDefault(r => this._approvalSnapshots.ContainsKey(r.RequestId));
 
-        if (approvalResponse?.Approved != true)
+        if (approvalResponse is null)
         {
-            // Rejected, no matching pending, or unknown request id: surface a not-approved
-            // error and drop any matched snapshot.
-            if (approvalResponse is not null)
-            {
-                this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out _);
-            }
+            await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+            return;
+        }
+
+        if (!approvalResponse.Approved)
+        {
+            this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out _);
             await this.AssignErrorAsync(context, "MCP tool invocation was not approved by user.").ConfigureAwait(false);
             return;
         }
@@ -165,7 +166,7 @@ internal sealed class InvokeMcpToolExecutor(
         // Headers are re-evaluated (they may contain auth secrets not persisted to state).
         if (!this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out ApprovalSnapshot? snapshot))
         {
-            await this.AssignErrorAsync(context, "MCP tool invocation was not approved by user.").ConfigureAwait(false);
+            await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
             return;
         }
 
