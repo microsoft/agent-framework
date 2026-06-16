@@ -1512,18 +1512,26 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 duration_state["duration"] = perf_counter() - start_time
 
             try:
-                result_stream = cast(
-                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-                    super_get_response(
-                        messages=messages,
-                        stream=True,
-                        options=opts,
-                        compaction_strategy=compaction_strategy,
-                        tokenizer=tokenizer,
-                        function_invocation_kwargs=function_invocation_kwargs,
-                        client_kwargs=merged_client_kwargs,
-                    ),
-                )
+                # Activate the chat span across the synchronous setup phase so spans
+                # created by the underlying client while constructing the stream are
+                # parented under it. The per-pull ``_activate_span`` registered below
+                # covers iteration; this covers anything the subclass does between
+                # being called and returning the ResponseStream. Attach/detach are
+                # paired within this sync block, so there is no cross-context
+                # detach risk (the span itself is ended later in cleanup hooks).
+                with _activate_span(span):
+                    result_stream = cast(
+                        ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                        super_get_response(
+                            messages=messages,
+                            stream=True,
+                            options=opts,
+                            compaction_strategy=compaction_strategy,
+                            tokenizer=tokenizer,
+                            function_invocation_kwargs=function_invocation_kwargs,
+                            client_kwargs=merged_client_kwargs,
+                        ),
+                    )
             except Exception as exception:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 _close_span()
@@ -1787,7 +1795,17 @@ class AgentTelemetryLayer:
                 duration_state["duration"] = perf_counter() - start_time
 
             try:
-                run_result: object = execute()
+                # Activate the agent span across the synchronous setup phase so spans
+                # created by the underlying agent while constructing the stream are
+                # parented under it. The per-pull ``_activate_span`` registered below
+                # covers iteration; this covers anything the subclass does between
+                # being called and returning the ResponseStream (subclasses that
+                # instead return an Awaitable defer their work into the first pull,
+                # where the per-pull activation already applies). Attach/detach are
+                # paired within this sync block, so there is no cross-context detach
+                # risk (the span itself is ended later in cleanup hooks).
+                with _activate_span(span):
+                    run_result: object = execute()
                 if isinstance(run_result, ResponseStream):
                     result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
                 elif isinstance(run_result, Awaitable):
