@@ -18,6 +18,9 @@ public static partial class AgentWorkflowBuilder
     /// <param name="chainOnlyAgentResponses">
     /// <see langword="true"/> to pass only each agent's response to the next agent in the sequence;
     /// <see langword="false"/> to pass the full accumulated conversation.
+    /// When enabled, the workflow output also reflects only the final agent's messages,
+    /// because the sequential builder stops forwarding the incoming messages to the
+    /// terminal output executor.
     /// </param>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
@@ -39,6 +42,9 @@ public static partial class AgentWorkflowBuilder
     /// <param name="chainOnlyAgentResponses">
     /// <see langword="true"/> to pass only each agent's response to the next agent in the sequence;
     /// <see langword="false"/> to pass the full accumulated conversation.
+    /// When enabled, the workflow output also reflects only the final agent's messages,
+    /// because the sequential builder stops forwarding the incoming messages to the
+    /// terminal output executor.
     /// </param>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
