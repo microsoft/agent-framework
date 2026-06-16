@@ -26,7 +26,7 @@ from collections import defaultdict
 from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import (
     AgentExecutor,
@@ -720,6 +720,40 @@ def run_workflow_orchestrator(
     workflow_outputs: list[Any] = []
     iteration = 0
 
+    # Accumulate workflow events and publish them to the orchestration custom status
+    # after each superstep so an external client can stream progress by polling.
+    # Non-agent executors are run inside a durable activity that captures their events
+    # with data payloads (replayed via append_activity_events); agents contribute only
+    # synthesized invoked/completed lifecycle events. Events are per executor / per
+    # yielded output, not token-level, and accumulate for the run.
+    live_events: list[dict[str, Any]] = []
+
+    def emit_event(event_type: str, executor_id: str) -> None:
+        live_events.append({"type": event_type, "executor_id": executor_id, "iteration": iteration})
+
+    def append_activity_events(activity_result: dict[str, Any] | None) -> None:
+        # Replay the events captured inside the activity, tagging each with the current
+        # superstep iteration so clients can group events by superstep.
+        if not activity_result:
+            return
+        captured = activity_result.get("events")
+        if not isinstance(captured, list):
+            return
+        for serialized_event in cast("list[dict[str, Any]]", captured):
+            enriched = dict(serialized_event)
+            enriched["iteration"] = iteration
+            live_events.append(enriched)
+
+    def publish_live_status(state: str, pending_requests: dict[str, Any] | None = None) -> None:
+        # Publish only on live execution so events are not re-emitted on replay
+        # (the custom status set during the first execution already persisted).
+        if ctx.is_replaying:
+            return
+        status: dict[str, Any] = {"state": state, "events": live_events}
+        if pending_requests is not None:
+            status["pending_requests"] = pending_requests
+        ctx.set_custom_status(status)
+
     fan_in_pending: dict[str, dict[str, list[tuple[Any, str]]]] = {
         group.id: defaultdict(list) for group in workflow.edge_groups if isinstance(group, FanInEdgeGroup)
     }
@@ -735,6 +769,14 @@ def run_workflow_orchestrator(
             ctx, workflow, pending_messages, shared_state
         )
 
+        # Agents bypass the activity, so synthesize their invoked event here; activity
+        # executors emit their own events from inside the activity.
+        for task_meta in task_metadata_list:
+            if task_meta.task_type == TaskType.AGENT:
+                emit_event("executor_invoked", task_meta.executor_id)
+        for invoked_executor_id, _invoked_message, _invoked_source in remaining_agent_messages:
+            emit_event("executor_invoked", invoked_executor_id)
+
         # Phase 2: Execute all tasks in parallel
         all_results: list[ExecutorResult] = []
         if all_tasks:
@@ -746,8 +788,10 @@ def run_workflow_orchestrator(
                 metadata = task_metadata_list[idx]
                 if metadata.task_type == TaskType.AGENT:
                     result = _process_agent_response(raw_result, metadata.executor_id, metadata.message)
+                    emit_event("executor_completed", metadata.executor_id)
                 else:
                     result = _process_activity_result(raw_result, metadata.executor_id, shared_state, workflow_outputs)
+                    append_activity_events(result.activity_result)
                 all_results.append(result)
 
         # Phase 3: Process sequential agent messages
@@ -759,6 +803,7 @@ def run_workflow_orchestrator(
 
             result = _process_agent_response(agent_response, executor_id, message)
             all_results.append(result)
+            emit_event("executor_completed", executor_id)
 
         # Phase 4: Collect HITL requests
         for result in all_results:
@@ -773,13 +818,19 @@ def run_workflow_orchestrator(
 
         pending_messages = next_pending_messages
 
+        # Publish accumulated events after each superstep. When the workflow is about
+        # to pause for human input, the HITL block below publishes the waiting status
+        # with the pending requests instead.
+        if pending_messages or not pending_hitl_requests:
+            publish_live_status("running")
+
         # Phase 7: HITL wait
         if not pending_messages and pending_hitl_requests:
             logger.debug("Workflow paused for HITL - %d pending requests", len(pending_hitl_requests))
 
-            ctx.set_custom_status({
-                "state": "waiting_for_human_input",
-                "pending_requests": {
+            publish_live_status(
+                "waiting_for_human_input",
+                pending_requests={
                     req_id: {
                         "request_id": req.request_id,
                         "source_executor_id": req.source_executor_id,
@@ -789,7 +840,7 @@ def run_workflow_orchestrator(
                     }
                     for req_id, req in pending_hitl_requests.items()
                 },
-            })
+            )
 
             for request_id, hitl_request in list(pending_hitl_requests.items()):
                 # Wait indefinitely for the human response, matching MAF core's
@@ -836,7 +887,7 @@ def run_workflow_orchestrator(
                     )
                     break
 
-            ctx.set_custom_status({"state": "running"})
+            publish_live_status("running")
 
         iteration += 1
 

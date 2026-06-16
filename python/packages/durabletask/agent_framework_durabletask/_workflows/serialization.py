@@ -24,12 +24,14 @@ from contextlib import suppress
 from dataclasses import is_dataclass
 from typing import Any, cast
 
+from agent_framework import WorkflowEvent
 from agent_framework._workflows._checkpoint_encoding import (
     _PICKLE_MARKER,  # pyright: ignore[reportPrivateUsage]
     _TYPE_MARKER,  # pyright: ignore[reportPrivateUsage]
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
+from agent_framework._workflows._events import WorkflowEventType
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -151,6 +153,83 @@ def deserialize_workflow_output(output: Any) -> Any:
         and plain JSON structures pass through unchanged.
     """
     return deserialize_value(output)
+
+
+# ============================================================================
+# Workflow Event Serialization (streaming)
+# ============================================================================
+
+
+def _type_key(value_type: type[Any] | None) -> str | None:
+    """Format a type as a ``'module:qualname'`` key for :func:`resolve_type`."""
+    if value_type is None:
+        return None
+    return f"{value_type.__module__}:{value_type.__name__}"
+
+
+def serialize_workflow_event(event: WorkflowEvent[Any]) -> dict[str, Any]:
+    """Serialize a :class:`WorkflowEvent` to a JSON-compatible dict.
+
+    Carries a workflow event from the durable activity, through the orchestration
+    custom status, to a streaming client. The data payload is encoded with
+    :func:`serialize_value` so typed objects survive the round trip;
+    :func:`deserialize_workflow_event` reverses it into a ``WorkflowEvent`` so
+    callers never handle checkpoint-marker dicts directly.
+
+    Args:
+        event: The workflow event to serialize.
+
+    Returns:
+        A JSON-serializable dict with the event ``type`` and the fields needed to
+        reconstruct it.
+    """
+    serialized: dict[str, Any] = {"type": event.type}
+    if event.executor_id is not None:
+        serialized["executor_id"] = event.executor_id
+    if event.data is not None:
+        serialized["data"] = serialize_value(event.data)
+    if event.type == "request_info":
+        # request_type is omitted: deserialize_workflow_event rebuilds the event via
+        # WorkflowEvent.request_info, which derives it from the data payload.
+        serialized["request_id"] = event.request_id
+        serialized["source_executor_id"] = event.source_executor_id
+        serialized["response_type"] = _type_key(event.response_type)
+    return serialized
+
+
+def deserialize_workflow_event(serialized: dict[str, Any]) -> WorkflowEvent[Any]:
+    """Reconstruct a :class:`WorkflowEvent` from :func:`serialize_workflow_event` output.
+
+    ``serialized`` must originate from the workflow's own orchestration custom
+    status (trusted durable storage); its encoded payload is decoded with
+    :func:`deserialize_value`. Never pass untrusted external input here.
+
+    Args:
+        serialized: A dict previously produced by :func:`serialize_workflow_event`,
+            optionally augmented with an ``iteration`` key by the orchestrator.
+
+    Returns:
+        The reconstructed workflow event with its data payload restored.
+    """
+    event_type = cast(WorkflowEventType, serialized["type"])
+    payload = deserialize_value(serialized["data"]) if "data" in serialized else None
+
+    if event_type == "request_info":
+        response_key = serialized.get("response_type")
+        response_type = resolve_type(response_key) if response_key else None
+        event: WorkflowEvent[Any] = WorkflowEvent.request_info(
+            request_id=cast(str, serialized["request_id"]),
+            source_executor_id=cast(str, serialized["source_executor_id"]),
+            request_data=payload,
+            response_type=response_type or object,
+        )
+    else:
+        event = WorkflowEvent(event_type, data=payload, executor_id=serialized.get("executor_id"))
+
+    iteration = serialized.get("iteration")
+    if iteration is not None:
+        event.iteration = iteration
+    return event
 
 
 # ============================================================================

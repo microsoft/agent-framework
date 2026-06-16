@@ -41,6 +41,10 @@ class DurableTaskWorkflowContext:
         return self._context.instance_id
 
     @property
+    def is_replaying(self) -> bool:
+        return self._context.is_replaying
+
+    @property
     def current_utc_datetime(self) -> datetime:
         return self._context.current_utc_datetime
 

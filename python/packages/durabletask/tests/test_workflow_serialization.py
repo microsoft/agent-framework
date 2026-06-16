@@ -16,10 +16,14 @@ import json
 from collections import OrderedDict
 from dataclasses import dataclass
 
+from agent_framework import WorkflowEvent
+
 from agent_framework_durabletask._workflows.serialization import (
+    deserialize_workflow_event,
     deserialize_workflow_output,
     resolve_type,
     serialize_value,
+    serialize_workflow_event,
 )
 
 
@@ -71,3 +75,61 @@ class TestDeserializeWorkflowOutput:
 
     def test_none_passes_through(self) -> None:
         assert deserialize_workflow_output(None) is None
+
+
+@dataclass
+class _Approval:
+    """Module-level dataclass so it is picklable by serialize_value."""
+
+    reason: str
+
+
+def _roundtrip(event: WorkflowEvent) -> WorkflowEvent:
+    # Mirror the real path: serialize, JSON round-trip through the custom status,
+    # then reconstruct on the client.
+    return deserialize_workflow_event(json.loads(json.dumps(serialize_workflow_event(event))))
+
+
+class TestWorkflowEventRoundtrip:
+    """serialize_workflow_event / deserialize_workflow_event preserve event identity."""
+
+    def test_output_event_reconstructs_typed_data(self) -> None:
+        result = _roundtrip(WorkflowEvent("output", data=_Approval(reason="ok"), executor_id="writer"))
+
+        assert result.type == "output"
+        assert result.executor_id == "writer"
+        assert result.data == _Approval(reason="ok")
+        assert isinstance(result.data, _Approval)
+
+    def test_executor_completed_without_data_roundtrips_to_none(self) -> None:
+        result = _roundtrip(WorkflowEvent.executor_completed("reviewer"))
+
+        assert result.type == "executor_completed"
+        assert result.executor_id == "reviewer"
+        assert result.data is None
+
+    def test_iteration_tag_is_preserved(self) -> None:
+        # The orchestrator tags each event with its superstep before publishing.
+        serialized = serialize_workflow_event(WorkflowEvent.executor_invoked("writer"))
+        serialized["iteration"] = 3
+
+        result = deserialize_workflow_event(json.loads(json.dumps(serialized)))
+
+        assert result.type == "executor_invoked"
+        assert result.iteration == 3
+
+    def test_request_info_event_roundtrips(self) -> None:
+        event: WorkflowEvent = WorkflowEvent.request_info(
+            request_id="req-1",
+            source_executor_id="approver",
+            request_data=_Approval(reason="needs sign-off"),
+            response_type=bool,
+        )
+
+        result = _roundtrip(event)
+
+        assert result.type == "request_info"
+        assert result.request_id == "req-1"
+        assert result.source_executor_id == "approver"
+        assert result.response_type is bool
+        assert result.data == _Approval(reason="needs sign-off")

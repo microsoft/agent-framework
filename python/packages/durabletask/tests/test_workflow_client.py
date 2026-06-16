@@ -12,10 +12,11 @@ from dataclasses import dataclass
 from unittest.mock import Mock
 
 import pytest
+from agent_framework import WorkflowEvent
 
 from agent_framework_durabletask import DurableWorkflowClient
 from agent_framework_durabletask._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME
-from agent_framework_durabletask._workflows.serialization import serialize_value
+from agent_framework_durabletask._workflows.serialization import serialize_value, serialize_workflow_event
 
 
 @dataclass
@@ -272,3 +273,106 @@ class TestSendHitlResponse:
         # The whole marker-bearing dict is neutralized (replaced with None) rather
         # than forwarded, so it can never reach pickle.loads on the worker.
         assert kwargs["data"] is None
+
+
+class TestStreamWorkflow:
+    """Test streaming typed workflow events by polling custom status."""
+
+    def _state(self, *, status: str, events: list[dict] | None = None) -> Mock:
+        state = Mock()
+        state.runtime_status.name = status
+        if events is None:
+            state.serialized_custom_status = None
+        else:
+            state.serialized_custom_status = json.dumps({"state": "running", "events": events})
+        return state
+
+    async def test_streams_events_in_order_until_terminal(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """Events accrue across polls and stream in order; streaming ends at a terminal state."""
+        # Each poll returns a growing accumulated event list, then a terminal status.
+        mock_client.get_orchestration_state.side_effect = [
+            self._state(status="RUNNING", events=[{"type": "executor_invoked", "executor_id": "a"}]),
+            self._state(
+                status="RUNNING",
+                events=[
+                    {"type": "executor_invoked", "executor_id": "a"},
+                    {"type": "executor_completed", "executor_id": "a"},
+                ],
+            ),
+            self._state(
+                status="COMPLETED",
+                events=[
+                    {"type": "executor_invoked", "executor_id": "a"},
+                    {"type": "executor_completed", "executor_id": "a"},
+                ],
+            ),
+        ]
+
+        seen = [event async for event in workflow_client.stream_workflow("instance-1", poll_interval_seconds=0)]
+
+        # Each accumulated event is yielded exactly once, in order, as a typed event.
+        assert all(isinstance(e, WorkflowEvent) for e in seen)
+        assert [e.type for e in seen] == ["executor_invoked", "executor_completed"]
+        assert [e.executor_id for e in seen] == ["a", "a"]
+
+    async def test_terminal_with_no_status_yields_nothing(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A workflow that is already terminal with no custom status streams no events."""
+        mock_client.get_orchestration_state.return_value = self._state(status="COMPLETED")
+
+        seen = [event async for event in workflow_client.stream_workflow("instance-1", poll_interval_seconds=0)]
+
+        assert seen == []
+
+    async def test_streams_typed_event_data_roundtrip(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """An output event's data is reconstructed into its original typed object."""
+        receipt = _Receipt(order_id=7, total=42.5)
+        serialized_event = serialize_workflow_event(WorkflowEvent("output", data=receipt, executor_id="processor"))
+        mock_client.get_orchestration_state.side_effect = [
+            self._state(status="RUNNING", events=[serialized_event]),
+            self._state(status="COMPLETED", events=[serialized_event]),
+        ]
+
+        seen = [event async for event in workflow_client.stream_workflow("instance-1", poll_interval_seconds=0)]
+
+        assert len(seen) == 1
+        assert isinstance(seen[0], WorkflowEvent)
+        assert seen[0].type == "output"
+        assert seen[0].executor_id == "processor"
+        assert seen[0].data == receipt
+
+
+class TestRunWorkflow:
+    """Test the async run_workflow convenience (start + optional wait)."""
+
+    async def test_waits_and_returns_output_by_default(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """By default run_workflow starts the workflow and returns its deserialized output."""
+        mock_client.schedule_new_orchestration.return_value = "instance-1"
+        metadata = Mock()
+        metadata.runtime_status.name = "COMPLETED"
+        metadata.serialized_output = json.dumps(["done"])
+        mock_client.wait_for_orchestration_completion.return_value = metadata
+
+        result = await workflow_client.run_workflow(input="hello")
+
+        assert result == ["done"]
+        mock_client.schedule_new_orchestration.assert_called_once()
+        mock_client.wait_for_orchestration_completion.assert_called_once()
+
+    async def test_no_wait_returns_instance_id_without_awaiting(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """With wait=False, run_workflow returns the instance id and does not await completion."""
+        mock_client.schedule_new_orchestration.return_value = "instance-2"
+
+        result = await workflow_client.run_workflow(input="hello", wait=False)
+
+        assert result == "instance-2"
+        mock_client.wait_for_orchestration_completion.assert_not_called()

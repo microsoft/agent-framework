@@ -37,6 +37,16 @@ class WorkflowOrchestrationContext(Protocol):
         ...
 
     @property
+    def is_replaying(self) -> bool:
+        """Whether the orchestrator is replaying previously-recorded history.
+
+        Side effects intended to be observed live exactly once (for example,
+        publishing streaming status to the custom status) must be skipped while
+        this is ``True`` so they are not re-emitted on replay.
+        """
+        ...
+
+    @property
     def current_utc_datetime(self) -> datetime:
         """The current replay-safe UTC datetime."""
         ...

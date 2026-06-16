@@ -31,7 +31,7 @@ from .orchestrator import (
     execute_hitl_response_handler,
 )
 from .runner_context import CapturingRunnerContext
-from .serialization import deserialize_value, serialize_value
+from .serialization import deserialize_value, serialize_value, serialize_workflow_event
 
 
 def execute_workflow_activity(executor: Executor, input_json: str, workflow: Workflow | None = None) -> str:
@@ -49,7 +49,7 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
             When omitted, all yielded outputs are treated as final outputs.
 
     Returns:
-        A JSON string with keys ``sent_messages``, ``outputs``,
+        A JSON string with keys ``sent_messages``, ``outputs``, ``events``,
         ``shared_state_updates``, ``shared_state_deletes``, and
         ``pending_request_info_events``.
 
@@ -137,10 +137,16 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
         sent_messages = await runner_context.drain_messages()
         events = await runner_context.drain_events()
 
-        # Extract outputs from WorkflowEvent instances with type='output'.
+        # Serialize the executor's workflow events so the orchestrator can republish
+        # them to the streaming custom status. Output payloads are also extracted
+        # separately for message routing and the final workflow result.
         outputs: list[Any] = []
+        serialized_events: list[dict[str, Any]] = []
         for event in events:
-            if isinstance(event, WorkflowEvent) and event.type == "output":
+            if not isinstance(event, WorkflowEvent):
+                continue
+            serialized_events.append(serialize_workflow_event(event))
+            if event.type == "output":
                 outputs.append(serialize_value(event.data))
 
         # Serialize pending HITL request info events for the orchestrator.
@@ -172,6 +178,7 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
         return {
             "sent_messages": serialized_sent_messages,
             "outputs": outputs,
+            "events": serialized_events,
             "shared_state_updates": serialized_updates,
             "shared_state_deletes": list(deletes),
             "pending_request_info_events": serialized_pending_requests,

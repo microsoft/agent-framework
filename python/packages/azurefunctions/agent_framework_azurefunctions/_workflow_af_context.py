@@ -36,6 +36,11 @@ class AzureFunctionsWorkflowContext:
         return instance_id
 
     @property
+    def is_replaying(self) -> bool:
+        is_replaying: bool = self._context.is_replaying
+        return is_replaying
+
+    @property
     def current_utc_datetime(self) -> datetime:
         current: datetime = self._context.current_utc_datetime
         return current

@@ -9,14 +9,18 @@ await, and drive (including human-in-the-loop) workflows registered on a worker 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
+from agent_framework import WorkflowEvent
 from durabletask.client import TaskHubGrpcClient
 
 from .orchestrator import WORKFLOW_ORCHESTRATOR_NAME
-from .serialization import deserialize_workflow_output, strip_pickle_markers
+from .serialization import deserialize_workflow_event, deserialize_workflow_output, strip_pickle_markers
 
 logger = logging.getLogger("agent_framework.durabletask")
 
@@ -112,6 +116,46 @@ class DurableWorkflowClient:
         # checkpoint-marker dicts. Reconstruct the originals before returning.
         return deserialize_workflow_output(json.loads(metadata.serialized_output))
 
+    async def run_workflow(
+        self,
+        input: Any = None,
+        *,
+        instance_id: str | None = None,
+        wait: bool = True,
+        timeout_seconds: int = 300,
+    ) -> Any:
+        """Start the workflow and, by default, await its output.
+
+        The async counterpart to ``start_workflow`` + ``await_workflow_output``. The
+        underlying durabletask client is synchronous, so the blocking calls run in a
+        worker thread to avoid blocking the event loop.
+
+        Args:
+            input: The initial message/payload for the workflow.
+            instance_id: Optional explicit orchestration instance ID. If omitted,
+                one is generated.
+            wait: When ``True`` (default), wait for completion and return the
+                deserialized output. When ``False``, return the instance ID as
+                soon as the workflow is scheduled (use with ``stream_workflow`` or
+                the HITL methods).
+            timeout_seconds: Maximum time, in seconds, to wait for completion when
+                ``wait`` is ``True``.
+
+        Returns:
+            The deserialized workflow output when ``wait`` is ``True``; otherwise
+            the orchestration instance ID.
+
+        Raises:
+            TimeoutError: If ``wait`` is ``True`` and the workflow does not complete
+                within ``timeout_seconds``.
+            RuntimeError: If ``wait`` is ``True`` and the workflow ends with a
+                non-successful status.
+        """
+        new_instance_id = await asyncio.to_thread(self.start_workflow, input, instance_id=instance_id)
+        if not wait:
+            return new_instance_id
+        return await asyncio.to_thread(self.await_workflow_output, new_instance_id, timeout_seconds=timeout_seconds)
+
     def get_runtime_status(self, instance_id: str) -> str | None:
         """Return the workflow's current runtime status name, or ``None`` if unknown.
 
@@ -131,6 +175,70 @@ class DurableWorkflowClient:
         if state is None:
             return None
         return state.runtime_status.name
+
+    async def stream_workflow(
+        self,
+        instance_id: str,
+        *,
+        poll_interval_seconds: float = 1.0,
+        timeout_seconds: int | None = None,
+    ) -> AsyncIterator[WorkflowEvent]:
+        """Stream the workflow's events as typed :class:`WorkflowEvent` objects.
+
+        Yields the workflow's events (``executor_invoked`` / ``executor_completed`` /
+        ``output`` / ``request_info`` / ...) in order, finishing when the workflow
+        reaches a terminal state. Each event's ``data`` payload is already
+        reconstructed into its original typed object, so callers do not deserialize
+        anything themselves.
+
+        This is brokerless: it polls the orchestration custom status, into which the
+        orchestrator publishes accumulated events after each superstep. Granularity is
+        per executor and per yielded output, not token-level. Non-agent executors emit
+        events with data payloads; agent executors emit coarse ``executor_invoked`` /
+        ``executor_completed`` lifecycle events. The custom status accumulates events
+        for the run, so this suits workflows with a bounded number of executors rather
+        than very long-running fan-outs.
+
+        Args:
+            instance_id: The instance ID returned by ``start_workflow``.
+            poll_interval_seconds: Delay between status polls.
+            timeout_seconds: Optional overall timeout; ``None`` streams until the
+                workflow reaches a terminal state.
+
+        Yields:
+            :class:`WorkflowEvent` objects as the workflow progresses.
+
+        Raises:
+            TimeoutError: If ``timeout_seconds`` elapses before completion.
+        """
+        cursor = 0
+        terminal_statuses = {"COMPLETED", "FAILED", "TERMINATED"}
+        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+
+        while True:
+            state = await asyncio.to_thread(self._client.get_orchestration_state, instance_id)
+
+            if state is not None and state.serialized_custom_status:
+                try:
+                    status = json.loads(state.serialized_custom_status)
+                except (json.JSONDecodeError, TypeError):
+                    status = None
+                if isinstance(status, dict):
+                    events = cast("dict[str, Any]", status).get("events")
+                    if isinstance(events, list):
+                        typed_events = cast("list[dict[str, Any]]", events)
+                        while cursor < len(typed_events):
+                            yield deserialize_workflow_event(typed_events[cursor])
+                            cursor += 1
+
+            runtime_status = state.runtime_status.name if state is not None else None
+            if runtime_status in terminal_statuses:
+                return
+
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f"Workflow '{instance_id}' did not complete within {timeout_seconds}s")
+
+            await asyncio.sleep(poll_interval_seconds)
 
     def get_pending_hitl_requests(self, instance_id: str) -> list[dict[str, Any]]:
         """Return the workflow's pending human-in-the-loop (HITL) requests, if any.
