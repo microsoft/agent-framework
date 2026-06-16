@@ -12,6 +12,7 @@ security model, middleware behavior, and API reference.
 | `email_security_example.py` | Prompt injection defense | `SecureAgentConfig`, Foundry-backed email handling, `quarantined_llm`, and approval on policy violations |
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
 | `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
+| `workiq-email-example.py` | Fides Gateway policy enforcement | `SecureMCPToolProxy(gateway_policy=True)`, external gateway `eval_policy` integration, readers lattice, parallel approval flow |
 
 ## Prerequisites
 
@@ -109,6 +110,51 @@ What to look for:
 - MCP tools are auto-labeled from remote annotations
 - Untrusted tool output is tracked by FIDES label middleware
 - Attack-mode write attempts can trigger policy enforcement or approval
+
+### `workiq-email-example.py`
+
+This sample connects to WorkIQ email and teams MCP servers through a local
+Fides Gateway proxy. The gateway evaluates IFC policy via its `eval_policy` tool
+before each tool call, returning `allow`, `deny`, or `ask` decisions. When a
+policy violation is detected, the DevUI prompts the user for approval.
+
+#### Setting up the Fides Gateway
+
+Install the Fides Gateway from the [project page](https://github.com/microsoft/fides-gateway)
+and start it locally:
+
+```bash
+python gateway.py --config config.workiq.email.example.json --port 9090
+```
+
+The gateway must be running before starting the sample.
+
+#### Prerequisites
+
+- `FOUNDRY_PROJECT_ENDPOINT` set in your environment
+- `FOUNDRY_MODEL` (optional, defaults to `gpt-5`)
+- Fides Gateway running locally (see above)
+
+#### Running
+
+```bash
+uv run samples/02-agents/security/workiq-email-example.py --cli --gateway-port 9090
+uv run samples/02-agents/security/workiq-email-example.py --devui --gateway-port 9090
+uv run samples/02-agents/security/workiq-email-example.py --devui --gateway-port 9090 --debug
+```
+
+The `--gateway-port` flag specifies the port where the Fides Gateway is
+listening (default: `9090`).
+
+When you run the DevUI variant, the sample prints the active DevUI bearer token
+before starting the server.
+
+What to look for:
+
+- Gateway `eval_policy` decisions control whether tool calls proceed
+- `ask` decisions surface as approval prompts in DevUI
+- Parallel tool calls that all require approval can be approved/rejected individually
+- Readers lattice tracks which identities are authorized to see data
 
 ## Where to find the details
 
