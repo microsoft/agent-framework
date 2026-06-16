@@ -232,8 +232,9 @@ class AgentFrameworkWorkflow:
         self.workflow = workflow
         self._workflow_factory = workflow_factory
         # Cache keyed by (snapshot_scope, thread_id): the Snapshot Scope is the
-        # authorization boundary, so the same thread id under different scopes
-        # must never share an in-memory workflow instance.
+        # authorization boundary for both snapshots and in-memory workflow_factory
+        # instances, so the same thread id under different scopes must never share
+        # mutable workflow state.
         self._workflow_by_thread: dict[tuple[str | None, str], Workflow] = {}
         self.name = name if name is not None else getattr(workflow, "name", "workflow")
         self.description = description if description is not None else getattr(workflow, "description", "")

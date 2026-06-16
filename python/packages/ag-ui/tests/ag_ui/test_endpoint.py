@@ -1842,3 +1842,49 @@ def test_workflow_factory_cache_is_scoped_by_snapshot_scope():
 
     runner.clear_thread_workflow("thread-1")
     assert runner._resolve_workflow("thread-1", "tenant-b") is not workflow_b
+
+
+async def test_workflow_factory_cache_is_scoped_by_resolver_without_snapshot_store():
+    """Snapshot Scope resolver scopes live workflow_factory instances even without snapshot persistence."""
+
+    @executor(id="responder")
+    async def responder(message: Any, ctx: WorkflowContext) -> None:
+        del message
+        await ctx.yield_output("Workflow response")
+
+    def factory(thread_id: str) -> Any:
+        del thread_id
+        return WorkflowBuilder(start_executor=responder).build()
+
+    app = FastAPI()
+    runner = AgentFrameworkWorkflow(workflow_factory=factory)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        runner,
+        path="/workflow",
+        snapshot_scope_resolver=lambda request: request.forwarded_props["tenant"],
+    )
+    client = TestClient(app)
+
+    response_a = client.post(
+        "/workflow",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "Hello tenant A"}],
+            "forwardedProps": {"tenant": "tenant-a"},
+        },
+    )
+    response_b = client.post(
+        "/workflow",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "Hello tenant B"}],
+            "forwardedProps": {"tenant": "tenant-b"},
+        },
+    )
+
+    assert response_a.status_code == 200
+    assert response_b.status_code == 200
+    workflow_a = runner._resolve_workflow("thread-1", "tenant-a")  # pyright: ignore[reportPrivateUsage]
+    workflow_b = runner._resolve_workflow("thread-1", "tenant-b")  # pyright: ignore[reportPrivateUsage]
+    assert workflow_a is not workflow_b
