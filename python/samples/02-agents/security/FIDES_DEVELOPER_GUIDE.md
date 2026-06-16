@@ -332,8 +332,8 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
     async with AsyncExitStack() as stack:
         secure_mcp = await stack.enter_async_context(
             SecureMCPToolProxy(
-                url="https://api.githubcopilot.com/mcp/insiders",
-                headers={"Authorization": f"Bearer {github_pat}"},
+                url="https://api.githubcopilot.com/mcp/",
+                headers={"Authorization": f"Bearer {github_pat}", "X-MCP-Features": "ifc_labels"},
                 name="GitHub",
                 description="GitHub MCP server over Streamable HTTP",
             )

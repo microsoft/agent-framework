@@ -89,11 +89,11 @@ What to look for:
 
 ### `github_mcp_example.py`
 
-This sample connects directly to `https://api.githubcopilot.com/mcp/insiders` through
+This sample connects directly to `https://api.githubcopilot.com/mcp/` through
 `MCPStreamableHTTPTool`, then wraps the MCP client in `SecureMCPToolProxy` so
-FIDES middleware can inspect tool results and enforce policy locally. The github
-MCP with /insiders endpoint is used because it includes security-relevant
- annotations in the tool metadata and results.
+FIDES middleware can inspect tool results and enforce policy locally. The
+`X-MCP-Features: ifc_labels` header is passed to opt in to server-side IFC label
+emission in tool result `_meta`.
 
 Run it with:
 

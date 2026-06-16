@@ -3220,13 +3220,25 @@ class SecureMCPToolProxy:
             raise ValueError("Provide either 'mcp_tool' (an MCPTool instance) or 'url' (a remote MCP server URL).")
 
         if url is not None:
-            from ._mcp import MCPStreamableHTTPTool
+            from httpx import AsyncClient, Timeout
+
+            from ._mcp import MCPStreamableHTTPTool, MCP_DEFAULT_TIMEOUT, MCP_DEFAULT_SSE_READ_TIMEOUT
 
             static_headers = dict(headers or {})
+            # Pass headers via an AsyncClient so they are included on ALL requests
+            # (including session.initialize()), not just tool calls. Using
+            # header_provider alone only sets headers via a ContextVar that is
+            # populated during call_tool() and would be empty during initialization,
+            # causing 401s that silently manifest as anyio cancel-scope errors.
+            http_client = AsyncClient(
+                headers=static_headers,
+                follow_redirects=True,
+                timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+            ) if static_headers else None
             mcp_tool = MCPStreamableHTTPTool(
                 name=name or "mcp",
                 url=url,
-                header_provider=lambda kwargs: static_headers,
+                http_client=http_client,
                 description=description,
             )
 

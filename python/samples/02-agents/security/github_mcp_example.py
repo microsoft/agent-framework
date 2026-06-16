@@ -3,7 +3,7 @@
 """GitHub MCP URL + FIDES Example (direct URL connection with local policy enforcement).
 
 This sample demonstrates how to connect an agent directly to a remote MCP URL
-(`https://api.githubcopilot.com/mcp/insiders`) while still enforcing IFC/FIDES security
+(`https://api.githubcopilot.com/mcp/`) while still enforcing IFC/FIDES security
 locally in your application process.
 
 Important: this uses a local `MCPStreamableHTTPTool` wrapped by
@@ -49,7 +49,8 @@ from agent_framework.security import SecureAgentConfig, SecureMCPToolProxy
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
-MCP_URL = "https://api.githubcopilot.com/mcp/insiders"  # Insiders endpoint with more annotations and stricter policies
+MCP_URL = "https://api.githubcopilot.com/mcp/"
+MCP_HEADERS = {"X-MCP-Features": "ifc_labels"}  # Opt-in to server-side IFC label emission in _meta
 FOUNDRY_MODEL = os.getenv("FOUNDRY_MODEL", "o4-mini")
 
 
@@ -242,7 +243,7 @@ async def run_cli_async(*, attack_mode: bool, debug: bool = False) -> None:
             secure_github = await stack.enter_async_context(
                 SecureMCPToolProxy(
                     url=MCP_URL,
-                    headers={"Authorization": f"Bearer {github_pat}"},
+                    headers={"Authorization": f"Bearer {github_pat}", **MCP_HEADERS},
                     name="GitHub",
                     description="GitHub MCP server over Streamable HTTP",
                 )
@@ -325,7 +326,7 @@ async def run_devui_async(*, debug: bool = False) -> None:
             secure_github = await stack.enter_async_context(
                 SecureMCPToolProxy(
                     url=MCP_URL,
-                    headers={"Authorization": f"Bearer {github_pat}"},
+                    headers={"Authorization": f"Bearer {github_pat}", **MCP_HEADERS},
                     name="GitHub",
                     description="GitHub MCP server over Streamable HTTP",
                 )

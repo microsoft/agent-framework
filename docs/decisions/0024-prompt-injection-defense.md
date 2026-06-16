@@ -127,7 +127,7 @@ Monitor agent behavior and block suspicious actions post-facto.
 ### MCP-Specific Security Notes
 
 - `SecureMCPToolProxy` applies `apply_mcp_security_labels(...)` automatically when connecting an MCP tool or URL.
-- For servers like GitHub MCP `/insiders`, `_meta.ifc` labels are considered authoritative for per-result label assignment.
+- For servers like the GitHub MCP server (with `X-MCP-Features: ifc_labels`), `_meta.ifc` labels are considered authoritative for per-result label assignment.
 - Tools that are not explicitly `readOnlyHint=True` are treated as potential sinks and default to `max_allowed_confidentiality=PUBLIC` to prevent exfiltration.
 
 

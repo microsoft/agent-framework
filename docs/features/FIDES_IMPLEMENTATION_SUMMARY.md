@@ -9,7 +9,7 @@
 - **Automatic Variable Hiding** - UNTRUSTED content is automatically hidden without requiring manual intervention
 - **Per-Item Embedded Labels** - Tools return `list[Content]` with `Content.from_text()` for proper label propagation
 - **SecureMCPToolProxy Auto-Labeling** - MCP tools are labeled automatically from MCP `ToolAnnotations` hints
-- **MCP `_meta.ifc` Support** - Per-result IFC labels from servers (for example GitHub `/insiders`) are parsed and enforced
+- **MCP `_meta.ifc` Support** - Per-result IFC labels from servers (for example GitHub MCP with `X-MCP-Features: ifc_labels`) are parsed and enforced
 - **SecureAgentConfig** - One-line secure agent configuration via `context_providers=[config]`
 - **Data Exfiltration Prevention** - `max_allowed_confidentiality` prevents sensitive data leakage
 - **Message-Level Label Tracking** (Phase 1) - Track labels on every message in the conversation
@@ -196,7 +196,7 @@ FIDES now secures remote MCP integration end-to-end:
 - **Result labels from metadata**: MCP result `_meta` is propagated via `__mcp_result_meta__`; `_meta.ifc` is parsed into `security_label` per result item.
 - **`SecureMCPToolProxy` convenience**: wraps MCP tools/URLs and applies this labeling automatically on connect.
 
-This behavior is required for GitHub MCP `/insiders`, which returns IFC labels in `_meta` (for example `{"ifc": {"integrity": "untrusted", "confidentiality": "public"}}`).
+This behavior is used with the GitHub MCP server when `X-MCP-Features: ifc_labels` is passed, which causes the server to return IFC labels in `_meta` (for example `{"ifc": {"integrity": "untrusted", "confidentiality": "public"}}`).
 
 ## Security Properties
 
