@@ -337,13 +337,13 @@ async def test_chat_client_streaming_sync_setup_span_is_parented_to_chat_span(
 
     When a chat client subclass creates spans inside ``_inner_get_response`` during
     the synchronous setup phase (before returning the ``ResponseStream``), those
-    spans should be nested under the chat-completion span produced by
-    ``ChatTelemetryLayer``. Today they are siblings (or root spans) because the
-    chat span is created via ``_start_streaming_span`` (not attached as current)
-    and ``with_pull_context_manager`` is only applied to the returned stream, so
-    the setup window happens with the chat span existing-but-not-current.
-
-    This test is expected to fail until that gap is fixed.
+    spans must be nested under the chat-completion span produced by
+    ``ChatTelemetryLayer``. The chat span is created via ``_start_streaming_span``
+    (which does not attach the span as current) and ``with_pull_context_manager``
+    only activates the span around each pull, so the synchronous setup window
+    would otherwise see the chat span existing-but-not-current. ``ChatTelemetryLayer``
+    therefore wraps the synchronous ``super_get_response(...)`` call in
+    ``_activate_span(span)`` so subclass spans opened during setup parent correctly.
     """
     from agent_framework.observability import get_tracer
 
@@ -665,18 +665,18 @@ async def test_agent_streaming_sync_setup_span_is_parented_to_agent_span(
     but at the agent layer. When an agent's ``run(stream=True)`` synchronously
     constructs the ``ResponseStream`` (rather than returning a coroutine that
     the framework wraps via ``ResponseStream.from_awaitable``), any spans the
-    subclass opens during that synchronous setup should still be nested under
+    subclass opens during that synchronous setup must still be nested under
     the agent invoke span produced by ``AgentTelemetryLayer``.
 
-    Today they are siblings (or root spans in their own trace) because the
-    agent invoke span is created via ``_start_streaming_span`` (not attached as
-    current) and ``with_pull_context_manager`` is only applied to the returned
-    stream, so the synchronous setup window happens with the agent span
-    existing-but-not-current. ``BaseAgent.run`` happens to side-step this by
-    always wrapping its streaming path in ``from_awaitable``; subclasses that
-    return a stream synchronously do not get the same protection.
-
-    This test is expected to fail until that gap is fixed.
+    The agent invoke span is created via ``_start_streaming_span`` (which does
+    not attach the span as current) and ``with_pull_context_manager`` only
+    activates the span around each pull, so the synchronous setup window would
+    otherwise see the agent span existing-but-not-current. ``BaseAgent.run``
+    happens to side-step this by always wrapping its streaming path in
+    ``from_awaitable``, but subclasses that return a stream synchronously do not
+    get the same protection. ``AgentTelemetryLayer`` therefore wraps the
+    synchronous ``execute()`` call in ``_activate_span(span)`` so subclass spans
+    opened during setup parent correctly regardless of the return shape.
     """
     from agent_framework import AgentResponse, AgentResponseUpdate
     from agent_framework.observability import get_tracer
