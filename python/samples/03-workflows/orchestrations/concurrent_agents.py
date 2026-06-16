@@ -2,9 +2,8 @@
 
 import asyncio
 import os
-from typing import Any
 
-from agent_framework import Agent, Message
+from agent_framework import Agent, AgentResponse, Message
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
@@ -80,8 +79,10 @@ async def main() -> None:
     if outputs:
         print("===== Final Aggregated Conversation (messages) =====")
         for output in outputs:
-            messages: list[Message] | Any = output
-            for i, msg in enumerate(messages, start=1):
+            if not isinstance(output, AgentResponse):
+                print(f"[WARNING] Unexpected output type: {type(output).__name__}, skipping.")
+                continue
+            for i, msg in enumerate(output.messages, start=1):
                 name = msg.author_name if msg.author_name else "user"
                 print(f"{'-' * 60}\n\n{i:02d} [{name}]:\n{msg.text}")
 
