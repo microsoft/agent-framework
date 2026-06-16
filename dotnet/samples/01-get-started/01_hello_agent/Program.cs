@@ -3,7 +3,6 @@
 // This sample shows how to create and use a simple AI agent with Microsoft Foundry as the backend.
 
 using Azure.Identity;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 
 var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");

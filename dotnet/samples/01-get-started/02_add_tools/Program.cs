@@ -5,7 +5,6 @@
 
 using System.ComponentModel;
 using Azure.Identity;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 

@@ -85,6 +85,7 @@ All canonical samples (01-get-started) use **Microsoft Foundry** with the Foundr
 ```csharp
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry;
 
 var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -137,5 +138,4 @@ dotnet run
 - Prefer `client.GetChatClient(deployment).AsAIAgent(...)` extension method pattern
 - Azure Functions hosting uses `ConfigureDurableAgents(options => options.AddAIAgent(agent))`
 - Workflows use `WorkflowBuilder` with `Executor<TIn, TOut>` and edge connections
-
 
