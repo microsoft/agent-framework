@@ -15,10 +15,35 @@ public static partial class AgentWorkflowBuilder
     /// <summary>
     /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
     /// </summary>
+    /// <param name="chainOnlyAgentResponses">
+    /// <see langword="true"/> to pass only each agent's response to the next agent in the sequence;
+    /// <see langword="false"/> to pass the full accumulated conversation.
+    /// </param>
+    /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
+    /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
+    public static Workflow BuildSequential(bool chainOnlyAgentResponses, params IEnumerable<AIAgent> agents)
+        => BuildSequentialCore(workflowName: null, chainOnlyAgentResponses, agents);
+
+    /// <summary>
+    /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// </summary>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
     public static Workflow BuildSequential(params IEnumerable<AIAgent> agents)
-        => BuildSequentialCore(workflowName: null, agents);
+        => BuildSequentialCore(workflowName: null, chainOnlyAgentResponses: false, agents);
+
+    /// <summary>
+    /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// </summary>
+    /// <param name="workflowName">The name of workflow.</param>
+    /// <param name="chainOnlyAgentResponses">
+    /// <see langword="true"/> to pass only each agent's response to the next agent in the sequence;
+    /// <see langword="false"/> to pass the full accumulated conversation.
+    /// </param>
+    /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
+    /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
+    public static Workflow BuildSequential(string workflowName, bool chainOnlyAgentResponses, params IEnumerable<AIAgent> agents)
+        => BuildSequentialCore(workflowName, chainOnlyAgentResponses, agents);
 
     /// <summary>
     /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
@@ -27,13 +52,14 @@ public static partial class AgentWorkflowBuilder
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
     public static Workflow BuildSequential(string workflowName, params IEnumerable<AIAgent> agents)
-        => BuildSequentialCore(workflowName, agents);
+        => BuildSequentialCore(workflowName, chainOnlyAgentResponses: false, agents);
 
-    private static Workflow BuildSequentialCore(string? workflowName, params IEnumerable<AIAgent> agents)
+    private static Workflow BuildSequentialCore(string? workflowName, bool chainOnlyAgentResponses, params IEnumerable<AIAgent> agents)
     {
         Throw.IfNullOrEmpty(agents);
 
-        SequentialWorkflowBuilder builder = new(agents);
+        SequentialWorkflowBuilder builder = new SequentialWorkflowBuilder(agents)
+            .WithChainOnlyAgentResponses(chainOnlyAgentResponses);
         if (workflowName is not null)
         {
             builder.WithName(workflowName);
