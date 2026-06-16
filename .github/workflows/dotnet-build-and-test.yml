@@ -48,10 +48,6 @@ jobs:
           filters: |
             dotnet:
               - 'dotnet/**'
-              - '!dotnet/AGENTS.md'
-              - '!dotnet/**/AGENTS.md'
-              - '!dotnet/.github/skills/*'
-              - '!dotnet/.github/skills/**'
             cosmosdb:
               - 'dotnet/src/Microsoft.Agents.AI.CosmosNoSql/**'
             # The Foundry hosted-agent IT is costly (builds a container, pushes to ACR,
