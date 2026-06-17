@@ -3,7 +3,7 @@
 """Hosted workflow sample with a structured intake step + checkpoint location.
 
 Same three-agent slogan workflow as
-``../../foundry-hosted-agents/responses/04_workflows/main.py`` (writer →
+``../../foundry-hosted-agents/responses/05_workflows/main.py`` (writer →
 legal reviewer → formatter), but with an extra **structured intake**
 step at the front and driven through the ``agent-framework-hosting``
 stack instead of the Foundry-Hosted-Agents runtime.

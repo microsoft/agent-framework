@@ -48,4 +48,4 @@ involved**.
 `agent-framework-hosting` stack but is packaged so the Foundry Hosted
 Agents platform can run it as one of its own.
 
-See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the cross-sample story.
+The table above summarizes the cross-sample story.

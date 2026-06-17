@@ -3,7 +3,7 @@
 A `Workflow` (intake → writer → legal reviewer → formatter) hosted
 behind **both the Responses API and the Invocations API**, with the
 host configured to **persist per-conversation checkpoints**. Mirrors
-[`../../foundry-hosted-agents/responses/04_workflows/`](../../foundry-hosted-agents/responses/04_workflows/)
+[`../../foundry-hosted-agents/responses/05_workflows/`](../../foundry-hosted-agents/responses/05_workflows/)
 but uses the `agent-framework-hosting` stack instead of the
 Foundry-Hosted-Agents runtime, and adds a structured intake step
 (`SloganBrief` with `topic` / `style` / `audience` fields) at the front

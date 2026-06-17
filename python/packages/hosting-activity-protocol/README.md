@@ -7,10 +7,9 @@ Telegram-via-bot-channel, and any other channel Azure Bot Service
 supports — without having to learn each channel's native protocol.
 
 > Looking for a deeper Microsoft Teams integration with adaptive cards,
-> message extensions, dialogs, SSO, etc? See the companion
-> [`agent-framework-hosting-teams`](../hosting-teams) package, which is
-> built on `microsoft-teams-apps` and exposes Teams-specific affordances
-> on top of (still) Azure Bot Service.
+> message extensions, dialogs, SSO, etc? That is intentionally separate from
+> this Activity Protocol channel, which focuses on Azure Bot Service
+> compatibility rather than Teams-specific affordances.
 
 Handles inbound `message` activities, outbound replies, mid-stream
 `updateActivity` edits, typing indicators, and both client-secret and
