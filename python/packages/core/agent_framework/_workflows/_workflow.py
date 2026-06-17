@@ -528,11 +528,11 @@ class Workflow(DictConvertible):
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
                     started = WorkflowEvent.started()
-                yield started  # noqa: RUF070
+                yield started  # noqa: RUF070, ASYNC119
                 self._status = WorkflowRunState.IN_PROGRESS
                 with _framework_event_origin():
                     in_progress = WorkflowEvent.status(self._status)
-                yield in_progress  # noqa: RUF070
+                yield in_progress  # noqa: RUF070, ASYNC119
 
                 # Per-run reset for fresh-message runs only. We deliberately
                 # do NOT clear shared workflow state (`_state.clear()`) or the
@@ -582,41 +582,41 @@ class Workflow(DictConvertible):
                     # Track request events for final status determination
                     if event.type == "request_info":
                         saw_request = True
-                    yield event
+                    yield event  # noqa: ASYNC119
 
                     if event.type == "request_info" and not emitted_in_progress_pending:
                         emitted_in_progress_pending = True
                         self._status = WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
                         with _framework_event_origin():
                             pending_status = WorkflowEvent.status(self._status)
-                        yield pending_status  # noqa: RUF070
+                        yield pending_status  # noqa: RUF070, ASYNC119
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     self._status = WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
                     with _framework_event_origin():
                         terminal_status = WorkflowEvent.status(self._status)
-                    yield terminal_status
+                    yield terminal_status  # noqa: ASYNC119
                 else:
                     self._status = WorkflowRunState.IDLE
                     with _framework_event_origin():
                         terminal_status = WorkflowEvent.status(self._status)
-                    yield terminal_status
+                    yield terminal_status  # noqa: ASYNC119
 
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
             except Exception as exc:
                 # Drain any pending events (for example, executor_failed) before yielding failed event
                 for event in await self._runner.context.drain_events():
-                    yield event
+                    yield event  # noqa: ASYNC119
 
                 # Surface structured failure details before propagating exception
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
-                yield failed_event  # noqa: RUF070
+                yield failed_event  # noqa: RUF070, ASYNC119
                 self._status = WorkflowRunState.FAILED
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
-                yield failed_status  # noqa: RUF070
+                yield failed_status  # noqa: RUF070, ASYNC119
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
                     attributes={

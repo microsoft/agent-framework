@@ -974,9 +974,9 @@ class FunctionalWorkflow:
                 span.add_event(OtelAttr.WORKFLOW_STARTED)
 
                 with _framework_event_origin():
-                    yield WorkflowEvent.started()
+                    yield WorkflowEvent.started()  # noqa: ASYNC119
                 with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
+                    yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)  # noqa: ASYNC119
 
                 # Execute the user function
                 return_value = await self._execute(ctx, message)
@@ -999,10 +999,10 @@ class FunctionalWorkflow:
                 for event in ctx._get_events():
                     if event.type == "request_info":
                         saw_request = True
-                    yield event
+                    yield event  # noqa: ASYNC119
                     if event.type == "request_info":
                         with _framework_event_origin():
-                            yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                            yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)  # noqa: ASYNC119
 
                 # Save final checkpoint if storage is available
                 if storage is not None:
@@ -1012,7 +1012,7 @@ class FunctionalWorkflow:
                 if saw_request:
                     self._last_pending_request_ids = set(ctx._pending_requests)
                     with _framework_event_origin():
-                        yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                        yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)  # noqa: ASYNC119
                 else:
                     # Clean completion — drop cross-run replay state.
                     self._last_message = None
@@ -1020,7 +1020,7 @@ class FunctionalWorkflow:
                     self._last_step_cache_auto_request_info_counts = {}
                     self._last_pending_request_ids = set()
                     with _framework_event_origin():
-                        yield WorkflowEvent.status(WorkflowRunState.IDLE)
+                        yield WorkflowEvent.status(WorkflowRunState.IDLE)  # noqa: ASYNC119
 
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
@@ -1034,30 +1034,30 @@ class FunctionalWorkflow:
                 for event in ctx._get_events():
                     if event.type == "request_info":
                         saw_request = True
-                    yield event
+                    yield event  # noqa: ASYNC119
                     if event.type == "request_info":
                         with _framework_event_origin():
-                            yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                            yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)  # noqa: ASYNC119
 
                 # Save checkpoint
                 if storage is not None:
                     await self._save_checkpoint(ctx, storage, ckpt_chain[0])
 
                 with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                    yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)  # noqa: ASYNC119
 
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
             except Exception as exc:
                 # Yield any events collected before the failure
                 for event in ctx._get_events():
-                    yield event
+                    yield event  # noqa: ASYNC119
 
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
-                    yield WorkflowEvent.failed(details)
+                    yield WorkflowEvent.failed(details)  # noqa: ASYNC119
                 with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.FAILED)
+                    yield WorkflowEvent.status(WorkflowRunState.FAILED)  # noqa: ASYNC119
 
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,

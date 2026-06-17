@@ -299,7 +299,7 @@ class AgentFrameworkExecutor:
             with capture_traces(response_id=response_id, entity_id=entity_id) as trace_collector:
                 if entity_info.type == "agent":
                     async for event in self._execute_agent(entity_obj, request, trace_collector):
-                        yield event
+                        yield event  # noqa: ASYNC119
                 elif entity_info.type == "workflow":
                     async for event in self._execute_workflow(entity_obj, request, trace_collector):
                         # Log request_info event (type='request_info') for debugging HIL flow
@@ -312,13 +312,13 @@ class AgentFrameworkExecutor:
                             logger.info(f"   request_type: {getattr(event, 'request_type', 'N/A')}")
                             data = getattr(event, "data", None)
                             logger.info(f"   data type: {type(data).__name__ if data else 'None'}")
-                        yield event
+                        yield event  # noqa: ASYNC119
                 else:
                     raise ValueError(f"Unsupported entity type: {entity_info.type}")
 
                 # Yield any remaining trace events after execution completes
                 for trace_event in trace_collector.get_pending_events():
-                    yield trace_event
+                    yield trace_event  # noqa: ASYNC119
 
         except Exception as e:
             logger.exception(f"Error executing entity {entity_id}: {e}")

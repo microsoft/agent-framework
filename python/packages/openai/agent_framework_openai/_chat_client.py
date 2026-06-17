@@ -659,7 +659,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                 )
                                 if served_model is not None:
                                     update.model = served_model
-                                yield update
+                                yield update  # noqa: ASYNC119
                     except Exception as ex:
                         self._handle_request_error(ex)
                 else:
@@ -679,7 +679,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             # surface the served-model header.
                             async with client.responses.stream(**run_options) as response:
                                 async for chunk in response:
-                                    yield self._parse_chunk_from_openai(
+                                    yield self._parse_chunk_from_openai(  # noqa: ASYNC119
                                         chunk,
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
@@ -701,7 +701,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                     )
                                     if served_model is not None:
                                         update.model = served_model
-                                    yield update
+                                    yield update  # noqa: ASYNC119
                     except Exception as ex:
                         self._handle_request_error(ex)
 
