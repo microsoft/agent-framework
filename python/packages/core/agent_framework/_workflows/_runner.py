@@ -10,6 +10,7 @@ from typing import Any
 from ..exceptions import (
     WorkflowCheckpointException,
     WorkflowConvergenceException,
+    WorkflowException,
 )
 from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
 from ._const import EXECUTOR_STATE_KEY
@@ -65,7 +66,7 @@ class Runner:
 
         # Checkpointing related attributes
         self._resumed_from_checkpoint = False
-        self.previous_checkpoint_id: CheckpointID | None = None
+        self._previous_checkpoint_id: CheckpointID | None = None
 
     @property
     def context(self) -> RunnerContext:
@@ -87,6 +88,24 @@ class Runner:
             or a checkpoint, the iteration count is normally NOT reset.
         """
         self._iteration = 0
+
+    def reset_runtime_state(
+        self,
+        *,
+        iteration: int = 0,
+        previous_checkpoint_id: CheckpointID | None = None,
+        resumed_from_checkpoint: bool = False,
+    ) -> None:
+        """Reset runner runtime bookkeeping to a known baseline.
+
+        Args:
+            iteration: Iteration value to restore.
+            previous_checkpoint_id: Checkpoint parent pointer for subsequent saves.
+            resumed_from_checkpoint: Whether to treat next run as resumed.
+        """
+        self._iteration = iteration
+        self._previous_checkpoint_id = previous_checkpoint_id
+        self._resumed_from_checkpoint = resumed_from_checkpoint
 
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
@@ -214,25 +233,69 @@ class Runner:
         ]
         await asyncio.gather(*tasks)
 
+    async def _prepare_checkpoint_state(self) -> None:
+        """Persist executor snapshots into committed shared state.
+
+        This is used by checkpoint capture paths that need a complete, restorable
+        state payload without necessarily writing to a checkpoint storage backend.
+        """
+        await self._save_executor_states()
+        self._state.commit()
+
+    async def capture_checkpoint_object(self, *, metadata: dict[str, Any] | None = None) -> WorkflowCheckpoint:
+        """Capture the current runner state as an in-memory checkpoint object.
+
+        Persists executor snapshots into committed state and builds a
+        ``WorkflowCheckpoint`` from the current committed state. The checkpoint is
+        not written to any storage backend; the caller owns its lifetime (for
+        example, the workflow's captured initial checkpoint used by reset).
+
+        This is only valid when the runner is quiescent: it rejects capture when
+        in-flight executor messages or pending request_info events are present,
+        since those represent mid-run state that would not form a clean baseline.
+
+        Args:
+            metadata: Optional metadata to attach to the checkpoint.
+
+        Returns:
+            A ``WorkflowCheckpoint`` snapshot of the current runner state.
+
+        Raises:
+            WorkflowException: If in-flight messages or pending requests are present.
+        """
+        if await self._ctx.has_messages():
+            raise WorkflowException("Cannot capture checkpoint while in-flight messages are present.")
+
+        pending_requests = await self._ctx.get_pending_request_info_events()
+        if pending_requests:
+            raise WorkflowException("Cannot capture checkpoint while pending requests are present.")
+
+        await self._prepare_checkpoint_state()
+        return WorkflowCheckpoint(
+            workflow_name=self._workflow_name,
+            graph_signature_hash=self._graph_signature_hash,
+            previous_checkpoint_id=None,
+            messages={},
+            state=self._state.export_state(),
+            pending_request_info_events={},
+            iteration_count=0,
+            metadata=metadata or {},
+        )
+
     async def create_checkpoint_if_enabled(self) -> None:
         """Create a checkpoint if checkpointing is enabled and attach a label and metadata."""
         if not self._ctx.has_checkpointing():
             return
 
         try:
-            # Save executor states into the shared state before creating the checkpoint,
-            # so that they are included in the checkpoint payload.
-            await self._save_executor_states()
-            # `on_checkpoint_save()` writes via State.set(), which stages values in the
-            # pending buffer. Checkpoints serialize committed state only, so commit here
-            # to ensure executor snapshots are captured in this checkpoint.
-            self._state.commit()
+            # Save executor states into committed state before creating the checkpoint.
+            await self._prepare_checkpoint_state()
 
             checkpoint_id = await self._ctx.create_checkpoint(
                 self._workflow_name,
                 self._graph_signature_hash,
                 self._state,
-                self.previous_checkpoint_id,
+                self._previous_checkpoint_id,
                 self._iteration,
             )
 
@@ -240,9 +303,9 @@ class Runner:
                 "Created checkpoint: %s with parent checkpoint at iteration %d: %s",
                 checkpoint_id,
                 self._iteration,
-                self.previous_checkpoint_id,
+                self._previous_checkpoint_id,
             )
-            self.previous_checkpoint_id = checkpoint_id
+            self._previous_checkpoint_id = checkpoint_id
         except Exception as e:
             logger.warning(
                 "Failed to create checkpoint at iteration %d: %s. "
@@ -250,8 +313,34 @@ class Runner:
                 "The next successfully-created checkpoint will be parented to the last successful checkpoint: %s",
                 self._iteration,
                 e,
-                self.previous_checkpoint_id,
+                self._previous_checkpoint_id,
             )
+
+    async def restore_from_checkpoint_object(self, checkpoint: WorkflowCheckpoint) -> None:
+        """Restore runner state from an in-memory checkpoint object.
+
+        Unlike :meth:`restore_from_checkpoint`, this does not load from storage or
+        validate the graph signature; it applies a checkpoint that the caller already
+        holds (for example, the workflow's captured initial checkpoint used by reset).
+
+        This clears any runtime checkpoint storage override and resets the context for a
+        fresh run, then restores shared state, executor snapshots, and runtime bookkeeping
+        from the checkpoint.
+
+        Args:
+            checkpoint: The checkpoint whose state should be restored.
+        """
+        self._ctx.clear_runtime_checkpoint_storage()
+        self._ctx.reset_for_new_run()
+
+        self._state.clear()
+        self._state.import_state(checkpoint.state)
+        await self._restore_executor_states()
+        self.reset_runtime_state(
+            iteration=checkpoint.iteration_count,
+            previous_checkpoint_id=checkpoint.previous_checkpoint_id,
+            resumed_from_checkpoint=False,
+        )
 
     async def restore_from_checkpoint(
         self,
@@ -379,7 +468,7 @@ class Runner:
         """
         self._resumed_from_checkpoint = True
         self._iteration = checkpoint.iteration_count
-        self.previous_checkpoint_id = checkpoint.checkpoint_id
+        self._previous_checkpoint_id = checkpoint.checkpoint_id
 
     async def _set_executor_state(self, executor_id: str, state: dict[str, Any]) -> None:
         """Store executor state in state under a reserved key.

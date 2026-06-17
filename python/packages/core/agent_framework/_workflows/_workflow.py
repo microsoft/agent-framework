@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sessions import ContextProvider
 from .._types import ResponseStream
-from ..exceptions import WorkflowCheckpointException, WorkflowException
+from ..exceptions import WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
-from ._checkpoint import CheckpointID, CheckpointStorage
+from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
     EdgeGroup,
@@ -371,6 +371,10 @@ class Workflow(DictConvertible):
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
 
+        # In-memory initial checkpoint captured from the just-built workflow state.
+        # This is internal-only and used by ``reset()``.
+        self._initial_checkpoint: WorkflowCheckpoint | None = None
+
     @property
     def status(self) -> WorkflowRunState:
         """Return the current run-level status of this workflow instance.
@@ -474,49 +478,43 @@ class Workflow(DictConvertible):
         """Get the list of executors in the workflow."""
         return list(self.executors.values())
 
-    async def create_checkpoint(self, checkpoint_storage: CheckpointStorage | None) -> CheckpointID:
-        """Create a checkpoint of the current workflow state in the provided storage.
+    async def _ensure_initial_checkpoint(self) -> None:
+        """Capture the in-memory initial checkpoint once for this workflow instance."""
+        if self._initial_checkpoint is not None:
+            return
 
-        Args:
-            checkpoint_storage: The CheckpointStorage instance where the checkpoint will be stored.
-                If None, will use the workflow's default checkpoint storage if configured, or raise
-                if checkpointing is not enabled.
+        self._initial_checkpoint = await self._runner.capture_checkpoint_object(
+            metadata={"kind": "initial_in_memory"},
+        )
 
-        Notes:
-            - Checkpoints can only be created when the workflow is idle (not actively running).
-            - Checkpoints are automatically created at the end of each superstep if a checkpoint storage is configured.
-              Use this method only when necessary, for example to capture the initial state of the workflow prior to the
-              first run.
-            - Creating a checkpoint manually will alter the checkpoint lineage. The new checkpoint will become the
-              parent of the next checkpoint created automatically (if checkpointing is enabled by providing a storage).
+    async def reset(self) -> None:
+        """Reset the workflow instance to its captured initial checkpoint state.
+
+        The initial checkpoint is captured in memory once per workflow instance and
+        is not persisted to external checkpoint storage.
+
+        Raises:
+            WorkflowException: If called while a workflow run is active.
         """
         if self._is_run_active():
             raise WorkflowException(
-                "Cannot create checkpoint while a workflow run is active. "
-                "Checkpointing is only allowed between runs when the workflow is idle."
+                "Cannot reset workflow while a run is active. "
+                "Reset is only allowed between runs when the workflow is idle."
             )
 
-        if checkpoint_storage is None and not self._runner.context.has_checkpointing():
-            raise WorkflowCheckpointException(
-                "Checkpoint storage must be provided to create a checkpoint when checkpointing is not enabled."
-            )
-        if checkpoint_storage is not None:
-            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+        # Capture the baseline if it doesn't exist yet. This is idempotent: on a
+        # normal reset after one or more runs it's a no-op (the snapshot was taken
+        # before the first run); when reset is the first operation it captures the
+        # pristine just-built state so the workflow stays runnable.
+        await self._ensure_initial_checkpoint()
+        if self._initial_checkpoint is None:
+            raise WorkflowException("Workflow initial checkpoint is unavailable.")
 
-        # Capture the runner's checkpoint id before attempting to save. The runner
-        # log-and-swallows storage save errors and only updates
-        # ``previous_checkpoint_id`` on success, so a failed save would otherwise
-        # leave the prior id in place and we'd return it as if a fresh checkpoint
-        # had been created.
-        previous_id_before = self._runner.previous_checkpoint_id
-        try:
-            await self._runner.create_checkpoint_if_enabled()
-            new_id = self._runner.previous_checkpoint_id
-            if new_id is None or new_id == previous_id_before:
-                raise WorkflowCheckpointException("Failed to create checkpoint.")
-            return new_id
-        finally:
-            self._runner.context.clear_runtime_checkpoint_storage()
+        # Restore runner state, executor snapshots, and runtime bookkeeping from the
+        # in-memory initial checkpoint.
+        await self._runner.restore_from_checkpoint_object(self._initial_checkpoint)
+
+        self._status = WorkflowRunState.IDLE
 
     async def _run_workflow_with_tracing(
         self,
@@ -868,6 +866,8 @@ class Workflow(DictConvertible):
                     "Workflows that need to recover from a mid-run failure must use "
                     "checkpointing; there is no in-process recovery path."
                 )
+
+            await self._ensure_initial_checkpoint()
 
             initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
 

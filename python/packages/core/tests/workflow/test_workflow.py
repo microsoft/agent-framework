@@ -20,7 +20,6 @@ from agent_framework import (
     Content,
     Executor,
     FileCheckpointStorage,
-    InMemoryCheckpointStorage,
     Message,
     ResponseStream,
     WorkflowBuilder,
@@ -1418,141 +1417,83 @@ async def test_output_executors_filtering_with_run_responses_streaming() -> None
 # endregion
 
 
-# region Workflow.create_checkpoint
+# region Workflow.reset
 
 
-class TestWorkflowCreateCheckpoint:
-    """Tests for :meth:`Workflow.create_checkpoint`."""
+class CounterStateExecutor(Executor):
+    """Executor with local mutable state used to verify checkpoint-based reset."""
 
-    async def test_returns_checkpoint_id_with_runtime_storage(self, simple_executor: Executor) -> None:
-        """Calling `create_checkpoint` with a runtime storage persists a checkpoint and returns its id."""
-        storage = InMemoryCheckpointStorage()
+    def __init__(self, id: str) -> None:
+        super().__init__(id=id)
+        self.counter = 0
+
+    @handler
+    async def handle(self, message: str, ctx: WorkflowContext[str, int]) -> None:
+        self.counter += 1
+        await ctx.yield_output(self.counter)
+
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        return {"counter": self.counter}
+
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        self.counter = int(state.get("counter", 0))
+
+
+class TestWorkflowReset:
+    """Tests for :meth:`Workflow.reset`."""
+
+    async def test_reset_restores_initial_shared_state(self) -> None:
+        """Reset clears accumulated workflow state back to the initial baseline."""
+        executor = StateTrackingExecutor(id="state_executor")
+        workflow = WorkflowBuilder(start_executor=executor).add_edge(executor, executor).build()
+
+        result1 = await workflow.run(StateTrackingMessage(data="message1", run_id="run1"))
+        assert result1.get_outputs()[0] == ["run1:message1"]
+
+        result2 = await workflow.run(StateTrackingMessage(data="message2", run_id="run2"))
+        assert result2.get_outputs()[0] == ["run1:message1", "run2:message2"]
+
+        await workflow.reset()
+
+        result3 = await workflow.run(StateTrackingMessage(data="message3", run_id="run3"))
+        assert result3.get_outputs()[0] == ["run3:message3"]
+
+    async def test_reset_restores_executor_checkpoint_state(self) -> None:
+        """Reset restores per-executor local state captured in the initial checkpoint."""
+        executor = CounterStateExecutor(id="counter_executor")
+        workflow = WorkflowBuilder(start_executor=executor).add_edge(executor, executor).build()
+
+        result1 = await workflow.run("one")
+        assert result1.get_outputs() == [1]
+
+        result2 = await workflow.run("two")
+        assert result2.get_outputs() == [2]
+
+        await workflow.reset()
+
+        result3 = await workflow.run("three")
+        assert result3.get_outputs() == [1]
+
+    async def test_reset_before_first_run_is_allowed(self, simple_executor: Executor) -> None:
+        """Reset can be called before the first run and leaves workflow runnable."""
         workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
-        checkpoint_id = await workflow.create_checkpoint(storage)
+        await workflow.reset()
 
-        assert checkpoint_id
-        loaded = await storage.load(checkpoint_id)
-        assert loaded is not None
-        assert loaded.checkpoint_id == checkpoint_id
-        assert loaded.workflow_name == workflow.name
-        assert loaded.graph_signature_hash == workflow.graph_signature_hash
+        result = await workflow.run("hello")
+        assert result.get_final_state() == WorkflowRunState.IDLE
 
-    async def test_uses_buildtime_storage_when_none_provided(self, simple_executor: Executor) -> None:
-        """When called with `None`, the build-time storage is used."""
-        storage = InMemoryCheckpointStorage()
-        workflow = (
-            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
-            .add_edge(simple_executor, simple_executor)
-            .build()
-        )
-
-        checkpoint_id = await workflow.create_checkpoint(None)
-
-        loaded = await storage.load(checkpoint_id)
-        assert loaded is not None
-        assert loaded.checkpoint_id == checkpoint_id
-
-    async def test_raises_when_no_storage_available(self, simple_executor: Executor) -> None:
-        """Without build-time or runtime storage, `create_checkpoint(None)` raises."""
+    async def test_reset_raises_while_run_active(self, simple_executor: Executor) -> None:
+        """Reset must reject while a workflow run is active."""
         workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
-        with pytest.raises(WorkflowCheckpointException, match="Checkpoint storage must be provided"):
-            await workflow.create_checkpoint(None)
-
-    async def test_raises_while_run_active(self, simple_executor: Executor) -> None:
-        """`create_checkpoint` must reject while a workflow run is still active."""
-        storage = InMemoryCheckpointStorage()
-        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
-
-        # Hold a live reference to a streaming run without iterating it so that
-        # ``_is_run_active`` remains True (the active-run weakref still resolves).
         active_stream = workflow.run(WorkflowMessage(data="hi", source_id="test"), stream=True)
         try:
-            with pytest.raises(WorkflowException, match="Cannot create checkpoint while a workflow run is active"):
-                await workflow.create_checkpoint(storage)
+            with pytest.raises(WorkflowException, match="Cannot reset workflow while a run is active"):
+                await workflow.reset()
         finally:
-            # Drain the stream so the run completes cleanly and the active-run
-            # weakref is cleared; otherwise pytest's asyncio teardown can leak
-            # the unconsumed generator.
             async for _ in active_stream:
                 pass
-
-    async def test_clears_runtime_storage_after_call(self, simple_executor: Executor) -> None:
-        """The runtime storage override must not leak past the call."""
-        storage = InMemoryCheckpointStorage()
-        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
-
-        await workflow.create_checkpoint(storage)
-
-        assert workflow._runner.context.has_checkpointing() is False
-        assert workflow._runner.context._runtime_checkpoint_storage is None  # type: ignore[attr-defined]
-
-    async def test_clears_runtime_storage_after_failure(self, simple_executor: Executor) -> None:
-        """The runtime storage override must be cleared even if checkpoint creation fails."""
-        from unittest.mock import AsyncMock
-
-        storage = InMemoryCheckpointStorage()
-        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
-
-        # The runner logs-and-swallows storage save errors, so a failed save
-        # surfaces as the "Failed to create checkpoint." path when
-        # ``previous_checkpoint_id`` remains ``None``. Either way, the
-        # ``finally`` cleanup must still clear the runtime override.
-        storage.save = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
-
-        with pytest.raises(WorkflowCheckpointException, match="Failed to create checkpoint"):
-            await workflow.create_checkpoint(storage)
-
-        assert workflow._runner.context._runtime_checkpoint_storage is None  # type: ignore[attr-defined]
-
-    async def test_alters_lineage_for_next_checkpoint(self, simple_executor: Executor) -> None:
-        """A manually created checkpoint becomes the parent of the next checkpoint."""
-        storage = InMemoryCheckpointStorage()
-        workflow = (
-            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
-            .add_edge(simple_executor, simple_executor)
-            .build()
-        )
-
-        first_id = await workflow.create_checkpoint(None)
-        second_id = await workflow.create_checkpoint(None)
-
-        assert first_id != second_id
-        second = await storage.load(second_id)
-        assert second is not None
-        assert second.previous_checkpoint_id == first_id
-
-    async def test_raises_when_save_fails_after_prior_success(self, simple_executor: Executor) -> None:
-        """A failed save after an earlier successful checkpoint must not return the stale id.
-
-        The runner log-and-swallows storage save errors and only updates
-        ``previous_checkpoint_id`` on success. Without an explicit transition check,
-        ``create_checkpoint`` would silently return the previously stored id as if a
-        new checkpoint had been created.
-        """
-        from unittest.mock import AsyncMock
-
-        storage = InMemoryCheckpointStorage()
-        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
-
-        # First call succeeds and seeds ``previous_checkpoint_id``.
-        first_id = await workflow.create_checkpoint(storage)
-        assert first_id
-
-        # Second call fails to save, so the runner leaves ``previous_checkpoint_id``
-        # pointing at ``first_id``. The method must detect that the id did not
-        # transition and raise instead of returning the stale value.
-        original_save = storage.save
-        storage.save = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
-        try:
-            with pytest.raises(WorkflowCheckpointException, match="Failed to create checkpoint"):
-                await workflow.create_checkpoint(storage)
-        finally:
-            storage.save = original_save  # type: ignore[method-assign]
-
-        # The runner's bookkeeping is unchanged after the failed call.
-        assert workflow._runner.previous_checkpoint_id == first_id  # type: ignore[attr-defined]
 
 
 # endregion
