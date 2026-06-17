@@ -3516,9 +3516,7 @@ class MCPSkill(Skill):
         result = await self._client.read_resource(_mcp_any_url(self._skill_md_uri))
         text = _mcp_join_text(result)
         if not text:
-            raise ValueError(
-                f"The MCP server returned no text content for SKILL.md resource '{self._skill_md_uri}'."
-            )
+            raise ValueError(f"The MCP server returned no text content for SKILL.md resource '{self._skill_md_uri}'.")
         self._content = text
         return text
 
@@ -3572,11 +3570,7 @@ class MCPSkill(Skill):
             or ``None`` if the name is unsafe.
         """
         normalized = name.replace("\\", "/")
-        if (
-            normalized.startswith("/")
-            or "://" in normalized
-            or any(seg == ".." for seg in normalized.split("/"))
-        ):
+        if normalized.startswith("/") or "://" in normalized or any(seg == ".." for seg in normalized.split("/")):
             logger.debug("Rejecting resource name with unsafe path components: %r", name)
             return None
         return normalized

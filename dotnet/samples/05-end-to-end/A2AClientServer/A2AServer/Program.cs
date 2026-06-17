@@ -33,7 +33,7 @@ IConfigurationRoot configuration = new ConfigurationBuilder()
 
 string? apiKey = configuration["OPENAI_API_KEY"];
 string model = configuration["OPENAI_CHAT_MODEL_NAME"] ?? "gpt-5.4-mini";
-string? endpoint = configuration["AZURE_AI_PROJECT_ENDPOINT"];
+string? endpoint = configuration["FOUNDRY_PROJECT_ENDPOINT"];
 string[] agentUrls = (builder.Configuration["urls"] ?? "http://localhost:5000").Split(';');
 
 var invoiceQueryPlugin = new InvoiceQuery();

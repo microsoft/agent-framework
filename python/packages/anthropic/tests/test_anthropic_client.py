@@ -2354,6 +2354,27 @@ def test_parse_usage_with_cache_tokens(mock_anthropic_client: MagicMock) -> None
     assert result["input_token_count"] == 100
     assert result["anthropic.cache_creation_input_tokens"] == 20
     assert result["anthropic.cache_read_input_tokens"] == 30
+    assert result["cache_creation_input_token_count"] == 20
+    assert result["cache_read_input_token_count"] == 30
+
+
+def test_parse_usage_preserves_zero_cache_tokens(mock_anthropic_client: MagicMock) -> None:
+    """Test parsing usage preserves zero-valued mapped cache tokens."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_usage = MagicMock()
+    mock_usage.input_tokens = 100
+    mock_usage.output_tokens = 50
+    mock_usage.cache_creation_input_tokens = 0
+    mock_usage.cache_read_input_tokens = 0
+
+    result = client._parse_usage_from_anthropic(mock_usage)
+
+    assert result is not None
+    assert result["anthropic.cache_creation_input_tokens"] == 0
+    assert result["cache_creation_input_token_count"] == 0
+    assert result["anthropic.cache_read_input_tokens"] == 0
+    assert result["cache_read_input_token_count"] == 0
 
 
 # Code Execution Result Tests

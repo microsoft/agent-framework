@@ -296,7 +296,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     {
         FileMemoryState state = this._sessionState.GetOrInitializeState(AIAgent.CurrentRunContext?.Session);
         string? pattern = string.IsNullOrWhiteSpace(filePattern) ? null : filePattern;
-        IReadOnlyList<FileSearchResult> results = await this._fileStore.SearchFilesAsync(state.WorkingFolder, regexPattern, pattern, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FileSearchResult> results = await this._fileStore.SearchFilesAsync(state.WorkingFolder, regexPattern, pattern, recursive: false, cancellationToken).ConfigureAwait(false);
 
         // Filter out internal files (description sidecars and memory index) so they stay hidden.
         var filtered = new List<FileSearchResult>(results.Count);

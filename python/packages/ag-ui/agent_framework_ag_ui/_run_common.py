@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from collections.abc import Mapping
@@ -33,7 +34,7 @@ from agent_framework import Content
 
 from ._orchestration._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
-from ._utils import generate_event_id, make_json_safe
+from ._utils import generate_event_id, make_json_safe, normalize_agui_role
 
 logger = logging.getLogger(__name__)
 
@@ -733,3 +734,117 @@ def _emit_content(
         return _emit_text_reasoning(content, flow)
     logger.debug("Skipping unsupported content type in AG-UI emitter: %s", content_type)
     return events
+
+
+def _canonical_snapshot_message(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalize an AG-UI message for identity comparison without generated ids."""
+    from ._message_adapters import agui_messages_to_snapshot_format
+
+    normalized_message = agui_messages_to_snapshot_format([copy.deepcopy(message)])[0]
+    normalized_message.pop("id", None)
+    return cast(dict[str, Any], make_json_safe(normalized_message))
+
+
+def _snapshot_messages_match(stored_message: dict[str, Any], incoming_message: dict[str, Any]) -> bool:
+    """Return whether an incoming message already represents the stored snapshot message."""
+    stored_id = stored_message.get("id")
+    incoming_id = incoming_message.get("id")
+    if stored_id and incoming_id:
+        return str(stored_id) == str(incoming_id)
+    return _canonical_snapshot_message(stored_message) == _canonical_snapshot_message(incoming_message)
+
+
+def _latest_user_message_index(messages: list[dict[str, Any]]) -> int | None:
+    """Find the newest incoming user message index."""
+    for index in range(len(messages) - 1, -1, -1):
+        if normalize_agui_role(messages[index].get("role", "user")) == "user":
+            return index
+    return None
+
+
+def _known_tool_call_ids(
+    stored_messages: list[dict[str, Any]],
+    stored_interrupt: list[dict[str, Any]] | None,
+) -> set[str]:
+    """Collect tool call ids the backend previously issued for this thread."""
+    known_ids: set[str] = set()
+    for message in stored_messages:
+        tool_calls = message.get("tool_calls") or message.get("toolCalls") or []
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in cast(list[Any], tool_calls):
+            if isinstance(tool_call, dict):
+                tool_call_id = cast(dict[str, Any], tool_call).get("id")
+                if tool_call_id:
+                    known_ids.add(str(tool_call_id))
+    for interrupt in stored_interrupt or []:
+        interrupt_id = interrupt.get("id")
+        if interrupt_id:
+            known_ids.add(str(interrupt_id))
+    return known_ids
+
+
+def _filter_untrusted_suffix(
+    incoming_suffix: list[dict[str, Any]],
+    *,
+    stored_messages: list[dict[str, Any]],
+    stored_interrupt: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Drop client-forged non-user messages before promoting them to stored history.
+
+    Only the user's own turns and tool results answering backend-issued tool calls
+    (including pending interrupts) may extend the authoritative thread history.
+    """
+    known_ids: set[str] | None = None
+    filtered: list[dict[str, Any]] = []
+    for message in incoming_suffix:
+        raw_role = str(message.get("role", "")).lower()
+        if raw_role == "user":
+            filtered.append(message)
+            continue
+        if raw_role == "tool":
+            tool_call_id = message.get("toolCallId") or message.get("tool_call_id") or message.get("actionExecutionId")
+            if known_ids is None:
+                known_ids = _known_tool_call_ids(stored_messages, stored_interrupt)
+            if tool_call_id and str(tool_call_id) in known_ids:
+                filtered.append(message)
+                continue
+        logger.warning(
+            "Dropping client-supplied %r message from the incoming thread suffix; "
+            "only user turns and tool results for backend-issued tool calls extend stored history.",
+            raw_role or "unknown",
+        )
+    return filtered
+
+
+def _reconstruct_messages_from_thread_snapshot(
+    *,
+    stored_messages: list[dict[str, Any]],
+    incoming_messages: list[dict[str, Any]],
+    stored_interrupt: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Combine backend-owned prior history with the request-owned new user turn."""
+    if not stored_messages or not incoming_messages:
+        return incoming_messages
+
+    incoming_suffix: list[dict[str, Any]]
+    if len(incoming_messages) >= len(stored_messages) and all(
+        _snapshot_messages_match(stored_message, incoming_message)
+        for stored_message, incoming_message in zip(stored_messages, incoming_messages)
+    ):
+        incoming_suffix = incoming_messages[len(stored_messages) :]
+    else:
+        latest_user_index = _latest_user_message_index(incoming_messages)
+        if latest_user_index is None:
+            return incoming_messages
+        incoming_suffix = incoming_messages[latest_user_index:]
+
+    incoming_suffix = _filter_untrusted_suffix(
+        incoming_suffix,
+        stored_messages=stored_messages,
+        stored_interrupt=stored_interrupt,
+    )
+
+    return [copy.deepcopy(message) for message in stored_messages] + [
+        copy.deepcopy(message) for message in incoming_suffix
+    ]

@@ -40,8 +40,8 @@ public class FileAccessProviderTests
         // Arrange
         var tools = await CreateToolsAsync();
 
-        // Assert — 5 tools: SaveFile, ReadFile, DeleteFile, ListFiles, SearchFiles
-        Assert.Equal(5, tools.Count());
+        // Assert — 6 tools: SaveFile, ReadFile, DeleteFile, ListFiles, ListSubdirectories, SearchFiles
+        Assert.Equal(6, tools.Count());
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public class FileAccessProviderTests
         // Assert
         Assert.NotNull(result.Instructions);
         Assert.Contains("File Access", result.Instructions);
-        Assert.Contains("FileAccess_", result.Instructions);
+        Assert.Contains("file_access_", result.Instructions);
         Assert.Contains("persist beyond the current session", result.Instructions);
     }
 
@@ -108,7 +108,7 @@ public class FileAccessProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var tools = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileAccess_SaveFile");
+        var saveFile = GetTool(tools, "file_access_save_file");
 
         // Act
         await InvokeToolAsync(saveFile, new AIFunctionArguments
@@ -128,7 +128,7 @@ public class FileAccessProviderTests
         // Arrange — FileAccessProvider should never create description sidecar files.
         var store = new InMemoryAgentFileStore();
         var tools = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileAccess_SaveFile");
+        var saveFile = GetTool(tools, "file_access_save_file");
 
         // Act
         await InvokeToolAsync(saveFile, new AIFunctionArguments
@@ -148,7 +148,7 @@ public class FileAccessProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var tools = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileAccess_SaveFile");
+        var saveFile = GetTool(tools, "file_access_save_file");
 
         await InvokeToolAsync(saveFile, new AIFunctionArguments
         {
@@ -175,7 +175,7 @@ public class FileAccessProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var tools = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileAccess_SaveFile");
+        var saveFile = GetTool(tools, "file_access_save_file");
 
         await InvokeToolAsync(saveFile, new AIFunctionArguments
         {
@@ -200,7 +200,7 @@ public class FileAccessProviderTests
     {
         // Arrange
         var tools = await CreateToolsAsync();
-        var saveFile = GetTool(tools, "FileAccess_SaveFile");
+        var saveFile = GetTool(tools, "file_access_save_file");
 
         // Act
         var result = await InvokeToolAsync(saveFile, new AIFunctionArguments
@@ -225,7 +225,7 @@ public class FileAccessProviderTests
         var store = new InMemoryAgentFileStore();
         await store.WriteFileAsync("notes.md", "Stored content");
         var tools = await CreateToolsAsync(store);
-        var readFile = GetTool(tools, "FileAccess_ReadFile");
+        var readFile = GetTool(tools, "file_access_read_file");
 
         // Act
         var result = await InvokeToolAsync(readFile, new AIFunctionArguments
@@ -243,7 +243,7 @@ public class FileAccessProviderTests
     {
         // Arrange
         var tools = await CreateToolsAsync();
-        var readFile = GetTool(tools, "FileAccess_ReadFile");
+        var readFile = GetTool(tools, "file_access_read_file");
 
         // Act
         var result = await InvokeToolAsync(readFile, new AIFunctionArguments
@@ -267,7 +267,7 @@ public class FileAccessProviderTests
         var store = new InMemoryAgentFileStore();
         await store.WriteFileAsync("notes.md", "Content");
         var tools = await CreateToolsAsync(store);
-        var deleteFile = GetTool(tools, "FileAccess_DeleteFile");
+        var deleteFile = GetTool(tools, "file_access_delete_file");
 
         // Act
         var result = await InvokeToolAsync(deleteFile, new AIFunctionArguments
@@ -286,7 +286,7 @@ public class FileAccessProviderTests
     {
         // Arrange
         var tools = await CreateToolsAsync();
-        var deleteFile = GetTool(tools, "FileAccess_DeleteFile");
+        var deleteFile = GetTool(tools, "file_access_delete_file");
 
         // Act
         var result = await InvokeToolAsync(deleteFile, new AIFunctionArguments
@@ -311,7 +311,7 @@ public class FileAccessProviderTests
         await store.WriteFileAsync("notes.md", "Content");
         await store.WriteFileAsync("data.txt", "Data");
         var tools = await CreateToolsAsync(store);
-        var listFiles = GetTool(tools, "FileAccess_ListFiles");
+        var listFiles = GetTool(tools, "file_access_list_files");
 
         // Act
         var result = await InvokeToolAsync(listFiles, new AIFunctionArguments());
@@ -331,7 +331,7 @@ public class FileAccessProviderTests
         await store.WriteFileAsync("notes.md", "Content");
         await store.WriteFileAsync("notes_description.md", "Description");
         var tools = await CreateToolsAsync(store);
-        var listFiles = GetTool(tools, "FileAccess_ListFiles");
+        var listFiles = GetTool(tools, "file_access_list_files");
 
         // Act
         var result = await InvokeToolAsync(listFiles, new AIFunctionArguments());
@@ -346,10 +346,102 @@ public class FileAccessProviderTests
     {
         // Arrange
         var tools = await CreateToolsAsync();
-        var listFiles = GetTool(tools, "FileAccess_ListFiles");
+        var listFiles = GetTool(tools, "file_access_list_files");
 
         // Act
         var result = await InvokeToolAsync(listFiles, new AIFunctionArguments());
+
+        // Assert
+        var entries = Assert.IsType<JsonElement>(result).EnumerateArray().ToList();
+        Assert.Empty(entries);
+    }
+
+    [Fact]
+    public async Task ListFiles_WithDirectory_ListsSubdirectoryChildrenAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("root.txt", "Root");
+        await store.WriteFileAsync("reports/2024/q1.md", "Q1");
+        await store.WriteFileAsync("reports/2024/q2.md", "Q2");
+        var tools = await CreateToolsAsync(store);
+        var listFiles = GetTool(tools, "file_access_list_files");
+
+        // Act
+        var result = await InvokeToolAsync(listFiles, new AIFunctionArguments
+        {
+            ["directory"] = "reports/2024",
+        });
+
+        // Assert — only the direct children of reports/2024 are returned (by their names)
+        var entries = Assert.IsType<JsonElement>(result).EnumerateArray().ToList();
+        Assert.Equal(2, entries.Count);
+        Assert.Contains(entries, e => e.GetString() == "q1.md");
+        Assert.Contains(entries, e => e.GetString() == "q2.md");
+    }
+
+    #endregion
+
+    #region ListSubdirectories Tests
+
+    [Fact]
+    public async Task ListSubdirectories_ReturnsDirectChildDirectoriesAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("root.txt", "Root");
+        await store.WriteFileAsync("reports/q1.md", "Q1");
+        await store.WriteFileAsync("reports/2024/q2.md", "Q2");
+        await store.WriteFileAsync("data/raw.csv", "x");
+        var tools = await CreateToolsAsync(store);
+        var listSubdirectories = GetTool(tools, "file_access_list_subdirectories");
+
+        // Act — list the root's direct child subdirectories
+        var result = await InvokeToolAsync(listSubdirectories, new AIFunctionArguments());
+
+        // Assert — only direct children (reports, data); not the nested 2024
+        var entries = Assert.IsType<JsonElement>(result).EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Equal(2, entries.Count);
+        Assert.Contains("reports", entries);
+        Assert.Contains("data", entries);
+    }
+
+    [Fact]
+    public async Task ListSubdirectories_WithDirectory_ListsNestedChildrenAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("reports/q1.md", "Q1");
+        await store.WriteFileAsync("reports/2024/q2.md", "Q2");
+        await store.WriteFileAsync("reports/2025/q3.md", "Q3");
+        var tools = await CreateToolsAsync(store);
+        var listSubdirectories = GetTool(tools, "file_access_list_subdirectories");
+
+        // Act
+        var result = await InvokeToolAsync(listSubdirectories, new AIFunctionArguments
+        {
+            ["directory"] = "reports",
+        });
+
+        // Assert — direct child subdirectories of reports
+        var entries = Assert.IsType<JsonElement>(result).EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Equal(2, entries.Count);
+        Assert.Contains("2024", entries);
+        Assert.Contains("2025", entries);
+    }
+
+    [Fact]
+    public async Task ListSubdirectories_NoSubdirectories_ReturnsEmptyAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("a.txt", "A");
+        await store.WriteFileAsync("b.txt", "B");
+        var tools = await CreateToolsAsync(store);
+        var listSubdirectories = GetTool(tools, "file_access_list_subdirectories");
+
+        // Act
+        var result = await InvokeToolAsync(listSubdirectories, new AIFunctionArguments());
 
         // Assert
         var entries = Assert.IsType<JsonElement>(result).EnumerateArray().ToList();
@@ -367,7 +459,7 @@ public class FileAccessProviderTests
         var store = new InMemoryAgentFileStore();
         await store.WriteFileAsync("notes.md", "Important research findings about AI");
         var tools = await CreateToolsAsync(store);
-        var searchFiles = GetTool(tools, "FileAccess_SearchFiles");
+        var searchFiles = GetTool(tools, "file_access_search_files");
 
         // Act
         var result = await InvokeToolAsync(searchFiles, new AIFunctionArguments
@@ -392,7 +484,7 @@ public class FileAccessProviderTests
         await store.WriteFileAsync("notes.md", "Important data");
         await store.WriteFileAsync("data.txt", "Important data");
         var tools = await CreateToolsAsync(store);
-        var searchFiles = GetTool(tools, "FileAccess_SearchFiles");
+        var searchFiles = GetTool(tools, "file_access_search_files");
 
         // Act
         var result = await InvokeToolAsync(searchFiles, new AIFunctionArguments
@@ -414,7 +506,7 @@ public class FileAccessProviderTests
         var store = new InMemoryAgentFileStore();
         await store.WriteFileAsync("notes.md", "No matching content here");
         var tools = await CreateToolsAsync(store);
-        var searchFiles = GetTool(tools, "FileAccess_SearchFiles");
+        var searchFiles = GetTool(tools, "file_access_search_files");
 
         // Act
         var result = await InvokeToolAsync(searchFiles, new AIFunctionArguments
@@ -427,6 +519,84 @@ public class FileAccessProviderTests
         Assert.Empty(entries);
     }
 
+    [Fact]
+    public async Task SearchFiles_SearchesAllDescendantsRecursivelyAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("root.md", "Important data at root");
+        await store.WriteFileAsync("reports/q1.md", "Important data in reports");
+        await store.WriteFileAsync("reports/2024/q2.md", "Important data nested deeper");
+        var tools = await CreateToolsAsync(store);
+        var searchFiles = GetTool(tools, "file_access_search_files");
+
+        // Act — no glob, so all descendants are searched
+        var result = await InvokeToolAsync(searchFiles, new AIFunctionArguments
+        {
+            ["regexPattern"] = "Important",
+        });
+
+        // Assert — matches at every depth, returned as store-root-relative paths
+        var entries = Assert.IsType<JsonElement>(result).EnumerateArray().ToList();
+        var names = entries.ConvertAll(e => e.GetProperty("fileName").GetString());
+        Assert.Equal(3, names.Count);
+        Assert.Contains("root.md", names);
+        Assert.Contains("reports/q1.md", names);
+        Assert.Contains("reports/2024/q2.md", names);
+    }
+
+    [Fact]
+    public async Task SearchFiles_GlobScopesToSubtreeAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("root.md", "Important data at root");
+        await store.WriteFileAsync("reports/q1.md", "Important data in reports");
+        await store.WriteFileAsync("reports/2024/q2.md", "Important data nested deeper");
+        var tools = await CreateToolsAsync(store);
+        var searchFiles = GetTool(tools, "file_access_search_files");
+
+        // Act — restrict to the reports subtree using a recursive glob
+        var result = await InvokeToolAsync(searchFiles, new AIFunctionArguments
+        {
+            ["regexPattern"] = "Important",
+            ["filePattern"] = "reports/**",
+        });
+
+        // Assert — only the files under reports/ match
+        var entries = Assert.IsType<JsonElement>(result).EnumerateArray().ToList();
+        var names = entries.ConvertAll(e => e.GetProperty("fileName").GetString());
+        Assert.Equal(2, names.Count);
+        Assert.Contains("reports/q1.md", names);
+        Assert.Contains("reports/2024/q2.md", names);
+    }
+
+    [Fact]
+    public async Task SearchFiles_RecursiveGlobMatchesNestedExtensionAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteFileAsync("notes.md", "Important data");
+        await store.WriteFileAsync("data/raw.txt", "Important data");
+        await store.WriteFileAsync("reports/2024/q1.md", "Important data");
+        var tools = await CreateToolsAsync(store);
+        var searchFiles = GetTool(tools, "file_access_search_files");
+
+        // Act — match markdown files at any depth
+        var result = await InvokeToolAsync(searchFiles, new AIFunctionArguments
+        {
+            ["regexPattern"] = "Important",
+            ["filePattern"] = "**/*.md",
+        });
+
+        // Assert
+        var entries = Assert.IsType<JsonElement>(result).EnumerateArray().ToList();
+        var names = entries.ConvertAll(e => e.GetProperty("fileName").GetString());
+        Assert.Equal(2, names.Count);
+        Assert.Contains("notes.md", names);
+        Assert.Contains("reports/2024/q1.md", names);
+    }
+
     #endregion
 
     #region Path Traversal Protection
@@ -436,7 +606,7 @@ public class FileAccessProviderTests
     {
         // Arrange
         var tools = await CreateToolsAsync();
-        var saveFile = GetTool(tools, "FileAccess_SaveFile");
+        var saveFile = GetTool(tools, "file_access_save_file");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -452,7 +622,7 @@ public class FileAccessProviderTests
     {
         // Arrange
         var tools = await CreateToolsAsync();
-        var saveFile = GetTool(tools, "FileAccess_SaveFile");
+        var saveFile = GetTool(tools, "file_access_save_file");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -468,7 +638,7 @@ public class FileAccessProviderTests
     {
         // Arrange
         var tools = await CreateToolsAsync();
-        var saveFile = GetTool(tools, "FileAccess_SaveFile");
+        var saveFile = GetTool(tools, "file_access_save_file");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -485,7 +655,7 @@ public class FileAccessProviderTests
         // Arrange — "notes..md" is not a path traversal attempt.
         var store = new InMemoryAgentFileStore();
         var tools = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileAccess_SaveFile");
+        var saveFile = GetTool(tools, "file_access_save_file");
 
         // Act
         await InvokeToolAsync(saveFile, new AIFunctionArguments
@@ -503,7 +673,7 @@ public class FileAccessProviderTests
     {
         // Arrange
         var tools = await CreateToolsAsync();
-        var readFile = GetTool(tools, "FileAccess_ReadFile");
+        var readFile = GetTool(tools, "file_access_read_file");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -518,7 +688,7 @@ public class FileAccessProviderTests
     {
         // Arrange
         var tools = await CreateToolsAsync();
-        var deleteFile = GetTool(tools, "FileAccess_DeleteFile");
+        var deleteFile = GetTool(tools, "file_access_delete_file");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
