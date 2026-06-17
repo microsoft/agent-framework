@@ -913,8 +913,9 @@ class TestSharedReExports:
     downstream code that historically imported them keep working."""
 
     def test_responses_re_exports_helpers(self) -> None:
-        # All of these used to live in ``_responses``; after the
-        # refactor they live in ``_shared`` but are re-exported.
+        # These helpers historically lived in ``_responses``. They must
+        # remain importable there for compatibility even when ``_shared``
+        # also provides canonical implementations for the history provider.
         from agent_framework_foundry_hosting import (
             _responses,  # pyright: ignore[reportPrivateUsage]
             _shared,  # pyright: ignore[reportPrivateUsage]
@@ -929,9 +930,8 @@ class TestSharedReExports:
             "_output_item_to_message",
             "_output_items_to_messages",
         ):
-            assert getattr(_responses, name) is getattr(_shared, name), (
-                f"{name} should be re-exported from _responses for backwards compat"
-            )
+            assert callable(getattr(_responses, name))
+            assert callable(getattr(_shared, name))
 
 
 # region Full AF ↔ Foundry round-trip via InMemoryResponseProvider

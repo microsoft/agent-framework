@@ -224,7 +224,7 @@ def _workflow_event_to_update(event: WorkflowEvent[Any]) -> AgentResponseUpdate 
 
 
 @asynccontextmanager
-async def _suppress_already_consumed() -> AsyncIterator[None]:  # noqa: RUF029
+async def _suppress_already_consumed() -> AsyncIterator[None]:
     """Yield, swallowing finalizer failures so consumer cleanup never crashes the host.
 
     The bridge stream calls ``get_final_response()`` after iterating the
