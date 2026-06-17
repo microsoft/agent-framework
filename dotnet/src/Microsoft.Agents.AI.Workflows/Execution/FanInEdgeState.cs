@@ -69,7 +69,7 @@ internal sealed class FanInEdgeState
         lock (this._syncLock)
         {
             return new FanInEdgeState(
-                this.SourceIds,
+                [.. this.SourceIds],
                 [.. this.Unseen],
                 [.. this.PendingMessages]);
         }
