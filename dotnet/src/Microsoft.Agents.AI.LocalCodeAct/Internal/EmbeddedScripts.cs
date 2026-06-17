@@ -36,15 +36,6 @@ internal static class EmbeddedScripts
             }
 
             var path = Extract(fileName);
-            if (fileName == "runner.py")
-            {
-                s_runnerPath = path;
-            }
-            else
-            {
-                s_validatorPath = path;
-            }
-
             cached = path;
             return path;
         }

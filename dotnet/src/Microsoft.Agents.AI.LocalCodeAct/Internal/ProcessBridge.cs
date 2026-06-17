@@ -310,7 +310,7 @@ internal sealed class ProcessBridge
 
         if (value is JsonNode node)
         {
-            return node.DeepClone();
+            return node;
         }
 
         try
