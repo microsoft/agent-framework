@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -41,8 +43,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         var result = await function.InvokeAsync(args, CancellationToken.None);
 
         Assert.NotNull(result);
-        var contents = Assert.IsAssignableFrom<System.Collections.Generic.IEnumerable<AIContent>>(result);
-        var combined = string.Join("\n", contents.OfType<TextContent>().Select(t => t.Text));
+        var combined = GetResultText(result);
         Assert.Contains("hello world", combined);
         Assert.Contains("3", combined);
     }
@@ -91,8 +92,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
             var result = await function.InvokeAsync(args, CancellationToken.None);
 
             Assert.NotNull(result);
-            var contents = Assert.IsAssignableFrom<System.Collections.Generic.IEnumerable<AIContent>>(result);
-            Assert.Contains(contents, c => c is DataContent);
+            AssertResultContainsDataContent(result, "/output/out.txt");
         }
         finally
         {
@@ -121,8 +121,7 @@ except Exception as exc:
         };
 
         var result = await function.InvokeAsync(args, CancellationToken.None);
-        var contents = Assert.IsAssignableFrom<System.Collections.Generic.IEnumerable<AIContent>>(result);
-        var combined = string.Join("\n", contents.OfType<TextContent>().Select(t => t.Text));
+        var combined = GetResultText(result);
         Assert.Contains("GOT_ERROR", combined);
         Assert.Contains("definitely_not_registered", combined);
         Assert.DoesNotContain("NO_ERROR", combined);
@@ -154,10 +153,8 @@ except Exception as exc:
     print('GOT_ERROR:' + type(exc).__name__ + ':' + str(exc))
 ",
         };
-
         var result = await function.InvokeAsync(args, CancellationToken.None);
-        var contents = Assert.IsAssignableFrom<System.Collections.Generic.IEnumerable<AIContent>>(result);
-        var combined = string.Join("\n", contents.OfType<TextContent>().Select(t => t.Text));
+        var combined = GetResultText(result);
         Assert.Contains("GOT_ERROR", combined);
         Assert.Contains("InvalidOperationException", combined);
         Assert.Contains("intentional: boom", combined);
@@ -193,6 +190,26 @@ except Exception as exc:
         {
             Directory.Delete(tempDir, recursive: true);
         }
+    }
+
+    private static string GetResultText(object? result) =>
+        result switch
+        {
+            IEnumerable<AIContent> contents => string.Join("\n", contents.OfType<TextContent>().Select(t => t.Text)),
+            JsonElement element => element.GetRawText(),
+            _ => result?.ToString() ?? string.Empty,
+        };
+
+    private static void AssertResultContainsDataContent(object? result, string expectedPath)
+    {
+        if (result is IEnumerable<AIContent> contents)
+        {
+            Assert.Contains(contents, c => c is DataContent);
+            return;
+        }
+
+        var json = Assert.IsType<JsonElement>(result).GetRawText();
+        Assert.Contains(expectedPath, json);
     }
 
     private static string? FindPython()
