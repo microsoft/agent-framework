@@ -418,11 +418,11 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return this._edgeMap.ExportStateAsync();
     }
 
-    internal ValueTask ImportEdgeStateAsync(Checkpoint checkpoint)
+    internal ValueTask ImportEdgeStateAsync(Dictionary<EdgeId, PortableValue> edgeStateData)
     {
         this.CheckEnded();
 
-        return this._edgeMap.ImportStateAsync(checkpoint);
+        return this._edgeMap.ImportStateAsync(edgeStateData);
     }
 
     internal async ValueTask RepublishUnservicedRequestsAsync(CancellationToken cancellationToken = default)

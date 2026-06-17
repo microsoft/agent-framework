@@ -418,7 +418,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
         Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellationToken);
 
-        await this.RunContext.ImportEdgeStateAsync(checkpoint).ConfigureAwait(false);
+        await this.RunContext.ImportEdgeStateAsync(checkpoint.EdgeStateData).ConfigureAwait(false);
         await Task.WhenAll(executorNotifyTask,
                            restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
 

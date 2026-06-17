@@ -60,4 +60,18 @@ internal sealed class FanInEdgeState
             .Select(portable => portable.ToMessageEnvelope())
             .GroupBy(messageEnvelope => messageEnvelope.Source);
     }
+
+    // Snapshot mutable state under _syncLock so a checkpoint export cannot observe a partially
+    // updated buffer or be silently mutated afterwards (matters for in-memory checkpoint stores
+    // that retain the live PortableValue reference).
+    public FanInEdgeState Snapshot()
+    {
+        lock (this._syncLock)
+        {
+            return new FanInEdgeState(
+                this.SourceIds,
+                [.. this.Unseen],
+                [.. this.PendingMessages]);
+        }
+    }
 }
