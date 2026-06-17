@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import warnings
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
 from typing import Any
@@ -25,6 +26,21 @@ from ._runner_context import (
 from ._state import State
 
 logger = logging.getLogger(__name__)
+
+
+def warn_runner_deprecated() -> None:
+    """Emit a deprecation warning when ``Runner`` is accessed from the public API.
+
+    ``Runner`` remains importable from ``agent_framework`` for backward
+    compatibility, but it is intended for internal use only and will be removed
+    from the public API in a future version.
+    """
+    warnings.warn(
+        "`Runner` is deprecated and will be removed from the public API in a future version. "
+        "It is intended for internal use only.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 class Runner:
