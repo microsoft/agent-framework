@@ -39,6 +39,12 @@ jobs:
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
 
+      - name: Set dependency release cutoff
+        run: |
+          cutoff="$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "UV_EXCLUDE_NEWER=${cutoff}" >> "$GITHUB_ENV"
+          echo "Using dependency release cutoff: ${cutoff}"
+
       - name: Repin dev dependency declarations
         run: uv run poe upgrade-dev-dependency-pins
         working-directory: ./python
