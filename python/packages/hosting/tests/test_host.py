@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
+from agent_framework._workflows._events import WorkflowEvent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
@@ -25,6 +26,7 @@ from agent_framework_hosting import (
     ChannelSession,
     HostedRunResult,
 )
+from agent_framework_hosting._host import _workflow_event_to_update
 
 
 async def _ping(_request: Request) -> JSONResponse:
@@ -438,6 +440,35 @@ class TestHostWorkflowTarget:
         assert chunks == ["x-1", "x-2", "x-3"]
         final = await stream.get_final_response()
         assert final.text == "x-1x-2x-3"
+
+    def test_workflow_event_to_update_drops_non_output_events(self) -> None:
+        event = WorkflowEvent("intermediate", executor_id="worker", data="hidden")
+
+        assert _workflow_event_to_update(event) is None
+
+    def test_workflow_event_to_update_preserves_agent_response_update_payload(self) -> None:
+        event = WorkflowEvent(
+            "output",
+            executor_id="worker",
+            data=AgentResponseUpdate(contents=[Content.from_text("chunk")], role="assistant"),
+        )
+
+        update = _workflow_event_to_update(event)
+
+        assert update is event.data
+        assert update.raw_representation is event
+
+    def test_workflow_event_to_update_preserves_content_payload(self) -> None:
+        content = Content.from_data(data=b"\x89PNG", media_type="image/png", raw_representation={"source": "test"})
+        event = WorkflowEvent("output", executor_id="worker", data=content)
+
+        update = _workflow_event_to_update(event)
+
+        assert update is not None
+        assert update.contents == [content]
+        assert update.contents[0].raw_representation == {"source": "test"}
+        assert update.author_name == "worker"
+        assert update.raw_representation is event
 
 
 class TestHostWorkflowCheckpointing:
