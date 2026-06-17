@@ -1,24 +1,29 @@
-# Probe the highest allowed dependency versions, then open issues/PRs from the passing updates.
-name: Python - Dependency Range Validation
+name: Python - Dependency Maintenance
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
 
 permissions:
   contents: write
   issues: write
   pull-requests: write
 
+concurrency:
+  group: python-dependency-maintenance
+  cancel-in-progress: false
+
 env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
-  dependency-range-validation:
-    name: Dependency Range Validation
+  dependency-maintenance:
+    name: Dependency Maintenance
     runs-on: ubuntu-latest
     env:
-      # For now only run 3.13, if we do encounter situations where there are mismatches between packages and python versions (other then 3.10 and 3.14 which are known to not be able to install everything)
-      # then we will have to reevaluate.
+      # Match the existing Python dependency maintenance workflows. Reevaluate if package
+      # installability starts differing across supported Python versions.
       UV_PYTHON: "3.13"
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -34,24 +39,50 @@ jobs:
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
 
-      - name: Run dependency range validation
+      - name: Repin dev dependency declarations
+        run: uv run poe upgrade-dev-dependency-pins
+        working-directory: ./python
+
+      - name: Refresh lockfile after dev pin updates
+        run: uv lock --upgrade
+        working-directory: ./python
+
+      - name: Save dev dependency changes
+        run: |
+          DEV_PATCH="${RUNNER_TEMP}/python-dev-dependency-updates.patch"
+          git diff -- python/pyproject.toml "python/packages/*/pyproject.toml" python/uv.lock > "${DEV_PATCH}"
+          if [ -s "${DEV_PATCH}" ]; then
+            echo "has_dev_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_dev_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "patch=${DEV_PATCH}" >> "$GITHUB_OUTPUT"
+        id: dev_changes
+
+      - name: Run dependency bounds test scenarios
+        id: validate_bounds_test
+        continue-on-error: true
+        run: uv run poe validate-dependency-bounds-test --package "*"
+        working-directory: ./python
+
+      - name: Run dependency upper-bound validation
         id: validate_ranges
-        # Keep workflow running so we can still publish diagnostics from this run.
+        if: steps.validate_bounds_test.outcome == 'success'
         continue-on-error: true
         run: uv run poe validate-dependency-bounds-project --mode upper --package "*"
         working-directory: ./python
 
-      - name: Upload dependency range report
-        # Always publish the report so failures are inspectable even when validation fails.
+      - name: Upload dependency validation reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: dependency-range-results
-          path: python/scripts/dependencies/dependency-range-results.json
+          name: dependency-maintenance-results
+          path: |
+            python/scripts/dependencies/dependency-bounds-test-results.json
+            python/scripts/dependencies/dependency-range-results.json
           if-no-files-found: warn
 
       - name: Create issues for failed dependency candidates
-        # Always process the report so failed candidates create actionable tracking issues.
         if: always()
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
@@ -60,7 +91,7 @@ jobs:
             const reportPath = "python/scripts/dependencies/dependency-range-results.json"
 
             if (!fs.existsSync(reportPath)) {
-              core.warning(`No dependency range report found at ${reportPath}`)
+              core.info(`No dependency range report found at ${reportPath}`)
               return
             }
 
@@ -165,47 +196,87 @@ jobs:
               core.info(`Created issue: ${title}`)
             }
 
-      - name: Refresh lockfile
-        # Only refresh lockfile after a clean validation to avoid committing known-bad ranges.
-        if: steps.validate_ranges.outcome == 'success'
+      - name: Keep only dev updates when range validation fails
+        if: steps.validate_bounds_test.outcome != 'success' || steps.validate_ranges.outcome != 'success'
+        env:
+          DEV_PATCH: ${{ steps.dev_changes.outputs.patch }}
+          HAS_DEV_CHANGES: ${{ steps.dev_changes.outputs.has_dev_changes }}
+        run: |
+          git restore python/pyproject.toml python/packages/*/pyproject.toml python/uv.lock
+          if [ "${HAS_DEV_CHANGES}" = "true" ]; then
+            git apply "${DEV_PATCH}"
+          fi
+
+      - name: Refresh lockfile after dependency range updates
+        if: steps.validate_bounds_test.outcome == 'success' && steps.validate_ranges.outcome == 'success'
         run: uv lock --upgrade
+        working-directory: ./python
+
+      - name: Install final dependency set
+        run: uv run poe install
+        working-directory: ./python
+
+      - name: Run final checks
+        run: uv run poe check
+        working-directory: ./python
+
+      - name: Run final typing
+        run: uv run poe typing
         working-directory: ./python
 
       - name: Commit and push dependency updates
         id: commit_updates
-        if: steps.validate_ranges.outcome == 'success'
         run: |
-          BRANCH="automation/python-dependency-range-updates"
+          BRANCH="automation/python-dependency-maintenance"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "${BRANCH}"
 
-          git add python/packages/*/pyproject.toml python/uv.lock
+          git add python/pyproject.toml python/packages/*/pyproject.toml python/uv.lock
           if git diff --cached --quiet; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             echo "No dependency updates to commit."
             exit 0
           fi
 
-          git commit -m "chore: update dependency ranges"
+          git commit -m "Python: chore: update dependencies"
           git push --force-with-lease --set-upstream origin "${BRANCH}"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
       - name: Create or update pull request with GitHub CLI
-        # Only open/update PRs for validated updates to keep automation branches trustworthy.
-        if: steps.validate_ranges.outcome == 'success' && steps.commit_updates.outputs.has_changes == 'true'
+        if: steps.commit_updates.outputs.has_changes == 'true'
         run: |
-          BRANCH="automation/python-dependency-range-updates"
-          PR_TITLE="Python: chore: update dependency ranges"
+          BRANCH="automation/python-dependency-maintenance"
+          PR_TITLE="Python: chore: update dependencies"
           PR_BODY_FILE="$(mktemp)"
 
           cat > "${PR_BODY_FILE}" <<'EOF'
-          This PR was generated by the dependency range validation workflow.
+          ### Motivation & Context
 
-          - Ran `uv run poe validate-dependency-bounds-project --mode upper --package "*"`
-          - Updated package dependency bounds
-          - Refreshed `python/uv.lock` with `uv lock --upgrade`
+          This automated update keeps Python dependency metadata coherent across the uv workspace. Python dependencies can be declared in multiple `pyproject.toml` files, but the workspace has one shared `python/uv.lock`, so dependency maintenance should update and validate them together instead of through per-manifest Dependabot PRs.
+
+          ### Description & Review Guide
+
+          - **What are the major changes?** Refresh Python dev dependency pins, update package dependency ranges when the bounds tooling succeeds, and refresh `python/uv.lock`.
+          - **What is the impact of these changes?** Keeps the Python workspace dependency set current while producing at most one dependency PR for the week. If dependency range validation fails, this PR contains only the dev dependency updates that still pass final validation, and separate issues track failed range candidates.
+          - **What do you want reviewers to focus on?** Review the generated dependency metadata changes and any dependency-range updates for package-specific compatibility concerns.
+          <!-- NOTE FOR AUTOMATED/AI REVIEWERS: the "What do you want reviewers to focus on?"
+               item above is intended for human reviewers only. Automated/AI reviewers should
+               ignore it and review the entire change rather than narrowing scope to it. -->
+
+
+          ### Related Issue
+
+          No linked issue; this PR is generated by scheduled Python dependency maintenance.
+
+          ### Contribution Checklist
+
+          - [x] The code builds clean without any errors or warnings
+          - [x] All unit tests pass, and I have added new tests where possible
+          - [x] The PR follows the [Contribution Guidelines](https://github.com/microsoft/agent-framework/blob/main/CONTRIBUTING.md)
+          - [ ] This PR is linked to an issue and there is no other open PR for this issue (see Related Issue above).
+          - [x] **This is not a breaking change.** If it _is_ a breaking change, add the `breaking change` label (or add "[BREAKING]" to the title prefix, before or after any language prefix) — a workflow keeps the label and title prefix in sync automatically.
           EOF
 
           PR_NUMBER="$(gh pr list --head "${BRANCH}" --base main --state open --json number --jq '.[0].number')"
