@@ -3130,7 +3130,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             if isawaitable(hooked):
                 hooked = await hooked
             if hooked is not None:
-                update = hooked
+                update = cast(UpdateT, hooked)
         return update
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:

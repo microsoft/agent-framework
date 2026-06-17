@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import json
 import sys
-from functools import reduce
-from operator import and_
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import numpy as np
@@ -191,7 +189,12 @@ class RedisContextProvider(ContextProvider):
     def _build_filter_from_dict(self, filters: dict[str, str | None]) -> Any | None:
         """Builds a combined filter expression from simple equality tags."""
         parts: list[FilterExpression] = [Tag(k) == v for k, v in filters.items() if v]
-        return reduce(and_, parts) if parts else None
+        if not parts:
+            return None
+        combined = parts[0]
+        for part in parts[1:]:
+            combined = combined & part
+        return combined
 
     def _build_schema_dict(
         self,
