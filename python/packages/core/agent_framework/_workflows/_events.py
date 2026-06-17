@@ -46,7 +46,7 @@ def _current_event_origin() -> WorkflowEventSource:
 
 
 @contextmanager
-def _framework_event_origin() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+def _framework_event_origin() -> Generator[None, None, None]:  # pyright: ignore[reportUnusedFunction]
     """Temporarily mark subsequently created events as originating from the framework (internal)."""
     token = _event_origin_context.set(WorkflowEventSource.FRAMEWORK)
     try:

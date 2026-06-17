@@ -28,7 +28,7 @@ from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
-from typing_extensions import Never
+from typing_extensions import Never, Sentinel
 
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
@@ -1411,7 +1411,7 @@ class MagenticBuilder:
         task_ledger_plan_update_prompt: str | None = None,
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
-        max_stall_count: Any = UNSET,
+        max_stall_count: int | Sentinel = cast(Any, UNSET),
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
         # Existing params
@@ -1621,7 +1621,7 @@ class MagenticBuilder:
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
         # Limits
-        max_stall_count: Any = UNSET,
+        max_stall_count: int | Sentinel = cast(Any, UNSET),
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
     ) -> None:
