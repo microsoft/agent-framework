@@ -59,6 +59,7 @@ namespace Microsoft.Agents.AI;
 /// <list type="bullet">
 /// <item><description><see cref="ToolApprovalAgent"/> — "don't ask again" tool approval rules enabling safe unattended execution. Disable with <see cref="HarnessAgentOptions.DisableToolApproval"/>.</description></item>
 /// <item><description><see cref="OpenTelemetryAgent"/> — OpenTelemetry instrumentation following semantic conventions for generative AI. Disable with <see cref="HarnessAgentOptions.DisableOpenTelemetry"/>.</description></item>
+/// <item><description><see cref="LoopAgent"/> — re-invokes the agent until the configured evaluators are satisfied. Applied as the outermost decorator (so each iteration is a complete agent run) and only when <see cref="HarnessAgentOptions.LoopEvaluators"/> supplies at least one evaluator; otherwise omitted.</description></item>
 /// </list>
 /// </para>
 /// <para>
@@ -141,6 +142,18 @@ public sealed class HarnessAgent : DelegatingAIAgent
         ChatClientAgent innerAgent = BuildInnerAgent(chatClient, options, loggerFactory, services);
 
         AIAgentBuilder builder = innerAgent.AsBuilder();
+
+        // Register the loop decorator first so it ends up outermost (AIAgentBuilder applies factories in reverse): the
+        // loop drives complete agent runs, each independently tool-approved and OpenTelemetry-traced. Only added when at
+        // least one evaluator is supplied; otherwise the agent behaves as a single-shot agent.
+        if (options?.LoopEvaluators is IEnumerable<LoopEvaluator> loopEvaluators)
+        {
+            List<LoopEvaluator> evaluatorList = loopEvaluators.ToList();
+            if (evaluatorList.Count > 0)
+            {
+                builder.Use((inner, _) => new LoopAgent(inner, evaluatorList, options.LoopAgentOptions, loggerFactory));
+            }
+        }
 
         if (options?.DisableToolApproval is not true)
         {

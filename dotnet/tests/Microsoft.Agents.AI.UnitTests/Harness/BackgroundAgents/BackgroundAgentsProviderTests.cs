@@ -156,7 +156,7 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
 
         // Act
         object? result = await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -183,7 +183,7 @@ public class BackgroundAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
 
         // Act
         object? result = await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -215,7 +215,7 @@ public class BackgroundAgentsProviderTests
             return callCount == 1 ? tcs1.Task : tcs2.Task;
         });
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
 
         // Act
         object? result1 = await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -253,8 +253,8 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
 
         // Start one task
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -288,7 +288,7 @@ public class BackgroundAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
 
         // Act
         object? result = await waitForFirst.InvokeAsync(new AIFunctionArguments
@@ -314,9 +314,9 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
-        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+        AIFunction getResults = GetTool(tools, "background_agents_get_task_results");
 
         // Start a task
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -355,8 +355,8 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction getResults = GetTool(tools, "background_agents_get_task_results");
 
         // Start a task (don't complete it)
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -387,7 +387,7 @@ public class BackgroundAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
+        AIFunction getResults = GetTool(tools, "background_agents_get_task_results");
 
         // Act
         object? result = await getResults.InvokeAsync(new AIFunctionArguments
@@ -409,9 +409,9 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
-        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+        AIFunction getResults = GetTool(tools, "background_agents_get_task_results");
 
         // Start a task
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -456,8 +456,8 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction getAllTasks = GetTool(tools, "BackgroundAgents_GetAllTasks");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction getAllTasks = GetTool(tools, "background_agents_get_all_tasks");
 
         // Start a task
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -490,9 +490,9 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
-        AIFunction getAllTasks = GetTool(tools, "BackgroundAgents_GetAllTasks");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+        AIFunction getAllTasks = GetTool(tools, "background_agents_get_all_tasks");
 
         // Start and complete a task
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -525,7 +525,7 @@ public class BackgroundAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction getAllTasks = GetTool(tools, "BackgroundAgents_GetAllTasks");
+        AIFunction getAllTasks = GetTool(tools, "background_agents_get_all_tasks");
 
         // Act
         object? result = await getAllTasks.InvokeAsync(new AIFunctionArguments());
@@ -554,10 +554,10 @@ public class BackgroundAgentsProviderTests
             return callCount == 1 ? tcs1.Task : tcs2.Task;
         });
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
-        AIFunction continueTask = GetTool(tools, "BackgroundAgents_ContinueTask");
-        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+        AIFunction continueTask = GetTool(tools, "background_agents_continue_task");
+        AIFunction getResults = GetTool(tools, "background_agents_get_task_results");
 
         // Start and complete a task
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -606,8 +606,8 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction continueTask = GetTool(tools, "BackgroundAgents_ContinueTask");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction continueTask = GetTool(tools, "background_agents_continue_task");
 
         // Start a task (don't complete it)
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -639,7 +639,7 @@ public class BackgroundAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction continueTask = GetTool(tools, "BackgroundAgents_ContinueTask");
+        AIFunction continueTask = GetTool(tools, "background_agents_continue_task");
 
         // Act
         object? result = await continueTask.InvokeAsync(new AIFunctionArguments
@@ -666,10 +666,10 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
-        AIFunction clearTask = GetTool(tools, "BackgroundAgents_ClearCompletedTask");
-        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+        AIFunction clearTask = GetTool(tools, "background_agents_clear_completed_task");
+        AIFunction getResults = GetTool(tools, "background_agents_get_task_results");
 
         // Start and complete a task
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -711,8 +711,8 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
-        AIFunction clearTask = GetTool(tools, "BackgroundAgents_ClearCompletedTask");
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction clearTask = GetTool(tools, "background_agents_clear_completed_task");
 
         // Start a task (don't complete it)
         await startBackgroundTask.InvokeAsync(new AIFunctionArguments
@@ -743,7 +743,7 @@ public class BackgroundAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction clearTask = GetTool(tools, "BackgroundAgents_ClearCompletedTask");
+        AIFunction clearTask = GetTool(tools, "background_agents_clear_completed_task");
 
         // Act
         object? result = await clearTask.InvokeAsync(new AIFunctionArguments
@@ -794,7 +794,7 @@ public class BackgroundAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        var startTool = GetTool(tools, "BackgroundAgents_StartTask");
+        var startTool = GetTool(tools, "background_agents_start_task");
 
         AgentRunContext? contextBefore = AIAgent.CurrentRunContext;
 
@@ -854,8 +854,8 @@ public class BackgroundAgentsProviderTests
         AIContext result = await provider.InvokingAsync(context);
 
         // Assert — instructions contain tool usage guidance and agent list
-        Assert.Contains("BackgroundAgents_*", result.Instructions);
-        Assert.Contains("BackgroundAgents_ClearCompletedTask", result.Instructions);
+        Assert.Contains("background_agents_*", result.Instructions);
+        Assert.Contains("background_agents_clear_completed_task", result.Instructions);
         Assert.Contains("Research", result.Instructions);
         Assert.Contains("Research agent", result.Instructions);
     }

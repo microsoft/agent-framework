@@ -667,3 +667,104 @@ def test_create_harness_agent_shell_executor_validated_before_client_check() -> 
             disable_web_search=True,
             shell_executor=_BadExecutor(),
         )
+
+
+# --- Tool Approval Tests ---
+
+
+def _find_tool_approval_middleware(agent: Any) -> Any:
+    from agent_framework import ToolApprovalMiddleware
+
+    for mw in agent.middleware or []:
+        if isinstance(mw, ToolApprovalMiddleware):
+            return mw
+    return None
+
+
+def test_create_harness_agent_adds_tool_approval_by_default() -> None:
+    """Tool approval middleware should be wired in by default."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+    )
+    assert _find_tool_approval_middleware(agent) is not None
+
+
+def test_create_harness_agent_disable_tool_auto_approval() -> None:
+    """disable_tool_auto_approval=True should omit the tool approval middleware."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_tool_auto_approval=True,
+    )
+    assert _find_tool_approval_middleware(agent) is None
+
+
+def test_create_harness_agent_passes_auto_approval_rules() -> None:
+    """auto_approval_rules should be forwarded to the tool approval middleware."""
+
+    def _rule(content: Any) -> bool:
+        return True
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        auto_approval_rules=[_rule],
+    )
+    middleware = _find_tool_approval_middleware(agent)
+    assert middleware is not None
+    assert _rule in middleware.auto_approval_rules
+
+
+def test_create_harness_agent_tool_approval_outermost_with_user_middleware() -> None:
+    """Tool approval middleware should be placed first (outermost) ahead of user middleware."""
+    from agent_framework import AgentMiddleware, ToolApprovalMiddleware
+
+    class _CustomMiddleware(AgentMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            await call_next()
+
+    custom = _CustomMiddleware()
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        middleware=[custom],
+    )
+    assert agent.middleware is not None
+    assert isinstance(agent.middleware[0], ToolApprovalMiddleware)
+    assert custom in agent.middleware
+    assert agent.middleware.index(custom) > 0
+
+
+def test_create_harness_agent_disable_tool_auto_approval_preserves_user_middleware() -> None:
+    """When tool approval is disabled, only user-supplied middleware should remain."""
+    from agent_framework import AgentMiddleware
+
+    class _CustomMiddleware(AgentMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            await call_next()
+
+    custom = _CustomMiddleware()
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_tool_auto_approval=True,
+        middleware=[custom],
+    )
+    assert agent.middleware == [custom]
+
+
+def test_create_harness_agent_no_middleware_when_tool_approval_disabled_and_none() -> None:
+    """No middleware should be installed when tool approval is disabled and none is supplied."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_tool_auto_approval=True,
+    )
+    assert agent.middleware is None
