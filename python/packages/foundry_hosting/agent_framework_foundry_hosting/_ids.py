@@ -45,7 +45,7 @@ def foundry_response_id(previous_response_id: str | None = None) -> str:
     return IdGenerator.new_response_id(previous_response_id or "")
 
 
-def foundry_response_id_factory() -> "Any":
+def foundry_response_id_factory() -> Any:
     """Return a callable suitable for ``ResponsesChannel(response_id_factory=...)``.
 
     The returned callable accepts an optional ``previous_response_id``
@@ -55,7 +55,7 @@ def foundry_response_id_factory() -> "Any":
     return foundry_response_id
 
 
-def foundry_item_id(item: "Any", response_id: str | None = None) -> str | None:
+def foundry_item_id(item: Any, response_id: str | None = None) -> str | None:
     """Mint a Foundry-storage-compatible item id for *item*.
 
     Dispatches via :meth:`IdGenerator.new_item_id` so the id picks up
