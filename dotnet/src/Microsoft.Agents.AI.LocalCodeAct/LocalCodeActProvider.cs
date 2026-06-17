@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -34,12 +35,11 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
 
     private static readonly IReadOnlyList<string> s_stateKeys = [FixedStateKey];
 
-    private readonly object _gate = new();
     private readonly CodeExecutor _executor;
 
-    private readonly Dictionary<string, AIFunction> _tools = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, FileMount> _fileMounts = new(StringComparer.Ordinal);
-    private bool _disposed;
+    private readonly ConcurrentDictionary<string, AIFunction> _tools = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, FileMount> _fileMounts = new(StringComparer.Ordinal);
+    private volatile bool _disposed;
 
     /// <summary>Initializes a new instance of the <see cref="LocalCodeActProvider"/> class.</summary>
     /// <param name="pythonExecutablePath">Path to the Python interpreter used for execution and validation.</param>
@@ -103,45 +103,35 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
     public void AddTools(params AIFunction[] tools)
     {
         _ = Throw.IfNull(tools);
-        lock (this._gate)
+        this.ThrowIfDisposed();
+        foreach (var tool in tools.Where(t => t is not null))
         {
-            this.ThrowIfDisposed();
-            foreach (var tool in tools.Where(t => t is not null))
-            {
-                this._tools[tool.Name] = tool;
-            }
+            this._tools[tool.Name] = tool;
         }
     }
 
     /// <summary>Returns the currently registered tools.</summary>
     public IReadOnlyList<AIFunction> GetTools()
     {
-        lock (this._gate)
-        {
-            return this._tools.Values.ToList();
-        }
+        return this._tools.Values.ToList();
     }
 
     /// <summary>Removes tools by name.</summary>
     public void RemoveTools(params string[] names)
     {
         _ = Throw.IfNull(names);
-        lock (this._gate)
+        this.ThrowIfDisposed();
+        foreach (var name in names.Where(n => n is not null))
         {
-            foreach (var name in names.Where(n => n is not null))
-            {
-                _ = this._tools.Remove(name);
-            }
+            _ = this._tools.TryRemove(name, out _);
         }
     }
 
     /// <summary>Removes all registered tools.</summary>
     public void ClearTools()
     {
-        lock (this._gate)
-        {
-            this._tools.Clear();
-        }
+        this.ThrowIfDisposed();
+        this._tools.Clear();
     }
 
     // -------------------------------------------------------------------
@@ -152,46 +142,36 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
     public void AddFileMounts(params FileMount[] mounts)
     {
         _ = Throw.IfNull(mounts);
-        lock (this._gate)
+        this.ThrowIfDisposed();
+        foreach (var mount in mounts.Where(m => m is not null))
         {
-            this.ThrowIfDisposed();
-            foreach (var mount in mounts.Where(m => m is not null))
-            {
-                var normalized = FileMountHelper.Normalize(mount);
-                this._fileMounts[normalized.MountPath] = normalized;
-            }
+            var normalized = FileMountHelper.Normalize(mount);
+            this._fileMounts[normalized.MountPath] = normalized;
         }
     }
 
     /// <summary>Returns the currently registered file mounts.</summary>
     public IReadOnlyList<FileMount> GetFileMounts()
     {
-        lock (this._gate)
-        {
-            return this._fileMounts.Values.ToList();
-        }
+        return this._fileMounts.Values.ToList();
     }
 
     /// <summary>Removes file mounts by mount path.</summary>
     public void RemoveFileMounts(params string[] mountPaths)
     {
         _ = Throw.IfNull(mountPaths);
-        lock (this._gate)
+        this.ThrowIfDisposed();
+        foreach (var path in mountPaths.Where(p => p is not null))
         {
-            foreach (var path in mountPaths.Where(p => p is not null))
-            {
-                _ = this._fileMounts.Remove(path);
-            }
+            _ = this._fileMounts.TryRemove(path, out _);
         }
     }
 
     /// <summary>Removes all registered file mounts.</summary>
     public void ClearFileMounts()
     {
-        lock (this._gate)
-        {
-            this._fileMounts.Clear();
-        }
+        this.ThrowIfDisposed();
+        this._fileMounts.Clear();
     }
 
     // -------------------------------------------------------------------
@@ -204,13 +184,10 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
         _ = Throw.IfNull(context);
 
         CodeExecutor.RunSnapshot snapshot;
-        lock (this._gate)
-        {
-            this.ThrowIfDisposed();
-            snapshot = new CodeExecutor.RunSnapshot(
-                this._tools.Values.ToList(),
-                this._fileMounts.Values.ToList());
-        }
+        this.ThrowIfDisposed();
+        snapshot = new CodeExecutor.RunSnapshot(
+            this._tools.Values.ToList(),
+            this._fileMounts.Values.ToList());
 
         var description = InstructionBuilder.BuildExecuteCodeDescription(snapshot.Tools, snapshot.FileMounts);
         var executeCode = new ExecuteCodeFunction(this._executor, snapshot, description);
@@ -229,9 +206,6 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
     /// <inheritdoc/>
     public void Dispose()
     {
-        lock (this._gate)
-        {
-            this._disposed = true;
-        }
+        this._disposed = true;
     }
 }

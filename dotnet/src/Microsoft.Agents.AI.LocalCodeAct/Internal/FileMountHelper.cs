@@ -221,10 +221,6 @@ internal static class FileMountHelper
             {
                 continue;
             }
-            catch (UnauthorizedAccessException)
-            {
-                continue;
-            }
 
             foreach (var entry in entries)
             {
