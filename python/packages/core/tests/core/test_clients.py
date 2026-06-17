@@ -69,7 +69,7 @@ def test_base_client_as_agent_rejects_function_invocation_configuration(
         TypeError,
         match=r"as_agent\(\) got an unexpected keyword argument 'function_invocation_configuration'",
     ):
-        chat_client_base.as_agent(function_invocation_configuration={"enabled": False})
+        chat_client_base.as_agent(function_invocation_configuration={"enabled": False})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_base: SupportsChatGetResponse) -> None:

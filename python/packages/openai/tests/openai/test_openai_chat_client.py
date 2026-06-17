@@ -3615,6 +3615,11 @@ def test_streaming_annotation_added_with_url_citation() -> None:
     assert region["end_index"] == 112
 
 
+def _first_annotation(content: Any) -> Any:
+    assert content.annotations is not None
+    return content.annotations[0]
+
+
 def _make_url_citation_event(
     *,
     title: str,
@@ -3667,7 +3672,7 @@ def _make_azure_ai_search_output_event(
 def test_streaming_azure_ai_search_output_enriches_final_url_citation_get_url() -> None:
     """Azure AI Search get_urls are resolved onto doc_N citation annotations after streaming completes."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
+    chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
     get_url = "https://example.search.windows.net/indexes/my-index/docs/doc-123?api-version=2024-07-01"
 
@@ -3686,17 +3691,17 @@ def test_streaming_azure_ai_search_output_enriches_final_url_citation_get_url() 
 
     response = client._finalize_response_updates([citation_update, search_update])
 
-    annotation = response.messages[0].contents[0].annotations[0]
+    annotation = _first_annotation(response.messages[0].contents[0])
     assert annotation["additional_properties"]["get_url"] == get_url
 
 
 async def test_streaming_azure_ai_search_output_enriches_mapped_agent_response() -> None:
     """Finalization mutates collected chat updates so mapped agent streams receive the enriched citation too."""
-    from agent_framework import AgentResponse
+    from agent_framework import AgentResponse, AgentResponseUpdate
     from agent_framework._types import ResponseStream, map_chat_to_agent_update
 
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
+    chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
     get_url = "https://example.search.windows.net/indexes/my-index/docs/doc-123?api-version=2024-07-01"
     updates = [
@@ -3717,7 +3722,7 @@ async def test_streaming_azure_ai_search_output_enriches_mapped_agent_response()
             yield update
 
     chat_stream = ResponseStream(_stream(), finalizer=client._finalize_response_updates)
-    agent_stream = chat_stream.map(
+    agent_stream: ResponseStream[AgentResponseUpdate, AgentResponse] = chat_stream.map(
         transform=lambda update: map_chat_to_agent_update(update, agent_name="test-agent"),
         finalizer=AgentResponse.from_updates,
     )
@@ -3726,14 +3731,14 @@ async def test_streaming_azure_ai_search_output_enriches_mapped_agent_response()
         pass
     response = await agent_stream.get_final_response()
 
-    annotation = response.messages[0].contents[0].annotations[0]
+    annotation = _first_annotation(response.messages[0].contents[0])
     assert annotation["additional_properties"]["get_url"] == get_url
 
 
 def test_streaming_azure_ai_search_output_does_not_overwrite_existing_get_url() -> None:
     """If the annotation already contains get_url, the later Search output does not replace it."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
+    chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
     existing_get_url = "https://example.search.windows.net/indexes/my-index/docs/existing?api-version=2024-07-01"
 
@@ -3752,14 +3757,14 @@ def test_streaming_azure_ai_search_output_does_not_overwrite_existing_get_url() 
 
     response = client._finalize_response_updates([citation_update, search_update])
 
-    annotation = response.messages[0].contents[0].annotations[0]
+    annotation = _first_annotation(response.messages[0].contents[0])
     assert annotation["additional_properties"]["get_url"] == existing_get_url
 
 
 def test_streaming_azure_ai_search_output_uses_global_doc_index_across_search_events() -> None:
     """Azure AI Search `doc_N` URLs are resolved against the concatenated stream order of all search events."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
+    chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
 
     citation_update = client._parse_chunk_from_openai(
@@ -3787,14 +3792,14 @@ def test_streaming_azure_ai_search_output_uses_global_doc_index_across_search_ev
 
     response = client._finalize_response_updates([citation_update, search_update_one, search_update_two])
 
-    annotation = response.messages[0].contents[0].annotations[0]
+    annotation = _first_annotation(response.messages[0].contents[0])
     assert annotation["additional_properties"]["get_url"] == "https://example.search.windows.net/docs/three"
 
 
 def test_streaming_azure_ai_search_output_normalizes_non_dict_additional_properties() -> None:
     """Existing non-dict additional_properties should be normalized before enriching get_url."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
+    chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
     get_url = "https://example.search.windows.net/indexes/my-index/docs/doc-123?api-version=2024-07-01"
 
@@ -3803,7 +3808,7 @@ def test_streaming_azure_ai_search_output_normalizes_non_dict_additional_propert
         chat_options,
         function_call_ids,
     )
-    citation_update.contents[0].annotations[0]["additional_properties"] = None
+    _first_annotation(citation_update.contents[0])["additional_properties"] = None
     search_update = client._parse_chunk_from_openai(
         _make_azure_ai_search_output_event(json.dumps({"get_urls": [get_url]})),
         chat_options,
@@ -3812,7 +3817,7 @@ def test_streaming_azure_ai_search_output_normalizes_non_dict_additional_propert
 
     response = client._finalize_response_updates([citation_update, search_update])
 
-    annotation = response.messages[0].contents[0].annotations[0]
+    annotation = _first_annotation(response.messages[0].contents[0])
     assert annotation["additional_properties"] == {"get_url": get_url}
 
 
@@ -3832,7 +3837,7 @@ def test_streaming_azure_ai_search_output_does_not_create_additional_properties_
 
     RawOpenAIChatClient._enrich_streamed_azure_ai_search_citations([update])
 
-    annotation = update.contents[0].annotations[0]
+    annotation = _first_annotation(update.contents[0])
     assert annotation.get("additional_properties") is None
 
 
@@ -3851,7 +3856,7 @@ def test_extract_azure_ai_search_get_urls_accepts_dedicated_output_event() -> No
 def test_parse_chunk_from_openai_ignores_dedicated_azure_ai_search_events() -> None:
     """Dedicated Azure AI Search events should be treated as intentional no-op updates."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
+    chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
     event = _make_azure_ai_search_output_event(
         json.dumps({"get_urls": ["https://example.search.windows.net/indexes/my-index/docs/doc-0"]}),
@@ -3878,7 +3883,7 @@ def test_parse_chunk_from_openai_ignores_dedicated_azure_ai_search_events() -> N
 def test_streaming_azure_ai_search_output_ignores_unusable_get_url_data(title: str, output: str) -> None:
     """Malformed or non-matching Azure AI Search output leaves citations unchanged."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
+    chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
 
     citation_update = client._parse_chunk_from_openai(
@@ -3894,14 +3899,14 @@ def test_streaming_azure_ai_search_output_ignores_unusable_get_url_data(title: s
 
     response = client._finalize_response_updates([citation_update, search_update])
 
-    annotation = response.messages[0].contents[0].annotations[0]
+    annotation = _first_annotation(response.messages[0].contents[0])
     assert "get_url" not in annotation["additional_properties"]
 
 
 def test_streaming_mcp_searchindex_citation_enriched_from_mcp_output() -> None:
     """MCP search-index citations are enriched from retrieved document metadata in MCP output."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
+    chat_options: dict[str, Any] = {}
     function_call_ids: dict[int, tuple[str, str]] = {}
     document_id = "inspection_procedures_p1_c0"
     mcp_output = f"""
@@ -3996,7 +4001,7 @@ Retrieved 1 document.
 
     response = client._parse_response_from_openai(mock_response, options={})
 
-    annotation = response.messages[0].contents[-1].annotations[0]
+    annotation = _first_annotation(response.messages[0].contents[-1])
     assert annotation["additional_properties"]["mcp_document_id"] == document_id
     assert annotation["additional_properties"]["document_title"] == "Ticket Management Policy"
     assert annotation["additional_properties"]["source"] == "ticket_management_policy.pdf"

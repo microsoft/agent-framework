@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import pytest
@@ -3707,11 +3707,15 @@ async def test_agent_instructions_include_context_provider_extensions(
 
     spans = span_exporter.get_finished_spans()
     agent_spans = [
-        span for span in spans if span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+        span
+        for span in spans
+        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
     ]
     assert len(agent_spans) == 1
 
-    system_instructions = json.loads(agent_spans[0].attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    agent_attributes = agent_spans[0].attributes
+    assert agent_attributes is not None
+    system_instructions = json.loads(cast(str, agent_attributes[OtelAttr.SYSTEM_INSTRUCTIONS]))
     contents = [item["content"] for item in system_instructions]
     assert any("You are a friendly assistant." in content for content in contents)
     assert any("The user's name is Alice." in content for content in contents)
@@ -3767,15 +3771,21 @@ async def test_agent_instructions_not_overwritten_by_unrelated_nested_chat(
 
     spans = span_exporter.get_finished_spans()
     agent_spans = [
-        span for span in spans if span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+        span
+        for span in spans
+        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
     ]
     assert len(agent_spans) == 1
     chat_spans = [
-        span for span in spans if span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
+        span
+        for span in spans
+        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
     ]
     assert len(chat_spans) == 2
 
-    system_instructions = json.loads(agent_spans[0].attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    agent_attributes = agent_spans[0].attributes
+    assert agent_attributes is not None
+    system_instructions = json.loads(cast(str, agent_attributes[OtelAttr.SYSTEM_INSTRUCTIONS]))
     contents = [item["content"] for item in system_instructions]
     assert any("Base agent instructions." in content for content in contents)
     assert any("Context-provided instructions." in content for content in contents)

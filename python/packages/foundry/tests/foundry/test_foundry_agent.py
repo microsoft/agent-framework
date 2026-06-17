@@ -1073,11 +1073,11 @@ async def test_foundry_agent_azure_ai_search_streaming_citation_get_url() -> Non
 
         project_client = AIProjectClient(
             endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            credential=credential,
+            credential=credential,  # pyrefly: ignore[bad-argument-type]
             allow_preview=True,
         )
         try:
-            search_connection = await project_client.connections.get_default(
+            search_connection = await project_client.connections.get_default(  # type: ignore[attr-defined]
                 projects_models.ConnectionType.AZURE_AI_SEARCH
             )
         except Exception as exc:

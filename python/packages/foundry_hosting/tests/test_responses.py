@@ -2920,7 +2920,7 @@ class TestFunctionApprovalRoundTrip:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "failed"
-        error = body.get("error") or {}
+        error: dict[str, Any] = body.get("error") or {}
         assert "apr_unknown" in (error.get("message") or "")
 
 
@@ -3500,7 +3500,7 @@ class TestOAuthConsentSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         assert not any(it["type"] == "oauth_consent_request" for it in body.get("output", []))
-        error = body.get("error") or {}
+        error: dict[str, Any] = body.get("error") or {}
         assert error.get("message") == "boom"
         agent.run.assert_not_called()
 
@@ -3558,7 +3558,7 @@ class TestResponseFailedSurfacing:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "failed"
-        error = body.get("error") or {}
+        error: dict[str, Any] = body.get("error") or {}
         assert error.get("message") == "non-stream kaboom"
 
     async def test_streaming_run_failure_emits_response_failed(self) -> None:
@@ -3593,8 +3593,8 @@ class TestResponseFailedSurfacing:
 
         failed = [e for e in events if e["event"] == "response.failed"]
         assert len(failed) == 1
-        response_payload = failed[0]["data"].get("response") or {}
-        error = response_payload.get("error") or {}
+        response_payload: dict[str, Any] = failed[0]["data"].get("response") or {}
+        error: dict[str, Any] = response_payload.get("error") or {}
         assert error.get("message") == "stream kaboom"
 
     async def test_streaming_run_failure_drains_pending_output_item(self) -> None:
@@ -3649,7 +3649,7 @@ class TestResponseFailedSurfacing:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "failed"
-        error = body.get("error") or {}
+        error: dict[str, Any] = body.get("error") or {}
         assert error.get("message") == "workflow kaboom"
 
 
