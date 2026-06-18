@@ -125,16 +125,35 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
         super().__init__(io.BytesIO(data))
         self._allowed_types = allowed_types
 
-    def find_class(self, module: str, name: str) -> type:
+    def find_class(self, module: str, name: str) -> Any:  # noqa: ANN401
         type_key = f"{module}:{name}"
 
-        if (
-            type_key in _BUILTIN_ALLOWED_TYPE_KEYS
-            or type_key in self._allowed_types
-            or module.startswith(_FRAMEWORK_MODULE_PREFIX)
-            or module.startswith(_OPENAI_MODULE_PREFIX)
-        ):
+        if type_key in _BUILTIN_ALLOWED_TYPE_KEYS:
             return super().find_class(module, name)  # type: ignore[no-any-return]  # nosec
+
+        if type_key in self._allowed_types:
+            resolved = super().find_class(module, name)  # nosec
+            if not isinstance(resolved, type):
+                raise pickle.UnpicklingError(
+                    f"Checkpoint deserialization blocked for non-type global "
+                    f"'{type_key}' in allowed_types."
+                )
+            return resolved
+
+        if module.startswith(_FRAMEWORK_MODULE_PREFIX) or module.startswith(
+            _OPENAI_MODULE_PREFIX
+        ):
+            resolved = super().find_class(module, name)  # nosec
+            # Reject non-type globals from allowed package prefixes.  A broad
+            # module-prefix allowlist returns arbitrary module attributes such
+            # as functions and sub-modules, which can be combined with
+            # builtins.getattr to call unrestricted pickle.loads.
+            if isinstance(resolved, type):
+                return resolved
+            raise pickle.UnpicklingError(
+                f"Checkpoint deserialization blocked for non-type global "
+                f"'{type_key}'."
+            )
 
         raise pickle.UnpicklingError(
             f"Checkpoint deserialization blocked for type '{type_key}'. "

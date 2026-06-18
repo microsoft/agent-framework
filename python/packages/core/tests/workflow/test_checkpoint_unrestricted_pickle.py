@@ -246,6 +246,37 @@ def test_restricted_decode_allows_openai_types():
     assert decoded.choices[0].message.content == "hello"
 
 
+def test_restricted_decode_rejects_non_type_global_in_allowed_types():
+    """allowed_types entry resolving to a non-type (function) is rejected."""
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    # Put a function's type_key in allowed_types — should be rejected
+    type_key = "os:getpid"
+    pickled = pickle.dumps(object)
+    unpickler = _RestrictedUnpickler(pickled, frozenset({type_key}))
+    with pytest.raises(
+        pickle.UnpicklingError,
+        match="deserialization blocked for non-type global",
+    ):
+        unpickler.find_class("os", "getpid")
+
+
+def test_restricted_decode_rejects_non_type_global_under_prefix():
+    """Non-type global under allowed package prefix is rejected."""
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    pickled = pickle.dumps(object)
+    unpickler = _RestrictedUnpickler(pickled, frozenset())
+    with pytest.raises(
+        pickle.UnpicklingError,
+        match="deserialization blocked for non-type global",
+    ):
+        unpickler.find_class(
+            "agent_framework._workflows._checkpoint_encoding",
+            "encode_checkpoint_value",
+        )
+
+
 def test_restricted_decode_allows_openai_response_types():
     """OpenAI Responses API types are always allowed during restricted deserialization."""
     from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
