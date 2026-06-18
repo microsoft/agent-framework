@@ -168,9 +168,11 @@ static void SafeExtractZip(ZipArchive archive, string destinationDir)
 
     foreach (ZipArchiveEntry entry in archive.Entries)
     {
+        // Resolve the entry against the destination, then require the result to stay within the
+        // destination subtree. A single StartsWith containment check is the only gate to extraction,
+        // so any entry that escapes (for example via '..') is rejected.
         string entryPath = Path.GetFullPath(Path.Combine(destRoot, entry.FullName));
-        if (!entryPath.StartsWith(destRootWithSep, comparison)
-            && !string.Equals(entryPath, destRoot, comparison))
+        if (!entryPath.StartsWith(destRootWithSep, comparison))
         {
             throw new InvalidOperationException(
                 $"Refusing to extract unsafe path '{entry.FullName}' outside of '{destRoot}'.");

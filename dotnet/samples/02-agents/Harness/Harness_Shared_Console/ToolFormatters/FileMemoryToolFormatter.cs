@@ -5,21 +5,21 @@ using Microsoft.Extensions.AI;
 namespace Harness.Shared.Console.ToolFormatters;
 
 /// <summary>
-/// Formats <c>FileMemory_*</c> tool calls, showing file names and search patterns
+/// Formats <c>file_memory_*</c> tool calls, showing file names and search patterns
 /// with tree-view corners for save operations.
 /// </summary>
 public sealed class FileMemoryToolFormatter : ToolCallFormatter
 {
     /// <inheritdoc/>
-    public override bool CanFormat(FunctionCallContent call) => call.Name.StartsWith("FileMemory_", StringComparison.Ordinal);
+    public override bool CanFormat(FunctionCallContent call) => call.Name.StartsWith("file_memory_", StringComparison.Ordinal);
 
     /// <inheritdoc/>
     public override string? FormatDetail(FunctionCallContent call) => call.Name switch
     {
-        "FileMemory_SaveFile" => FormatSaveFile(call),
-        "FileMemory_ReadFile" => FormatStringArg(call, "fileName"),
-        "FileMemory_DeleteFile" => FormatStringArg(call, "fileName"),
-        "FileMemory_SearchFiles" => FormatSearchFiles(call),
+        "file_memory_save_file" => FormatSaveFile(call),
+        "file_memory_read_file" => FormatStringArg(call, "fileName"),
+        "file_memory_delete_file" => FormatStringArg(call, "fileName"),
+        "file_memory_search_files" => FormatSearchFiles(call),
         _ => null,
     };
 

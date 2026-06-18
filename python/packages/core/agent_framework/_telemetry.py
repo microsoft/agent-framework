@@ -76,7 +76,7 @@ def _detect_hosted_environment() -> None:
     try:
         if importlib.util.find_spec("azure.ai.agentserver.core") is None:
             return
-    except (ModuleNotFoundError, ValueError):
+    except (ImportError, ValueError):
         return
     with contextlib.suppress(ImportError, AttributeError):
         from azure.ai.agentserver.core import (  # pyright: ignore[reportMissingImports]

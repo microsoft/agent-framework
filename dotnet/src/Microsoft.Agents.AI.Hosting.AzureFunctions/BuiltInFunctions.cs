@@ -363,9 +363,10 @@ internal static class BuiltInFunctions
 
         string agentName = context.Name;
 
-        // Derive session id: try to parse provided threadId, otherwise create a new one.
+        // Bind the caller-supplied threadId as a session key under the current agent name,
+        // mirroring the behavior of RunAgentHttpAsync.
         AgentSessionId sessionId = context.Arguments.TryGetValue("threadId", out object? threadObj) && threadObj is string threadId && !string.IsNullOrWhiteSpace(threadId)
-            ? AgentSessionId.Parse(threadId)
+            ? new AgentSessionId(agentName, threadId)
             : new AgentSessionId(agentName, functionContext.InvocationId);
 
         AIAgent agentProxy = client.AsDurableAgentProxy(functionContext, agentName);

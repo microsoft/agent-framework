@@ -1,4 +1,4 @@
-# Hosted Toolbox — Authentication Paths
+﻿# Hosted Toolbox — Authentication Paths
 
 A hosted Foundry agent backed by a single Foundry Toolbox that bundles MCP tools using **three different authentication paths**. The educational surface lives in the toolbox configuration (which you provision in the Foundry portal) and in this README — the agent code itself is identical to the existing [`Hosted-Toolbox/`](../Hosted-Toolbox/) sample.
 
@@ -115,7 +115,7 @@ Each entry should also carry:
 
 ### Sidebar — what the toolbox-creation code looks like
 
-This sample assumes the toolbox already exists; it does not provision one programmatically. For an end-to-end code example of toolbox creation from a publisher script (suitable for a CI/CD pipeline), see [`02-agents/AgentsWithFoundry/Agent_Step25_FoundryToolboxMcp/Program.cs`](../../../../02-agents/AgentsWithFoundry/Agent_Step25_FoundryToolboxMcp/Program.cs) — its `CreateSampleToolboxAsync` helper uses `AgentAdministrationClient.GetAgentToolboxes().CreateToolboxVersionAsync(...)` and is the canonical pattern.
+This sample assumes the toolbox already exists; it does not provision one programmatically. For an end-to-end code example of toolbox creation from a publisher script (suitable for a CI/CD pipeline), see [`02-agents/AgentProviders/foundry/Agent_Step25_FoundryToolboxMcp/Program.cs`](../../../../02-agents/AgentProviders/foundry/Agent_Step25_FoundryToolboxMcp/Program.cs) — its `CreateSampleToolboxAsync` helper uses `AgentAdministrationClient.GetAgentToolboxes().CreateToolboxVersionAsync(...)` and is the canonical pattern.
 
 ## Run the agent
 
@@ -195,3 +195,4 @@ Inline `authorization` on a toolbox tool entry stores credentials **inside the t
 - Local development against a test MCP server with a throwaway token.
 
 For everything else use `project_connection_id` and let the platform inject credentials.
+
