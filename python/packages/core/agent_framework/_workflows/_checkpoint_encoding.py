@@ -50,7 +50,7 @@ import base64
 import io
 import logging
 import pickle  # nosec  # noqa: S403
-from typing import Any
+from typing import Any, cast
 
 from ..exceptions import WorkflowCheckpointException
 
@@ -59,6 +59,13 @@ logger = logging.getLogger("agent_framework")
 # Marker to identify pickled values in serialized JSON
 _PICKLE_MARKER = "__pickled__"
 _TYPE_MARKER = "__type__"
+_ESCAPED_DICT_MARKER = "__agent_framework_checkpoint_dict__"
+_ESCAPED_DICT_VALUE = "value"
+_RESERVED_DICT_KEYS: frozenset[str] = frozenset({
+    _PICKLE_MARKER,
+    _TYPE_MARKER,
+    _ESCAPED_DICT_MARKER,
+})
 
 # Types that are natively JSON-serializable and don't need pickling
 _JSON_NATIVE_TYPES = (str, int, float, bool, type(None))
@@ -68,6 +75,13 @@ _FRAMEWORK_MODULE_PREFIX = "agent_framework."
 
 # Module prefix for OpenAI SDK types that are always allowed
 _OPENAI_MODULE_PREFIX = "openai.types."
+
+_DENIED_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
+    "agent_framework._workflows._checkpoint_encoding:_RestrictedUnpickler",
+    "agent_framework._workflows._checkpoint_encoding:_base64_to_unpickle",
+    "agent_framework._workflows._checkpoint_encoding:decode_checkpoint_value",
+    "agent_framework._workflows._checkpoint_encoding:encode_checkpoint_value",
+})
 
 # Built-in types considered safe for checkpoint deserialization.
 # Each entry is a ``module:qualname`` string matching the format produced by
@@ -127,6 +141,9 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
 
     def find_class(self, module: str, name: str) -> type:
         type_key = f"{module}:{name}"
+
+        if type_key in _DENIED_ALLOWED_TYPE_KEYS:
+            raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
 
         if (
             type_key in _BUILTIN_ALLOWED_TYPE_KEYS
@@ -217,7 +234,14 @@ def _encode(value: Any) -> Any:
 
     # Recursively encode dict values (keys become strings)
     if isinstance(value, dict):
-        return {str(k): _encode(v) for k, v in value.items()}  # type: ignore
+        typed_dict = cast(dict[Any, Any], value)  # type: ignore[redundant-cast]
+        encoded_dict: dict[str, Any] = {str(k): _encode(v) for k, v in typed_dict.items()}
+        if _RESERVED_DICT_KEYS.intersection(encoded_dict):
+            return {
+                _ESCAPED_DICT_MARKER: True,
+                _ESCAPED_DICT_VALUE: encoded_dict,
+            }
+        return encoded_dict
 
     # Recursively encode list items (lists are JSON-native collections)
     if isinstance(value, list):
@@ -238,14 +262,24 @@ def _decode(value: Any, *, allowed_types: frozenset[str] | None = None) -> Any:
 
     # Handle encoded dicts
     if isinstance(value, dict):
+        typed_dict = cast(dict[str, Any], value)
+        if typed_dict.get(_ESCAPED_DICT_MARKER) is True and set(typed_dict) == {
+            _ESCAPED_DICT_MARKER,
+            _ESCAPED_DICT_VALUE,
+        }:
+            escaped_value = typed_dict[_ESCAPED_DICT_VALUE]
+            if isinstance(escaped_value, dict):
+                escaped_dict = cast(dict[str, Any], escaped_value)
+                return {k: _decode(v, allowed_types=allowed_types) for k, v in escaped_dict.items()}
+
         # Pickled value: decode, unpickle, and verify type
-        if _PICKLE_MARKER in value and _TYPE_MARKER in value:
-            obj = _base64_to_unpickle(value[_PICKLE_MARKER], allowed_types=allowed_types)  # type: ignore
-            _verify_type(obj, value.get(_TYPE_MARKER))  # type: ignore
+        if _PICKLE_MARKER in typed_dict and _TYPE_MARKER in typed_dict:
+            obj = _base64_to_unpickle(cast(str, typed_dict[_PICKLE_MARKER]), allowed_types=allowed_types)
+            _verify_type(obj, cast(str, typed_dict.get(_TYPE_MARKER)))
             return obj
 
         # Regular dict: decode values recursively
-        return {k: _decode(v, allowed_types=allowed_types) for k, v in value.items()}  # type: ignore
+        return {k: _decode(v, allowed_types=allowed_types) for k, v in typed_dict.items()}
 
     # Handle encoded lists
     if isinstance(value, list):
