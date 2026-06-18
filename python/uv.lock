@@ -258,7 +258,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-foundry", editable = "packages/foundry" },
     { name = "aiohttp", specifier = ">=3.9,<4" },
-    { name = "azure-ai-contentunderstanding", specifier = ">=1.0.1,<1.1" },
+    { name = "azure-ai-contentunderstanding", specifier = ">=1.2.0b2,<2" },
     { name = "filetype", specifier = ">=1.2,<2" },
 ]
 
@@ -534,6 +534,7 @@ source = { editable = "packages/foundry" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-inference", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -542,6 +543,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-openai", editable = "packages/openai" },
+    { name = "aiohttp", specifier = ">=3.9,<4" },
     { name = "azure-ai-inference", specifier = ">=1.0.0b9,<1.0.0b10" },
     { name = "azure-ai-projects", specifier = ">=2.2.0,<3.0" },
 ]
@@ -1214,16 +1216,16 @@ wheels = [
 
 [[package]]
 name = "azure-ai-contentunderstanding"
-version = "1.0.1"
+version = "1.2.0b2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3d/97/6696d3fecb5650213c4b29dd45a306cc1da954e70e168605a5d372c51c3e/azure_ai_contentunderstanding-1.0.1.tar.gz", hash = "sha256:f653ea85a73df7d377ab55e39d7f02e271c66765f5fa5a3a56b59798bcb01e2c", size = 214634, upload-time = "2026-03-10T02:01:20.737Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/6c/f9af836a30b5299b10304d6b5ec645f8dbb1857429fa0191e41f86825d70/azure_ai_contentunderstanding-1.2.0b2.tar.gz", hash = "sha256:0ccef3c8087759ca788aabcc9af7b22cd8ada2df0236bf63563f4974c2d8cfcd", size = 265922, upload-time = "2026-06-11T02:24:56.951Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/f4/bb26c5b347f18fc85a066b4360a93204466ef7026d28585f3bf77c1a73ed/azure_ai_contentunderstanding-1.0.1-py3-none-any.whl", hash = "sha256:8d34246482691229ef75fe25f18c066d5f6adfe03b638c47f9b784c2992e6611", size = 101275, upload-time = "2026-03-10T02:01:22.181Z" },
+    { url = "https://files.pythonhosted.org/packages/12/08/bbe98d886deeeae320bb2d54b6cf132b1d811478232076d6e0d16d1aafaa/azure_ai_contentunderstanding-1.2.0b2-py3-none-any.whl", hash = "sha256:284885c9a45ef50f3938714cb6636c675c1ce9436dc0d561ff425fc124990379", size = 113072, upload-time = "2026-06-11T02:24:58.47Z" },
 ]
 
 [[package]]
