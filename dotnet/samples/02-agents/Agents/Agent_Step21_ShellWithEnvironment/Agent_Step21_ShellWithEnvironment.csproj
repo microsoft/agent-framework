@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Identity" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Tools.Shell\Microsoft.Agents.AI.Tools.Shell.csproj" />
   </ItemGroup>

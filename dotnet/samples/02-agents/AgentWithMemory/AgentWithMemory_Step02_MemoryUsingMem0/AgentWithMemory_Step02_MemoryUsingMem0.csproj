@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Identity" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Mem0\Microsoft.Agents.AI.Mem0.csproj" />
   </ItemGroup>

@@ -51,11 +51,11 @@ await using var provider = new Neo4jContextProvider(
 AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-    .AsIChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new()
         {
+            ModelId = deploymentName,
             Instructions = "You are a helpful assistant that answers questions using Neo4j graph context."
         },
         AIContextProviders = [provider]
