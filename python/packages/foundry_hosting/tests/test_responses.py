@@ -44,15 +44,20 @@ from mcp import McpError
 from mcp.types import ErrorData
 from typing_extensions import Any
 
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting import HostedSessionContext, ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
     _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
+    _default_hosted_session_context_resolver,  # pyright: ignore[reportPrivateUsage]
+    _hosted_session_context_path,  # pyright: ignore[reportPrivateUsage]
+    _hosted_session_key,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _read_hosted_session_context,  # pyright: ignore[reportPrivateUsage]
+    _try_write_hosted_session_context,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 
@@ -113,7 +118,56 @@ def _make_agent(
 
 def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     """Create a ResponsesHostServer with an in-memory store."""
+    kwargs.setdefault("hosted_session_context_resolver", _static_hosted_session_context_resolver())
     return ResponsesHostServer(agent, store=InMemoryResponseProvider(), **kwargs)
+
+
+def _static_hosted_session_context_resolver(
+    hosted_context: HostedSessionContext | None = None,
+) -> Callable[[Any, Any], HostedSessionContext]:
+    resolved_context = hosted_context or HostedSessionContext(user_id="user-a", chat_id="chat-a")
+
+    def resolve(context: Any, request: Any) -> HostedSessionContext:
+        del context, request
+        return resolved_context
+
+    return resolve
+
+
+# Isolation key the default ``_make_server`` resolver (user-a/chat-a) binds approvals to.
+_DEFAULT_SERVER_ISOLATION_KEY = _hosted_session_key(HostedSessionContext(user_id="user-a", chat_id="chat-a"))
+
+
+def _missing_hosted_session_context_resolver(context: Any, request: Any) -> None:
+    del context, request
+    return
+
+
+def _async_hosted_session_context_resolver(
+    hosted_context: HostedSessionContext | None = None,
+) -> Callable[[Any, Any], Awaitable[HostedSessionContext]]:
+    resolved_context = hosted_context or HostedSessionContext(user_id="user-a", chat_id="chat-a")
+
+    async def resolve(context: Any, request: Any) -> HostedSessionContext:
+        del context, request
+        return resolved_context
+
+    return resolve
+
+
+@dataclass
+class _HostedSessionIsolation:
+    """Test isolation context with platform-shaped attributes."""
+
+    user_key: str | None
+    chat_key: str | None
+
+
+class _HostedSessionResponseContext:
+    """Test response context with platform isolation."""
+
+    def __init__(self, *, user_key: str | None, chat_key: str | None) -> None:
+        self.isolation = _HostedSessionIsolation(user_key=user_key, chat_key=chat_key)
 
 
 async def _post(
@@ -2609,6 +2663,113 @@ class TestFunctionApprovalStorage:
             await storage.load_approval_request("missing")
 
 
+class TestFunctionApprovalIsolationBinding:
+    """Tests that approval redemption is bound to the caller's isolation context (CWE-863)."""
+
+    def test_hosted_session_key_derivation(self) -> None:
+        # No identity -> no-op binding.
+        assert _hosted_session_key(None) is None
+        # Distinct identities produce distinct keys; same identity is stable.
+        alice = _hosted_session_key(HostedSessionContext(user_id="alice", chat_id="chat-1"))
+        bob = _hosted_session_key(HostedSessionContext(user_id="bob", chat_id="chat-1"))
+        alice_again = _hosted_session_key(HostedSessionContext(user_id="alice", chat_id="chat-1"))
+        assert alice is not None
+        assert alice == alice_again
+        assert alice != bob
+        # chat_id is part of the binding.
+        assert _hosted_session_key(HostedSessionContext(user_id="alice", chat_id="chat-2")) != alice
+
+    async def test_in_memory_same_isolation_round_trip(self) -> None:
+        storage = InMemoryFunctionApprovalStorage()
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request, isolation_key="alice")
+        loaded = await storage.load_approval_request("apr_1", isolation_key="alice")
+        assert loaded.id == "apr_1"  # type: ignore[attr-defined]
+
+    async def test_in_memory_cross_isolation_load_rejected(self) -> None:
+        storage = InMemoryFunctionApprovalStorage()
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request, isolation_key="alice")
+        # Bob cannot redeem Alice's approval handle.
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1", isolation_key="bob")
+        # Nor can a caller with no isolation context.
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1")
+
+    async def test_in_memory_no_isolation_round_trip(self) -> None:
+        storage = InMemoryFunctionApprovalStorage()
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request)
+        loaded = await storage.load_approval_request("apr_1")
+        assert loaded.id == "apr_1"  # type: ignore[attr-defined]
+
+    async def test_file_based_same_isolation_round_trip(self, tmp_path: Any) -> None:
+        path = tmp_path / "approvals.json"
+        storage = FileBasedFunctionApprovalStorage(str(path))
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request, isolation_key="alice")
+        loaded = await FileBasedFunctionApprovalStorage(str(path)).load_approval_request("apr_1", isolation_key="alice")
+        assert loaded.id == "apr_1"  # type: ignore[attr-defined]
+        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
+
+    async def test_file_based_cross_isolation_load_rejected(self, tmp_path: Any) -> None:
+        path = tmp_path / "approvals.json"
+        storage = FileBasedFunctionApprovalStorage(str(path))
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request, isolation_key="alice")
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1", isolation_key="bob")
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1")
+
+    async def test_file_based_legacy_entry_rejected(self, tmp_path: Any) -> None:
+        # A legacy on-disk entry (bare request dict, no isolation envelope) is rejected.
+        path = tmp_path / "approvals.json"
+        request = _make_function_approval_request_content(request_id="apr_1")
+        path.write_text(json.dumps({"apr_1": request.to_dict()}))
+        storage = FileBasedFunctionApprovalStorage(str(path))
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1")
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1", isolation_key="alice")
+
+    async def test_conversion_cross_isolation_rejected(self) -> None:
+        from azure.ai.agentserver.responses.models import MCPApprovalResponse
+
+        storage = InMemoryFunctionApprovalStorage()
+        saved = _make_function_approval_request_content(request_id="apr-1")
+        await storage.save_approval_request("apr-1", saved, isolation_key="alice")
+
+        item = MCPApprovalResponse({
+            "type": "mcp_approval_response",
+            "approval_request_id": "apr-1",
+            "approve": True,
+        })
+        # Bob redeeming Alice's approval handle is rejected at the conversion layer.
+        with pytest.raises(KeyError):
+            await _item_to_message(item, approval_storage=storage, isolation_key="bob")  # type: ignore[arg-type]
+        # The legitimate owner can still redeem it.
+        msg = await _item_to_message(item, approval_storage=storage, isolation_key="alice")  # type: ignore[arg-type]
+        assert msg.contents[0].type == "function_approval_response"
+
+    async def test_conversion_no_identity_round_trip(self) -> None:
+        from azure.ai.agentserver.responses.models import MCPApprovalResponse
+
+        storage = InMemoryFunctionApprovalStorage()
+        saved = _make_function_approval_request_content(request_id="apr-1")
+        await storage.save_approval_request("apr-1", saved)
+
+        item = MCPApprovalResponse({
+            "type": "mcp_approval_response",
+            "approval_request_id": "apr-1",
+            "approve": True,
+        })
+        # Without any resolved identity, an approval saved and redeemed with no key still works.
+        msg = await _item_to_message(item, approval_storage=storage)  # type: ignore[arg-type]
+        assert msg.contents[0].type == "function_approval_response"
+
+
 class TestFunctionApprovalConversion:
     """Tests for the approval-aware paths in `_item_to_message` / `_output_item_to_message`."""
 
@@ -2747,7 +2908,7 @@ class TestFunctionApprovalRoundTrip:
 
         # Storage must contain a saved entry under the emitted request id.
         loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
+            approval_request_id, isolation_key=_DEFAULT_SERVER_ISOLATION_KEY
         )
         assert loaded.type == "function_approval_request"
         assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
@@ -2776,7 +2937,7 @@ class TestFunctionApprovalRoundTrip:
         assert approval_request_id is not None
 
         loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
+            approval_request_id, isolation_key=_DEFAULT_SERVER_ISOLATION_KEY
         )
         assert loaded.type == "function_approval_request"
 
@@ -2817,6 +2978,58 @@ class TestFunctionApprovalRoundTrip:
 
         # The agent's second invocation must have received a
         # function_approval_response content carrying the original function_call.
+        assert agent.run.call_count == 2
+        second_call_kwargs = agent.run.call_args_list[1].kwargs
+        approval_responses = [
+            c for m in second_call_kwargs["messages"] for c in m.contents if c.type == "function_approval_response"
+        ]
+        assert len(approval_responses) == 1
+        assert approval_responses[0].approved is True
+        assert approval_responses[0].function_call.name == "delete_file"
+
+    async def test_round_trip_default_local_no_identity_reaches_agent(self) -> None:
+        """Default local behavior must be unchanged: a server built with no injected
+        resolver (so the default resolver finds no `ResponseContext.isolation`) saves the
+        approval under `isolation_key=None` on turn 1 and redeems it on turn 2 without error."""
+        request_content = _make_function_approval_request_content()
+
+        agent = _make_multi_response_agent(
+            responses=[
+                AgentResponse(messages=[Message(role="assistant", contents=[request_content])]),
+                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
+            ]
+        )
+        # Construct directly (not via _make_server) so no identity resolver is injected and
+        # strict_session_isolation keeps its default; this exercises the true default path.
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+
+        first = await _post(server, stream=False)
+        assert first.status_code == 200
+        approval_request_id = next(
+            item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request"
+        )
+
+        # The approval was persisted under the empty identity.
+        loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
+            approval_request_id
+        )
+        assert loaded.type == "function_approval_request"
+
+        second = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "mcp_approval_response",
+                        "approval_request_id": approval_request_id,
+                        "approve": True,
+                    }
+                ],
+                "stream": False,
+            },
+        )
+        assert second.status_code == 200
         assert agent.run.call_count == 2
         second_call_kwargs = agent.run.call_args_list[1].kwargs
         approval_responses = [
@@ -2957,6 +3170,28 @@ class TestCheckpointContextPathValidation:
             == "azure.ai.agentserver.responses.models._generated.sdk.models.models._enums:MessageRole"
         )
 
+    def test_hosted_session_context_rejects_whitespace_only_keys(self) -> None:
+        with pytest.raises(ValueError, match="requires non-empty"):
+            HostedSessionContext(user_id=" ", chat_id="chat-a")
+        with pytest.raises(ValueError, match="requires non-empty"):
+            HostedSessionContext(user_id="user-a", chat_id="\t")
+
+    def test_default_hosted_session_context_resolver_rejects_whitespace_only_keys(self) -> None:
+        assert (
+            _default_hosted_session_context_resolver(
+                _HostedSessionResponseContext(user_key=" ", chat_key="chat-a"),  # type: ignore[arg-type]
+                MagicMock(),
+            )
+            is None
+        )
+        assert (
+            _default_hosted_session_context_resolver(
+                _HostedSessionResponseContext(user_key="user-a", chat_key="\n"),  # type: ignore[arg-type]
+                MagicMock(),
+            )
+            is None
+        )
+
     async def test_storage_allows_azure_message_role_checkpoint_restore(self, tmp_path: Any) -> None:
         from azure.ai.agentserver.responses.models import MessageRole
 
@@ -3030,6 +3265,9 @@ class TestCheckpointContextPathValidation:
         checkpoint_storage = self._helper()(str(root), previous_response_id)
         checkpoint = self._checkpoint_with_azure_message_role()
         await checkpoint_storage.save(checkpoint)
+        assert await _try_write_hosted_session_context(
+            checkpoint_storage, HostedSessionContext(user_id="user-a", chat_id="chat-a")
+        )
 
         agent = MagicMock(spec=WorkflowAgent)
         agent.id = "wf-agent"
@@ -3045,7 +3283,7 @@ class TestCheckpointContextPathValidation:
                 AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
             ]
         )
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = _make_server(agent)
         server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
 
         request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
@@ -3068,6 +3306,211 @@ class TestCheckpointContextPathValidation:
         assert len(new_turn_messages) == 1
         assert new_turn_messages[0].text == "next turn"
         assert new_turn_call.kwargs["checkpoint_storage"].storage_path == (root / response_id).resolve()
+
+        stamped_context = await _read_hosted_session_context(new_turn_call.kwargs["checkpoint_storage"])
+        assert stamped_context == HostedSessionContext(user_id="user-a", chat_id="chat-a")
+
+    async def test_handle_inner_workflow_rejects_cross_user_previous_response_id(self, tmp_path: Any) -> None:
+        from agent_framework import WorkflowAgent
+        from azure.ai.agentserver.responses import ResponseContext
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        previous_response_id = "resp_previous"
+        response_id = "resp_current"
+        root = tmp_path / "root"
+        root.mkdir()
+        checkpoint_storage = self._helper()(str(root), previous_response_id)
+        assert await _try_write_hosted_session_context(
+            checkpoint_storage,
+            HostedSessionContext(user_id="victim-user", chat_id="victim-chat"),
+        )
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.run = AsyncMock()
+        server = ResponsesHostServer(
+            agent,
+            store=InMemoryResponseProvider(),
+            hosted_session_context_resolver=_async_hosted_session_context_resolver(
+                HostedSessionContext(user_id="attacker-user", chat_id="victim-chat")
+            ),
+        )
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
+        context = ResponseContext(
+            response_id=response_id, previous_response_id=previous_response_id, mode_flags=MagicMock()
+        )
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            events = [event async for event in server._handle_inner_workflow(request, context)]  # pyright: ignore[reportPrivateUsage]
+
+        failed = [event for event in events if getattr(event, "type", None) == "response.failed"]
+        assert len(failed) == 1
+        response_obj = getattr(failed[0], "response", None)
+        error = getattr(response_obj, "error", None) if response_obj is not None else None
+        assert error is not None
+        assert "hosted_session_identity_mismatch" in (error.message or "")
+        agent.run.assert_not_called()
+
+    async def test_hosted_session_context_stamp_is_create_only(self, tmp_path: Any) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        checkpoint_storage = self._helper()(str(root), "resp_previous")
+
+        first_created = await _try_write_hosted_session_context(
+            checkpoint_storage,
+            HostedSessionContext(user_id="user-a", chat_id="chat-a"),
+        )
+        second_created = await _try_write_hosted_session_context(
+            checkpoint_storage,
+            HostedSessionContext(user_id="user-b", chat_id="chat-b"),
+        )
+
+        assert first_created is True
+        assert second_created is False
+        assert _hosted_session_context_path(checkpoint_storage).suffix != ".json"
+        assert _hosted_session_context_path(checkpoint_storage).name not in {
+            path.name for path in checkpoint_storage.storage_path.glob("*.json")
+        }
+        assert await _read_hosted_session_context(checkpoint_storage) == HostedSessionContext(
+            user_id="user-a",
+            chat_id="chat-a",
+        )
+
+    async def test_handle_inner_workflow_rejects_unstamped_existing_previous_response_id(self, tmp_path: Any) -> None:
+        from agent_framework import WorkflowAgent
+        from azure.ai.agentserver.responses import ResponseContext
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        previous_response_id = "resp_previous"
+        response_id = "resp_current"
+        root = tmp_path / "root"
+        root.mkdir()
+        checkpoint_storage = self._helper()(str(root), previous_response_id)
+        await checkpoint_storage.save(self._checkpoint_with_azure_message_role())
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.run = AsyncMock()
+        server = _make_server(agent)
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
+        context = ResponseContext(
+            response_id=response_id, previous_response_id=previous_response_id, mode_flags=MagicMock()
+        )
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            events = [event async for event in server._handle_inner_workflow(request, context)]  # pyright: ignore[reportPrivateUsage]
+
+        failed = [event for event in events if getattr(event, "type", None) == "response.failed"]
+        assert len(failed) == 1
+        response_obj = getattr(failed[0], "response", None)
+        error = getattr(response_obj, "error", None) if response_obj is not None else None
+        assert error is not None
+        assert "hosted_session_identity_missing" in (error.message or "")
+        agent.run.assert_not_called()
+
+    async def test_handle_inner_workflow_allows_unstamped_previous_response_id_when_non_strict(
+        self, tmp_path: Any
+    ) -> None:
+        from agent_framework import WorkflowAgent
+        from azure.ai.agentserver.responses import ResponseContext
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        previous_response_id = "resp_previous"
+        response_id = "resp_current"
+        root = tmp_path / "root"
+        root.mkdir()
+        checkpoint_storage = self._helper()(str(root), previous_response_id)
+        checkpoint = self._checkpoint_with_azure_message_role()
+        await checkpoint_storage.save(checkpoint)
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.run = AsyncMock(
+            side_effect=[
+                AgentResponse(messages=[]),
+                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
+            ]
+        )
+        server = ResponsesHostServer(
+            agent,
+            store=InMemoryResponseProvider(),
+            hosted_session_context_resolver=_missing_hosted_session_context_resolver,
+            strict_session_isolation=False,
+        )
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
+        context = ResponseContext(
+            response_id=response_id, previous_response_id=previous_response_id, mode_flags=MagicMock()
+        )
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            async for _ in server._handle_inner_workflow(request, context):  # pyright: ignore[reportPrivateUsage]
+                pass
+
+        assert agent.run.call_count == 2
+        restore_call = agent.run.call_args_list[0]
+        assert restore_call.kwargs["checkpoint_id"] == checkpoint.checkpoint_id
+        assert restore_call.kwargs["checkpoint_storage"].storage_path == (root / previous_response_id).resolve()
+
+    async def test_handle_inner_workflow_requires_isolation_keys_by_default(self, tmp_path: Any) -> None:
+        from agent_framework import WorkflowAgent
+        from azure.ai.agentserver.responses import ResponseContext
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        root = tmp_path / "root"
+        root.mkdir()
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+        agent.run = AsyncMock()
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="resp_current", mode_flags=MagicMock())
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            events = [event async for event in server._handle_inner_workflow(request, context)]  # pyright: ignore[reportPrivateUsage]
+
+        failed = [event for event in events if getattr(event, "type", None) == "response.failed"]
+        assert len(failed) == 1
+        response_obj = getattr(failed[0], "response", None)
+        error = getattr(response_obj, "error", None) if response_obj is not None else None
+        assert error is not None
+        assert "Hosted session isolation keys are required" in (error.message or "")
+        agent.run.assert_not_called()
 
     @pytest.mark.parametrize(
         "bad_id",
@@ -3165,7 +3608,7 @@ class TestCheckpointContextPathValidation:
 
         # Constructor inspects WorkflowAgent.workflow internals; bypass setup
         # by feeding a configured mock through a normal init.
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = _make_server(agent)
         # Re-root checkpoint storage at our isolated tmp_path so we can detect
         # any escape attempt on the filesystem.
         root = tmp_path / "root"
@@ -3253,7 +3696,7 @@ class TestCheckpointContextPathValidation:
             return_value=False
         )
 
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = _make_server(agent)
         # Re-root checkpoint storage at our isolated tmp_path so we can detect
         # any escape attempt on the filesystem.
         root = tmp_path / "root"
@@ -3946,7 +4389,7 @@ class TestWorkflowAgentHosting:
         # ``function_call``) must be persisted under that id so the next
         # turn can reconstruct it.
         loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
+            approval_request_id, isolation_key=_DEFAULT_SERVER_ISOLATION_KEY
         )
         assert loaded.type == "function_approval_request"
         assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
@@ -3975,7 +4418,7 @@ class TestWorkflowAgentHosting:
         assert approval_request_id is not None
 
         loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
+            approval_request_id, isolation_key=_DEFAULT_SERVER_ISOLATION_KEY
         )
         assert loaded.type == "function_approval_request"
         assert mock_agent.run_count == 1

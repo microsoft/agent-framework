@@ -136,13 +136,12 @@ def add_agent_framework_fastapi_endpoint(
         """
         try:
             input_data = request_body.model_dump(exclude_none=True)
-            snapshot_persistence_active = False
-            if snapshot_scope_resolver is not None and _get_snapshot_store(protocol_runner) is not None:
+            snapshot_persistence_active = _get_snapshot_store(protocol_runner) is not None
+            if snapshot_scope_resolver is not None:
                 snapshot_scope = snapshot_scope_resolver(request_body)
                 if isawaitable(snapshot_scope):
                     snapshot_scope = await snapshot_scope
                 input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
-                snapshot_persistence_active = True
             if default_state:
                 if snapshot_persistence_active:
                     # Defer default application to the runner so defaults only fill keys
