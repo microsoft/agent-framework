@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **agent-framework-azure-ai-search**: Support the stable/GA (`azure-search-documents` `12.0.0`, api-version `2026-04-01`) and preview (`12.1.0b1`, api-version `2026-05-01-preview`) Azure AI Search SDKs across semantic and agentic modes. Bump the dependency to `>=12.0.0,<13` and auto-detect the installed build: preview-only agentic features (output mode, low/medium reasoning effort) are enabled when a preview build is installed and otherwise raise an actionable error. The installed SDK selects its own data-plane api-version (no `api_version` parameter to configure). Also fixes semantic search with a semantic configuration on the 12.x SDK by passing string values for `query_type`/`query_caption` (the 12.x non-`str` enums serialized to a form the service rejected).
+
 ## [1.10.0] - 2026-06-25
 
 ### Added
