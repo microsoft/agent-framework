@@ -2987,6 +2987,58 @@ class TestFunctionApprovalRoundTrip:
         assert approval_responses[0].approved is True
         assert approval_responses[0].function_call.name == "delete_file"
 
+    async def test_round_trip_default_local_no_identity_reaches_agent(self) -> None:
+        """Default local behavior must be unchanged: a server built with no injected
+        resolver (so the default resolver finds no `ResponseContext.isolation`) saves the
+        approval under `isolation_key=None` on turn 1 and redeems it on turn 2 without error."""
+        request_content = _make_function_approval_request_content()
+
+        agent = _make_multi_response_agent(
+            responses=[
+                AgentResponse(messages=[Message(role="assistant", contents=[request_content])]),
+                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
+            ]
+        )
+        # Construct directly (not via _make_server) so no identity resolver is injected and
+        # strict_session_isolation keeps its default; this exercises the true default path.
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+
+        first = await _post(server, stream=False)
+        assert first.status_code == 200
+        approval_request_id = next(
+            item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request"
+        )
+
+        # The approval was persisted under the empty identity.
+        loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
+            approval_request_id
+        )
+        assert loaded.type == "function_approval_request"
+
+        second = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "mcp_approval_response",
+                        "approval_request_id": approval_request_id,
+                        "approve": True,
+                    }
+                ],
+                "stream": False,
+            },
+        )
+        assert second.status_code == 200
+        assert agent.run.call_count == 2
+        second_call_kwargs = agent.run.call_args_list[1].kwargs
+        approval_responses = [
+            c for m in second_call_kwargs["messages"] for c in m.contents if c.type == "function_approval_response"
+        ]
+        assert len(approval_responses) == 1
+        assert approval_responses[0].approved is True
+        assert approval_responses[0].function_call.name == "delete_file"
+
     async def test_round_trip_approval_response_rejected(self) -> None:
         """Same as above but the user rejects the approval; the agent must
         receive `approved=False`."""
