@@ -661,10 +661,6 @@ internal static class BuiltInFunctions
     /// Extracts the workflow name from the function definition name by stripping the
     /// <see cref="HttpPrefix"/> and the given suffix (e.g., "-status" or "-respond").
     /// </summary>
-    /// <summary>
-    /// Extracts the workflow name from the function definition name by stripping the
-    /// <see cref="HttpPrefix"/> and the given suffix (e.g., "-status" or "-respond").
-    /// </summary>
     internal static string GetWorkflowName(string functionName, string suffix)
     {
         if (!functionName.StartsWith(HttpPrefix, StringComparison.Ordinal) ||
@@ -683,6 +679,12 @@ internal static class BuiltInFunctions
     /// </summary>
     internal static bool IsOrchestrationOwnedByWorkflow(string orchestrationName, string functionName, string suffix)
     {
+        if (!functionName.StartsWith(HttpPrefix, StringComparison.Ordinal) ||
+            !functionName.EndsWith(suffix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         string workflowName = GetWorkflowName(functionName, suffix);
         string expectedOrchestrationName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
         return string.Equals(orchestrationName, expectedOrchestrationName, StringComparison.OrdinalIgnoreCase);

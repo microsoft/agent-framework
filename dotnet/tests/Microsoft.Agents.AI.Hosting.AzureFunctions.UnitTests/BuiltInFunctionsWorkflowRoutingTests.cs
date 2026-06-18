@@ -9,7 +9,7 @@ public sealed class BuiltInFunctionsWorkflowRoutingTests
     [InlineData("http-OrderProcessor-status", "-status", "OrderProcessor")]
     [InlineData("http-MyWorkflow-respond", "-respond", "MyWorkflow")]
     [InlineData("http-Multi-Dash-Name-status", "-status", "Multi-Dash-Name")]
-    public void GetWorkflowName_ReturnsCorrectNameAsync(string functionName, string suffix, string expectedWorkflowName)
+    public void GetWorkflowName_ReturnsCorrectName(string functionName, string suffix, string expectedWorkflowName)
     {
         // Act
         string result = BuiltInFunctions.GetWorkflowName(functionName, suffix);
