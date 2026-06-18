@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import pytest
-from agent_framework import Content, Message
+from agent_framework import Content, ExperimentalFeature, Message
 
 from agent_framework_foundry_hosting import FoundryHostedAgentHistoryProvider, foundry_response_id
 
 _RESPONSE_PREFIX = "caresp_"
 _PARTITION_KEY_LENGTH = 18
 _ENTROPY_LENGTH = 32
+
+
+def test_history_provider_public_api_is_marked_experimental() -> None:
+    assert FoundryHostedAgentHistoryProvider.__feature_id__ == ExperimentalFeature.HOSTING.value
+    assert foundry_response_id.__feature_id__ == ExperimentalFeature.HOSTING.value
 
 
 def test_foundry_response_id_uses_foundry_shape() -> None:

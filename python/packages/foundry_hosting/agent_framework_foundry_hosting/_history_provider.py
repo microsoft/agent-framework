@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, ClassVar, cast
 
-from agent_framework import HistoryProvider, Message
+from agent_framework import ExperimentalFeature, HistoryProvider, Message
+from agent_framework._feature_stage import experimental
 from azure.ai.agentserver.core import AgentConfig
 from azure.ai.agentserver.responses import (
     FoundryStorageProvider,
@@ -50,6 +51,7 @@ _request_context: ContextVar[_RequestContext | None] = ContextVar(
 )
 
 
+@experimental(feature_id=ExperimentalFeature.HOSTING)
 def foundry_response_id(previous_response_id: str | None = None) -> str:
     """Mint a Foundry-storage-compatible response ID.
 
@@ -64,6 +66,7 @@ def foundry_response_id(previous_response_id: str | None = None) -> str:
     return IdGenerator.new_response_id(previous_response_id or "")
 
 
+@experimental(feature_id=ExperimentalFeature.HOSTING)
 def foundry_response_id_factory() -> FoundryResponseIdFactory:
     """Return a callable suitable for response ID factory hooks.
 
@@ -123,6 +126,7 @@ def _message_to_item(message: Message, *, response_id: str) -> OutputItem:
     })
 
 
+@experimental(feature_id=ExperimentalFeature.HOSTING)
 class FoundryHostedAgentHistoryProvider(HistoryProvider):
     """Conversation history provider backed by Foundry Hosted Agents storage.
 
