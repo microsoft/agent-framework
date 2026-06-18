@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -423,15 +424,15 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         MockAgentProvider mockAgentProvider = new();
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
 
-        Mock<IWorkflowContext> mockContext = new(MockBehavior.Loose);
+        // Emit the approval request so the executor records the per-invocation snapshot.
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
 
-        // Build an approved response matching this action's request id.
-        McpServerToolCallContent toolCall = new(action.Id, TestToolName, TestServerLabel);
-        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
-        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
+        // Build the matching approved response from the emitted request.
+        ExternalInputResponse response = CreateApprovalResponseFor(emittedRequests, approved: true);
 
-        // Act - call CaptureResponseAsync directly so the post-approval branch actually executes.
+        // Act - call CaptureResponseAsync so the post-approval branch actually executes.
         await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
 
         // Assert - headers reach the transport invocation on the approved path.
@@ -887,7 +888,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
 
         // Act - trigger ExecuteAsync to store the approval snapshot
-        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext();
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
         await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
 
         // Simulate parallel branch mutating state during the approval window
@@ -895,10 +897,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         this.State.Bind();
 
         // User clicks approve (they saw "safe_readonly_query" in the approval UI)
-        McpServerToolCallContent toolCall = new(action.Id, ApprovedToolName, TestServerUrl);
-        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
-        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
+        ExternalInputResponse response = CreateApprovalResponseFor(emittedRequests, approved: true);
 
         // Resume after approval
         await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
@@ -950,7 +949,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
 
         // Act - trigger ExecuteAsync to store the approval snapshot
-        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext();
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
         await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
 
         // Simulate parallel branch mutating state during the approval window
@@ -958,10 +958,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         this.State.Bind();
 
         // User clicks approve
-        McpServerToolCallContent toolCall = new(action.Id, TestToolName, TestServerUrl);
-        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
-        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
+        ExternalInputResponse response = CreateApprovalResponseFor(emittedRequests, approved: true);
 
         // Resume after approval
         await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
@@ -1011,7 +1008,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
 
         // Act - trigger ExecuteAsync to store the approval snapshot
-        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext();
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
         await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
 
         // Simulate parallel branch mutating state during the approval window
@@ -1019,10 +1017,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         this.State.Bind();
 
         // User clicks approve
-        McpServerToolCallContent toolCall = new(action.Id, TestToolName, ApprovedServerUrl);
-        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
-        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
+        ExternalInputResponse response = CreateApprovalResponseFor(emittedRequests, approved: true);
 
         // Resume after approval
         await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
@@ -1072,17 +1067,18 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
 
         // Act - trigger ExecuteAsync to store the approval snapshot
-        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore();
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore(emittedRequests);
         await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
 
         // Simulate checkpoint: persist to state store
         await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
 
-        // Simulate restore on a "new" executor instance by clearing the in-memory field via reflection
-        // (In production, a new executor instance would be created with _approvalSnapshot == null)
-        typeof(InvokeMcpToolExecutor)
-            .GetField("_approvalSnapshot", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .SetValue(action, null);
+        // Simulate restore on a "new" executor instance by clearing the in-memory dictionary via reflection
+        ConcurrentDictionary<string, ApprovalSnapshot> liveSnapshots = (ConcurrentDictionary<string, ApprovalSnapshot>)typeof(InvokeMcpToolExecutor)
+            .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(action)!;
+        liveSnapshots.Clear();
 
         // Restore from state store
         await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
@@ -1092,10 +1088,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         this.State.Bind();
 
         // User clicks approve
-        McpServerToolCallContent toolCall = new(action.Id, ApprovedToolName, TestServerUrl);
-        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
-        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
+        ExternalInputResponse response = CreateApprovalResponseFor(emittedRequests, approved: true);
 
         // Resume after approval
         await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
@@ -1105,7 +1098,440 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         Assert.Equal(ApprovedToolName, capturedToolName);
     }
 
-    private static Mock<IWorkflowContext> CreateMockWorkflowContext()
+    /// <summary>
+    /// Each ExecuteAsync invocation must produce a unique per-invocation request id on
+    /// both the McpServerToolCallContent and the wrapping ToolApprovalRequestContent.
+    /// </summary>
+    [Fact]
+    public async Task InvokeMcpToolEmitsUniqueRequestIdPerInvocationAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeMcpTool model = this.CreateModelWithApproval(
+            displayName: nameof(InvokeMcpToolEmitsUniqueRequestIdPerInvocationAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName);
+        Mock<IMcpToolHandler> mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+
+        // Act
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        // Assert - two distinct request ids surfaced
+        Assert.Equal(2, emittedRequests.Count);
+        string id1 = emittedRequests[0].AgentResponse.Messages
+            .SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().Single().RequestId;
+        string id2 = emittedRequests[1].AgentResponse.Messages
+            .SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().Single().RequestId;
+        Assert.NotEqual(id1, id2);
+        Assert.NotEqual(action.Id, id1);
+        Assert.NotEqual(action.Id, id2);
+    }
+
+    /// <summary>
+    /// Two concurrent pending MCP approvals on different executor instances (representing
+    /// concurrent fan-in or interleaved invocations) must each resume with their own
+    /// approved parameters when responses are delivered out of order.
+    /// </summary>
+    [Fact]
+    public async Task InvokeMcpToolConcurrentPendingApprovalsDoNotSwapAsync()
+    {
+        // Arrange
+        const string ToolA = "tool_alpha";
+        const string ToolB = "tool_beta";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeMcpTool modelA = this.CreateModelWithApproval(
+            displayName: nameof(InvokeMcpToolConcurrentPendingApprovalsDoNotSwapAsync) + "A",
+            serverUrl: TestServerUrl,
+            toolName: ToolA);
+        InvokeMcpTool modelB = this.CreateModelWithApproval(
+            displayName: nameof(InvokeMcpToolConcurrentPendingApprovalsDoNotSwapAsync) + "B",
+            serverUrl: TestServerUrl,
+            toolName: ToolB);
+
+        List<string?> capturedToolNames = [];
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(p => p.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, toolName, _, _, _, _) => capturedToolNames.Add(toolName))
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("ok")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+
+        InvokeMcpToolExecutor actionA = new(modelA, mockProvider.Object, mockAgentProvider.Object, this.State);
+        InvokeMcpToolExecutor actionB = new(modelB, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedA = [];
+        List<ExternalInputRequest> emittedB = [];
+        Mock<IWorkflowContext> ctxA = CreateMockWorkflowContext(emittedA);
+        Mock<IWorkflowContext> ctxB = CreateMockWorkflowContext(emittedB);
+
+        // Act - both executors emit approval requests
+        await actionA.HandleAsync(new ActionExecutorResult(actionA.Id), ctxA.Object, CancellationToken.None);
+        await actionB.HandleAsync(new ActionExecutorResult(actionB.Id), ctxB.Object, CancellationToken.None);
+
+        // Deliver responses out of order
+        await actionB.CaptureResponseAsync(ctxB.Object, CreateApprovalResponseFor(emittedB, approved: true), CancellationToken.None);
+        await actionA.CaptureResponseAsync(ctxA.Object, CreateApprovalResponseFor(emittedA, approved: true), CancellationToken.None);
+
+        // Assert - each invocation invoked its own approved tool name
+        Assert.Equal([ToolB, ToolA], capturedToolNames);
+    }
+
+    /// <summary>
+    /// When the approval response references a request id that is not in the snapshot map,
+    /// the executor must NOT invoke the MCP tool.
+    /// </summary>
+    [Fact]
+    public async Task InvokeMcpToolMissingSnapshotAssignsErrorAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeMcpTool model = this.CreateModelWithApproval(
+            displayName: nameof(InvokeMcpToolMissingSnapshotAssignsErrorAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName);
+        Mock<IMcpToolHandler> mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext();
+
+        // Act - deliver an approval response whose RequestId has no matching snapshot
+        McpServerToolCallContent toolCall = new("stale-id", TestToolName, TestServerUrl);
+        ToolApprovalRequestContent staleRequest = new("stale-id", toolCall);
+        ToolApprovalResponseContent staleResponse = staleRequest.CreateResponse(approved: true);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [staleResponse]));
+
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert - mcpToolHandler.InvokeToolAsync must NOT have been called
+        mockProvider.Verify(p => p.InvokeToolAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<IDictionary<string, object?>?>(),
+            It.IsAny<IDictionary<string, string>?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// A snapshot persisted at the legacy <c>"_approvalSnapshot"</c> key must be migrated
+    /// under <c>this.Id</c> after restore so an approval response carrying
+    /// <c>RequestId == this.Id</c> resumes with the snapshot's tool name.
+    /// </summary>
+    [Fact]
+    public async Task InvokeMcpToolLegacySingleSnapshotCheckpointIsMigratedAsync()
+    {
+        // Arrange
+        const string LegacyApprovedToolName = "legacy_approved_tool";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeMcpTool model = this.CreateModelWithApproval(
+            displayName: nameof(InvokeMcpToolLegacySingleSnapshotCheckpointIsMigratedAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName);
+
+        string? capturedToolName = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(p => p.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, toolName, _, _, _, _) => capturedToolName = toolName)
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("ok")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        // Seed the state store with a single ApprovalSnapshot at the legacy key.
+        Dictionary<string, object?> stateStore = new()
+        {
+            ["_approvalSnapshot"] = new ApprovalSnapshot(
+                TestServerUrl, null, LegacyApprovedToolName, new Dictionary<string, object?>(), null),
+        };
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStoreSeeded(stateStore);
+
+        // Act - restore migrates the legacy snapshot under this.Id.
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+
+        ConcurrentDictionary<string, ApprovalSnapshot> snapshots = (ConcurrentDictionary<string, ApprovalSnapshot>)typeof(InvokeMcpToolExecutor)
+            .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(action)!;
+        Assert.True(snapshots.ContainsKey(action.Id));
+
+        // Deliver an approval response with RequestId == action.Id and resume.
+        McpServerToolCallContent toolCall = new(action.Id, LegacyApprovedToolName, TestServerUrl);
+        ToolApprovalRequestContent legacyRequest = new(action.Id, toolCall);
+        ToolApprovalResponseContent legacyResponse = legacyRequest.CreateResponse(approved: true);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [legacyResponse]));
+
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert - the MCP tool was invoked with the snapshot's tool name.
+        Assert.Equal(LegacyApprovedToolName, capturedToolName);
+    }
+
+    /// <summary>
+    /// The legacy <c>"_approvalSnapshot"</c> key is removed from the state store after
+    /// migration so subsequent checkpoints do not carry stale data.
+    /// </summary>
+    [Fact]
+    public async Task InvokeMcpToolLegacyKeyIsClearedAfterMigrationAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeMcpTool model = this.CreateModelWithApproval(
+            displayName: nameof(InvokeMcpToolLegacyKeyIsClearedAfterMigrationAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName);
+        Mock<IMcpToolHandler> mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        Dictionary<string, object?> stateStore = new()
+        {
+            ["_approvalSnapshot"] = new ApprovalSnapshot(
+                TestServerUrl, null, TestToolName, new Dictionary<string, object?>(), null),
+        };
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStoreSeeded(stateStore);
+
+        // Act
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+
+        // Assert - legacy key was cleared via QueueStateUpdateAsync<ApprovalSnapshot?>(null).
+        Assert.False(stateStore.ContainsKey("_approvalSnapshot"));
+    }
+
+    /// <summary>
+    /// Variant of CreateMockWorkflowContextWithStateStore that accepts a pre-seeded state
+    /// store and supports the read/write operations exercised by the legacy-migration path.
+    /// </summary>
+    private static Mock<IWorkflowContext> CreateMockWorkflowContextWithStateStoreSeeded(Dictionary<string, object?> stateStore)
+    {
+        Mock<IWorkflowContext> mockContext = new();
+        mockContext.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(default(ValueTask));
+        mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<ApprovalSnapshot?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, ApprovalSnapshot?, string?, CancellationToken>((key, value, _, _) =>
+            {
+                if (value is null)
+                {
+                    stateStore.Remove(key);
+                }
+                else
+                {
+                    stateStore[key] = value;
+                }
+            })
+            .Returns(default(ValueTask));
+        mockContext.Setup(c => c.ReadStateAsync<Dictionary<string, ApprovalSnapshot>>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string?, CancellationToken>((key, _, _) =>
+                new ValueTask<Dictionary<string, ApprovalSnapshot>?>(stateStore.TryGetValue(key, out object? val) ? val as Dictionary<string, ApprovalSnapshot> : null));
+        mockContext.Setup(c => c.ReadStateAsync<ApprovalSnapshot>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string?, CancellationToken>((key, _, _) =>
+                new ValueTask<ApprovalSnapshot?>(stateStore.TryGetValue(key, out object? val) ? val as ApprovalSnapshot : null));
+        mockContext.Setup(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<string>());
+        return mockContext;
+    }
+
+    /// <summary>
+    /// Drives ExecuteAsync → checkpoint → ResetAsync → restore → CaptureResponseAsync on a
+    /// single pending approval and asserts the originally-approved tool name is used,
+    /// even though ResetAsync cleared the in-memory dict between checkpoint and restore.
+    /// </summary>
+    [Fact]
+    public async Task InvokeMcpToolResumeAfterResetUsesPersistedSnapshotAsync()
+    {
+        // Arrange
+        const string ApprovedToolName = "approved_tool";
+
+        this.State.Set("TargetTool", FormulaValue.New(ApprovedToolName));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableToolName(
+            displayName: nameof(InvokeMcpToolResumeAfterResetUsesPersistedSnapshotAsync),
+            serverUrl: TestServerUrl,
+            variableName: "TargetTool");
+
+        string? capturedToolName = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(p => p.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, toolName, _, _, _, _) => capturedToolName = toolName)
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("ok")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Dictionary<string, object?> stateStore = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore(emittedRequests, stateStore);
+
+        ConcurrentDictionary<string, ApprovalSnapshot> liveSnapshots = (ConcurrentDictionary<string, ApprovalSnapshot>)typeof(InvokeMcpToolExecutor)
+            .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(action)!;
+
+        // Act - emit, checkpoint, reset (simulates runner end), restore, then capture.
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
+        await action.ResetAsync();
+        Assert.Empty(liveSnapshots);
+
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+        Assert.Single(liveSnapshots);
+
+        ExternalInputResponse response = CreateApprovalResponseFor(emittedRequests, approved: true);
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert - the originally-approved tool name was used and the entry was removed.
+        Assert.Equal(ApprovedToolName, capturedToolName);
+        Assert.Empty(liveSnapshots);
+    }
+
+    /// <summary>
+    /// Two pending invocations (A then B) are interleaved with checkpoint/reset/restore
+    /// cycles; A's snapshot must survive both reset cycles and route A's response to
+    /// A's tool name, while B remains pending and is later resolved correctly.
+    /// </summary>
+    [Fact]
+    public async Task InvokeMcpToolMultiplePendingInvocationsSurviveCheckpointResetRestoreAsync()
+    {
+        // Arrange
+        const string ToolA = "tool_alpha";
+        const string ToolB = "tool_beta";
+
+        this.State.Set("TargetTool", FormulaValue.New(ToolA));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableToolName(
+            displayName: nameof(InvokeMcpToolMultiplePendingInvocationsSurviveCheckpointResetRestoreAsync),
+            serverUrl: TestServerUrl,
+            variableName: "TargetTool");
+
+        List<string?> capturedToolNames = [];
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(p => p.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, toolName, _, _, _, _) => capturedToolNames.Add(toolName))
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("ok")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Dictionary<string, object?> stateStore = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore(emittedRequests, stateStore);
+
+        ConcurrentDictionary<string, ApprovalSnapshot> liveSnapshots = (ConcurrentDictionary<string, ApprovalSnapshot>)typeof(InvokeMcpToolExecutor)
+            .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(action)!;
+
+        // Act - invocation A with ToolA, then full checkpoint/reset/restore.
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
+        await action.ResetAsync();
+        Assert.Empty(liveSnapshots);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+        Assert.Single(liveSnapshots);
+
+        // Mutate the source variable, then invocation B with ToolB.
+        this.State.Set("TargetTool", FormulaValue.New(ToolB));
+        this.State.Bind();
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
+        await action.ResetAsync();
+        Assert.Empty(liveSnapshots);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+        Assert.Equal(2, liveSnapshots.Count);
+
+        // Capture A's response. State has been mutated to ToolB but the per-invocation
+        // snapshot must still drive invocation with ToolA.
+        Assert.Equal(2, emittedRequests.Count);
+        ExternalInputResponse responseA = CreateApprovalResponseForRequest(emittedRequests[0], approved: true);
+        await action.CaptureResponseAsync(mockContext.Object, responseA, CancellationToken.None);
+        Assert.Single(liveSnapshots);
+        Assert.Equal([ToolA], capturedToolNames);
+
+        // Another checkpoint/reset/restore cycle - B's snapshot survives.
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
+        await action.ResetAsync();
+        Assert.Empty(liveSnapshots);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+        Assert.Single(liveSnapshots);
+
+        // Capture B's response.
+        ExternalInputResponse responseB = CreateApprovalResponseForRequest(emittedRequests[1], approved: true);
+        await action.CaptureResponseAsync(mockContext.Object, responseB, CancellationToken.None);
+
+        // Assert - both invocations executed with their own approved tool names; nothing pending.
+        Assert.Equal([ToolA, ToolB], capturedToolNames);
+        Assert.Empty(liveSnapshots);
+    }
+
+    private InvokeMcpTool CreateModelWithApproval(string displayName, string serverUrl, string toolName)
+    {
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(displayName),
+            ServerUrl = new StringExpression.Builder(StringExpression.Literal(serverUrl)),
+            ToolName = new StringExpression.Builder(StringExpression.Literal(toolName)),
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
+        };
+        return AssignParent<InvokeMcpTool>(builder);
+    }
+
+    private static Mock<IWorkflowContext> CreateMockWorkflowContext(List<ExternalInputRequest>? emittedRequests = null)
     {
         Mock<IWorkflowContext> mockContext = new();
         mockContext.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
@@ -1113,30 +1539,73 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns(default(ValueTask));
         mockContext.Setup(c => c.SendMessageAsync(It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<object, string?, CancellationToken>((msg, _, _) =>
+            {
+                if (emittedRequests is not null && msg is ExternalInputRequest request)
+                {
+                    emittedRequests.Add(request);
+                }
+            })
             .Returns(default(ValueTask));
         return mockContext;
     }
 
     /// <summary>
     /// Creates a mock workflow context that actually stores state values (for checkpoint/restore tests).
+    /// Optionally accepts an externally-owned state store so callers can drive multi-step
+    /// checkpoint/reset/restore sequences against the same persisted state.
     /// </summary>
-    private static Mock<IWorkflowContext> CreateMockWorkflowContextWithStateStore()
+    private static Mock<IWorkflowContext> CreateMockWorkflowContextWithStateStore(
+        List<ExternalInputRequest>? emittedRequests = null,
+        Dictionary<string, object?>? stateStore = null)
     {
-        Dictionary<string, object?> stateStore = new();
+        stateStore ??= new Dictionary<string, object?>();
         Mock<IWorkflowContext> mockContext = new();
         mockContext.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
             .Returns(default(ValueTask));
-        mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<ApprovalSnapshot?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback<string, ApprovalSnapshot?, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
+        mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<Dictionary<string, ApprovalSnapshot>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, Dictionary<string, ApprovalSnapshot>, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
             .Returns(default(ValueTask));
         mockContext.Setup(c => c.SendMessageAsync(It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<object, string?, CancellationToken>((msg, _, _) =>
+            {
+                if (emittedRequests is not null && msg is ExternalInputRequest request)
+                {
+                    emittedRequests.Add(request);
+                }
+            })
             .Returns(default(ValueTask));
-        mockContext.Setup(c => c.ReadStateAsync<ApprovalSnapshot>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        mockContext.Setup(c => c.ReadStateAsync<Dictionary<string, ApprovalSnapshot>>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns<string, string?, CancellationToken>((key, _, _) =>
-                new ValueTask<ApprovalSnapshot?>(stateStore.TryGetValue(key, out object? val) ? val as ApprovalSnapshot : null));
+                new ValueTask<Dictionary<string, ApprovalSnapshot>?>(stateStore.TryGetValue(key, out object? val) ? val as Dictionary<string, ApprovalSnapshot> : null));
         mockContext.Setup(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<string>());
         return mockContext;
+    }
+
+    /// <summary>
+    /// Builds an approval response paired to the request id stamped on the emitted
+    /// <c>ToolApprovalRequestContent</c>.
+    /// </summary>
+    private static ExternalInputResponse CreateApprovalResponseFor(IReadOnlyList<ExternalInputRequest> emittedRequests, bool approved)
+    {
+        ExternalInputRequest emitted = Assert.Single(emittedRequests);
+        return CreateApprovalResponseForRequest(emitted, approved);
+    }
+
+    /// <summary>
+    /// Builds an approval response paired to the inner <c>ToolApprovalRequestContent.RequestId</c>
+    /// of a specific emitted request. Used when multiple requests are emitted and the
+    /// caller needs to address one by position.
+    /// </summary>
+    private static ExternalInputResponse CreateApprovalResponseForRequest(ExternalInputRequest emitted, bool approved)
+    {
+        ToolApprovalRequestContent approvalRequest = emitted.AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved);
+        return new ExternalInputResponse(new ChatMessage(ChatRole.User, [approvalResponse]));
     }
 
     /// <summary>

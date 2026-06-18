@@ -62,6 +62,16 @@ def test_base_client_as_agent_uses_explicit_additional_properties(chat_client_ba
     assert agent.additional_properties == {"team": "core"}
 
 
+def test_base_client_as_agent_rejects_function_invocation_configuration(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    with pytest.raises(
+        TypeError,
+        match=r"as_agent\(\) got an unexpected keyword argument 'function_invocation_configuration'",
+    ):
+        chat_client_base.as_agent(function_invocation_configuration={"enabled": False})
+
+
 async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_base: SupportsChatGetResponse) -> None:
     async def fake_inner_get_response(**kwargs):
         assert kwargs["trace_id"] == "trace-123"
