@@ -17,6 +17,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     Message,
     RawAgent,
     ResponseStream,
@@ -3645,6 +3646,124 @@ async def test_agent_streaming_instructions_merged_from_default_and_options(
     assert len(system_instructions) == 1
     assert "Default instructions." in system_instructions[0]["content"]
     assert "Stream override." in system_instructions[0]["content"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agent_instructions_include_context_provider_extensions(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data,
+    stream: bool,
+) -> None:
+    """Agent span instructions include instructions added by context providers."""
+    import json
+
+    class UserMemoryProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="user-memory")
+
+        async def before_run(
+            self,
+            *,
+            agent: Any,
+            session: Any,
+            context: Any,
+            state: dict[str, Any],
+        ) -> None:
+            context.extend_instructions(self.source_id, "The user's name is Alice.")
+
+    agent = Agent(
+        client=mock_chat_client(),
+        name="memory_agent",
+        instructions="You are a friendly assistant.",
+        context_providers=[UserMemoryProvider()],
+    )
+
+    span_exporter.clear()
+    if stream:
+        result_stream = agent.run("Hello", stream=True)
+        async for _ in result_stream:
+            pass
+        await result_stream.get_final_response()
+    else:
+        await agent.run("Hello")
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [
+        span for span in spans if span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+    ]
+    assert len(agent_spans) == 1
+
+    system_instructions = json.loads(agent_spans[0].attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    contents = [item["content"] for item in system_instructions]
+    assert any("You are a friendly assistant." in content for content in contents)
+    assert any("The user's name is Alice." in content for content in contents)
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_instructions_not_overwritten_by_unrelated_nested_chat(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data,
+) -> None:
+    """Unrelated nested chat calls must not overwrite agent span instructions."""
+    import json
+
+    class NestedChatProvider(ContextProvider):
+        def __init__(self, nested_client: BaseChatClient[Any]) -> None:
+            super().__init__(source_id="nested-chat")
+            self.nested_client = nested_client
+
+        async def before_run(
+            self,
+            *,
+            agent: Any,
+            session: Any,
+            context: Any,
+            state: dict[str, Any],
+        ) -> None:
+            context.extend_instructions(self.source_id, "Context-provided instructions.")
+
+        async def after_run(
+            self,
+            *,
+            agent: Any,
+            session: Any,
+            context: Any,
+            state: dict[str, Any],
+        ) -> None:
+            await self.nested_client.get_response(
+                messages=[Message(role="user", contents=["Nested request"])],
+                options={"model": "NestedModel", "instructions": "Unrelated nested instructions."},
+                client_kwargs={"session": session},
+            )
+
+    agent = Agent(
+        client=mock_chat_client(),
+        name="guarded_agent",
+        instructions="Base agent instructions.",
+        context_providers=[NestedChatProvider(mock_chat_client())],
+    )
+
+    span_exporter.clear()
+    await agent.run("Hello")
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [
+        span for span in spans if span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+    ]
+    assert len(agent_spans) == 1
+    chat_spans = [
+        span for span in spans if span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
+    ]
+    assert len(chat_spans) == 2
+
+    system_instructions = json.loads(agent_spans[0].attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    contents = [item["content"] for item in system_instructions]
+    assert any("Base agent instructions." in content for content in contents)
+    assert any("Context-provided instructions." in content for content in contents)
+    assert all("Unrelated nested instructions." not in content for content in contents)
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)

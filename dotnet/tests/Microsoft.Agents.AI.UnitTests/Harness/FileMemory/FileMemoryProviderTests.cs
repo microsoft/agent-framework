@@ -86,7 +86,7 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
@@ -107,7 +107,7 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
@@ -130,7 +130,7 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Save with description first.
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
@@ -159,7 +159,7 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, state, session) = await CreateToolsAsync(store, _ => new FileMemoryState { WorkingFolder = "session123" });
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
@@ -186,7 +186,7 @@ public class FileMemoryProviderTests
         var store = new InMemoryAgentFileStore();
         await store.WriteFileAsync("notes.md", "Stored content");
         var (tools, _, session) = await CreateToolsAsync(store);
-        var readFile = GetTool(tools, "FileMemory_ReadFile");
+        var readFile = GetTool(tools, "file_memory_read_file");
 
         // Act
         var result = await InvokeWithRunContextAsync(readFile, new AIFunctionArguments
@@ -204,7 +204,7 @@ public class FileMemoryProviderTests
     {
         // Arrange
         var (tools, _, session) = await CreateToolsAsync();
-        var readFile = GetTool(tools, "FileMemory_ReadFile");
+        var readFile = GetTool(tools, "file_memory_read_file");
 
         // Act
         var result = await InvokeWithRunContextAsync(readFile, new AIFunctionArguments
@@ -228,7 +228,7 @@ public class FileMemoryProviderTests
         var store = new InMemoryAgentFileStore();
         await store.WriteFileAsync("notes.md", "Content");
         var (tools, _, session) = await CreateToolsAsync(store);
-        var deleteFile = GetTool(tools, "FileMemory_DeleteFile");
+        var deleteFile = GetTool(tools, "file_memory_delete_file");
 
         // Act
         var result = await InvokeWithRunContextAsync(deleteFile, new AIFunctionArguments
@@ -250,7 +250,7 @@ public class FileMemoryProviderTests
         await store.WriteFileAsync("notes.md", "Content");
         await store.WriteFileAsync("notes_description.md", "Description");
         var (tools, _, session) = await CreateToolsAsync(store);
-        var deleteFile = GetTool(tools, "FileMemory_DeleteFile");
+        var deleteFile = GetTool(tools, "file_memory_delete_file");
 
         // Act
         await InvokeWithRunContextAsync(deleteFile, new AIFunctionArguments
@@ -276,7 +276,7 @@ public class FileMemoryProviderTests
         await store.WriteFileAsync("notes_description.md", "A description");
         await store.WriteFileAsync("other.md", "Other content");
         var (tools, _, session) = await CreateToolsAsync(store);
-        var listFiles = GetTool(tools, "FileMemory_ListFiles");
+        var listFiles = GetTool(tools, "file_memory_list_files");
 
         // Act
         var result = await InvokeWithRunContextAsync(listFiles, new AIFunctionArguments(), session);
@@ -300,7 +300,7 @@ public class FileMemoryProviderTests
         await store.WriteFileAsync("notes.md", "Content");
         await store.WriteFileAsync("notes_description.md", "Desc");
         var (tools, _, session) = await CreateToolsAsync(store);
-        var listFiles = GetTool(tools, "FileMemory_ListFiles");
+        var listFiles = GetTool(tools, "file_memory_list_files");
 
         // Act
         var result = await InvokeWithRunContextAsync(listFiles, new AIFunctionArguments(), session);
@@ -322,7 +322,7 @@ public class FileMemoryProviderTests
         var store = new InMemoryAgentFileStore();
         await store.WriteFileAsync("notes.md", "Important research findings about AI");
         var (tools, _, session) = await CreateToolsAsync(store);
-        var searchFiles = GetTool(tools, "FileMemory_SearchFiles");
+        var searchFiles = GetTool(tools, "file_memory_search_files");
 
         // Act
         var result = await InvokeWithRunContextAsync(searchFiles, new AIFunctionArguments
@@ -347,7 +347,7 @@ public class FileMemoryProviderTests
         await store.WriteFileAsync("notes.md", "Important data");
         await store.WriteFileAsync("data.txt", "Important data");
         var (tools, _, session) = await CreateToolsAsync(store);
-        var searchFiles = GetTool(tools, "FileMemory_SearchFiles");
+        var searchFiles = GetTool(tools, "file_memory_search_files");
 
         // Act
         var result = await InvokeWithRunContextAsync(searchFiles, new AIFunctionArguments
@@ -422,7 +422,7 @@ public class FileMemoryProviderTests
     {
         // Arrange
         var (tools, _, session) = await CreateToolsAsync();
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -439,7 +439,7 @@ public class FileMemoryProviderTests
     {
         // Arrange
         var (tools, _, session) = await CreateToolsAsync();
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -456,7 +456,7 @@ public class FileMemoryProviderTests
     {
         // Arrange
         var (tools, _, session) = await CreateToolsAsync();
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -473,7 +473,7 @@ public class FileMemoryProviderTests
         // Arrange — "notes..md" is not a path traversal attempt.
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
@@ -496,7 +496,7 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
@@ -517,7 +517,7 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
@@ -539,8 +539,8 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
-        var deleteFile = GetTool(tools, "FileMemory_DeleteFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
+        var deleteFile = GetTool(tools, "file_memory_delete_file");
 
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
         {
@@ -573,7 +573,7 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
 
         // Act — save 55 files
         for (int i = 0; i < 55; i++)
@@ -607,8 +607,8 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
-        var listFiles = GetTool(tools, "FileMemory_ListFiles");
+        var saveFile = GetTool(tools, "file_memory_save_file");
+        var listFiles = GetTool(tools, "file_memory_list_files");
 
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
         {
@@ -639,7 +639,7 @@ public class FileMemoryProviderTests
         var initContext = new AIContextProvider.InvokingContext(agent, session, new AIContext());
 #pragma warning restore MAAI001
         AIContext initResult = await provider.InvokingAsync(initContext);
-        var saveFile = GetTool(initResult.Tools!, "FileMemory_SaveFile");
+        var saveFile = GetTool(initResult.Tools!, "file_memory_save_file");
         await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
         {
             ["fileName"] = "research.md",
@@ -802,7 +802,7 @@ public class FileMemoryProviderTests
         // Arrange
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
         const int FileCount = 20;
 
         // Act — save multiple files in parallel.
@@ -835,8 +835,8 @@ public class FileMemoryProviderTests
         // Arrange — pre-populate files that will be deleted.
         var store = new InMemoryAgentFileStore();
         var (tools, _, session) = await CreateToolsAsync(store);
-        var saveFile = GetTool(tools, "FileMemory_SaveFile");
-        var deleteFile = GetTool(tools, "FileMemory_DeleteFile");
+        var saveFile = GetTool(tools, "file_memory_save_file");
+        var deleteFile = GetTool(tools, "file_memory_delete_file");
 
         for (int i = 0; i < 5; i++)
         {
@@ -900,7 +900,7 @@ public class FileMemoryProviderTests
         var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
 #pragma warning restore MAAI001
         AIContext result = await provider.InvokingAsync(context);
-        var saveFile = GetTool(result.Tools!, "FileMemory_SaveFile");
+        var saveFile = GetTool(result.Tools!, "file_memory_save_file");
         provider.Dispose();
 
         // Act & Assert — the disposed SemaphoreSlim should throw ObjectDisposedException.

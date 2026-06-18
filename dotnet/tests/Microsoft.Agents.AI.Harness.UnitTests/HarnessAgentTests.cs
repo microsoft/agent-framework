@@ -1820,4 +1820,121 @@ public class HarnessAgentTests
     }
 
     #endregion
+
+    #region Feature: Loop
+
+    /// <summary>
+    /// Verify that no <see cref="LoopAgent"/> is added when no loop evaluators are supplied.
+    /// </summary>
+    [Fact]
+    public void Loop_ExcludedByDefault()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
+
+        // Assert
+        Assert.Null(agent.GetService<LoopAgent>());
+    }
+
+    /// <summary>
+    /// Verify that an empty loop evaluator collection does not add a <see cref="LoopAgent"/>.
+    /// </summary>
+    [Fact]
+    public void Loop_EmptyEvaluators_Excluded()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.LoopEvaluators = [];
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+
+        // Assert
+        Assert.Null(agent.GetService<LoopAgent>());
+    }
+
+    /// <summary>
+    /// Verify that a <see cref="LoopAgent"/> is added when at least one evaluator is supplied, while the inner
+    /// <see cref="ChatClientAgent"/> remains resolvable through the decorator chain.
+    /// </summary>
+    [Fact]
+    public void Loop_IncludedWhenEvaluatorsProvided()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.LoopEvaluators = [new DelegateLoopEvaluator((_, _) => new ValueTask<LoopEvaluation>(LoopEvaluation.Stop()))];
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+
+        // Assert
+        Assert.NotNull(agent.GetService<LoopAgent>());
+        Assert.NotNull(agent.GetService<ChatClientAgent>());
+    }
+
+    /// <summary>
+    /// Verify that the <see cref="LoopAgent"/> is the outermost decorator, wrapping the <see cref="ToolApprovalAgent"/>
+    /// (which is itself resolvable through the loop).
+    /// </summary>
+    [Fact]
+    public void Loop_IsOutermost_WrappingToolApproval()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.DisableToolApproval = false;
+        options.LoopEvaluators = [new DelegateLoopEvaluator((_, _) => new ValueTask<LoopEvaluation>(LoopEvaluation.Stop()))];
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+
+        // Assert — the loop is the outermost decorator: it is resolvable, it wraps the tool approval agent, and
+        // looking *down* from the tool approval agent does not surface the loop (proving the loop sits above it).
+        Assert.NotNull(agent.GetService<LoopAgent>());
+        var toolApproval = agent.GetService<ToolApprovalAgent>();
+        Assert.NotNull(toolApproval);
+        Assert.Null(toolApproval.GetService<LoopAgent>());
+    }
+
+    /// <summary>
+    /// Verify that the loop actually drives re-invocation: an evaluator that continues once before stopping causes the
+    /// inner chat client to be invoked twice.
+    /// </summary>
+    [Fact]
+    public async Task Loop_DrivesReinvocationAsync()
+    {
+        // Arrange — inner client returns a response on each call.
+        var mockClient = new Mock<IChatClient>();
+        mockClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "working")));
+
+        var options = CreateAllDisabledOptions();
+        // Continue once (iteration 1), then stop on the second evaluation.
+        options.LoopEvaluators = [new DelegateLoopEvaluator((ctx, _) =>
+            new ValueTask<LoopEvaluation>(ctx.Iteration < 2 ? LoopEvaluation.Continue() : LoopEvaluation.Stop()))];
+        var agent = new HarnessAgent(mockClient.Object, options);
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], session);
+
+        // Assert — the inner client was invoked once per iteration (two iterations).
+        mockClient.Verify(
+            c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    #endregion
 }

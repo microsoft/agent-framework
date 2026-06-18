@@ -95,7 +95,7 @@ public sealed class LoopAgent : DelegatingAIAgent
     /// </summary>
     /// <param name="innerAgent">The underlying agent to invoke in a loop.</param>
     /// <param name="evaluators">
-    /// The ordered set of <see cref="LoopEvaluator"/> that decide whether to re-invoke the agent. They are evaluated in
+    /// The ordered collection of <see cref="LoopEvaluator"/> that decide whether to re-invoke the agent. They are evaluated in
     /// order after each iteration and the first that asks to re-invoke wins.
     /// </param>
     /// <param name="options">Optional configuration for the loop. When <see langword="null"/>, defaults are used.</param>
