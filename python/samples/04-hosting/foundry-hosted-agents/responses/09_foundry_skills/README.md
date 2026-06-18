@@ -23,9 +23,9 @@ Each `SKILL.md` includes a unique `*-CANARY-*` token that the model is asked to 
 
 ### Downloading skills at agent startup
 
-[`main.py`](main.py) reads the comma-separated `SKILL_NAMES` env var, opens an `AIProjectClient` (also with `allow_preview=True`), and for each skill name streams the ZIP archive from `beta.skills.download(name)` and unpacks it into a **separate runtime directory** at `downloaded_skills/<name>/` (kept distinct from the static `skills/` source folder so the two never get confused — `skills/` is the input to `provision_skills.py`, `downloaded_skills/` is the output of `main.py`'s bootstrap step).
+[`main.py`](main.py) reads the comma-separated `SKILL_NAMES` env var, opens an `AIProjectClient` (also with `allow_preview=True`), and for each skill name streams the ZIP archive from `beta.skills.download(name)` and unpacks it into a **separate writable runtime directory**. By default this directory is created under the system temp folder as `maf_downloaded_skills/<name>/`, which works in hosted containers where the application directory may be read-only. Set `DOWNLOADED_SKILLS_DIR` to override the location.
 
-A [`SkillsProvider`](../../../../../packages/core/agent_framework/_skills.py) is then built over `downloaded_skills/` and attached to the `Agent` as a context provider. The provider follows the [Agent Skills](https://agentskills.io/) progressive-disclosure pattern:
+A [`SkillsProvider`](../../../../../packages/core/agent_framework/_skills.py) is then built over the downloaded skills directory and attached to the `Agent` as a context provider. The provider follows the [Agent Skills](https://agentskills.io/) progressive-disclosure pattern:
 
 1. **Advertise** — skill names and descriptions are injected into the system prompt at session start (~100 tokens per skill).
 2. **Load** — the model calls the `load_skill` tool when it decides a skill is relevant to the user's turn, and the full `SKILL.md` body is returned.
@@ -100,7 +100,9 @@ Downloading skill 'support-style' from Foundry...
 Downloading skill 'escalation-policy' from Foundry...
 ```
 
-The downloaded `SKILL.md` files land under `downloaded_skills/<name>/SKILL.md` next to `main.py`. This directory is recreated from scratch on every run, so deleting it manually is never necessary.
+The downloaded `SKILL.md` files land under `<downloaded-skills-dir>/<name>/SKILL.md`. The directory is recreated from scratch on every run, so deleting it manually is never necessary.
+
+By default, the sample uses the system temp directory, for example `/tmp/maf_downloaded_skills` on Linux. To choose a different writable location, set `DOWNLOADED_SKILLS_DIR` before startup.
 
 ## Interacting with the agent
 
