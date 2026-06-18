@@ -20,6 +20,8 @@ internal static class BuiltInFunctions
 {
     internal const string HttpPrefix = "http-";
     internal const string McpToolPrefix = "mcptool-";
+    internal const string StatusFunctionSuffix = "-status";
+    internal const string RespondFunctionSuffix = "-respond";
 
     private const string WaitForResponseHeaderName = "x-ms-wait-for-response";
 
@@ -90,7 +92,7 @@ internal static class BuiltInFunctions
         }
 
         OrchestrationMetadata? metadata = await client.GetInstanceAsync(runId, getInputsAndOutputs: true);
-        if (metadata is null)
+        if (metadata is null || !IsOrchestrationOwnedByWorkflow(metadata.Name, context.FunctionDefinition.Name, StatusFunctionSuffix))
         {
             return await CreateErrorResponseAsync(req, context, HttpStatusCode.NotFound, $"Workflow run '{runId}' not found.");
         }
@@ -146,7 +148,7 @@ internal static class BuiltInFunctions
 
         // Verify the orchestration exists and is in a valid state
         OrchestrationMetadata? metadata = await client.GetInstanceAsync(runId, getInputsAndOutputs: true);
-        if (metadata is null)
+        if (metadata is null || !IsOrchestrationOwnedByWorkflow(metadata.Name, context.FunctionDefinition.Name, RespondFunctionSuffix))
         {
             return await CreateErrorResponseAsync(req, context, HttpStatusCode.NotFound, $"Workflow run '{runId}' not found.");
         }
@@ -653,6 +655,37 @@ internal static class BuiltInFunctions
 
         // Remove the HttpPrefix from the function name to get the agent name.
         return functionName[HttpPrefix.Length..];
+    }
+
+    /// <summary>
+    /// Extracts the workflow name from the function definition name by stripping the
+    /// <see cref="HttpPrefix"/> and the given suffix (e.g., "-status" or "-respond").
+    /// </summary>
+    /// <summary>
+    /// Extracts the workflow name from the function definition name by stripping the
+    /// <see cref="HttpPrefix"/> and the given suffix (e.g., "-status" or "-respond").
+    /// </summary>
+    internal static string GetWorkflowName(string functionName, string suffix)
+    {
+        if (!functionName.StartsWith(HttpPrefix, StringComparison.Ordinal) ||
+            !functionName.EndsWith(suffix, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Built-in HTTP trigger function name '{functionName}' does not match the expected pattern '{HttpPrefix}<workflowName>{suffix}'.");
+        }
+
+        return functionName[HttpPrefix.Length..^suffix.Length];
+    }
+
+    /// <summary>
+    /// Returns true if the orchestration name matches the expected orchestration for the
+    /// workflow derived from the given function name and suffix.
+    /// </summary>
+    internal static bool IsOrchestrationOwnedByWorkflow(string orchestrationName, string functionName, string suffix)
+    {
+        string workflowName = GetWorkflowName(functionName, suffix);
+        string expectedOrchestrationName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
+        return string.Equals(orchestrationName, expectedOrchestrationName, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
