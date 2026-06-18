@@ -140,6 +140,24 @@ def test_restricted_decode_blocks_framework_deserialization_helpers() -> None:
         assert not os.path.exists(marker_file)
 
 
+def test_restricted_decode_blocks_dotted_framework_global() -> None:
+    """Restricted deserialization blocks dotted globals in allowed framework modules."""
+    module = b"agent_framework._workflows._checkpoint_encoding"
+    name = b"pickle.loads"
+    dotted_global_payload = (
+        b"\x80\x04\x8c" + bytes([len(module)]) + module + b"\x8c" + bytes([len(name)]) + name + b"\x93C\x05NESTD\x85R."
+    )
+    encoded_b64 = base64.b64encode(dotted_global_payload).decode("ascii")
+
+    checkpoint_value = {
+        _PICKLE_MARKER: encoded_b64,
+        _TYPE_MARKER: "builtins:int",
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset())
+
+
 def test_file_checkpoint_storage_accepts_allowed_types():
     """FileCheckpointStorage.__init__ accepts allowed_checkpoint_types."""
     with tempfile.TemporaryDirectory() as tmpdir:

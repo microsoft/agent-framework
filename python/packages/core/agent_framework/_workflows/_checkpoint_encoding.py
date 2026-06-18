@@ -59,12 +59,9 @@ logger = logging.getLogger("agent_framework")
 # Marker to identify pickled values in serialized JSON
 _PICKLE_MARKER = "__pickled__"
 _TYPE_MARKER = "__type__"
-_ESCAPED_DICT_MARKER = "__agent_framework_checkpoint_dict__"
-_ESCAPED_DICT_VALUE = "value"
 _RESERVED_DICT_KEYS: frozenset[str] = frozenset({
     _PICKLE_MARKER,
     _TYPE_MARKER,
-    _ESCAPED_DICT_MARKER,
 })
 
 # Types that are natively JSON-serializable and don't need pickling
@@ -145,13 +142,15 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
         if type_key in _DENIED_ALLOWED_TYPE_KEYS:
             raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
 
-        if (
-            type_key in _BUILTIN_ALLOWED_TYPE_KEYS
-            or type_key in self._allowed_types
-            or module.startswith(_FRAMEWORK_MODULE_PREFIX)
-            or module.startswith(_OPENAI_MODULE_PREFIX)
-        ):
+        if type_key in _BUILTIN_ALLOWED_TYPE_KEYS or type_key in self._allowed_types:
             return super().find_class(module, name)  # type: ignore[no-any-return]  # nosec
+
+        if module.startswith(_FRAMEWORK_MODULE_PREFIX) or module.startswith(_OPENAI_MODULE_PREFIX):
+            if "." in name:
+                raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
+            resolved = super().find_class(module, name)  # nosec
+            if isinstance(resolved, type):
+                return resolved
 
         raise pickle.UnpicklingError(
             f"Checkpoint deserialization blocked for type '{type_key}'. "
@@ -237,10 +236,7 @@ def _encode(value: Any) -> Any:
         typed_dict = cast(dict[Any, Any], value)  # type: ignore[redundant-cast]
         encoded_dict: dict[str, Any] = {str(k): _encode(v) for k, v in typed_dict.items()}
         if _RESERVED_DICT_KEYS.intersection(encoded_dict):
-            return {
-                _ESCAPED_DICT_MARKER: True,
-                _ESCAPED_DICT_VALUE: encoded_dict,
-            }
+            return _encode_pickle(value)
         return encoded_dict
 
     # Recursively encode list items (lists are JSON-native collections)
@@ -248,10 +244,7 @@ def _encode(value: Any) -> Any:
         return [_encode(item) for item in value]  # type: ignore
 
     # Everything else (tuples, sets, dataclasses, custom objects, etc.): pickle and base64 encode
-    return {
-        _PICKLE_MARKER: _pickle_to_base64(value),
-        _TYPE_MARKER: _type_to_key(type(value)),  # type: ignore
-    }
+    return _encode_pickle(value)
 
 
 def _decode(value: Any, *, allowed_types: frozenset[str] | None = None) -> Any:
@@ -263,15 +256,6 @@ def _decode(value: Any, *, allowed_types: frozenset[str] | None = None) -> Any:
     # Handle encoded dicts
     if isinstance(value, dict):
         typed_dict = cast(dict[str, Any], value)
-        if typed_dict.get(_ESCAPED_DICT_MARKER) is True and set(typed_dict) == {
-            _ESCAPED_DICT_MARKER,
-            _ESCAPED_DICT_VALUE,
-        }:
-            escaped_value = typed_dict[_ESCAPED_DICT_VALUE]
-            if isinstance(escaped_value, dict):
-                escaped_dict = cast(dict[str, Any], escaped_value)
-                return {k: _decode(v, allowed_types=allowed_types) for k, v in escaped_dict.items()}
-
         # Pickled value: decode, unpickle, and verify type
         if _PICKLE_MARKER in typed_dict and _TYPE_MARKER in typed_dict:
             obj = _base64_to_unpickle(cast(str, typed_dict[_PICKLE_MARKER]), allowed_types=allowed_types)
@@ -286,6 +270,14 @@ def _decode(value: Any, *, allowed_types: frozenset[str] | None = None) -> Any:
         return [_decode(item, allowed_types=allowed_types) for item in value]  # type: ignore
 
     return value
+
+
+def _encode_pickle(value: Any) -> dict[str, str]:
+    """Encode a value as a pickle envelope."""
+    return {
+        _PICKLE_MARKER: _pickle_to_base64(value),
+        _TYPE_MARKER: _value_type_to_key(value),
+    }
 
 
 def _verify_type(obj: Any, expected_type_key: str) -> None:
@@ -340,6 +332,11 @@ def _base64_to_unpickle(encoded: str, *, allowed_types: frozenset[str] | None = 
         raise WorkflowCheckpointException(f"Failed to decode pickled checkpoint data: {exc}") from exc
 
 
-def _type_to_key(t: type) -> str:
+def _type_to_key(t: type[Any]) -> str:
     """Convert a type to a module:qualname string."""
     return f"{t.__module__}:{t.__qualname__}"
+
+
+def _value_type_to_key(value: object) -> str:
+    """Convert a value's type to a module:qualname string."""
+    return _type_to_key(type(value))

@@ -313,8 +313,8 @@ def test_encode_round_trips_dict_with_pickle_marker_key() -> None:
     }
     result = encode_checkpoint_value(data)
     assert isinstance(result, dict)
-    assert _PICKLE_MARKER not in result
-    assert decode_checkpoint_value(result) == data
+    assert _PICKLE_MARKER in result
+    assert decode_checkpoint_value(result, allowed_types=frozenset()) == data
 
 
 def test_encode_round_trips_nested_dict_with_pickle_marker_key() -> None:
@@ -327,4 +327,10 @@ def test_encode_round_trips_nested_dict_with_pickle_marker_key() -> None:
             }
         ]
     }
-    assert decode_checkpoint_value(encode_checkpoint_value(data)) == data
+    assert decode_checkpoint_value(encode_checkpoint_value(data), allowed_types=frozenset()) == data
+
+
+def test_decode_preserves_user_dict_matching_old_escape_shape() -> None:
+    """Test that user data shaped like an old escape envelope remains unchanged."""
+    data = {"__agent_framework_checkpoint_dict__": True, "value": {"safe": "data"}}
+    assert decode_checkpoint_value(data) == data
