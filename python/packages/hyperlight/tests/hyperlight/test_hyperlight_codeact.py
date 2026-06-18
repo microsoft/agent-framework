@@ -689,13 +689,26 @@ def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
     (output_root / "sub").symlink_to(outside_dir, target_is_directory=True)
 
     contents = execute_code_module._parse_output_files(
-        sandbox=_SandboxWithListing(["/output/sub/leak.txt"]),
+        sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
         output_dir=_OutputDirShim(output_root),
         expect_output_files=False,
     )
 
     assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
     assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
+
+
+def test_is_safe_output_file_rejects_parent_traversal(tmp_path: Path) -> None:
+    """A lexical ``..`` component must be rejected even without any symlink."""
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("HOST_SECRET", encoding="utf-8")
+
+    assert (
+        execute_code_module._is_safe_output_file(root=output_root, host_path=output_root / ".." / "secret.txt") is False
+    )
+    assert execute_code_module._is_safe_output_file(root=output_root, host_path=secret) is False
 
 
 def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:

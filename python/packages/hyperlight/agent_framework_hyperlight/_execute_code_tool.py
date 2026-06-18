@@ -597,15 +597,32 @@ def _populate_input_dir(*, config: _RunConfig, input_root: Path) -> None:
 
 
 def _read_output_file_bytes(file_path: Path) -> bytes:
-    """Read ``file_path`` without following a final-component symlink.
+    """Read ``file_path`` without following a symlink, even under a TOCTOU swap.
 
     ``Path.read_bytes`` follows symlinks, so a sandbox payload that replaces an
     output file with ``/output/leak.txt -> /host/secret`` between validation and
-    read (TOCTOU) could still exfiltrate a host file. Opening with
-    ``os.O_NOFOLLOW`` makes the kernel reject a final-component symlink with
-    ``ELOOP``, closing that window.
+    read could still exfiltrate a host file. Two layers defend against this:
+
+    * ``os.O_NOFOLLOW`` makes the kernel reject a final-component symlink with
+      ``ELOOP``. The flag is absent on some platforms (notably Windows), where
+      it degrades to ``0``, so it cannot be the only defense.
+    * The file is ``lstat``-ed before opening and ``fstat``-ed after; if the
+      ``(st_dev, st_ino)`` identity changed, or the pre-open entry is a symlink,
+      the read is refused. This closes the swap window on every platform.
     """
+    pre_stat = file_path.lstat()
+    if stat.S_ISLNK(pre_stat.st_mode):
+        raise OSError(f"refusing to read symlinked output file: {file_path}")
+
     fd = os.open(file_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened_stat = os.fstat(fd)
+        if (opened_stat.st_dev, opened_stat.st_ino) != (pre_stat.st_dev, pre_stat.st_ino):
+            raise OSError(f"output file changed between validation and read: {file_path}")
+    except BaseException:
+        os.close(fd)
+        raise
+
     with os.fdopen(fd, "rb") as handle:
         return handle.read()
 
@@ -646,7 +663,10 @@ def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
     ``Path.is_file`` follows symlinks, so this validator instead walks each path
     component from ``root`` to ``host_path`` with ``lstat`` and rejects the path
     if any component is a symlink, requiring the final entry to be a regular
-    file. This mirrors the symlink-hardening already applied to the input
+    file. ``..``/``.`` components are rejected up front because
+    ``Path.relative_to`` is purely lexical and would otherwise allow a listing
+    such as ``root / ".." / "secret.txt"`` to escape ``root`` without any
+    symlink. This mirrors the symlink-hardening already applied to the input
     staging path (``_copy_path`` / ``_iter_real_entries``).
     """
     try:
@@ -654,7 +674,7 @@ def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
     except ValueError:
         return False
 
-    if not relative.parts:
+    if not relative.parts or any(part in {"..", "."} for part in relative.parts):
         return False
 
     *parent_parts, final_part = relative.parts
