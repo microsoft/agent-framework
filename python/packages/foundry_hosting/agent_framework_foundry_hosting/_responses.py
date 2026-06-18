@@ -609,13 +609,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         try:
             hosted_session_context = await self._resolve_hosted_session_context_optional(context, request)
             isolation_key = _hosted_session_key(hosted_session_context)
-            require_isolation = self._strict_session_isolation and isolation_key is None
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(
                 input_items,
                 approval_storage=self._approval_storage,
                 isolation_key=isolation_key,
-                require_isolation=require_isolation,
             )
 
             history = await context.get_history()
@@ -626,7 +624,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             history,
                             approval_storage=self._approval_storage,
                             isolation_key=isolation_key,
-                            require_isolation=require_isolation,
                         )
                     ),
                     *input_messages,
@@ -722,13 +719,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         try:
             hosted_session_context = await self._resolve_hosted_session_context_optional(context, request)
             isolation_key = _hosted_session_key(hosted_session_context)
-            require_isolation = self._strict_session_isolation and isolation_key is None
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(
                 input_items,
                 approval_storage=self._approval_storage,
                 isolation_key=isolation_key,
-                require_isolation=require_isolation,
             )
             is_streaming_request = request.stream is not None and request.stream is True
 
@@ -887,9 +882,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     ) -> HostedSessionContext | None:
         """Resolve the hosted session identity without enforcing strict mode.
 
-        Used to derive the approval-binding key. Strict enforcement for approvals happens at
-        redemption time (see ``require_isolation``), so non-approval requests are unaffected
-        when no identity is available.
+        Used to derive the approval-binding key. Approvals bind to whatever identity is
+        resolved (``None`` when no isolation keys are available), so approval flows work with
+        or without isolation headers; redemption only fails when the bound identity differs.
         """
         resolved_context = self._hosted_session_context_resolver(context, request)
         if isawaitable(resolved_context):
@@ -1172,7 +1167,6 @@ async def _items_to_messages(
     *,
     approval_storage: ApprovalStorage | None = None,
     isolation_key: str | None = None,
-    require_isolation: bool = False,
 ) -> list[Message]:
     """Converts a sequence of input items to a list of Messages, one per item.
 
@@ -1182,8 +1176,6 @@ async def _items_to_messages(
             approval requests when converting MCP approval response items.
         isolation_key: The caller's isolation key, used to verify that redeemed
             approval requests belong to the same isolation context.
-        require_isolation: When True, reject approval redemption that has no resolved
-            isolation identity (strict session isolation).
 
     Returns:
         A list of Messages, one per supported input item.
@@ -1195,7 +1187,6 @@ async def _items_to_messages(
                 item,
                 approval_storage=approval_storage,
                 isolation_key=isolation_key,
-                require_isolation=require_isolation,
             )
         )
     return messages
@@ -1206,7 +1197,6 @@ async def _item_to_message(
     *,
     approval_storage: ApprovalStorage | None = None,
     isolation_key: str | None = None,
-    require_isolation: bool = False,
 ) -> Message:
     """Converts an Item to a Message.
 
@@ -1216,8 +1206,6 @@ async def _item_to_message(
             approval requests when converting MCP approval response items.
         isolation_key: The caller's isolation key, used to verify that redeemed
             approval requests belong to the same isolation context.
-        require_isolation: When True, reject approval redemption that has no resolved
-            isolation identity (strict session isolation).
 
     Returns:
         The converted Message.
@@ -1292,8 +1280,6 @@ async def _item_to_message(
 
     if item.type == "mcp_approval_response":
         mcp_resp = cast(MCPApprovalResponse, item)
-        if require_isolation and isolation_key is None:
-            raise PermissionError("hosted_session_identity_missing")
         if approval_storage is not None:
             function_approval_request_content = await approval_storage.load_approval_request(
                 mcp_resp.approval_request_id, isolation_key=isolation_key
@@ -1474,7 +1460,6 @@ async def _output_items_to_messages(
     *,
     approval_storage: ApprovalStorage | None = None,
     isolation_key: str | None = None,
-    require_isolation: bool = False,
 ) -> list[Message]:
     """Converts a sequence of OutputItem objects to a list of Message objects.
 
@@ -1484,8 +1469,6 @@ async def _output_items_to_messages(
             resolving MCP approval requests. Defaults to None.
         isolation_key (str | None, optional): The caller's isolation key, used to verify that
             redeemed approval requests belong to the same isolation context. Defaults to None.
-        require_isolation (bool, optional): When True, reject approval redemption that has no
-            resolved isolation identity (strict session isolation). Defaults to False.
 
     Returns:
         list[Message]: The list of Message objects.
@@ -1497,7 +1480,6 @@ async def _output_items_to_messages(
                 item,
                 approval_storage=approval_storage,
                 isolation_key=isolation_key,
-                require_isolation=require_isolation,
             )
         )
     return messages
@@ -1508,7 +1490,6 @@ async def _output_item_to_message(
     *,
     approval_storage: ApprovalStorage | None = None,
     isolation_key: str | None = None,
-    require_isolation: bool = False,
 ) -> Message:
     """Converts an OutputItem to a Message.
 
@@ -1518,8 +1499,6 @@ async def _output_item_to_message(
             resolving MCP approval requests. Defaults to None.
         isolation_key (str | None, optional): The caller's isolation key, used to verify that
             redeemed approval requests belong to the same isolation context. Defaults to None.
-        require_isolation (bool, optional): When True, reject approval redemption that has no
-            resolved isolation identity (strict session isolation). Defaults to False.
 
     Returns:
         Message: The converted Message.
@@ -1592,8 +1571,6 @@ async def _output_item_to_message(
 
     if item.type == "mcp_approval_response":
         mcp_resp = cast(OutputItemMcpApprovalResponseResource, item)
-        if require_isolation and isolation_key is None:
-            raise PermissionError("hosted_session_identity_missing")
         if approval_storage is not None:
             function_approval_request_content = await approval_storage.load_approval_request(
                 mcp_resp.approval_request_id, isolation_key=isolation_key

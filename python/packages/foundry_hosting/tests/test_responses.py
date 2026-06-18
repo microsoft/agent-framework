@@ -2753,7 +2753,7 @@ class TestFunctionApprovalIsolationBinding:
         msg = await _item_to_message(item, approval_storage=storage, isolation_key="alice")  # type: ignore[arg-type]
         assert msg.contents[0].type == "function_approval_response"
 
-    async def test_conversion_strict_requires_identity_on_redemption(self) -> None:
+    async def test_conversion_no_identity_round_trip(self) -> None:
         from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
         storage = InMemoryFunctionApprovalStorage()
@@ -2765,11 +2765,9 @@ class TestFunctionApprovalIsolationBinding:
             "approval_request_id": "apr-1",
             "approve": True,
         })
-        # Strict mode with no resolved identity rejects redemption outright.
-        with pytest.raises(PermissionError):
-            await _item_to_message(  # type: ignore[arg-type]
-                item, approval_storage=storage, isolation_key=None, require_isolation=True
-            )
+        # Without any resolved identity, an approval saved and redeemed with no key still works.
+        msg = await _item_to_message(item, approval_storage=storage)  # type: ignore[arg-type]
+        assert msg.contents[0].type == "function_approval_response"
 
 
 class TestFunctionApprovalConversion:
