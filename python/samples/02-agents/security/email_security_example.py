@@ -368,7 +368,7 @@ async def run_scenarios(agent, config):
             "Please fetch my recent emails and give me a brief summary of each one.", session=session
         )
     except OpenAIContentFilterException as exc:
-        print("\nAzure OpenAI blocked the prompt before the sample could continue.")
+        print("\nFoundry blocked the prompt before the sample could continue.")
         print("This usually means the sample's simulated attack text triggered the provider's jailbreak filter.")
         print("To continue, soften the email attack strings or use a deployment with a less restrictive filter policy.")
         print(f"\nProvider error: {exc}")
@@ -401,7 +401,7 @@ async def run_scenarios(agent, config):
             session=session,
         )
     except OpenAIContentFilterException as exc:
-        print("\nAzure OpenAI blocked the follow-up prompt before the sample could continue.")
+        print("\nFoundry blocked the follow-up prompt before the sample could continue.")
         print("The simulated prompt-injection content likely triggered the provider's jailbreak filter.")
         print(f"\nProvider error: {exc}")
         return

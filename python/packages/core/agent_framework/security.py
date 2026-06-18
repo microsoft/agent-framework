@@ -38,6 +38,7 @@ from ._types import Content, Message
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
+    from ._mcp import MCPTool
 
 __all__ = [
     "SECURITY_TOOL_INSTRUCTIONS",
@@ -3203,7 +3204,7 @@ class SecureMCPToolProxy:
 
     def __init__(
         self,
-        mcp_tool: Any | None = None,
+        mcp_tool: "MCPTool | None" = None,
         *,
         url: str | None = None,
         headers: dict[str, str] | None = None,
@@ -3213,7 +3214,30 @@ class SecureMCPToolProxy:
         annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
         mark_write_tools_as_sinks: bool = True,
     ) -> None:
-        """Initialize a secure proxy for an MCP tool or MCP URL endpoint."""
+        """Initialize a secure proxy for an MCP tool or MCP URL endpoint.
+
+        Provide exactly one of ``mcp_tool`` or ``url``.
+
+        Args:
+            mcp_tool: An ``MCPTool`` instance to wrap. Mutually exclusive with ``url``.
+
+        Keyword Args:
+            url: URL of a remote MCP server. When provided, the proxy creates an
+                ``MCPStreamableHTTPTool`` internally. Mutually exclusive with ``mcp_tool``.
+            headers: HTTP headers (e.g. auth tokens) sent with every request when using
+                ``url`` mode.
+            name: Tool name used when creating the internal ``MCPStreamableHTTPTool``
+                (defaults to ``"mcp"``).
+            description: Tool description for the internal tool.
+            default_integrity: Default integrity for tools without annotations.
+                Defaults to ``IntegrityLabel.UNTRUSTED``.
+            annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name.
+            mark_write_tools_as_sinks: Whether to restrict write tools to PUBLIC
+                confidentiality. Defaults to ``True``.
+
+        Raises:
+            ValueError: If both ``mcp_tool`` and ``url`` are provided, or if neither is provided.
+        """
         if mcp_tool is not None and url is not None:
             raise ValueError("Provide either 'mcp_tool' or 'url', not both.")
         if mcp_tool is None and url is None:

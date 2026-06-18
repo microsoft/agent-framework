@@ -446,21 +446,21 @@ The easiest way to configure a secure agent with all security features. `SecureA
 
 ```python
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.security import SecureAgentConfig
 from azure.identity import AzureCliCredential
 
 # Create main chat client
-main_client = OpenAIChatClient(
+main_client = FoundryChatClient(
     model="gpt-4o",
-    azure_endpoint="https://your-endpoint.openai.azure.com",
+    project_endpoint="https://your-project.services.ai.azure.com/api/projects/your-project",
     credential=AzureCliCredential()
 )
 
 # Create a SEPARATE client for quarantined LLM calls (uses cheaper model)
-quarantine_client = OpenAIChatClient(
+quarantine_client = FoundryChatClient(
     model="gpt-4o-mini",  # Cheaper model for processing untrusted content
-    azure_endpoint="https://your-endpoint.openai.azure.com",
+    project_endpoint="https://your-project.services.ai.azure.com/api/projects/your-project",
     credential=AzureCliCredential()
 )
 

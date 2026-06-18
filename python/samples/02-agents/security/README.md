@@ -23,7 +23,7 @@ environment available.
 - `FOUNDRY_MODEL` set in your environment for the main agent deployment
 - Local dev environment installed (for example, `uv sync --dev`)
 
-These samples use Azure OpenAI for the main agent and keep the quarantine
+These samples use Foundry for the main agent and keep the quarantine
 client pinned to `gpt-4o-mini` where applicable.
 
 For `github_mcp_example.py`, set:

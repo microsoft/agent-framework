@@ -359,62 +359,53 @@ class MCPTool:
 
         raw_meta = getattr(mcp_type, "meta", None)
         meta: dict[str, Any] | None = dict(raw_meta) if raw_meta else None
-
-        def _stamp(content: Content) -> Content:
-            if meta is None:
-                return content
-            content.additional_properties = {
-                **(content.additional_properties or {}),
-                "_meta": dict(meta),
-            }
-            return content
+        # Stamp the server ``_meta`` payload directly via additional_properties on
+        # each newly constructed Content; empty when the server provided no meta.
+        additional_kwargs: dict[str, Any] = {"additional_properties": {"_meta": meta}} if meta else {}
 
         result: list[Content] = []
         for item in mcp_type.content:
             match item:
                 case types.TextContent():
-                    result.append(_stamp(Content.from_text(item.text)))
+                    result.append(Content.from_text(item.text, **additional_kwargs))
                 case types.ImageContent() | types.AudioContent():
                     decoded = base64.b64decode(item.data)
                     result.append(
-                        _stamp(
-                            Content.from_data(
-                                data=decoded,
-                                media_type=item.mimeType,
-                            )
+                        Content.from_data(
+                            data=decoded,
+                            media_type=item.mimeType,
+                            **additional_kwargs,
                         )
                     )
                 case types.ResourceLink():
                     result.append(
-                        _stamp(
-                            Content.from_uri(
-                                uri=str(item.uri),
-                                media_type=item.mimeType,
-                            )
+                        Content.from_uri(
+                            uri=str(item.uri),
+                            media_type=item.mimeType,
+                            **additional_kwargs,
                         )
                     )
                 case types.EmbeddedResource():
                     match item.resource:
                         case types.TextResourceContents():
-                            result.append(_stamp(Content.from_text(item.resource.text)))
+                            result.append(Content.from_text(item.resource.text, **additional_kwargs))
                         case types.BlobResourceContents():
                             blob = item.resource.blob
                             mime = item.resource.mimeType or "application/octet-stream"
                             if not blob.startswith("data:"):
                                 blob = f"data:{mime};base64,{blob}"
                             result.append(
-                                _stamp(
-                                    Content.from_uri(
-                                        uri=blob,
-                                        media_type=mime,
-                                    )
+                                Content.from_uri(
+                                    uri=blob,
+                                    media_type=mime,
+                                    **additional_kwargs,
                                 )
                             )
                 case _:
-                    result.append(_stamp(Content.from_text(str(item))))
+                    result.append(Content.from_text(str(item), **additional_kwargs))
 
         if not result:
-            result.append(_stamp(Content.from_text("null")))
+            result.append(Content.from_text("null", **additional_kwargs))
         return result
 
     def _parse_content_from_mcp(
