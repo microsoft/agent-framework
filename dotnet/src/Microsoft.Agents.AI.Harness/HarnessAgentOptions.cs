@@ -147,6 +147,33 @@ public sealed class HarnessAgentOptions
     public IEnumerable<AIContextProvider>? AIContextProviders { get; set; }
 
     /// <summary>
+    /// Gets or sets the ordered collection of <see cref="LoopEvaluator"/> instances that, when supplied, cause the
+    /// <see cref="HarnessAgent"/> to be wrapped in a <see cref="LoopAgent"/> decorator.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When this collection is non-<see langword="null"/> and contains at least one evaluator, the harness agent is
+    /// wrapped in a <see cref="LoopAgent"/> that re-invokes the agent until the evaluators are satisfied. The loop is
+    /// applied as the outermost decorator, so each iteration is a complete agent run (including tool approval and
+    /// OpenTelemetry instrumentation).
+    /// </para>
+    /// <para>
+    /// When <see langword="null"/> or empty (the default), no <see cref="LoopAgent"/> is added and the agent behaves
+    /// as a single-shot agent.
+    /// </para>
+    /// </remarks>
+    public IEnumerable<LoopEvaluator>? LoopEvaluators { get; set; }
+
+    /// <summary>
+    /// Gets or sets optional configuration for the <see cref="LoopAgent"/> created from <see cref="LoopEvaluators"/>.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, the <see cref="LoopAgent"/> uses its default settings. This property is ignored
+    /// when <see cref="LoopEvaluators"/> is <see langword="null"/> or empty.
+    /// </remarks>
+    public LoopAgentOptions? LoopAgentOptions { get; set; }
+
+    /// <summary>
     /// Gets or sets the maximum number of function-invocation loop iterations per request.
     /// </summary>
     /// <remarks>

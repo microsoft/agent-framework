@@ -94,11 +94,11 @@ agent_framework/
 
 ### File Access Harness (`_harness/_file_access.py`)
 
-- **`AgentFileStore`** - Abstract async store backing the file-access harness. Implementations expose `write_file`, `read_file`, `delete_file`, `list_files`, `file_exists`, `search_files`, and `create_directory` over forward-slash relative paths.
+- **`AgentFileStore`** - Abstract async store backing the file-access harness. Implementations expose `write_file`, `read_file`, `delete_file`, `list_files`, `list_directories`, `file_exists`, `search_files`, and `create_directory` over forward-slash relative paths. `list_files`/`list_directories` return only direct children; `search_files` accepts a keyword-only `recursive` flag (default `False`) and, when `recursive=True`, walks all descendants and returns `file_name` values relative to the search directory.
 - **`InMemoryAgentFileStore`** - Dict-backed store suitable for tests and lightweight scenarios.
 - **`FileSystemAgentFileStore`** - Disk-backed store rooted under a configurable directory. Enforces relative-path normalization, root containment, and rejects symlink/reparse-point segments to prevent escape.
 - **`FileSearchResult`** / **`FileSearchMatch`** - `SerializationMixin` DTOs returned by `search_files`, carrying the matching file name, a context snippet, and the matching lines with 1-based line numbers.
-- **`FileAccessProvider`** - `ContextProvider` that adds shared file-access tools (`file_access_save_file`, `file_access_read_file`, `file_access_delete_file`, `file_access_list_files`, `file_access_search_files`) plus default usage instructions to each invocation. Unlike `MemoryContextProvider`, the store is intentionally shared across sessions and agents.
+- **`FileAccessProvider`** - `ContextProvider` that adds shared file-access tools (`file_access_save_file`, `file_access_read_file`, `file_access_delete_file`, `file_access_list_files`, `file_access_list_subdirectories`, `file_access_search_files`) plus default usage instructions to each invocation. `file_access_list_files`/`file_access_list_subdirectories` enumerate direct children (files / subdirectories) so the agent can walk the tree level by level; `file_access_search_files` searches recursively from the store root and returns store-root-relative `file_name` paths, scoped via an `fnmatch` glob (where `*` crosses `/`, e.g. `*.md`, `reports/*`). Unlike `MemoryContextProvider`, the store is intentionally shared across sessions and agents.
 
 ### Tool Approval Harness (`_harness/_tool_approval.py`)
 

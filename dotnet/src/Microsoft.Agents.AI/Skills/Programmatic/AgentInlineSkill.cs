@@ -30,6 +30,7 @@ public sealed class AgentInlineSkill : AgentSkill
 {
     private readonly string _instructions;
     private readonly JsonSerializerOptions? _serializerOptions;
+    private readonly Func<JsonElement?, AIFunctionArguments>? _argumentMarshaler;
     private List<AgentInlineSkillResource>? _resources;
     private List<AgentInlineSkillScript>? _scripts;
     private string? _cachedContent;
@@ -45,11 +46,16 @@ public sealed class AgentInlineSkill : AgentSkill
     /// added to this skill. Individual <see cref="AddScript"/> and <see cref="AddResource(string, Delegate, string?, JsonSerializerOptions?)"/>
     /// calls can override this default. When <see langword="null"/>, <see cref="AIJsonUtilities.DefaultOptions"/> is used.
     /// </param>
-    public AgentInlineSkill(AgentSkillFrontmatter frontmatter, string instructions, JsonSerializerOptions? serializerOptions = null)
+    /// <param name="argumentMarshaler">
+    /// Optional argument marshaler applied by default to all scripts added to this skill.
+    /// When <see langword="null"/>, the default marshaler is used which expects arguments as a JSON object.
+    /// </param>
+    public AgentInlineSkill(AgentSkillFrontmatter frontmatter, string instructions, JsonSerializerOptions? serializerOptions = null, Func<JsonElement?, AIFunctionArguments>? argumentMarshaler = null)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this._instructions = Throw.IfNullOrWhitespace(instructions);
         this._serializerOptions = serializerOptions;
+        this._argumentMarshaler = argumentMarshaler;
     }
 
     /// <summary>
@@ -68,6 +74,10 @@ public sealed class AgentInlineSkill : AgentSkill
     /// added to this skill. Individual <see cref="AddScript"/> and <see cref="AddResource(string, Delegate, string?, JsonSerializerOptions?)"/>
     /// calls can override this default. When <see langword="null"/>, <see cref="AIJsonUtilities.DefaultOptions"/> is used.
     /// </param>
+    /// <param name="argumentMarshaler">
+    /// Optional argument marshaler applied by default to all scripts added to this skill.
+    /// When <see langword="null"/>, the default marshaler is used which expects arguments as a JSON object.
+    /// </param>
     public AgentInlineSkill(
         string name,
         string description,
@@ -76,7 +86,8 @@ public sealed class AgentInlineSkill : AgentSkill
         string? compatibility = null,
         string? allowedTools = null,
         AdditionalPropertiesDictionary? metadata = null,
-        JsonSerializerOptions? serializerOptions = null)
+        JsonSerializerOptions? serializerOptions = null,
+        Func<JsonElement?, AIFunctionArguments>? argumentMarshaler = null)
         : this(
             new AgentSkillFrontmatter(name, description, compatibility)
             {
@@ -85,7 +96,8 @@ public sealed class AgentInlineSkill : AgentSkill
                 Metadata = metadata,
             },
             instructions,
-            serializerOptions)
+            serializerOptions,
+            argumentMarshaler)
     {
     }
 
@@ -169,7 +181,7 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <returns>This instance, for chaining.</returns>
     public AgentInlineSkill AddScript(string name, Delegate method, string? description = null, JsonSerializerOptions? serializerOptions = null)
     {
-        (this._scripts ??= []).Add(new AgentInlineSkillScript(name, method, description, serializerOptions ?? this._serializerOptions));
+        (this._scripts ??= []).Add(new AgentInlineSkillScript(name, method, description, serializerOptions ?? this._serializerOptions, this._argumentMarshaler));
         return this;
     }
 }

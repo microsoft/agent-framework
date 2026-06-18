@@ -322,6 +322,72 @@ public class CheckpointResumeTests
     }
 
     /// <summary>
+    /// Verifies that fan-in edge state buffered before a checkpoint is still present after resume.
+    /// </summary>
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    internal async Task Checkpoint_Resume_PreservesFanInBarrierBufferedMessagesAsync(ExecutionEnvironment environment)
+    {
+        // Arrange
+        const string RequestPortId = "Approval";
+        const string SinkId = "Sink";
+
+        ExecutorBinding beforePause = new PreCheckpointBarrierSource("BeforePause", RequestPortId, SinkId);
+        ExecutorBinding afterResume = new PostCheckpointBarrierSource("AfterResume", SinkId);
+        ExecutorBinding sink = new BarrierSink(SinkId);
+        RequestPort<ApprovalRequest, ApprovalReply> requestPort = RequestPort.Create<ApprovalRequest, ApprovalReply>(RequestPortId);
+
+        Workflow workflow = new WorkflowBuilder(beforePause)
+            .AddEdge(beforePause, requestPort)
+            .AddEdge(requestPort, afterResume)
+            .AddFanInBarrierEdge([beforePause, afterResume], sink)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
+
+        ExternalRequest pendingRequest;
+        CheckpointInfo checkpoint;
+
+        await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
+                                                      .RunStreamingAsync(workflow, "start"))
+        {
+            (pendingRequest, checkpoint) = await CapturePendingRequestAndCheckpointAsync(firstRun);
+        }
+
+        // Act
+        await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
+                                                    .ResumeStreamingAsync(workflow, checkpoint);
+
+        List<WorkflowEvent> resumedEvents = await ReadToHaltAsync(resumed);
+        ExternalRequest replayedRequest = resumedEvents.OfType<RequestInfoEvent>()
+                                                       .Select(evt => evt.Request)
+                                                       .Should()
+                                                       .ContainSingle("resume should replay the request captured after the first fan-in source")
+                                                       .Subject;
+
+        await resumed.SendResponseAsync(replayedRequest.CreateResponse(new ApprovalReply("yes")));
+
+        List<WorkflowEvent> completionEvents = await ReadToHaltAsync(resumed);
+
+        // Assert
+        completionEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty(
+            "resuming across a partially satisfied fan-in barrier should not raise workflow errors");
+
+        string[] outputs = [.. completionEvents.OfType<BarrierReleasedEvent>().Select(evt => evt.Source)];
+        outputs.Should().BeEquivalentTo(["before", "after"],
+            "the barrier should release the contribution buffered before the checkpoint and the one produced after resume");
+
+        RunStatus status = await resumed.GetStatusAsync();
+        status.Should().Be(RunStatus.Idle,
+            "the fan-in target should run after the post-resume source contributes");
+
+        pendingRequest.RequestId.Should().Be(replayedRequest.RequestId,
+            "the replayed request should be the one from the checkpointed superstep");
+    }
+
+    /// <summary>
     /// Verifies that a resumed parent workflow re-emits pending requests that originated in a subworkflow.
     /// </summary>
     [Theory]
@@ -483,5 +549,49 @@ public class CheckpointResumeTests
         }
 
         return events;
+    }
+
+    private sealed record BarrierContribution(string Source);
+
+    private sealed record ApprovalRequest(string Prompt);
+
+    private sealed record ApprovalReply(string Value);
+
+    private sealed class BarrierReleasedEvent(string source) : WorkflowEvent
+    {
+        public string Source { get; } = source;
+    }
+
+    private sealed class PreCheckpointBarrierSource(string id, string requestPortId, string sinkId) : Executor(id)
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<string>(this.HandleAsync))
+                              .SendsMessage<BarrierContribution>()
+                              .SendsMessage<ApprovalRequest>();
+
+        private async ValueTask HandleAsync(string input, IWorkflowContext ctx)
+        {
+            await ctx.SendMessageAsync(new BarrierContribution("before"), sinkId).ConfigureAwait(false);
+            await ctx.SendMessageAsync(new ApprovalRequest("continue?"), requestPortId).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class PostCheckpointBarrierSource(string id, string sinkId) : Executor(id)
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<ApprovalReply>(this.HandleAsync))
+                              .SendsMessage<BarrierContribution>();
+
+        private ValueTask HandleAsync(ApprovalReply reply, IWorkflowContext ctx)
+            => ctx.SendMessageAsync(new BarrierContribution("after"), sinkId);
+    }
+
+    private sealed class BarrierSink(string id) : Executor(id)
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<BarrierContribution>(this.HandleAsync));
+
+        private ValueTask HandleAsync(BarrierContribution contribution, IWorkflowContext ctx)
+            => ctx.AddEventAsync(new BarrierReleasedEvent(contribution.Source));
     }
 }

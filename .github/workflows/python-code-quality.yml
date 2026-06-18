@@ -6,6 +6,10 @@ on:
     branches: ["main"]
     paths:
       - "python/**"
+      - "!python/AGENTS.md"
+      - "!python/**/AGENTS.md"
+      - "!python/.github/skills/*"
+      - "!python/.github/skills/**"
 
 env:
   # Configure a constant location for the uv cache

@@ -100,11 +100,12 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
     /// Modifying their properties will mutate the provider's state directly.
     /// </remarks>
     /// <param name="session">The agent session to read todos from.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A list of all todo items. The items are live references to internal state.</returns>
-    public async Task<IReadOnlyList<TodoItem>> GetAllTodosAsync(AgentSession? session)
+    public async Task<IReadOnlyList<TodoItem>> GetAllTodosAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
         SemaphoreSlim sessionLock = this.GetSessionLock(session);
-        await sessionLock.WaitAsync().ConfigureAwait(false);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             TodoState state = this._sessionState.GetOrInitializeState(session);
@@ -124,11 +125,12 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
     /// Modifying their properties will mutate the provider's state directly.
     /// </remarks>
     /// <param name="session">The agent session to read todos from.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A list of incomplete todo items. The items are live references to internal state.</returns>
-    public async Task<List<TodoItem>> GetRemainingTodosAsync(AgentSession? session)
+    public async Task<List<TodoItem>> GetRemainingTodosAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
         SemaphoreSlim sessionLock = this.GetSessionLock(session);
-        await sessionLock.WaitAsync().ConfigureAwait(false);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             TodoState state = this._sessionState.GetOrInitializeState(session);

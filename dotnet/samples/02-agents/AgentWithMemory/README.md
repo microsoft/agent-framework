@@ -10,4 +10,5 @@ These samples show how to create an agent with the Agent Framework that uses Mem
 |[Memory with Microsoft Foundry](./AgentWithMemory_Step04_MemoryUsingFoundry/)|This sample demonstrates how to create and run an agent that uses Microsoft Foundry's managed memory service to extract and retrieve individual memories.|
 |[Bounded Chat History with Overflow](./AgentWithMemory_Step05_BoundedChatHistory/)|This sample demonstrates how to create a bounded chat history provider that overflows older messages to a vector store and recalls them as memories.|
 
-> **See also**: [Memory Search with Foundry Agents](../AgentsWithFoundry/Agent_Step22_MemorySearch/) - demonstrates using the built-in Memory Search tool with Microsoft Foundry agents.
+> **See also**: [Memory Search with Foundry Agents](../AgentProviders/foundry/Agent_Step22_MemorySearch/) - demonstrates using the built-in Memory Search tool with Microsoft Foundry agents.
+
