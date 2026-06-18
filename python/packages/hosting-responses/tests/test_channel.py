@@ -15,6 +15,7 @@ from agent_framework_hosting import (
 from starlette.testclient import TestClient
 
 from agent_framework_hosting_responses import ResponsesChannel
+from agent_framework_hosting_responses._channel import _result_to_text  # pyright: ignore[reportPrivateUsage]
 
 # --------------------------------------------------------------------------- #
 # Fakes                                                                        #
@@ -78,9 +79,13 @@ def _make_client(
     agent: _FakeAgent | None = None,
     *,
     path: str = "/responses",
+    response_id_factory: Any | None = None,
 ) -> tuple[TestClient, AgentFrameworkHost, _FakeAgent]:
     agent = agent or _FakeAgent()
-    host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel(path=path)])
+    host = AgentFrameworkHost(
+        target=agent,
+        channels=[ResponsesChannel(path=path, response_id_factory=response_id_factory)],
+    )
     return TestClient(host.app), host, agent
 
 
@@ -94,8 +99,16 @@ class TestResponsesChannelNonStreaming:
         assert body["status"] == "completed"
         assert body["object"] == "response"
         assert body["id"].startswith("resp_")
+        assert isinstance(body["created_at"], int)
         assert body["output"][0]["content"][0]["text"] == "hi back"
         assert len(agent.calls) == 1
+
+    def test_non_string_model_falls_back_to_agent(self) -> None:
+        client, _host, _agent = _make_client(_FakeAgent(reply="hi"))
+        with client:
+            r = client.post("/responses", json={"input": "hi", "model": None})
+        assert r.status_code == 200
+        assert r.json()["model"] == "agent"
 
     def test_empty_path_mounts_at_app_root(self) -> None:
         client, _host, _agent = _make_client(_FakeAgent(reply="hi back"), path="")
@@ -134,15 +147,25 @@ class TestResponsesChannelNonStreaming:
         # _FakeAgent.create_session stashes the session_id on the dict it returns.
         assert sess["session_id"] == "resp_42"
 
+    def test_first_turn_response_id_creates_session(self) -> None:
+        client, _host, agent = _make_client(response_id_factory=lambda *_: "resp_first")
+        with client:
+            client.post("/responses", json={"input": "x"})
+        sess = agent.calls[0]["kwargs"].get("session")
+        assert sess is not None
+        assert sess["session_id"] == "resp_first"
+
     def test_chat_isolation_header_ignored_outside_foundry(self) -> None:
-        client, _host, agent = _make_client()
+        client, _host, agent = _make_client(response_id_factory=lambda *_: "resp_local")
         with client:
             client.post(
                 "/responses",
                 json={"input": "x"},
                 headers={"x-agent-chat-isolation-key": "chat-abc"},
             )
-        assert "session" not in agent.calls[0]["kwargs"]
+        sess = agent.calls[0]["kwargs"].get("session")
+        assert sess is not None
+        assert sess["session_id"] == "resp_local"
 
     def test_chat_isolation_header_creates_session_in_foundry(self, monkeypatch: Any) -> None:
         """Foundry-style ``x-agent-chat-isolation-key`` falls back to a session anchor.
@@ -202,6 +225,18 @@ class TestResponsesChannelNonStreaming:
         assert body["output"][0]["content"][0]["text"] == "HOOKED"
         assert seen_kwargs
         assert seen_kwargs[0]["channel_name"] == "responses"
+
+
+class TestResultTextRendering:
+    def test_result_text_prefers_text_property(self) -> None:
+        assert _result_to_text(_FakeAgentResponse(text="plain")) == "plain"
+
+    def test_result_text_projects_workflow_outputs(self) -> None:
+        class _WorkflowResult:
+            def get_outputs(self) -> list[Any]:
+                return [_FakeAgentResponse(text="one"), " two"]
+
+        assert _result_to_text(_WorkflowResult()) == "one two"
 
 
 class TestResponsesChannelStreaming:

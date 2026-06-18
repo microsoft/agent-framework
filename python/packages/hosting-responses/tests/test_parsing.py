@@ -44,6 +44,24 @@ class TestMessagesFromResponsesInput:
         ])
         assert msgs[0].text == "describe this"
 
+    def test_message_envelope_rejects_non_object_content_item(self) -> None:
+        with pytest.raises(ValueError, match="content.*object"):
+            messages_from_responses_input([{"type": "message", "role": "user", "content": ["bad"]}])
+
+    def test_input_file_via_url(self) -> None:
+        msgs = messages_from_responses_input([
+            {"type": "input_file", "file_url": "https://example.com/report.pdf", "mime_type": "application/pdf"}
+        ])
+        assert msgs[0].contents[0].uri == "https://example.com/report.pdf"
+
+    def test_input_file_via_file_id(self) -> None:
+        msgs = messages_from_responses_input([{"type": "input_file", "file_id": "file_123"}])
+        assert msgs[0].contents[0].file_id == "file_123"
+
+    def test_input_file_missing_anchor_raises(self) -> None:
+        with pytest.raises(ValueError, match="input_file"):
+            messages_from_responses_input([{"type": "input_file"}])
+
     def test_pending_text_flushes_before_message_envelope(self) -> None:
         msgs = messages_from_responses_input([
             {"type": "input_text", "text": "first"},

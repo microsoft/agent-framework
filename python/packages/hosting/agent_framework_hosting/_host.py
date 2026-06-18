@@ -638,6 +638,7 @@ class AgentFrameworkHost:
         self.channels = list(channels)
         self._debug = debug
         self._app: Starlette | None = None
+        self._workflow_lock = asyncio.Lock()
         self._state_paths: dict[str, Path | None] = normalize_state_dir(state_dir)
         checkpoints_explicit_in_mapping = isinstance(state_dir, Mapping) and "checkpoints" in state_dir
         derived_checkpoint_path = self._state_paths.get("checkpoints")
@@ -1031,15 +1032,16 @@ class AgentFrameworkHost:
                 "session_mode": request.session_mode,
             },
         )
-        logger.debug(
-            "channel request details",
-            extra={
-                "channel": request.channel,
-                "options": dict(request.options) if request.options else {},
-                "attributes": dict(request.attributes) if request.attributes else {},
-                "metadata": dict(request.metadata) if request.metadata else {},
-            },
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "channel request details",
+                extra={
+                    "channel": request.channel,
+                    "options": dict(request.options) if request.options else {},
+                    "attributes": dict(request.attributes) if request.attributes else {},
+                    "metadata": dict(request.metadata) if request.metadata else {},
+                },
+            )
 
     def _bind_request_context(self, request: ChannelRequest) -> ExitStack:
         """Bind any per-request anchors a target's context-providers expose.
@@ -1093,7 +1095,12 @@ class AgentFrameworkHost:
             # Workflow targets follow a separate path; the dedicated dispatch
             # is parameterised on ``WorkflowRunResult`` so the static return
             # type of ``_invoke`` itself stays the agent-shaped envelope.
-            return await self._invoke_workflow(request)  # type: ignore[return-value]
+            # Workflow instances own mutable runner context and do not support
+            # concurrent ``run`` calls. Keep the normal Workflow programming
+            # model intact by serializing requests to the shared workflow
+            # instance supplied to this host.
+            async with self._workflow_lock:
+                return await self._invoke_workflow(request)  # type: ignore[return-value]
         run_kwargs = self._build_run_kwargs(request)
         with self._bind_request_context(request):
             # ``_is_workflow`` is False here so ``self.target`` is an
@@ -1274,16 +1281,17 @@ class AgentFrameworkHost:
             # ``_restore_workflow_checkpoint``) — kept inside the bridge
             # so the in-memory state is rehydrated lazily on first
             # iteration rather than at stream-construction time.
-            await self._restore_workflow_checkpoint_streaming(workflow, storage)
-            workflow_stream = workflow.run(request.input, stream=True, checkpoint_storage=storage)
-            try:
-                async for event in workflow_stream:
-                    update = _workflow_event_to_update(event)
-                    if update is not None:
-                        yield update
-            finally:
-                async with _suppress_already_consumed():
-                    await workflow_stream.get_final_response()
+            async with self._workflow_lock:
+                await self._restore_workflow_checkpoint_streaming(workflow, storage)
+                workflow_stream = workflow.run(request.input, stream=True, checkpoint_storage=storage)
+                try:
+                    async for event in workflow_stream:
+                        update = _workflow_event_to_update(event)
+                        if update is not None:
+                            yield update
+                finally:
+                    async with _suppress_already_consumed():
+                        await workflow_stream.get_final_response()
 
         async def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:  # noqa: RUF029
             return AgentResponse.from_updates(updates)
