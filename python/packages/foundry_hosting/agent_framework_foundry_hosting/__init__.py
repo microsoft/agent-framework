@@ -2,6 +2,7 @@
 
 import importlib.metadata
 
+from ._history_provider import FoundryHostedAgentHistoryProvider, foundry_response_id, foundry_response_id_factory
 from ._invocations import InvocationsHostServer
 from ._responses import ResponsesHostServer
 
@@ -10,4 +11,10 @@ try:
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
-__all__ = ["InvocationsHostServer", "ResponsesHostServer"]
+__all__ = [
+    "FoundryHostedAgentHistoryProvider",
+    "InvocationsHostServer",
+    "ResponsesHostServer",
+    "foundry_response_id",
+    "foundry_response_id_factory",
+]
