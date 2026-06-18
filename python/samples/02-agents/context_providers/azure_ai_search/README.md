@@ -14,7 +14,7 @@ This folder contains examples demonstrating how to use the Azure AI Search conte
 ## Installation
 
 ```bash
-pip install agent-framework-foundry-search agent-framework-foundry
+pip install agent-framework-azure-ai-search agent-framework-foundry
 ```
 
 ## Prerequisites
@@ -41,6 +41,27 @@ Both examples support two authentication methods:
 - **Entra ID (Managed Identity)**: Uses `DefaultAzureCredential` when API key is not provided
 
 Run `az login` if using Entra ID authentication.
+
+### API versions (stable vs preview)
+
+The provider follows the `azure-search-documents` SDK channels:
+
+- **Stable / GA** — `pip install azure-search-documents` (`12.0.0`), default api-version `2026-04-01`.
+- **Preview** — `pip install --pre azure-search-documents` (`12.1.0b1`), default api-version `2026-05-01-preview`.
+
+Pass `api_version` to pin it explicitly (otherwise the installed SDK's default is used):
+
+```python
+from agent_framework.azure import AzureAISearchContextProvider, STABLE_API_VERSION
+
+provider = AzureAISearchContextProvider(..., api_version=STABLE_API_VERSION)
+```
+
+Agentic `knowledge_base_output_mode="answer_synthesis"` and
+`retrieval_reasoning_effort` of `"low"`/`"medium"` are **preview-only** (require the
+preview SDK + `PREVIEW_API_VERSION`). On the stable SDK the provider uses extractive
+output with minimal reasoning effort and raises an actionable error if a preview-only
+option is requested.
 
 ## Configuration
 
@@ -211,6 +232,7 @@ async with Agent(
 - `credential`: Azure credential for Entra ID auth (e.g., `DefaultAzureCredential()`)
 - `mode`: Search mode - `"semantic"` (default) or `"agentic"`
 - `top_k`: Number of documents to retrieve (default: 3 for semantic, 5 for agentic)
+- `api_version`: Data-plane REST api-version. `None` (default) uses the installed SDK's default; pass `STABLE_API_VERSION` (`"2026-04-01"`) or `PREVIEW_API_VERSION` (`"2026-05-01-preview"`) to pin it.
 
 ### Semantic Mode Parameters
 

@@ -83,8 +83,8 @@ async def main() -> None:
             mode="agentic",
             knowledge_base_name=knowledge_base_name,
             # Optional: Configure retrieval behavior
-            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
-            retrieval_reasoning_effort="minimal",  # or "medium", "low"
+            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis" (preview SDK only)
+            retrieval_reasoning_effort="minimal",  # or "medium", "low" (preview SDK only)
         )
     else:
         # Auto-create Knowledge Base from index
@@ -100,10 +100,14 @@ async def main() -> None:
             credential=AzureCliCredential() if not search_key else None,
             mode="agentic",
             azure_openai_resource_url=azure_openai_resource_url,
-            model_deployment_name=model_deployment,
+            model=model_deployment,
+            # Optional: pin the data-plane api-version. Defaults to the installed SDK's
+            # default (stable -> 2026-04-01, preview -> 2026-05-01-preview). Output modes
+            # and low/medium reasoning effort below require the preview SDK + api_version.
+            # api_version=PREVIEW_API_VERSION,
             # Optional: Configure retrieval behavior
-            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
-            retrieval_reasoning_effort="minimal",  # or "medium", "low"
+            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis" (preview SDK only)
+            retrieval_reasoning_effort="minimal",  # or "medium", "low" (preview SDK only)
             top_k=3,
         )
 

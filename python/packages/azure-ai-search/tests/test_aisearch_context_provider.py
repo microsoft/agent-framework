@@ -2,6 +2,8 @@
 # pyright: reportPrivateUsage=false
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -11,6 +13,7 @@ from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential
 
+from agent_framework_azure_ai_search import _context_provider
 from agent_framework_azure_ai_search._context_provider import AzureAISearchContextProvider
 
 # -- Helpers -------------------------------------------------------------------
@@ -94,6 +97,44 @@ def _make_provider(**overrides) -> AzureAISearchContextProvider:
     provider = AzureAISearchContextProvider(**defaults)
     provider._auto_discovered_vector_field = True  # skip auto-discovery
     return provider
+
+
+# -- Preview-feature stubs ----------------------------------------------------
+# The stable/GA azure-search-documents SDK (api-version 2026-04-01) does not ship the
+# preview-only agentic symbols (output mode, low/medium reasoning effort, image content,
+# messages-based retrieval request). These stubs let the preview code paths be exercised
+# deterministically regardless of which SDK is installed.
+
+
+class _StubReasoningEffort:
+    def __init__(self, *args: object, **kwargs: object) -> None: ...
+
+
+class _StubOutputMode:
+    EXTRACTIVE_DATA = "extractiveData"
+    ANSWER_SYNTHESIS = "answerSynthesis"
+
+
+class _StubRetrievalRequest:
+    """Lenient stand-in for the preview KnowledgeBaseRetrievalRequest that accepts any kwargs."""
+
+    def __init__(self, **kwargs: object) -> None:
+        self.__dict__.update(kwargs)
+
+
+@contextmanager
+def force_preview_features() -> Iterator[None]:
+    """Force preview-only agentic features on (with lightweight stubs)."""
+    with patch.multiple(
+        _context_provider,
+        _preview_agentic_features_available=True,
+        KBRetrievalMinimalReasoningEffort=_StubReasoningEffort,
+        KBRetrievalMediumReasoningEffort=_StubReasoningEffort,
+        KBRetrievalLowReasoningEffort=_StubReasoningEffort,
+        KBRetrievalOutputMode=_StubOutputMode,
+        KnowledgeBaseRetrievalRequest=_StubRetrievalRequest,
+    ):
+        yield
 
 
 # -- Initialization: semantic mode ---------------------------------------------
@@ -313,6 +354,148 @@ class TestInitAgenticValidation:
         assert provider.index_name == "idx"
         assert provider.knowledge_base_name == "idx-kb"
         assert provider._use_existing_knowledge_base is False
+
+
+# -- api_version + stable/preview feature gating ------------------------------
+
+
+class TestApiVersion:
+    """Tests for the api_version parameter and the version constants."""
+
+    def test_version_constants(self) -> None:
+        assert _context_provider.STABLE_API_VERSION == "2026-04-01"
+        assert _context_provider.PREVIEW_API_VERSION == "2026-05-01-preview"
+
+    def test_api_version_defaults_to_none(self) -> None:
+        provider = _make_provider()
+        assert provider.api_version is None
+
+    def test_api_version_none_not_forwarded(self) -> None:
+        provider = _make_provider()
+        kwargs = provider._common_client_kwargs()
+        assert "user_agent" in kwargs
+        assert "api_version" not in kwargs
+
+    def test_api_version_explicit_forwarded(self) -> None:
+        provider = _make_provider(api_version=_context_provider.STABLE_API_VERSION)
+        assert provider.api_version == "2026-04-01"
+        assert provider._common_client_kwargs()["api_version"] == "2026-04-01"
+
+    def test_api_version_passed_to_search_client(self) -> None:
+        with patch("agent_framework_azure_ai_search._context_provider.SearchClient") as mock_sc:
+            _make_provider(api_version=_context_provider.PREVIEW_API_VERSION)
+        _, kwargs = mock_sc.call_args
+        assert kwargs["api_version"] == "2026-05-01-preview"
+
+    def test_api_version_passed_to_index_client_agentic(self) -> None:
+        with patch("agent_framework_azure_ai_search._context_provider.SearchIndexClient") as mock_ic:
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="kb",
+                api_key="key",
+                mode="agentic",
+                api_version=_context_provider.STABLE_API_VERSION,
+            )
+        _, kwargs = mock_ic.call_args
+        assert kwargs["api_version"] == "2026-04-01"
+
+    def test_preview_features_active_requires_preview_sdk_and_api(self) -> None:
+        with patch.object(_context_provider, "_preview_agentic_features_available", True):
+            assert _make_provider(api_version=None)._preview_features_active() is True
+            assert _make_provider(api_version=_context_provider.PREVIEW_API_VERSION)._preview_features_active() is True
+            # A pinned stable api-version disables preview features even on the preview SDK.
+            assert _make_provider(api_version=_context_provider.STABLE_API_VERSION)._preview_features_active() is False
+        with patch.object(_context_provider, "_preview_agentic_features_available", False):
+            assert _make_provider(api_version=_context_provider.PREVIEW_API_VERSION)._preview_features_active() is False
+
+
+class TestPreviewFeatureGating:
+    """Auto-detect gating: preview-only agentic options require the preview SDK."""
+
+    def _agentic(self, **overrides: object) -> AzureAISearchContextProvider:
+        defaults: dict[str, object] = {
+            "endpoint": "https://test.search.windows.net",
+            "knowledge_base_name": "kb",
+            "api_key": "key",
+            "mode": "agentic",
+        }
+        defaults.update(overrides)
+        return AzureAISearchContextProvider(**defaults)  # type: ignore[arg-type]
+
+    def test_answer_synthesis_rejected_without_preview_sdk(self) -> None:
+        with (
+            patch.object(_context_provider, "_preview_agentic_features_available", False),
+            pytest.raises(ValueError, match="answer_synthesis"),
+        ):
+            self._agentic(knowledge_base_output_mode="answer_synthesis")
+
+    def test_medium_effort_rejected_without_preview_sdk(self) -> None:
+        with (
+            patch.object(_context_provider, "_preview_agentic_features_available", False),
+            pytest.raises(ValueError, match="reasoning_effort"),
+        ):
+            self._agentic(retrieval_reasoning_effort="medium")
+
+    def test_low_effort_rejected_without_preview_sdk(self) -> None:
+        with (
+            patch.object(_context_provider, "_preview_agentic_features_available", False),
+            pytest.raises(ValueError, match="reasoning_effort"),
+        ):
+            self._agentic(retrieval_reasoning_effort="low")
+
+    def test_defaults_allowed_without_preview_sdk(self) -> None:
+        with patch.object(_context_provider, "_preview_agentic_features_available", False):
+            provider = self._agentic()
+        assert provider.knowledge_base_output_mode == "extractive_data"
+        assert provider.retrieval_reasoning_effort == "minimal"
+
+    def test_preview_options_allowed_with_preview_sdk(self) -> None:
+        with patch.object(_context_provider, "_preview_agentic_features_available", True):
+            provider = self._agentic(
+                knowledge_base_output_mode="answer_synthesis",
+                retrieval_reasoning_effort="medium",
+            )
+        assert provider.knowledge_base_output_mode == "answer_synthesis"
+        assert provider.retrieval_reasoning_effort == "medium"
+
+    def test_stable_api_version_rejects_preview_option_even_with_preview_sdk(self) -> None:
+        # Preview SDK installed, but a pinned stable api-version uses the GA wire protocol,
+        # which would reject the preview-only field server-side -> fail fast with an error.
+        with (
+            patch.object(_context_provider, "_preview_agentic_features_available", True),
+            pytest.raises(ValueError, match="reasoning_effort"),
+        ):
+            self._agentic(api_version=_context_provider.STABLE_API_VERSION, retrieval_reasoning_effort="medium")
+
+    async def test_kb_creation_omits_preview_fields_on_stable_sdk(self) -> None:
+        provider = _make_provider()
+        provider._knowledge_base_initialized = False
+        provider._use_existing_knowledge_base = False
+        provider.knowledge_base_name = "test-kb"
+        provider.azure_openai_resource_url = "https://aoai.openai.azure.com"
+        provider.azure_openai_model = "gpt-4"
+        provider.index_name = "test-index"
+
+        captured: dict[str, object] = {}
+
+        async def _capture(kb: object) -> None:
+            captured["kb"] = kb
+
+        mock_index_client = AsyncMock()
+        mock_index_client.get_knowledge_source.return_value = Mock()
+        mock_index_client.create_or_update_knowledge_base = AsyncMock(side_effect=_capture)
+        provider._index_client = mock_index_client
+
+        with (
+            patch.object(_context_provider, "_preview_agentic_features_available", False),
+            patch("agent_framework_azure_ai_search._context_provider.KnowledgeBaseRetrievalClient") as mock_cls,
+        ):
+            mock_cls.return_value = AsyncMock()
+            await provider._ensure_knowledge_base()
+
+        kb = captured["kb"]
+        assert getattr(kb, "output_mode", None) is None
+        assert getattr(kb, "retrieval_reasoning_effort", None) is None
 
 
 # -- __aenter__ / __aexit__ ---------------------------------------------------
@@ -1182,9 +1365,12 @@ class TestAgenticSearch:
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
         provider._retrieval_client = mock_retrieval
 
-        with patch(
-            "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
-            type(mock_content),
+        with (
+            force_preview_features(),
+            patch(
+                "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
+                type(mock_content),
+            ),
         ):
             results = await provider._agentic_search([
                 Message(role="user", contents=["question"]),
@@ -1253,9 +1439,12 @@ class TestAgenticSearch:
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
         provider._retrieval_client = mock_retrieval
 
-        with patch(
-            "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
-            type(mock_content),
+        with (
+            force_preview_features(),
+            patch(
+                "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
+                type(mock_content),
+            ),
         ):
             results = await provider._agentic_search([Message(role="user", contents=["query"])])
 
@@ -1336,7 +1525,6 @@ class TestPrepareMessagesForKbSearch:
         assert result[0].content[0].text == "hello"
 
     def test_image_uri_content(self) -> None:
-
         img = Content.from_uri(uri="https://example.com/photo.png", media_type="image/png")
         messages = [Message(role="user", contents=[img])]
         result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
@@ -1347,7 +1535,6 @@ class TestPrepareMessagesForKbSearch:
         assert result[0].content[0].image.url == "https://example.com/photo.png"
 
     def test_mixed_text_and_image_content(self) -> None:
-
         text = Content.from_text("describe this image")
         img = Content.from_uri(uri="https://example.com/img.jpg", media_type="image/jpeg")
         messages = [Message(role="user", contents=[text, img])]
@@ -1376,7 +1563,6 @@ class TestPrepareMessagesForKbSearch:
         assert result[0].content[0].text == "fallback text"
 
     def test_data_uri_image(self) -> None:
-
         img = Content.from_data(data=b"\x89PNG", media_type="image/png")
         messages = [Message(role="user", contents=[img])]
         result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
@@ -1459,18 +1645,19 @@ class TestParseReferencesToAnnotations:
         assert result[0]["raw_representation"] is ref
 
     def test_remote_sharepoint_captures_sensitivity_label(self) -> None:
-        from azure.search.documents.knowledgebases.models import (
-            KnowledgeBaseRemoteSharePointReference,
-            SharePointSensitivityLabelInfo,
+        # KnowledgeBaseRemoteSharePointReference is preview-only; a SimpleNamespace fake keeps this
+        # test runnable on the stable/GA SDK while exercising the same parsing branches.
+        ref = SimpleNamespace(
+            id="ref-6",
+            activity_source=0,
+            reranker_score=None,
+            source_data=None,
+            web_url="https://sp.example.com/doc",
+            search_sensitivity_label_info=SimpleNamespace(
+                display_name="Confidential", sensitivity_label_id="lbl-1", is_encrypted=True
+            ),
         )
-
-        label = SharePointSensitivityLabelInfo(
-            display_name="Confidential", sensitivity_label_id="lbl-1", is_encrypted=True
-        )
-        ref = KnowledgeBaseRemoteSharePointReference(
-            id="ref-6", activity_source=0, web_url="https://sp.example.com/doc", search_sensitivity_label_info=label
-        )
-        result = AzureAISearchContextProvider._parse_references_to_annotations([ref])
+        result = AzureAISearchContextProvider._parse_references_to_annotations([ref])  # type: ignore[list-item]
         assert result[0]["url"] == "https://sp.example.com/doc"
         sl = result[0]["additional_properties"]["sensitivity_label"]
         assert sl["display_name"] == "Confidential"
@@ -1537,18 +1724,18 @@ class TestParseMessagesFromKbResponse:
         from azure.search.documents.knowledgebases.models import (
             KnowledgeBaseMessage,
             KnowledgeBaseMessageImageContent,
-            KnowledgeBaseMessageImageContentImage,
             KnowledgeBaseRetrievalResponse,
         )
 
+        # The inner image object differs across SDKs (preview KnowledgeBaseMessageImageContentImage
+        # vs stable KnowledgeBaseImageContent); both expose ``url``. A SimpleNamespace keeps the
+        # parsing assertion SDK-agnostic.
         response = KnowledgeBaseRetrievalResponse(
             response=[
                 KnowledgeBaseMessage(
                     role="assistant",
                     content=[
-                        KnowledgeBaseMessageImageContent(
-                            image=KnowledgeBaseMessageImageContentImage(url="https://img.example.com/a.png")
-                        )
+                        KnowledgeBaseMessageImageContent(image=SimpleNamespace(url="https://img.example.com/a.png"))
                     ],
                 ),
             ],
@@ -1563,7 +1750,6 @@ class TestParseMessagesFromKbResponse:
         from azure.search.documents.knowledgebases.models import (
             KnowledgeBaseMessage,
             KnowledgeBaseMessageImageContent,
-            KnowledgeBaseMessageImageContentImage,
             KnowledgeBaseMessageTextContent,
             KnowledgeBaseRetrievalResponse,
         )
@@ -1574,9 +1760,7 @@ class TestParseMessagesFromKbResponse:
                     role="assistant",
                     content=[
                         KnowledgeBaseMessageTextContent(text="description"),
-                        KnowledgeBaseMessageImageContent(
-                            image=KnowledgeBaseMessageImageContentImage(url="https://img.example.com/b.png")
-                        ),
+                        KnowledgeBaseMessageImageContent(image=SimpleNamespace(url="https://img.example.com/b.png")),
                     ],
                 ),
             ],

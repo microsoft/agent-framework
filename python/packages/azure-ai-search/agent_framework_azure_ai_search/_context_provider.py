@@ -35,11 +35,6 @@ from azure.search.documents.indexes.models import (
     AzureOpenAIVectorizerParameters,
     KnowledgeBase,
     KnowledgeBaseAzureOpenAIModel,
-    KnowledgeRetrievalLowReasoningEffort,
-    KnowledgeRetrievalMediumReasoningEffort,
-    KnowledgeRetrievalMinimalReasoningEffort,
-    KnowledgeRetrievalOutputMode,
-    KnowledgeRetrievalReasoningEffort,
     KnowledgeSourceReference,
     SearchIndexKnowledgeSource,
     SearchIndexKnowledgeSourceParameters,
@@ -55,9 +50,9 @@ if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
     from azure.search.documents.knowledgebases.aio import KnowledgeBaseRetrievalClient
     from azure.search.documents.knowledgebases.models import (
+        KnowledgeBaseImageContent,
         KnowledgeBaseMessage,
         KnowledgeBaseMessageImageContent,
-        KnowledgeBaseMessageImageContentImage,
         KnowledgeBaseMessageTextContent,
         KnowledgeBaseReference,
         KnowledgeBaseRetrievalRequest,
@@ -66,19 +61,7 @@ if TYPE_CHECKING:
         KnowledgeRetrievalSemanticIntent,
     )
     from azure.search.documents.knowledgebases.models import (
-        KnowledgeRetrievalLowReasoningEffort as KBRetrievalLowReasoningEffort,
-    )
-    from azure.search.documents.knowledgebases.models import (
-        KnowledgeRetrievalMediumReasoningEffort as KBRetrievalMediumReasoningEffort,
-    )
-    from azure.search.documents.knowledgebases.models import (
         KnowledgeRetrievalMinimalReasoningEffort as KBRetrievalMinimalReasoningEffort,
-    )
-    from azure.search.documents.knowledgebases.models import (
-        KnowledgeRetrievalOutputMode as KBRetrievalOutputMode,
-    )
-    from azure.search.documents.knowledgebases.models import (
-        KnowledgeRetrievalReasoningEffort as KBRetrievalReasoningEffort,
     )
 
 if sys.version_info >= (3, 11):
@@ -86,13 +69,15 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
-# Runtime imports for agentic mode (optional dependency)
+# Runtime imports for agentic mode. Core knowledge base retrieval works on both the
+# stable/GA SDK (api-version 2026-04-01) and the preview SDK (api-version
+# 2026-05-01-preview).
 try:
     from azure.search.documents.knowledgebases.aio import KnowledgeBaseRetrievalClient
     from azure.search.documents.knowledgebases.models import (
+        KnowledgeBaseImageContent,
         KnowledgeBaseMessage,
         KnowledgeBaseMessageImageContent,
-        KnowledgeBaseMessageImageContentImage,
         KnowledgeBaseMessageTextContent,
         KnowledgeBaseReference,
         KnowledgeBaseRetrievalRequest,
@@ -101,29 +86,52 @@ try:
         KnowledgeRetrievalSemanticIntent,
     )
     from azure.search.documents.knowledgebases.models import (
-        KnowledgeRetrievalLowReasoningEffort as KBRetrievalLowReasoningEffort,
-    )
-    from azure.search.documents.knowledgebases.models import (
-        KnowledgeRetrievalMediumReasoningEffort as KBRetrievalMediumReasoningEffort,
-    )
-    from azure.search.documents.knowledgebases.models import (
         KnowledgeRetrievalMinimalReasoningEffort as KBRetrievalMinimalReasoningEffort,
-    )
-    from azure.search.documents.knowledgebases.models import (
-        KnowledgeRetrievalOutputMode as KBRetrievalOutputMode,
-    )
-    from azure.search.documents.knowledgebases.models import (
-        KnowledgeRetrievalReasoningEffort as KBRetrievalReasoningEffort,
     )
 
     _agentic_retrieval_available = True
 except ImportError:
     _agentic_retrieval_available = False
 
+# Preview-only agentic capabilities (api-version 2026-05-01-preview). These symbols are
+# absent from the stable/GA SDK (api-version 2026-04-01): there, the knowledge base
+# definition and retrieval request do not expose an output mode or extended (low/medium)
+# reasoning effort, and retrieval is intent-based only. They are accessed exclusively
+# behind ``_preview_agentic_features_available`` checks. ``Any`` keeps the optional symbols
+# usable under strict type checking against the stable SDK.
+KBRetrievalLowReasoningEffort: Any = None
+KBRetrievalMediumReasoningEffort: Any = None
+KBRetrievalOutputMode: Any = None
+try:
+    from azure.search.documents.knowledgebases.models import (  # type: ignore[attr-defined]
+        KnowledgeRetrievalLowReasoningEffort as _KBRetrievalLowReasoningEffort,
+    )
+    from azure.search.documents.knowledgebases.models import (  # type: ignore[attr-defined]
+        KnowledgeRetrievalMediumReasoningEffort as _KBRetrievalMediumReasoningEffort,
+    )
+    from azure.search.documents.knowledgebases.models import (  # type: ignore[attr-defined]
+        KnowledgeRetrievalOutputMode as _KBRetrievalOutputMode,
+    )
+
+    KBRetrievalLowReasoningEffort = _KBRetrievalLowReasoningEffort
+    KBRetrievalMediumReasoningEffort = _KBRetrievalMediumReasoningEffort
+    KBRetrievalOutputMode = _KBRetrievalOutputMode
+    _preview_agentic_features_available = True
+except ImportError:
+    _preview_agentic_features_available = False
+
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 EmbeddingFunction = Callable[[str], Awaitable[list[float]]] | SupportsGetEmbeddings[str, list[float], Any]
 KnowledgeBaseOutputModeLiteral = Literal["extractive_data", "answer_synthesis"]
 RetrievalReasoningEffortLiteral = Literal["minimal", "medium", "low"]
+
+#: Azure AI Search data-plane REST api-version used by the stable/GA SDK
+#: (``azure-search-documents`` ``>=12.0.0``). Supports semantic and agentic retrieval.
+STABLE_API_VERSION = "2026-04-01"
+#: Azure AI Search data-plane REST api-version used by the preview SDK
+#: (``pip install --pre azure-search-documents``). Adds agentic output modes and
+#: extended (low/medium) reasoning effort on top of the stable surface.
+PREVIEW_API_VERSION = "2026-05-01-preview"
 
 logger = logging.getLogger("agent_framework.azure_ai_search")
 
@@ -187,6 +195,7 @@ class AzureAISearchContextProvider(ContextProvider):
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        api_version: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -212,6 +221,9 @@ class AzureAISearchContextProvider(ContextProvider):
             knowledge_base_output_mode: Unused in semantic mode.
             retrieval_reasoning_effort: Unused in semantic mode.
             agentic_message_history_count: Unused in semantic mode.
+            api_version: Azure AI Search data-plane REST api-version. ``None`` uses the installed
+                SDK default (stable SDK -> 2026-04-01, preview SDK -> 2026-05-01-preview). Use
+                ``STABLE_API_VERSION`` or ``PREVIEW_API_VERSION`` to pin explicitly.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
         """
@@ -240,6 +252,7 @@ class AzureAISearchContextProvider(ContextProvider):
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        api_version: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -265,6 +278,9 @@ class AzureAISearchContextProvider(ContextProvider):
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
             agentic_message_history_count: Number of recent messages included in retrieval.
+            api_version: Azure AI Search data-plane REST api-version. ``None`` uses the installed
+                SDK default (stable SDK -> 2026-04-01, preview SDK -> 2026-05-01-preview). Use
+                ``STABLE_API_VERSION`` or ``PREVIEW_API_VERSION`` to pin explicitly.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
         """
@@ -293,6 +309,7 @@ class AzureAISearchContextProvider(ContextProvider):
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        api_version: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -318,6 +335,9 @@ class AzureAISearchContextProvider(ContextProvider):
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
             agentic_message_history_count: Number of recent messages included in retrieval.
+            api_version: Azure AI Search data-plane REST api-version. ``None`` uses the installed
+                SDK default (stable SDK -> 2026-04-01, preview SDK -> 2026-05-01-preview). Use
+                ``STABLE_API_VERSION`` or ``PREVIEW_API_VERSION`` to pin explicitly.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
         """
@@ -346,6 +366,7 @@ class AzureAISearchContextProvider(ContextProvider):
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        api_version: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -375,6 +396,9 @@ class AzureAISearchContextProvider(ContextProvider):
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
             agentic_message_history_count: Number of recent messages included in retrieval.
+            api_version: Azure AI Search data-plane REST api-version. ``None`` uses the installed
+                SDK default (stable SDK -> 2026-04-01, preview SDK -> 2026-05-01-preview). Use
+                ``STABLE_API_VERSION`` or ``PREVIEW_API_VERSION`` to pin explicitly.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
         """
@@ -402,6 +426,7 @@ class AzureAISearchContextProvider(ContextProvider):
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        api_version: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -430,6 +455,11 @@ class AzureAISearchContextProvider(ContextProvider):
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for Knowledge Base query planning.
             agentic_message_history_count: Number of recent messages for agentic mode.
+            api_version: Azure AI Search data-plane REST api-version. ``None`` (default) uses the
+                installed SDK default (stable SDK -> 2026-04-01, preview SDK -> 2026-05-01-preview).
+                Pass ``STABLE_API_VERSION`` ("2026-04-01") or ``PREVIEW_API_VERSION``
+                ("2026-05-01-preview") to pin explicitly. Agentic output modes and low/medium
+                reasoning effort require the preview SDK and ``PREVIEW_API_VERSION``.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
         """
@@ -505,6 +535,7 @@ class AzureAISearchContextProvider(ContextProvider):
         self.knowledge_base_output_mode = knowledge_base_output_mode
         self.retrieval_reasoning_effort = retrieval_reasoning_effort
         self.agentic_message_history_count = agentic_message_history_count
+        self.api_version = api_version
 
         self._use_existing_knowledge_base = False
         if mode == "agentic":
@@ -522,12 +553,31 @@ class AzureAISearchContextProvider(ContextProvider):
         if mode == "agentic":
             if not _agentic_retrieval_available:
                 raise ImportError(
-                    "Agentic retrieval requires azure-search-documents >= 11.7.0b1 with Knowledge Base support."
+                    "Agentic retrieval requires azure-search-documents >= 12.0.0 with Knowledge Base support."
                 )
             if not self._use_existing_knowledge_base and not self.azure_openai_resource_url:
                 raise ValueError(
                     "azure_openai_resource_url is required for agentic mode when creating Knowledge Base from index."
                 )
+            if not self._preview_features_active():
+                # Preview-only agentic options require BOTH the preview SDK and a preview
+                # api-version. On the stable/GA wire (api-version 2026-04-01) the knowledge
+                # base definition and retrieval request do not accept output mode or extended
+                # reasoning effort, so reject them up front instead of failing server-side.
+                if knowledge_base_output_mode != "extractive_data":
+                    raise ValueError(
+                        f"knowledge_base_output_mode={knowledge_base_output_mode!r} requires the preview "
+                        "azure-search-documents SDK and a preview api-version. Install it with "
+                        "`pip install --pre azure-search-documents` and set "
+                        f"api_version=PREVIEW_API_VERSION ({PREVIEW_API_VERSION!r}), or use 'extractive_data'."
+                    )
+                if retrieval_reasoning_effort != "minimal":
+                    raise ValueError(
+                        f"retrieval_reasoning_effort={retrieval_reasoning_effort!r} requires the preview "
+                        "azure-search-documents SDK and a preview api-version. Install it with "
+                        "`pip install --pre azure-search-documents` and set "
+                        f"api_version=PREVIEW_API_VERSION ({PREVIEW_API_VERSION!r}), or use 'minimal'."
+                    )
 
         self._search_client: SearchClient | None = None
         if self.index_name:
@@ -535,7 +585,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 endpoint=self.endpoint,
                 index_name=self.index_name,
                 credential=self.credential,
-                user_agent=get_user_agent(),
+                **self._common_client_kwargs(),
             )
 
         self._index_client: SearchIndexClient | None = None
@@ -544,10 +594,32 @@ class AzureAISearchContextProvider(ContextProvider):
             self._index_client = SearchIndexClient(
                 endpoint=self.endpoint,
                 credential=self.credential,
-                user_agent=get_user_agent(),
+                **self._common_client_kwargs(),
             )
 
         self._knowledge_base_initialized = False
+
+    def _common_client_kwargs(self) -> dict[str, Any]:
+        """Build the keyword arguments shared by every Azure AI Search client.
+
+        ``api_version`` is only forwarded when explicitly set so that, when ``None``, the
+        installed SDK selects its own default (stable -> 2026-04-01, preview ->
+        2026-05-01-preview).
+        """
+        kwargs: dict[str, Any] = {"user_agent": get_user_agent()}
+        if self.api_version is not None:
+            kwargs["api_version"] = self.api_version
+        return kwargs
+
+    def _preview_features_active(self) -> bool:
+        """Whether preview-only agentic features (output mode, low/medium effort) are usable.
+
+        They require BOTH the preview SDK (``_preview_agentic_features_available``) and a
+        preview ``api-version``. A pinned stable api-version (e.g. ``2026-04-01``) uses the GA
+        wire protocol, which rejects those fields even when the preview SDK is installed.
+        """
+        api_version_supports_preview = self.api_version is None or self.api_version.endswith("-preview")
+        return _preview_agentic_features_available and api_version_supports_preview
 
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
@@ -640,7 +712,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 self._index_client = SearchIndexClient(
                     endpoint=self.endpoint,
                     credential=self.credential,
-                    user_agent=get_user_agent(),
+                    **self._common_client_kwargs(),
                 )
             if not self.index_name:
                 logger.warning("Cannot auto-discover vector field: index_name is not set.")
@@ -695,14 +767,18 @@ class AzureAISearchContextProvider(ContextProvider):
         if self.vector_field_name:
             vector_k = max(self.top_k, 50) if self.semantic_configuration_name else self.top_k
             if self._use_vectorizable_query:
-                vector_queries = [VectorizableTextQuery(text=query, k=vector_k, fields=self.vector_field_name)]
+                vector_queries = [
+                    VectorizableTextQuery(text=query, k_nearest_neighbors=vector_k, fields=self.vector_field_name)
+                ]
             elif self.embedding_function:
                 if isinstance(self.embedding_function, SupportsGetEmbeddings):
                     embeddings = await self.embedding_function.get_embeddings([query])  # type: ignore[reportUnknownVariableType]
                     query_vector = embeddings[0].vector  # type: ignore[reportUnknownVariableType]
                 else:
                     query_vector = await self.embedding_function(query)  # type: ignore[reportUnknownVariableType]
-                vector_queries = [VectorizedQuery(vector=query_vector, k=vector_k, fields=self.vector_field_name)]  # type: ignore[reportUnknownArgumentType]
+                vector_queries = [
+                    VectorizedQuery(vector=query_vector, k_nearest_neighbors=vector_k, fields=self.vector_field_name)  # type: ignore[reportUnknownArgumentType]
+                ]
 
         search_params: dict[str, Any] = {"search_text": query, "top": self.top_k}
         if vector_queries:
@@ -740,7 +816,7 @@ class AzureAISearchContextProvider(ContextProvider):
                     endpoint=self.endpoint,
                     knowledge_base_name=knowledge_base_name,
                     credential=self.credential,
-                    user_agent=get_user_agent(),
+                    **self._common_client_kwargs(),
                 )
             self._knowledge_base_initialized = True
             return
@@ -774,26 +850,29 @@ class AzureAISearchContextProvider(ContextProvider):
             api_key=self.azure_openai_api_key,
         )
 
-        output_mode = (
-            KnowledgeRetrievalOutputMode.EXTRACTIVE_DATA
-            if self.knowledge_base_output_mode == "extractive_data"
-            else KnowledgeRetrievalOutputMode.ANSWER_SYNTHESIS
-        )
-        reasoning_effort_map: dict[str, KnowledgeRetrievalReasoningEffort] = {
-            "minimal": KnowledgeRetrievalMinimalReasoningEffort(),
-            "medium": KnowledgeRetrievalMediumReasoningEffort(),
-            "low": KnowledgeRetrievalLowReasoningEffort(),
+        kb_kwargs: dict[str, Any] = {
+            "name": knowledge_base_name,
+            "description": f"Knowledge Base for multi-hop retrieval across {self.index_name}",
+            "knowledge_sources": [KnowledgeSourceReference(name=knowledge_source_name)],
+            "models": [KnowledgeBaseAzureOpenAIModel(azure_open_ai_parameters=aoai_params)],
         }
-        reasoning_effort = reasoning_effort_map[self.retrieval_reasoning_effort]
+        if self._preview_features_active():
+            # Output mode and reasoning effort on the knowledge base definition require the
+            # preview SDK and a preview api-version; the stable/GA wire omits them (validated
+            # as defaults in __init__).
+            kb_kwargs["output_mode"] = (
+                KBRetrievalOutputMode.EXTRACTIVE_DATA
+                if self.knowledge_base_output_mode == "extractive_data"
+                else KBRetrievalOutputMode.ANSWER_SYNTHESIS
+            )
+            kb_reasoning_effort_map = {
+                "minimal": KBRetrievalMinimalReasoningEffort(),
+                "medium": KBRetrievalMediumReasoningEffort(),
+                "low": KBRetrievalLowReasoningEffort(),
+            }
+            kb_kwargs["retrieval_reasoning_effort"] = kb_reasoning_effort_map[self.retrieval_reasoning_effort]
 
-        knowledge_base = KnowledgeBase(
-            name=knowledge_base_name,
-            description=f"Knowledge Base for multi-hop retrieval across {self.index_name}",
-            knowledge_sources=[KnowledgeSourceReference(name=knowledge_source_name)],
-            models=[KnowledgeBaseAzureOpenAIModel(azure_open_ai_parameters=aoai_params)],
-            output_mode=output_mode,
-            retrieval_reasoning_effort=reasoning_effort,
-        )
+        knowledge_base = KnowledgeBase(**kb_kwargs)
         await self._index_client.create_or_update_knowledge_base(knowledge_base)
         self._knowledge_base_initialized = True
 
@@ -802,43 +881,40 @@ class AzureAISearchContextProvider(ContextProvider):
                 endpoint=self.endpoint,
                 knowledge_base_name=knowledge_base_name,
                 credential=self.credential,
-                user_agent=get_user_agent(),
+                **self._common_client_kwargs(),
             )
 
     async def _agentic_search(self, messages: list[Message]) -> list[Message]:
         """Perform agentic retrieval with multi-hop reasoning."""
         await self._ensure_knowledge_base()
 
-        reasoning_effort_map: dict[str, KBRetrievalReasoningEffort] = {
-            "minimal": KBRetrievalMinimalReasoningEffort(),
-            "medium": KBRetrievalMediumReasoningEffort(),
-            "low": KBRetrievalLowReasoningEffort(),
-        }
-        reasoning_effort = reasoning_effort_map[self.retrieval_reasoning_effort]
-
-        output_mode = (
-            KBRetrievalOutputMode.EXTRACTIVE_DATA
-            if self.knowledge_base_output_mode == "extractive_data"
-            else KBRetrievalOutputMode.ANSWER_SYNTHESIS
-        )
+        request_kwargs: dict[str, Any] = {"include_activity": True}
+        if self._preview_features_active():
+            # Reasoning effort and output mode on the retrieval request require the preview
+            # SDK and a preview api-version; the stable/GA wire rejects them.
+            request_reasoning_effort_map = {
+                "minimal": KBRetrievalMinimalReasoningEffort(),
+                "medium": KBRetrievalMediumReasoningEffort(),
+                "low": KBRetrievalLowReasoningEffort(),
+            }
+            request_kwargs["retrieval_reasoning_effort"] = request_reasoning_effort_map[self.retrieval_reasoning_effort]
+            request_kwargs["output_mode"] = (
+                KBRetrievalOutputMode.EXTRACTIVE_DATA
+                if self.knowledge_base_output_mode == "extractive_data"
+                else KBRetrievalOutputMode.ANSWER_SYNTHESIS
+            )
 
         if self.retrieval_reasoning_effort == "minimal":
             query = "\n".join(msg.text for msg in messages if msg.text)
             intents: list[KnowledgeRetrievalIntent] = [KnowledgeRetrievalSemanticIntent(search=query)]
-            retrieval_request = KnowledgeBaseRetrievalRequest(
-                intents=intents,
-                retrieval_reasoning_effort=reasoning_effort,
-                output_mode=output_mode,
-                include_activity=True,
-            )
+            request_kwargs["intents"] = intents
         else:
-            kb_messages = self._prepare_messages_for_kb_search(messages)
-            retrieval_request = KnowledgeBaseRetrievalRequest(
-                messages=kb_messages,
-                retrieval_reasoning_effort=reasoning_effort,
-                output_mode=output_mode,
-                include_activity=True,
-            )
+            # Messages-based retrieval (multi-hop query planning) is preview-only; reaching
+            # this branch requires low/medium reasoning effort, which __init__ already
+            # rejects on the stable/GA SDK.
+            request_kwargs["messages"] = self._prepare_messages_for_kb_search(messages)
+
+        retrieval_request = KnowledgeBaseRetrievalRequest(**request_kwargs)
 
         if not self._retrieval_client:
             raise RuntimeError("Retrieval client not initialized.")
@@ -872,7 +948,7 @@ class AzureAISearchContextProvider(ContextProvider):
                         ):
                             kb_content.append(
                                 KnowledgeBaseMessageImageContent(
-                                    image=KnowledgeBaseMessageImageContentImage(url=content.uri),
+                                    image=KnowledgeBaseImageContent(url=content.uri),
                                 )
                             )
                         case _:
@@ -924,8 +1000,9 @@ class AzureAISearchContextProvider(ContextProvider):
             doc_key = getattr(ref, "doc_key", None)
             if doc_key:
                 extra["doc_key"] = doc_key
-            if ref.additional_properties:
-                extra["sdk_additional_properties"] = ref.additional_properties
+            sdk_additional_properties = getattr(ref, "additional_properties", None)
+            if sdk_additional_properties:
+                extra["sdk_additional_properties"] = sdk_additional_properties
             sensitivity_info = getattr(ref, "search_sensitivity_label_info", None)
             if sensitivity_info:
                 extra["sensitivity_label"] = {
@@ -995,4 +1072,4 @@ class AzureAISearchContextProvider(ContextProvider):
         return text
 
 
-__all__ = ["AzureAISearchContextProvider"]
+__all__ = ["PREVIEW_API_VERSION", "STABLE_API_VERSION", "AzureAISearchContextProvider"]

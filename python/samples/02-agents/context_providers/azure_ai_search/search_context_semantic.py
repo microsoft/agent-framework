@@ -76,6 +76,10 @@ async def main() -> None:
         credential=credential if not search_key else None,
         mode="semantic",  # Default mode
         top_k=3,  # Retrieve top 3 most relevant documents
+        # Optional: pin the data-plane api-version (defaults to the installed SDK's default:
+        # stable -> 2026-04-01, preview -> 2026-05-01-preview). Import STABLE_API_VERSION /
+        # PREVIEW_API_VERSION from agent_framework.azure to set it explicitly.
+        # api_version=STABLE_API_VERSION,
         embedding_function=embedding_client,  # Provide embedding function for hybrid search
         vector_field_name="DescriptionVector"
         if embedding_client

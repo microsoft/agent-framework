@@ -19,6 +19,8 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "DurableAIAgentClient": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentOrchestrationContext": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentWorker": ("agent_framework_durabletask", "agent-framework-durabletask"),
+    "PREVIEW_API_VERSION": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
+    "STABLE_API_VERSION": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
 }
 
 
