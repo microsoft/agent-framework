@@ -50,6 +50,8 @@ members = [
     "agent-framework-foundry-local",
     "agent-framework-gemini",
     "agent-framework-github-copilot",
+    "agent-framework-hosting",
+    "agent-framework-hosting-responses",
     "agent-framework-hyperlight",
     "agent-framework-lab",
     "agent-framework-mem0",
@@ -627,6 +629,57 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "github-copilot-sdk", marker = "python_full_version >= '3.11'", specifier = ">=1.0.0,<2" },
+]
+
+[[package]]
+name = "agent-framework-hosting"
+version = "1.0.0a260424"
+source = { editable = "packages/hosting" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "starlette", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.optional-dependencies]
+disk = [
+    { name = "diskcache", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+serve = [
+    { name = "hypercorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "diskcache", marker = "extra == 'disk'", specifier = ">=5.6" },
+    { name = "hypercorn", marker = "extra == 'serve'", specifier = ">=0.17" },
+    { name = "starlette", specifier = ">=0.37" },
+]
+provides-extras = ["serve", "disk"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "httpx", specifier = ">=0.28.1" }]
+
+[[package]]
+name = "agent-framework-hosting-responses"
+version = "1.0.0a260424"
+source = { editable = "packages/hosting-responses" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "openai", specifier = ">=1.99.0,<3" },
 ]
 
 [[package]]
@@ -2148,6 +2201,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/24/20/63dd34163ed07393968128dc8c7ab948c96e47c4ce76976ea533de64909d/deepdiff-9.0.0.tar.gz", hash = "sha256:4872005306237b5b50829803feff58a1dfd20b2b357a55de22e7ded65b2008a7", size = 151952, upload-time = "2026-03-30T05:52:23.769Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/c4/da7089cd7aa4ab554f56e18a7fb08dcfed8fd2ae91fa528f5b1be207a148/deepdiff-9.0.0-py3-none-any.whl", hash = "sha256:b1ae0dd86290d86a03de5fbee728fde43095c1472ae4974bdab23ab4656305bd", size = 170540, upload-time = "2026-03-30T05:52:22.008Z" },
+]
+
+[[package]]
+name = "diskcache"
+version = "5.6.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/21/1c1ffc1a039ddcc459db43cc108658f32c57d271d7289a2794e401d0fdb6/diskcache-5.6.3.tar.gz", hash = "sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc", size = 67916, upload-time = "2023-08-31T06:12:00.316Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/27/4570e78fc0bf5ea0ca45eb1de3818a23787af9b390c0b0a0033a1b8236f9/diskcache-5.6.3-py3-none-any.whl", hash = "sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19", size = 45550, upload-time = "2023-08-31T06:11:58.822Z" },
 ]
 
 [[package]]
