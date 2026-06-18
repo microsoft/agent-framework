@@ -371,7 +371,7 @@ class TestHostWorkflowTarget:
     """The host accepts a ``Workflow`` and dispatches to ``workflow.run(...)``."""
 
     async def test_invoke_workflow_collapses_outputs_to_hosted_run_result(self) -> None:
-        from ._workflow_fixtures import build_upper_workflow
+        from _workflow_fixtures import build_upper_workflow
 
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
@@ -391,7 +391,7 @@ class TestHostWorkflowTarget:
         assert host._sessions == {}
 
     async def test_stream_workflow_yields_updates_and_finalizes(self) -> None:
-        from ._workflow_fixtures import build_echo_workflow
+        from _workflow_fixtures import build_echo_workflow
 
         workflow = build_echo_workflow()
         ch = _RecordingChannel()
@@ -419,7 +419,7 @@ class TestHostWorkflowTarget:
         assert final.text == "hi"
 
     async def test_stream_workflow_yields_one_update_per_output_event(self) -> None:
-        from ._workflow_fixtures import build_multi_chunk_workflow
+        from _workflow_fixtures import build_multi_chunk_workflow
 
         workflow = build_multi_chunk_workflow()
         ch = _RecordingChannel()
@@ -475,9 +475,8 @@ class TestHostWorkflowCheckpointing:
     """The host scopes per-conversation checkpoints when ``checkpoint_location`` is set."""
 
     def test_rejects_workflow_with_existing_checkpoint_storage(self, tmp_path: Any) -> None:
+        from _workflow_fixtures import _UpperExecutor
         from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
-
-        from ._workflow_fixtures import _UpperExecutor
 
         workflow = WorkflowBuilder(
             start_executor=_UpperExecutor(id="upper"),
@@ -500,7 +499,7 @@ class TestHostWorkflowCheckpointing:
         assert any("checkpoint_location" in rec.message for rec in caplog.records)
 
     async def test_invoke_skips_checkpointing_when_no_isolation_key(self, tmp_path: Any) -> None:
-        from ._workflow_fixtures import build_upper_workflow
+        from _workflow_fixtures import build_upper_workflow
 
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
@@ -516,7 +515,7 @@ class TestHostWorkflowCheckpointing:
         assert list(tmp_path.iterdir()) == []
 
     async def test_invoke_writes_checkpoint_under_isolation_key(self, tmp_path: Any) -> None:
-        from ._workflow_fixtures import build_upper_workflow
+        from _workflow_fixtures import build_upper_workflow
 
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
@@ -540,7 +539,7 @@ class TestHostWorkflowCheckpointing:
         assert any(scoped.iterdir()), "expected at least one checkpoint to be written under the per-user dir"
 
     async def test_stream_writes_checkpoint_under_isolation_key(self, tmp_path: Any) -> None:
-        from ._workflow_fixtures import build_echo_workflow
+        from _workflow_fixtures import build_echo_workflow
 
         workflow = build_echo_workflow()
         ch = _RecordingChannel()
@@ -564,9 +563,8 @@ class TestHostWorkflowCheckpointing:
         assert any(scoped.iterdir())
 
     async def test_caller_supplied_checkpoint_storage_used_as_is(self, tmp_path: Any) -> None:
+        from _workflow_fixtures import build_upper_workflow
         from agent_framework import InMemoryCheckpointStorage
-
-        from ._workflow_fixtures import build_upper_workflow
 
         storage = InMemoryCheckpointStorage()
         workflow = build_upper_workflow()
@@ -648,7 +646,7 @@ class TestHostWorkflowCheckpointingPathTraversal:
     async def test_traversal_key_skips_checkpointing_with_warning(self, tmp_path: Any, caplog: Any) -> None:
         import logging as _logging
 
-        from ._workflow_fixtures import build_upper_workflow
+        from _workflow_fixtures import build_upper_workflow
 
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
@@ -673,7 +671,7 @@ class TestHostWorkflowCheckpointingPathTraversal:
         )
 
     async def test_separator_in_key_skips_checkpointing(self, tmp_path: Any) -> None:
-        from ._workflow_fixtures import build_upper_workflow
+        from _workflow_fixtures import build_upper_workflow
 
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
