@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\Microsoft.Agents.AI.AzureAI.ContentUnderstanding\Microsoft.Agents.AI.AzureAI.ContentUnderstanding.csproj" />
+    <ProjectReference Include="..\..\..\..\Microsoft.Agents.AI.DevUI\Microsoft.Agents.AI.DevUI.csproj" />
+    <ProjectReference Include="..\..\..\..\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
+    <ProjectReference Include="..\..\..\..\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
+    <ProjectReference Include="..\..\..\..\Microsoft.Agents.AI.Hosting.OpenAI\Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+
+</Project>

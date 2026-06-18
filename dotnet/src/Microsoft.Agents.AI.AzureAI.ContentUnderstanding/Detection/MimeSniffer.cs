@@ -8,8 +8,6 @@ namespace Microsoft.Agents.AI.AzureAI.ContentUnderstanding;
 /// <remarks>
 /// Byte-signature only — never parses payloads. Covers the supported file types: PDF, PNG,
 /// JPEG, MP3, MP4, WAV, FLAC, OGG.
-/// See <c>features/sdk/dotnet-cu-context-provider/dev-plan-dotnet-cu-context-provider.md</c>
-/// "Phase 3".
 /// </remarks>
 internal static class MimeSniffer
 {

@@ -9,6 +9,14 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
+  <!-- Samples live under samples/ (mirroring the Python azure-contentunderstanding package
+       layout) but are standalone executable projects: never compile or pack them with the library. -->
+  <ItemGroup>
+    <Compile Remove="samples\**\*.cs" />
+    <None Remove="samples\**" />
+    <EmbeddedResource Remove="samples\**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Azure.AI.ContentUnderstanding" />
     <PackageReference Include="Azure.AI.Projects" />

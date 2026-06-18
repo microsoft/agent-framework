@@ -34,7 +34,8 @@ internal sealed record DetectedAttachment(
 /// <remarks>
 /// Unsupported content silently skips (must never block the agent run). Filename resolution
 /// order: <see cref="DataContent.Name"/> → <see cref="AIContent.AdditionalProperties"/>["filename"]
-/// → synthesized <c>attachment-{sha256[0..12]}.{ext}</c>. Supported media types cover documents,
+/// → synthesized <c>attachment-{id}.{ext}</c> (a random id for <see cref="DataContent"/>, a stable
+/// URI hash for <see cref="UriContent"/>). Supported media types cover documents,
 /// images, text, audio, and video per the Azure CU input file limits:
 /// https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits.
 /// </remarks>
@@ -139,7 +140,7 @@ internal static class AttachmentDetector
         // potentially hundreds of MB. Sniffing is also skipped entirely when the supplied type is a
         // concrete, non-octet-stream value (sniff only feeds the octet-stream / empty fallback).
         ReadOnlyMemory<byte> data = dc.Data;
-        string supplied = BaseMediaType(dc.MediaType);
+        string supplied = GetBaseMediaType(dc.MediaType);
         bool isOctetStream = string.Equals(supplied, OctetStream, StringComparison.OrdinalIgnoreCase);
         bool needSniff = data.Length > 0 && (supplied.Length == 0 || isOctetStream);
         string? sniffed = needSniff ? MimeSniffer.Detect(SliceHead(data.Span)) : null;
@@ -165,7 +166,7 @@ internal static class AttachmentDetector
         // Supported → now materialize a private copy (DetectedAttachment.Data is held across turns,
         // so a defensive copy avoids aliasing the caller's buffer).
         byte[] bytes = data.ToArray();
-        string filename = ResolveDataFilename(dc, resolved, bytes);
+        string filename = ResolveDataFilename(dc, resolved);
         return new DetectedAttachment(dc, resolved, filename, bytes, null);
     }
 
@@ -177,7 +178,7 @@ internal static class AttachmentDetector
             return null;
         }
 
-        string resolved = BaseMediaType(uc.MediaType);
+        string resolved = GetBaseMediaType(uc.MediaType);
         if (!s_supportedMediaTypes.Contains(resolved))
         {
             return null;
@@ -190,7 +191,7 @@ internal static class AttachmentDetector
     // Strips any RFC 2045 parameters (e.g. "; charset=utf-8") from a media type so allow-list
     // lookups match. Callers may supply parameterized types (especially UriContent.MediaType,
     // which is passed through verbatim) that would otherwise miss the exact-match HashSet.
-    private static string BaseMediaType(string? mediaType)
+    private static string GetBaseMediaType(string? mediaType)
     {
         if (string.IsNullOrEmpty(mediaType))
         {
@@ -204,7 +205,7 @@ internal static class AttachmentDetector
         return baseType.Replace(" ", string.Empty).Replace("\t", string.Empty).Trim();
     }
 
-    private static string ResolveDataFilename(DataContent dc, string mediaType, byte[] bytes)
+    private static string ResolveDataFilename(DataContent dc, string mediaType)
     {
         string? candidate = !string.IsNullOrEmpty(dc.Name)
             ? dc.Name
@@ -220,7 +221,9 @@ internal static class AttachmentDetector
             }
         }
 
-        return Synthesize(bytes, bytes.Length, mediaType);
+        // No usable name on the attachment — generate a cheap random id rather than hashing the
+        // (possibly hundreds-of-MB) payload. See SynthesizeRandom.
+        return SynthesizeRandom(mediaType);
     }
 
     private static string ResolveUriFilename(UriContent uc, string mediaType)
@@ -361,11 +364,22 @@ internal static class AttachmentDetector
         return joined.Length > MaxFilenameLength ? joined.Substring(0, MaxFilenameLength) : joined;
     }
 
-    // The hash only needs to produce a stable, well-distributed dedup prefix — it is NOT a content
-    // integrity check. We hash the full payload, then append its total length as a final block. With
-    // the entire content already hashed the length is redundant for collision resistance; it is kept
-    // only as a cheap defensive guard so the prefix still varies on length even if the digest were
-    // ever swapped for a weaker/truncated one.
+    // Last-resort fallback for a DataContent attachment that carries no usable name (Name,
+    // additional-properties "filename", and RawRepresentation filename all absent). Mirrors the
+    // Python CU package's derive_doc_key(), which uses a random id here instead of hashing the
+    // payload: this rare path needs no content-based identity, so a cheap GUID avoids an O(n)
+    // SHA-256 over a potentially hundreds-of-MB audio/video payload. The 12-hex shape matches the
+    // URI synthesizer below so downstream filename handling is identical.
+    private static string SynthesizeRandom(string mediaType)
+    {
+        string prefix = Guid.NewGuid().ToString("N").Substring(0, 12);
+        return $"attachment-{prefix}.{ExtensionFor(mediaType)}";
+    }
+
+    // Builds a stable dedup filename by hashing the given key bytes — used only by the URI
+    // synthesizer (ResolveUriFilename) to turn a URI into a stable name; it is NOT a content
+    // integrity check. The total length is appended as a final block so same-prefix /
+    // different-length keys still disambiguate.
     private static string Synthesize(ReadOnlySpan<byte> data, long totalLength, string mediaType)
     {
         // totalLength is mixed into the hash as the final block, so it must stay consistent with the

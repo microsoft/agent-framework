@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "AzureOpenAIBackend": {
+      "commandName": "Project",
+      "launchUrl": "devui",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:50522;http://localhost:50523"
+    }
+  }
+}
