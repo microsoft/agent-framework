@@ -80,12 +80,12 @@ dotnet/samples/
 
 ## Default provider
 
-All canonical samples (01-get-started) use **Microsoft Foundry** with the Foundry Responses API via `FoundryAgent` or `AIProjectClient.AsAIAgent()` with `DefaultAzureCredential`:
+All canonical samples (01-get-started) use **Microsoft Foundry** via `AIProjectClient.AsAIAgent()` with `DefaultAzureCredential`:
 
 ```csharp
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Foundry;
 
 var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -94,12 +94,8 @@ var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-FoundryAgent agent = new(
-    new Uri(endpoint),
-    new DefaultAzureCredential(),
-    model: model,
-    instructions: "...",
-    name: "...");
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: model, instructions: "...", name: "...");
 ```
 
 Environment variables:
@@ -107,6 +103,8 @@ Environment variables:
 - `FOUNDRY_MODEL` — Model name (defaults to `gpt-5.4-mini`)
 
 For authentication, run `az login` before running samples.
+
+**Note:** Use `FoundryAgent` only when demonstrating Foundry-managed (prompt) agents specifically — see `02-agents/AgentsWithFoundry/`. For all other samples, use `AIProjectClient.AsAIAgent()`.
 
 **Note:** For samples demonstrating other providers (Azure OpenAI, OpenAI, Anthropic, etc.), see `02-agents/AgentProviders/`.
 

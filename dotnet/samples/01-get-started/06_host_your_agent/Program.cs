@@ -13,9 +13,9 @@
 // Run with: func start
 // Then call: POST http://localhost:7071/api/agents/HostedAgent/run
 
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Hosting.AzureFunctions;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
@@ -28,12 +28,8 @@ var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new FoundryAgent(
-    new Uri(endpoint),
-    new DefaultAzureCredential(),
-    model: model,
-    instructions: "You are a helpful assistant hosted in Azure Functions.",
-    name: "HostedAgent");
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: model, instructions: "You are a helpful assistant hosted in Azure Functions.", name: "HostedAgent");
 
 // Configure the function app to host the AI agent.
 // This will automatically generate HTTP API endpoints for the agent.

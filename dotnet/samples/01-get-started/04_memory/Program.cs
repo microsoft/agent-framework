@@ -8,9 +8,9 @@
 
 using System.Text;
 using System.Text.Json;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using SampleApp;
 
@@ -20,18 +20,14 @@ var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-FoundryAgent baseAgent = new(
-    new Uri(endpoint),
-    new DefaultAzureCredential(),
-    model: model,
-    instructions: "You are a friendly assistant.");
+var projectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
 // Get the underlying IChatClient to use for the memory component.
-IChatClient? chatClient = baseAgent.GetService<IChatClient>();
-if (chatClient == null)
-{
-    throw new InvalidOperationException("Could not retrieve IChatClient from FoundryAgent.");
-}
+// The memory provider needs direct IChatClient access for structured extraction.
+IChatClient chatClient = projectClient
+    .AsAIAgent(new ChatClientAgentOptions { ChatOptions = new() { ModelId = model } })
+    .GetService<IChatClient>()
+    ?? throw new InvalidOperationException("Could not retrieve IChatClient from AIProjectClient agent.");
 
 // Create the agent and provide a factory to add our custom memory component to
 // all sessions created by the agent. Here each new memory component will have its own
