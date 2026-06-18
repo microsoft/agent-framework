@@ -30,20 +30,40 @@ jobs:
           merge-multiple: true
       - name: Display structure of downloaded files
         run: ls
-      - name: Read and set PR number
-        # Need to read the PR number from the file saved in the previous workflow
-        # because the workflow_run event does not have access to the PR number
-        # The PR number is needed to post the comment on the PR
+      - name: Read and validate PR number
+        # Keep the artifact handoff aligned with the workflow run that produced it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || '' }}
         run: |
           if [ ! -s pr_number ]; then
             echo "PR number file 'pr_number' is missing or empty"
             exit 1
           fi
-          PR_NUMBER=$(cat pr_number)
-          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+
+          ARTIFACT_PR_NUMBER=$(cat pr_number)
+          if ! [[ "$ARTIFACT_PR_NUMBER" =~ ^[0-9]+$ ]]; then
             echo "::error::PR number file contains invalid content"
             exit 1
           fi
+
+          if [ -n "$RUN_PR_NUMBER" ]; then
+            if [ "$ARTIFACT_PR_NUMBER" != "$RUN_PR_NUMBER" ]; then
+              echo "::error::PR number file does not match the triggering workflow run"
+              exit 1
+            fi
+            PR_NUMBER="$RUN_PR_NUMBER"
+          else
+            PR_HEAD_SHA=$(gh pr view "$ARTIFACT_PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+            if [ "$PR_HEAD_SHA" != "$RUN_HEAD_SHA" ]; then
+              echo "::error::PR head SHA does not match the triggering workflow run"
+              exit 1
+            fi
+            PR_NUMBER="$ARTIFACT_PR_NUMBER"
+          fi
+
           echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
       - name: Pytest coverage comment
         id: coverageComment
