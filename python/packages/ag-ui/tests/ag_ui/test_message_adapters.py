@@ -994,6 +994,49 @@ def test_sanitize_pending_tool_skip_on_user_followup():
     assert "skipped" in str(tool_results[0].contents[0].result).lower()
 
 
+def test_sanitize_consecutive_assistant_tool_calls_closes_previous_call():
+    """Consecutive assistant tool-call messages are separated by a synthetic tool result."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    first_assistant = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="get_weather", arguments="{}")],
+    )
+    second_assistant = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c2", name="get_time", arguments="{}")],
+    )
+    user_msg = Message(role="user", contents=[Content.from_text(text="Continue")])
+
+    result = _sanitize_tool_history([first_assistant, second_assistant, user_msg])
+
+    roles = [msg.role for msg in result]
+    assert roles == ["assistant", "tool", "assistant", "tool", "user"]
+    assert result[1].contents[0].type == "function_result"
+    assert result[1].contents[0].call_id == "c1"
+    assert result[3].contents[0].type == "function_result"
+    assert result[3].contents[0].call_id == "c2"
+
+
+def test_sanitize_history_ending_with_tool_call_closes_pending_call():
+    """History ending with assistant tool calls gets synthetic results before provider replay."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="get_weather", arguments="{}"),
+            Content.from_function_call(call_id="c2", name="get_time", arguments="{}"),
+        ],
+    )
+
+    result = _sanitize_tool_history([assistant_msg])
+
+    assert [msg.role for msg in result] == ["assistant", "tool", "tool"]
+    assert {result[1].contents[0].call_id, result[2].contents[0].call_id} == {"c1", "c2"}
+    assert all("skipped" in str(msg.contents[0].result).lower() for msg in result[1:])
+
+
 def test_sanitize_tool_result_clears_pending_confirm():
     """Tool result for pending confirm_changes call_id clears pending state."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
@@ -1015,7 +1058,7 @@ def test_sanitize_tool_result_clears_pending_confirm():
 
 
 def test_sanitize_non_standard_role_resets_state():
-    """System message between assistant+user resets pending tool state."""
+    """System message between assistant+user closes pending tool state."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
 
     assistant_msg = Message(
@@ -1026,9 +1069,9 @@ def test_sanitize_non_standard_role_resets_state():
     user_msg = Message(role="user", contents=[Content.from_text(text="Continue")])
 
     result = _sanitize_tool_history([assistant_msg, system_msg, user_msg])
-    # System message should reset pending state, so no synthetic tool results
     tool_results = [m for m in result if m.role == "tool"]
-    assert len(tool_results) == 0
+    assert len(tool_results) == 1
+    assert tool_results[0].contents[0].call_id == "c1"
 
 
 def test_sanitize_json_confirm_changes_response():
