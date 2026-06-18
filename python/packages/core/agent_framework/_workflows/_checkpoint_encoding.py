@@ -234,9 +234,9 @@ def _encode(value: Any) -> Any:
     # Recursively encode dict values (keys become strings)
     if isinstance(value, dict):
         typed_dict = cast(dict[Any, Any], value)  # type: ignore[redundant-cast]
-        encoded_dict: dict[str, Any] = {str(k): _encode(v) for k, v in typed_dict.items()}
-        if _RESERVED_DICT_KEYS.intersection(encoded_dict):
+        if any(str(k) in _RESERVED_DICT_KEYS for k in typed_dict):
             return _encode_pickle(value)
+        encoded_dict: dict[str, Any] = {str(k): _encode(v) for k, v in typed_dict.items()}
         return encoded_dict
 
     # Recursively encode list items (lists are JSON-native collections)
