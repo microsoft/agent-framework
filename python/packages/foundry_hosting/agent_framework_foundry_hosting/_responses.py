@@ -9,9 +9,10 @@ import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, dataclass, is_dataclass
+from inspect import isawaitable
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -126,8 +127,8 @@ class HostedSessionContext:
     """Identity context that owns a hosted workflow checkpoint session.
 
     Args:
-        user_id: Stable user isolation key for the current caller.
-        chat_id: Stable chat or conversation isolation key for the current caller.
+        user_id: Stable, non-whitespace user isolation key for the current caller.
+        chat_id: Stable, non-whitespace chat or conversation isolation key for the current caller.
     """
 
     user_id: str
@@ -139,42 +140,23 @@ class HostedSessionContext:
             raise ValueError("Hosted session context requires non-empty user_id and chat_id values.")
 
 
-class HostedSessionIsolationKeyProvider(Protocol):
-    """Resolves the hosted workflow checkpoint ownership context for a request."""
-
-    async def get_keys(self, context: ResponseContext, request: CreateResponse) -> HostedSessionContext | None:
-        """Resolve the hosted session ownership keys for the current request.
-
-        Args:
-            context: The Responses API execution context.
-            request: The current create-response request.
-
-        Returns:
-            The hosted session ownership context, or None when unavailable.
-        """
-        ...
+HostedSessionContextResolver = Callable[
+    [ResponseContext, CreateResponse],
+    HostedSessionContext | Awaitable[HostedSessionContext | None] | None,
+]
+"""Callable that resolves hosted workflow checkpoint ownership context for a request."""
 
 
-class PlatformHostedSessionIsolationKeyProvider:
-    """Default provider that reads platform-injected isolation keys from ``ResponseContext``."""
-
-    async def get_keys(self, context: ResponseContext, request: CreateResponse) -> HostedSessionContext | None:
-        """Resolve isolation keys from ``context.isolation``.
-
-        Args:
-            context: The Responses API execution context.
-            request: The current create-response request.
-
-        Returns:
-            The platform-provided hosted session context, or None when the platform did not supply both keys.
-        """
-        del request
-        isolation = getattr(context, "isolation", None)
-        user_id = getattr(isolation, "user_key", None)
-        chat_id = getattr(isolation, "chat_key", None)
-        if not isinstance(user_id, str) or not user_id.strip() or not isinstance(chat_id, str) or not chat_id.strip():
-            return None
-        return HostedSessionContext(user_id=user_id, chat_id=chat_id)
+def _default_hosted_session_context_resolver(
+    context: ResponseContext, request: CreateResponse
+) -> HostedSessionContext | None:
+    del request
+    isolation = getattr(context, "isolation", None)
+    user_id = getattr(isolation, "user_key", None)
+    chat_id = getattr(isolation, "chat_key", None)
+    if not isinstance(user_id, str) or not user_id.strip() or not isinstance(chat_id, str) or not chat_id.strip():
+        return None
+    return HostedSessionContext(user_id=user_id, chat_id=chat_id)
 
 
 # region Approval Storage
@@ -460,7 +442,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
-        hosted_session_isolation_key_provider: HostedSessionIsolationKeyProvider | None = None,
+        hosted_session_context_resolver: HostedSessionContextResolver | None = None,
         strict_session_isolation: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -471,9 +453,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             prefix: The URL prefix for the server.
             options: Optional server options.
             store: Optional response store.
-            hosted_session_isolation_key_provider: Optional provider for the hosted workflow checkpoint ownership
+            hosted_session_context_resolver: Optional callable that resolves the hosted workflow checkpoint ownership
                 context. The default reads Foundry platform isolation keys from ``ResponseContext.isolation``.
-            strict_session_isolation: Whether to reject hosted workflow checkpoint access when the provider cannot
+            strict_session_isolation: Whether to reject hosted workflow checkpoint access when the resolver cannot
                 resolve ownership keys.
             **kwargs: Additional keyword arguments.
 
@@ -515,8 +497,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._is_workflow_agent = True
 
         self._agent = agent
-        self._hosted_session_isolation_key_provider = (
-            hosted_session_isolation_key_provider or PlatformHostedSessionIsolationKeyProvider()
+        self._hosted_session_context_resolver = (
+            hosted_session_context_resolver or _default_hosted_session_context_resolver
         )
         self._strict_session_isolation = strict_session_isolation
         self._approval_storage = (
@@ -837,17 +819,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     async def _resolve_hosted_session_context(
         self, context: ResponseContext, request: CreateResponse
     ) -> HostedSessionContext | None:
-        resolved_context = await self._hosted_session_isolation_key_provider.get_keys(context, request)
+        resolved_context = self._hosted_session_context_resolver(context, request)
+        if isawaitable(resolved_context):
+            resolved_context = await resolved_context
         if resolved_context is None:
             if self._strict_session_isolation:
                 raise RuntimeError(
                     "Hosted session isolation keys are required for workflow checkpoint hosting. "
                     "Ensure the Foundry platform provides isolation keys or configure a custom "
-                    "HostedSessionIsolationKeyProvider."
+                    "hosted_session_context_resolver."
                 )
             return None
         if not isinstance(resolved_context, HostedSessionContext):
-            raise TypeError("HostedSessionIsolationKeyProvider.get_keys must return HostedSessionContext or None.")
+            raise TypeError("hosted_session_context_resolver must return HostedSessionContext or None.")
         return resolved_context
 
     async def _validate_or_stamp_hosted_session_context(

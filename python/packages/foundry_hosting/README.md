@@ -9,10 +9,10 @@ identify checkpoint records; they do not authorize checkpoint access by themselv
 stamps each hosted workflow checkpoint directory with a hosted session identity context and rejects later resume/write
 attempts whose resolved identity does not match.
 
-By default, `ResponsesHostServer` uses `PlatformHostedSessionIsolationKeyProvider`, which reads the Foundry
-platform-provided isolation keys from `ResponseContext.isolation`. If you host workflows outside the Foundry platform,
-provide `hosted_session_isolation_key_provider=...` that returns a `HostedSessionContext` derived from your
-authenticated user and chat/tenant boundary. Do not derive this context only from untrusted request body fields.
+By default, `ResponsesHostServer` reads the Foundry platform-provided isolation keys from `ResponseContext.isolation`.
+If you host workflows outside the Foundry platform, provide `hosted_session_context_resolver=...` that returns a
+`HostedSessionContext` derived from your authenticated user and chat/tenant boundary. Do not derive this context only
+from untrusted request body fields.
 
 `strict_session_isolation=True` is the default. This rejects hosted workflow checkpoint requests when no identity
 context is available. Local-only tests or demos can set `strict_session_isolation=False`, but production multi-user

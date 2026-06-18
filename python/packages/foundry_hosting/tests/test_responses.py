@@ -51,7 +51,7 @@ from agent_framework_foundry_hosting._responses import (
     ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
-    PlatformHostedSessionIsolationKeyProvider,
+    _default_hosted_session_context_resolver,  # pyright: ignore[reportPrivateUsage]
     _hosted_session_context_path,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
@@ -117,27 +117,37 @@ def _make_agent(
 
 def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     """Create a ResponsesHostServer with an in-memory store."""
-    kwargs.setdefault("hosted_session_isolation_key_provider", _StaticHostedSessionIsolationKeyProvider())
+    kwargs.setdefault("hosted_session_context_resolver", _static_hosted_session_context_resolver())
     return ResponsesHostServer(agent, store=InMemoryResponseProvider(), **kwargs)
 
 
-class _StaticHostedSessionIsolationKeyProvider:
-    """Test hosted session isolation provider."""
+def _static_hosted_session_context_resolver(
+    hosted_context: HostedSessionContext | None = None,
+) -> Callable[[Any, Any], HostedSessionContext]:
+    resolved_context = hosted_context or HostedSessionContext(user_id="user-a", chat_id="chat-a")
 
-    def __init__(self, hosted_context: HostedSessionContext | None = None) -> None:
-        self.hosted_context = hosted_context or HostedSessionContext(user_id="user-a", chat_id="chat-a")
-
-    async def get_keys(self, context: Any, request: Any) -> HostedSessionContext | None:
+    def resolve(context: Any, request: Any) -> HostedSessionContext:
         del context, request
-        return self.hosted_context
+        return resolved_context
+
+    return resolve
 
 
-class _MissingHostedSessionIsolationKeyProvider:
-    """Test provider that cannot resolve hosted session isolation keys."""
+def _missing_hosted_session_context_resolver(context: Any, request: Any) -> None:
+    del context, request
+    return
 
-    async def get_keys(self, context: Any, request: Any) -> HostedSessionContext | None:
+
+def _async_hosted_session_context_resolver(
+    hosted_context: HostedSessionContext | None = None,
+) -> Callable[[Any, Any], Awaitable[HostedSessionContext]]:
+    resolved_context = hosted_context or HostedSessionContext(user_id="user-a", chat_id="chat-a")
+
+    async def resolve(context: Any, request: Any) -> HostedSessionContext:
         del context, request
-        return None
+        return resolved_context
+
+    return resolve
 
 
 @dataclass
@@ -3002,18 +3012,16 @@ class TestCheckpointContextPathValidation:
         with pytest.raises(ValueError, match="requires non-empty"):
             HostedSessionContext(user_id="user-a", chat_id="\t")
 
-    async def test_platform_hosted_session_provider_rejects_whitespace_only_keys(self) -> None:
-        provider = PlatformHostedSessionIsolationKeyProvider()
-
+    def test_default_hosted_session_context_resolver_rejects_whitespace_only_keys(self) -> None:
         assert (
-            await provider.get_keys(
+            _default_hosted_session_context_resolver(
                 _HostedSessionResponseContext(user_key=" ", chat_key="chat-a"),  # type: ignore[arg-type]
                 MagicMock(),
             )
             is None
         )
         assert (
-            await provider.get_keys(
+            _default_hosted_session_context_resolver(
                 _HostedSessionResponseContext(user_key="user-a", chat_key="\n"),  # type: ignore[arg-type]
                 MagicMock(),
             )
@@ -3165,7 +3173,7 @@ class TestCheckpointContextPathValidation:
         server = ResponsesHostServer(
             agent,
             store=InMemoryResponseProvider(),
-            hosted_session_isolation_key_provider=_StaticHostedSessionIsolationKeyProvider(
+            hosted_session_context_resolver=_async_hosted_session_context_resolver(
                 HostedSessionContext(user_id="attacker-user", chat_id="victim-chat")
             ),
         )
@@ -3286,7 +3294,7 @@ class TestCheckpointContextPathValidation:
         server = ResponsesHostServer(
             agent,
             store=InMemoryResponseProvider(),
-            hosted_session_isolation_key_provider=_MissingHostedSessionIsolationKeyProvider(),
+            hosted_session_context_resolver=_missing_hosted_session_context_resolver,
             strict_session_isolation=False,
         )
         server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]

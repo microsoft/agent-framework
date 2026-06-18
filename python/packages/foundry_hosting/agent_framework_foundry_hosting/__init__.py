@@ -5,8 +5,7 @@ import importlib.metadata
 from ._invocations import InvocationsHostServer
 from ._responses import (
     HostedSessionContext,
-    HostedSessionIsolationKeyProvider,
-    PlatformHostedSessionIsolationKeyProvider,
+    HostedSessionContextResolver,
     ResponsesHostServer,
 )
 
@@ -17,8 +16,7 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "HostedSessionContext",
-    "HostedSessionIsolationKeyProvider",
+    "HostedSessionContextResolver",
     "InvocationsHostServer",
-    "PlatformHostedSessionIsolationKeyProvider",
     "ResponsesHostServer",
 ]
