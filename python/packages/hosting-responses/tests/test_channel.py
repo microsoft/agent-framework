@@ -117,6 +117,15 @@ class TestResponsesChannelNonStreaming:
         assert r.status_code == 200
         assert r.json()["output"][0]["content"][0]["text"] == "hi back"
 
+    def test_custom_path_mounts_route_under_host_path(self) -> None:
+        client, _host, _agent = _make_client(_FakeAgent(reply="custom"), path="/api/responses")
+        with client:
+            r = client.post("/api/responses", json={"input": "hi"})
+            missing = client.post("/api/responses/responses", json={"input": "hi"})
+        assert r.status_code == 200
+        assert r.json()["output"][0]["content"][0]["text"] == "custom"
+        assert missing.status_code == 404
+
     def test_invalid_json_returns_400(self) -> None:
         client, *_ = _make_client()
         with client:
