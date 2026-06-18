@@ -113,11 +113,11 @@ def messages_from_responses_input(value: Any) -> list[Message]:
             if isinstance(content, str):
                 parts = [Content.from_text(text=content)]
             elif isinstance(content, list):
-                parts = [
-                    _content_from_input_item(cast("Mapping[str, Any]", c))
-                    for c in cast("list[Any]", content)  # type: ignore[redundant-cast]
-                    if isinstance(c, Mapping)
-                ]
+                parts = []
+                for content_item in cast("list[Any]", content):  # type: ignore[redundant-cast]
+                    if not isinstance(content_item, Mapping):
+                        raise ValueError("each message `content` item must be an object")
+                    parts.append(_content_from_input_item(cast("Mapping[str, Any]", content_item)))
             else:
                 parts = []
             messages.append(Message(role, parts))

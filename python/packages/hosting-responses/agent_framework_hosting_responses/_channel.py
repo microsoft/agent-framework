@@ -15,10 +15,11 @@ required field without surprises.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping
-from typing import Any
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from typing import Any, cast
 
 from agent_framework_hosting import (
     ChannelContext,
@@ -56,9 +57,8 @@ from ._parsing import (
 class ResponsesChannel:
     """Minimal OpenAI-Responses-shaped surface.
 
-    Mounts ``POST <path>/responses`` (default path ``/responses`` so the
-    full route is ``/responses/responses`` when the channel is prefixed,
-    or just ``/`` when ``path=""``).
+    Mounts one ``POST`` route at ``path``. The default path is ``/responses``;
+    use ``path=""`` to expose the route at the app root.
     """
 
     name = "responses"
@@ -189,6 +189,8 @@ class ResponsesChannel:
         # co-locate the new record with the chain's existing partition.
         # No-arg factories continue to work via ``Callable[..., str]``.
         response_id = self._response_id_factory(previous_response_id)
+        if session is None:
+            session = ChannelSession(isolation_key=response_id)
 
         attributes: dict[str, Any] = {"response_id": response_id}
         if previous_response_id is not None:
@@ -222,9 +224,9 @@ class ResponsesChannel:
             response_hook=self.response_hook,
             channel_name=self.name,
         )
-        text = result.result.text
+        text = _result_to_text(result.result)
         envelope = self._build_response(body, text, status="completed", response_id=response_id)
-        return JSONResponse(envelope.model_dump(mode="json", exclude_none=True))
+        return JSONResponse(_response_payload(envelope))
 
     def _build_response(
         self,
@@ -251,12 +253,13 @@ class ResponsesChannel:
         before this argument was introduced) don't supply one.
         """
         message_status = status if status in ("in_progress", "completed", "incomplete") else "incomplete"
+        model = body.get("model")
         return OpenAIResponse(
             id=response_id or self._response_id_factory(None),
             object="response",
-            created_at=time.time(),
+            created_at=int(time.time()),
             status=status,  # type: ignore[arg-type]
-            model=body.get("model", "agent"),
+            model=model if isinstance(model, str) and model else "agent",
             output=[
                 ResponseOutputMessage(
                     id=f"msg_{uuid.uuid4().hex}",
@@ -296,7 +299,7 @@ class ResponsesChannel:
             return seq
 
         def sse(event: Any) -> str:
-            return f"event: {event.type}\ndata: {event.model_dump_json(exclude_none=True)}\n\n"
+            return f"event: {event.type}\ndata: {_event_json(event)}\n\n"
 
         skeleton = self._build_response(body, "", status="in_progress", response_id=response_id)
         yield sse(ResponseCreatedEvent(type="response.created", response=skeleton, sequence_number=next_seq()))
@@ -346,7 +349,7 @@ class ResponsesChannel:
             )
             return
 
-        completed_text = getattr(final_response, "text", None) or accumulated
+        completed_text = _result_to_text(final_response) if final_response is not None else accumulated
         completed = self._build_response(body, completed_text, status="completed", response_id=response_id)
         # Reuse the same message id we emitted deltas under.
         if completed.output and isinstance(completed.output[0], ResponseOutputMessage):
@@ -358,6 +361,40 @@ class ResponsesChannel:
                 sequence_number=next_seq(),
             )
         )
+
+
+def _result_to_text(result: Any) -> str:
+    """Render an agent or workflow result to plain text for Responses JSON."""
+    text = getattr(result, "text", None)
+    if isinstance(text, str):
+        return text
+    get_outputs = getattr(result, "get_outputs", None)
+    if callable(get_outputs):
+        return "".join(_output_to_text(output) for output in cast("Sequence[Any]", get_outputs()))
+    return str(result)
+
+
+def _output_to_text(output: Any) -> str:
+    text = getattr(output, "text", None)
+    if isinstance(text, str):
+        return text
+    return str(output)
+
+
+def _response_payload(response: OpenAIResponse) -> dict[str, Any]:
+    payload = response.model_dump(mode="json", exclude_none=True)
+    created_at = payload.get("created_at")
+    if isinstance(created_at, float):
+        payload["created_at"] = int(created_at)
+    return payload
+
+
+def _event_json(event: Any) -> str:
+    payload = cast("dict[str, Any]", event.model_dump(mode="json", exclude_none=True))
+    response = cast("dict[str, Any] | None", payload.get("response"))
+    if isinstance(response, dict) and isinstance(response.get("created_at"), float):
+        response["created_at"] = int(response["created_at"])
+    return json.dumps(payload, separators=(",", ":"))
 
 
 __all__ = ["ResponsesChannel"]
