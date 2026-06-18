@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
@@ -566,6 +567,13 @@ class _FakeShellClient(_FakeChatClient):
         return "shell_tool_instance"
 
 
+_requires_shell_tools = pytest.mark.skipif(
+    importlib.util.find_spec("agent_framework_tools") is None,
+    reason="agent-framework-tools is not installed in this environment",
+)
+
+
+@_requires_shell_tools
 def test_create_harness_agent_adds_shell_tool_and_provider() -> None:
     """Shell tool and ShellEnvironmentProvider should be added when a shell executor is supplied."""
     from agent_framework_tools.shell import ShellEnvironmentProvider
@@ -585,6 +593,7 @@ def test_create_harness_agent_adds_shell_tool_and_provider() -> None:
     assert any(isinstance(p, ShellEnvironmentProvider) for p in providers)
 
 
+@_requires_shell_tools
 def test_create_harness_agent_shell_passes_custom_options() -> None:
     """Custom ShellEnvironmentProviderOptions should be forwarded to the provider."""
     from agent_framework_tools.shell import ShellEnvironmentProvider, ShellEnvironmentProviderOptions
@@ -603,6 +612,7 @@ def test_create_harness_agent_shell_passes_custom_options() -> None:
     assert provider._options is options
 
 
+@_requires_shell_tools
 def test_create_harness_agent_shell_skipped_when_unsupported(caplog: pytest.LogCaptureFixture) -> None:
     """When the client lacks get_shell_tool, both the tool and provider are skipped with a warning."""
     import logging
@@ -623,6 +633,7 @@ def test_create_harness_agent_shell_skipped_when_unsupported(caplog: pytest.LogC
     assert "tools" not in agent.default_options or not agent.default_options.get("tools")
 
 
+@_requires_shell_tools
 def test_create_harness_agent_no_shell_by_default() -> None:
     """No shell tool or provider should be added when shell_executor is not provided."""
     from agent_framework_tools.shell import ShellEnvironmentProvider

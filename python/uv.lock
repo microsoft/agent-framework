@@ -115,7 +115,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.8.1"
+version = "1.9.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -185,7 +185,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.0.0rc4"
+version = "1.0.0rc5"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -213,7 +213,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "agent-framework-anthropic"
-version = "1.0.0b260604"
+version = "1.0.0b260618"
 source = { editable = "packages/anthropic" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -243,7 +243,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-contentunderstanding"
-version = "1.0.0a260521"
+version = "1.0.0a260618"
 source = { editable = "packages/azure-contentunderstanding" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -363,7 +363,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.8.1"
+version = "1.9.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -401,6 +401,11 @@ all = [
     { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "agent-framework-tools", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-a2a", marker = "extra == 'all'", editable = "packages/a2a" },
@@ -435,9 +440,12 @@ requires-dist = [
 ]
 provides-extras = ["all"]
 
+[package.metadata.requires-dev]
+dev = [{ name = "agent-framework-tools", editable = "packages/tools" }]
+
 [[package]]
 name = "agent-framework-declarative"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 source = { editable = "packages/declarative" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -529,7 +537,7 @@ dev = [{ name = "types-python-dateutil", specifier = "==2.9.0.20260518" }]
 
 [[package]]
 name = "agent-framework-foundry"
-version = "1.8.1"
+version = "1.8.2"
 source = { editable = "packages/foundry" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -550,7 +558,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0a260609"
+version = "1.0.0a260618"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -776,7 +784,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-openai"
-version = "1.8.1"
+version = "1.8.2"
 source = { editable = "packages/openai" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -791,7 +799,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-orchestrations"
-version = "1.0.0rc3"
+version = "1.0.0"
 source = { editable = "packages/orchestrations" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
