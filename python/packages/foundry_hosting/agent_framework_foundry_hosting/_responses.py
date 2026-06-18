@@ -159,16 +159,32 @@ def _default_hosted_session_context_resolver(
     return HostedSessionContext(user_id=user_id, chat_id=chat_id)
 
 
+def _hosted_session_key(hosted_context: HostedSessionContext | None) -> str | None:
+    """Derive a stable, comparable key from a hosted session identity context.
+
+    Approval handles are bound to the identity (``user_id`` + ``chat_id``) that was active
+    when they were created, so a handle issued to one principal cannot be redeemed from a
+    different user or conversation (CWE-863). When no identity is resolved (e.g. single-tenant
+    or local development without isolation headers), this returns ``None`` and binding becomes
+    a no-op, preserving the existing single-user behavior.
+    """
+    if hosted_context is None:
+        return None
+    return json.dumps([hosted_context.user_id, hosted_context.chat_id])
+
+
 # region Approval Storage
 class ApprovalStorage(Protocol):
     """Storage for saving function approval requests."""
 
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        """Save a function approval request under the given ID."""
+    async def save_approval_request(
+        self, approval_request_id: str, request: Content, *, isolation_key: str | None = None
+    ) -> None:
+        """Save a function approval request under the given ID, bound to ``isolation_key``."""
         ...
 
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        """Load a function approval request by its ID."""
+    async def load_approval_request(self, approval_request_id: str, *, isolation_key: str | None = None) -> Content:
+        """Load a function approval request by its ID, verifying ``isolation_key`` matches."""
         ...
 
 
@@ -176,17 +192,25 @@ class InMemoryFunctionApprovalStorage:
     """An in-memory storage for function approval requests."""
 
     def __init__(self) -> None:
-        self._store: dict[str, Content] = {}
+        self._store: dict[str, tuple[str | None, Content]] = {}
 
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
+    async def save_approval_request(
+        self, approval_request_id: str, request: Content, *, isolation_key: str | None = None
+    ) -> None:
         if approval_request_id in self._store:
             raise ValueError(f"Approval request with ID '{approval_request_id}' already exists.")
-        self._store[approval_request_id] = request
+        self._store[approval_request_id] = (isolation_key, request)
 
-    async def load_approval_request(self, approval_request_id: str) -> Content:
+    async def load_approval_request(self, approval_request_id: str, *, isolation_key: str | None = None) -> Content:
         if approval_request_id not in self._store:
             raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
-        return self._store[approval_request_id]
+        stored_key, request = self._store[approval_request_id]
+        if stored_key != isolation_key:
+            # The caller's isolation context does not match the one the approval was
+            # created under. Raise KeyError (indistinguishable from "not found") so the
+            # response does not reveal that the ID exists in another isolation context.
+            raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
+        return request
 
 
 class FileBasedFunctionApprovalStorage:
@@ -227,30 +251,43 @@ class FileBasedFunctionApprovalStorage:
                 os.unlink(tmp_path)
             raise
 
-    def _save_sync(self, approval_request_id: str, request: Content) -> None:
+    def _save_sync(self, approval_request_id: str, request: Content, isolation_key: str | None) -> None:
         with self._lock:
             self._create_storage_file_if_not_exists_sync()
             with open(self._storage_path) as f:
                 data = json.load(f)
             if approval_request_id in data:
                 raise ValueError(f"Approval request with ID '{approval_request_id}' already exists.")
-            data[approval_request_id] = request.to_dict()
+            data[approval_request_id] = {"isolation_key": isolation_key, "request": request.to_dict()}
             self._atomic_write(data)
 
-    def _load_sync(self, approval_request_id: str) -> Content:
+    def _load_sync(self, approval_request_id: str, isolation_key: str | None) -> Content:
         with self._lock:
             self._create_storage_file_if_not_exists_sync()
             with open(self._storage_path) as f:
-                data = json.load(f)
+                data: dict[str, Any] = json.load(f)
         if approval_request_id not in data:
             raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
-        return Content.from_dict(data[approval_request_id])
+        entry: Any = data[approval_request_id]
+        if not isinstance(entry, dict) or "request" not in entry:
+            # Legacy entry written before isolation binding existed; it carries no
+            # isolation metadata and cannot be safely attributed to a principal, so
+            # reject it. Raise KeyError to avoid revealing that the ID exists.
+            raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
+        entry_dict = cast("dict[str, Any]", entry)
+        if entry_dict.get("isolation_key") != isolation_key:
+            # Caller's isolation context does not match the one the approval was created
+            # under. Raise KeyError (indistinguishable from "not found").
+            raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
+        return Content.from_dict(entry_dict["request"])
 
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        await asyncio.to_thread(self._save_sync, approval_request_id, request)
+    async def save_approval_request(
+        self, approval_request_id: str, request: Content, *, isolation_key: str | None = None
+    ) -> None:
+        await asyncio.to_thread(self._save_sync, approval_request_id, request, isolation_key)
 
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        return await asyncio.to_thread(self._load_sync, approval_request_id)
+    async def load_approval_request(self, approval_request_id: str, *, isolation_key: str | None = None) -> Content:
+        return await asyncio.to_thread(self._load_sync, approval_request_id, isolation_key)
 
 
 def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpointStorage:
@@ -570,13 +607,28 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
+            hosted_session_context = await self._resolve_hosted_session_context_optional(context, request)
+            isolation_key = _hosted_session_key(hosted_session_context)
+            require_isolation = self._strict_session_isolation and isolation_key is None
             input_items = await context.get_input_items()
-            input_messages = await _items_to_messages(input_items, approval_storage=self._approval_storage)
+            input_messages = await _items_to_messages(
+                input_items,
+                approval_storage=self._approval_storage,
+                isolation_key=isolation_key,
+                require_isolation=require_isolation,
+            )
 
             history = await context.get_history()
             run_kwargs: dict[str, Any] = {
                 "messages": [
-                    *(await _output_items_to_messages(history, approval_storage=self._approval_storage)),
+                    *(
+                        await _output_items_to_messages(
+                            history,
+                            approval_storage=self._approval_storage,
+                            isolation_key=isolation_key,
+                            require_isolation=require_isolation,
+                        )
+                    ),
                     *input_messages,
                 ]
             }
@@ -623,6 +675,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     response_event_stream,
                     response.messages,
                     approval_storage=self._approval_storage,
+                    isolation_key=isolation_key,
                 ):
                     yield item
             else:
@@ -638,6 +691,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                                 response_event_stream,
                                 content,
                                 approval_storage=self._approval_storage,
+                                isolation_key=isolation_key,
                             ):
                                 yield item
                             tracker.needs_async = False
@@ -666,8 +720,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
+            hosted_session_context = await self._resolve_hosted_session_context_optional(context, request)
+            isolation_key = _hosted_session_key(hosted_session_context)
+            require_isolation = self._strict_session_isolation and isolation_key is None
             input_items = await context.get_input_items()
-            input_messages = await _items_to_messages(input_items, approval_storage=self._approval_storage)
+            input_messages = await _items_to_messages(
+                input_items,
+                approval_storage=self._approval_storage,
+                isolation_key=isolation_key,
+                require_isolation=require_isolation,
+            )
             is_streaming_request = request.stream is not None and request.stream is True
 
             _, are_options_set = _to_chat_options(request)
@@ -767,6 +829,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     response_event_stream,
                     response.messages,
                     approval_storage=self._approval_storage,
+                    isolation_key=isolation_key,
                 ):
                     yield item
 
@@ -787,7 +850,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         yield event
                     if tracker.needs_async:
                         async for item in _to_outputs(
-                            response_event_stream, content, approval_storage=self._approval_storage
+                            response_event_stream,
+                            content,
+                            approval_storage=self._approval_storage,
+                            isolation_key=isolation_key,
                         ):
                             yield item
                         tracker.needs_async = False
@@ -816,22 +882,34 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if checkpoint.checkpoint_id != latest_checkpoint.checkpoint_id:
                     await checkpoint_storage.delete(checkpoint.checkpoint_id)
 
-    async def _resolve_hosted_session_context(
+    async def _resolve_hosted_session_context_optional(
         self, context: ResponseContext, request: CreateResponse
     ) -> HostedSessionContext | None:
+        """Resolve the hosted session identity without enforcing strict mode.
+
+        Used to derive the approval-binding key. Strict enforcement for approvals happens at
+        redemption time (see ``require_isolation``), so non-approval requests are unaffected
+        when no identity is available.
+        """
         resolved_context = self._hosted_session_context_resolver(context, request)
         if isawaitable(resolved_context):
             resolved_context = await resolved_context
         if resolved_context is None:
-            if self._strict_session_isolation:
-                raise RuntimeError(
-                    "Hosted session isolation keys are required for workflow checkpoint hosting. "
-                    "Ensure the Foundry platform provides isolation keys or configure a custom "
-                    "hosted_session_context_resolver."
-                )
             return None
         if not isinstance(resolved_context, HostedSessionContext):
             raise TypeError("hosted_session_context_resolver must return HostedSessionContext or None.")
+        return resolved_context
+
+    async def _resolve_hosted_session_context(
+        self, context: ResponseContext, request: CreateResponse
+    ) -> HostedSessionContext | None:
+        resolved_context = await self._resolve_hosted_session_context_optional(context, request)
+        if resolved_context is None and self._strict_session_isolation:
+            raise RuntimeError(
+                "Hosted session isolation keys are required for workflow checkpoint hosting. "
+                "Ensure the Foundry platform provides isolation keys or configure a custom "
+                "hosted_session_context_resolver."
+            )
         return resolved_context
 
     async def _validate_or_stamp_hosted_session_context(
@@ -1090,7 +1168,11 @@ def _to_chat_options(request: CreateResponse) -> tuple[ChatOptions, bool]:
 
 
 async def _items_to_messages(
-    input_items: Sequence[Item], *, approval_storage: ApprovalStorage | None = None
+    input_items: Sequence[Item],
+    *,
+    approval_storage: ApprovalStorage | None = None,
+    isolation_key: str | None = None,
+    require_isolation: bool = False,
 ) -> list[Message]:
     """Converts a sequence of input items to a list of Messages, one per item.
 
@@ -1098,23 +1180,44 @@ async def _items_to_messages(
         input_items: The input items to convert.
         approval_storage: An optional ApprovalStorage instance used to look up
             approval requests when converting MCP approval response items.
+        isolation_key: The caller's isolation key, used to verify that redeemed
+            approval requests belong to the same isolation context.
+        require_isolation: When True, reject approval redemption that has no resolved
+            isolation identity (strict session isolation).
 
     Returns:
         A list of Messages, one per supported input item.
     """
     messages: list[Message] = []
     for item in input_items:
-        messages.append(await _item_to_message(item, approval_storage=approval_storage))
+        messages.append(
+            await _item_to_message(
+                item,
+                approval_storage=approval_storage,
+                isolation_key=isolation_key,
+                require_isolation=require_isolation,
+            )
+        )
     return messages
 
 
-async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | None = None) -> Message:
+async def _item_to_message(
+    item: Item,
+    *,
+    approval_storage: ApprovalStorage | None = None,
+    isolation_key: str | None = None,
+    require_isolation: bool = False,
+) -> Message:
     """Converts an Item to a Message.
 
     Args:
         item: The Item to convert.
         approval_storage: An optional ApprovalStorage instance used to look up
             approval requests when converting MCP approval response items.
+        isolation_key: The caller's isolation key, used to verify that redeemed
+            approval requests belong to the same isolation context.
+        require_isolation: When True, reject approval redemption that has no resolved
+            isolation identity (strict session isolation).
 
     Returns:
         The converted Message.
@@ -1177,7 +1280,9 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
     if item.type == "mcp_approval_request":
         mcp_req = cast(ItemMcpApprovalRequest, item)
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(mcp_req.id)
+            function_approval_request_content = await approval_storage.load_approval_request(
+                mcp_req.id, isolation_key=isolation_key
+            )
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
@@ -1187,9 +1292,11 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
 
     if item.type == "mcp_approval_response":
         mcp_resp = cast(MCPApprovalResponse, item)
+        if require_isolation and isolation_key is None:
+            raise PermissionError("hosted_session_identity_missing")
         if approval_storage is not None:
             function_approval_request_content = await approval_storage.load_approval_request(
-                mcp_resp.approval_request_id
+                mcp_resp.approval_request_id, isolation_key=isolation_key
             )
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
@@ -1366,6 +1473,8 @@ async def _output_items_to_messages(
     history: Sequence[OutputItem],
     *,
     approval_storage: ApprovalStorage | None = None,
+    isolation_key: str | None = None,
+    require_isolation: bool = False,
 ) -> list[Message]:
     """Converts a sequence of OutputItem objects to a list of Message objects.
 
@@ -1373,23 +1482,44 @@ async def _output_items_to_messages(
         history (Sequence[OutputItem]): The sequence of OutputItem objects to convert.
         approval_storage (ApprovalStorage | None, optional): The approval storage to use for
             resolving MCP approval requests. Defaults to None.
+        isolation_key (str | None, optional): The caller's isolation key, used to verify that
+            redeemed approval requests belong to the same isolation context. Defaults to None.
+        require_isolation (bool, optional): When True, reject approval redemption that has no
+            resolved isolation identity (strict session isolation). Defaults to False.
 
     Returns:
         list[Message]: The list of Message objects.
     """
     messages: list[Message] = []
     for item in history:
-        messages.append(await _output_item_to_message(item, approval_storage=approval_storage))
+        messages.append(
+            await _output_item_to_message(
+                item,
+                approval_storage=approval_storage,
+                isolation_key=isolation_key,
+                require_isolation=require_isolation,
+            )
+        )
     return messages
 
 
-async def _output_item_to_message(item: OutputItem, *, approval_storage: ApprovalStorage | None = None) -> Message:
+async def _output_item_to_message(
+    item: OutputItem,
+    *,
+    approval_storage: ApprovalStorage | None = None,
+    isolation_key: str | None = None,
+    require_isolation: bool = False,
+) -> Message:
     """Converts an OutputItem to a Message.
 
     Args:
         item (OutputItem): The OutputItem to convert.
         approval_storage (ApprovalStorage | None, optional): The approval storage to use for
             resolving MCP approval requests. Defaults to None.
+        isolation_key (str | None, optional): The caller's isolation key, used to verify that
+            redeemed approval requests belong to the same isolation context. Defaults to None.
+        require_isolation (bool, optional): When True, reject approval redemption that has no
+            resolved isolation identity (strict session isolation). Defaults to False.
 
     Returns:
         Message: The converted Message.
@@ -1450,7 +1580,9 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
     if item.type == "mcp_approval_request":
         mcp_req = cast(OutputItemMcpApprovalRequest, item)
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(mcp_req.id)
+            function_approval_request_content = await approval_storage.load_approval_request(
+                mcp_req.id, isolation_key=isolation_key
+            )
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
@@ -1460,9 +1592,11 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
 
     if item.type == "mcp_approval_response":
         mcp_resp = cast(OutputItemMcpApprovalResponseResource, item)
+        if require_isolation and isolation_key is None:
+            raise PermissionError("hosted_session_identity_missing")
         if approval_storage is not None:
             function_approval_request_content = await approval_storage.load_approval_request(
-                mcp_resp.approval_request_id
+                mcp_resp.approval_request_id, isolation_key=isolation_key
             )
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
@@ -1781,6 +1915,7 @@ async def _to_outputs(
     content: Content,
     *,
     approval_storage: ApprovalStorage | None = None,
+    isolation_key: str | None = None,
 ) -> AsyncIterator[ResponseStreamEvent]:
     """Converts a Content object to an async sequence of ResponseStreamEvent objects.
 
@@ -1788,6 +1923,7 @@ async def _to_outputs(
         stream: The ResponseEventStream to use for building events.
         content: The Content to convert.
         approval_storage: An optional ApprovalStorage instance to use for saving and loading function approval requests.
+        isolation_key: The caller's isolation key, bound to any approval request saved here.
 
     Yields:
         ResponseStreamEvent: The converted event objects.
@@ -1883,7 +2019,9 @@ async def _to_outputs(
                 item = getattr(event, "item", None)
                 if item is not None and getattr(item, "id", None) is not None:
                     approval_request_id = cast(str, item.id)  # type: ignore
-                    await approval_storage.save_approval_request(approval_request_id, content)
+                    await approval_storage.save_approval_request(
+                        approval_request_id, content, isolation_key=isolation_key
+                    )
                     request_saved = True
             yield event
         if approval_storage is not None and not request_saved:
@@ -1943,6 +2081,7 @@ async def _to_outputs_for_messages(
     messages: Sequence[Message],
     *,
     approval_storage: ApprovalStorage | None = None,
+    isolation_key: str | None = None,
 ) -> AsyncIterator[ResponseStreamEvent]:
     """Convert messages to output events with hosted-MCP call/result coalescing.
 
@@ -1967,7 +2106,9 @@ async def _to_outputs_for_messages(
                     pending_mcp_call = None
                     continue
 
-                async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
+                async for event in _to_outputs(
+                    stream, pending_mcp_call, approval_storage=approval_storage, isolation_key=isolation_key
+                ):
                     yield event
                 pending_mcp_call = None
 
@@ -1975,11 +2116,15 @@ async def _to_outputs_for_messages(
                 pending_mcp_call = content
                 continue
 
-            async for event in _to_outputs(stream, content, approval_storage=approval_storage):
+            async for event in _to_outputs(
+                stream, content, approval_storage=approval_storage, isolation_key=isolation_key
+            ):
                 yield event
 
     if pending_mcp_call is not None:
-        async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
+        async for event in _to_outputs(
+            stream, pending_mcp_call, approval_storage=approval_storage, isolation_key=isolation_key
+        ):
             yield event
 
 

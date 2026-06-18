@@ -53,6 +53,7 @@ from agent_framework_foundry_hosting._responses import (
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     _default_hosted_session_context_resolver,  # pyright: ignore[reportPrivateUsage]
     _hosted_session_context_path,  # pyright: ignore[reportPrivateUsage]
+    _hosted_session_key,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _read_hosted_session_context,  # pyright: ignore[reportPrivateUsage]
@@ -131,6 +132,10 @@ def _static_hosted_session_context_resolver(
         return resolved_context
 
     return resolve
+
+
+# Isolation key the default ``_make_server`` resolver (user-a/chat-a) binds approvals to.
+_DEFAULT_SERVER_ISOLATION_KEY = _hosted_session_key(HostedSessionContext(user_id="user-a", chat_id="chat-a"))
 
 
 def _missing_hosted_session_context_resolver(context: Any, request: Any) -> None:
@@ -2658,6 +2663,115 @@ class TestFunctionApprovalStorage:
             await storage.load_approval_request("missing")
 
 
+class TestFunctionApprovalIsolationBinding:
+    """Tests that approval redemption is bound to the caller's isolation context (CWE-863)."""
+
+    def test_hosted_session_key_derivation(self) -> None:
+        # No identity -> no-op binding.
+        assert _hosted_session_key(None) is None
+        # Distinct identities produce distinct keys; same identity is stable.
+        alice = _hosted_session_key(HostedSessionContext(user_id="alice", chat_id="chat-1"))
+        bob = _hosted_session_key(HostedSessionContext(user_id="bob", chat_id="chat-1"))
+        alice_again = _hosted_session_key(HostedSessionContext(user_id="alice", chat_id="chat-1"))
+        assert alice is not None
+        assert alice == alice_again
+        assert alice != bob
+        # chat_id is part of the binding.
+        assert _hosted_session_key(HostedSessionContext(user_id="alice", chat_id="chat-2")) != alice
+
+    async def test_in_memory_same_isolation_round_trip(self) -> None:
+        storage = InMemoryFunctionApprovalStorage()
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request, isolation_key="alice")
+        loaded = await storage.load_approval_request("apr_1", isolation_key="alice")
+        assert loaded.id == "apr_1"  # type: ignore[attr-defined]
+
+    async def test_in_memory_cross_isolation_load_rejected(self) -> None:
+        storage = InMemoryFunctionApprovalStorage()
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request, isolation_key="alice")
+        # Bob cannot redeem Alice's approval handle.
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1", isolation_key="bob")
+        # Nor can a caller with no isolation context.
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1")
+
+    async def test_in_memory_no_isolation_round_trip(self) -> None:
+        storage = InMemoryFunctionApprovalStorage()
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request)
+        loaded = await storage.load_approval_request("apr_1")
+        assert loaded.id == "apr_1"  # type: ignore[attr-defined]
+
+    async def test_file_based_same_isolation_round_trip(self, tmp_path: Any) -> None:
+        path = tmp_path / "approvals.json"
+        storage = FileBasedFunctionApprovalStorage(str(path))
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request, isolation_key="alice")
+        loaded = await FileBasedFunctionApprovalStorage(str(path)).load_approval_request("apr_1", isolation_key="alice")
+        assert loaded.id == "apr_1"  # type: ignore[attr-defined]
+        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
+
+    async def test_file_based_cross_isolation_load_rejected(self, tmp_path: Any) -> None:
+        path = tmp_path / "approvals.json"
+        storage = FileBasedFunctionApprovalStorage(str(path))
+        request = _make_function_approval_request_content(request_id="apr_1")
+        await storage.save_approval_request("apr_1", request, isolation_key="alice")
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1", isolation_key="bob")
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1")
+
+    async def test_file_based_legacy_entry_rejected(self, tmp_path: Any) -> None:
+        # A legacy on-disk entry (bare request dict, no isolation envelope) is rejected.
+        path = tmp_path / "approvals.json"
+        request = _make_function_approval_request_content(request_id="apr_1")
+        path.write_text(json.dumps({"apr_1": request.to_dict()}))
+        storage = FileBasedFunctionApprovalStorage(str(path))
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1")
+        with pytest.raises(KeyError):
+            await storage.load_approval_request("apr_1", isolation_key="alice")
+
+    async def test_conversion_cross_isolation_rejected(self) -> None:
+        from azure.ai.agentserver.responses.models import MCPApprovalResponse
+
+        storage = InMemoryFunctionApprovalStorage()
+        saved = _make_function_approval_request_content(request_id="apr-1")
+        await storage.save_approval_request("apr-1", saved, isolation_key="alice")
+
+        item = MCPApprovalResponse({
+            "type": "mcp_approval_response",
+            "approval_request_id": "apr-1",
+            "approve": True,
+        })
+        # Bob redeeming Alice's approval handle is rejected at the conversion layer.
+        with pytest.raises(KeyError):
+            await _item_to_message(item, approval_storage=storage, isolation_key="bob")  # type: ignore[arg-type]
+        # The legitimate owner can still redeem it.
+        msg = await _item_to_message(item, approval_storage=storage, isolation_key="alice")  # type: ignore[arg-type]
+        assert msg.contents[0].type == "function_approval_response"
+
+    async def test_conversion_strict_requires_identity_on_redemption(self) -> None:
+        from azure.ai.agentserver.responses.models import MCPApprovalResponse
+
+        storage = InMemoryFunctionApprovalStorage()
+        saved = _make_function_approval_request_content(request_id="apr-1")
+        await storage.save_approval_request("apr-1", saved)
+
+        item = MCPApprovalResponse({
+            "type": "mcp_approval_response",
+            "approval_request_id": "apr-1",
+            "approve": True,
+        })
+        # Strict mode with no resolved identity rejects redemption outright.
+        with pytest.raises(PermissionError):
+            await _item_to_message(  # type: ignore[arg-type]
+                item, approval_storage=storage, isolation_key=None, require_isolation=True
+            )
+
+
 class TestFunctionApprovalConversion:
     """Tests for the approval-aware paths in `_item_to_message` / `_output_item_to_message`."""
 
@@ -2796,7 +2910,7 @@ class TestFunctionApprovalRoundTrip:
 
         # Storage must contain a saved entry under the emitted request id.
         loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
+            approval_request_id, isolation_key=_DEFAULT_SERVER_ISOLATION_KEY
         )
         assert loaded.type == "function_approval_request"
         assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
@@ -2825,7 +2939,7 @@ class TestFunctionApprovalRoundTrip:
         assert approval_request_id is not None
 
         loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
+            approval_request_id, isolation_key=_DEFAULT_SERVER_ISOLATION_KEY
         )
         assert loaded.type == "function_approval_request"
 
@@ -4225,7 +4339,7 @@ class TestWorkflowAgentHosting:
         # ``function_call``) must be persisted under that id so the next
         # turn can reconstruct it.
         loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
+            approval_request_id, isolation_key=_DEFAULT_SERVER_ISOLATION_KEY
         )
         assert loaded.type == "function_approval_request"
         assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
@@ -4254,7 +4368,7 @@ class TestWorkflowAgentHosting:
         assert approval_request_id is not None
 
         loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
+            approval_request_id, isolation_key=_DEFAULT_SERVER_ISOLATION_KEY
         )
         assert loaded.type == "function_approval_request"
         assert mock_agent.run_count == 1
