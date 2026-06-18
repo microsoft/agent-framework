@@ -70,6 +70,7 @@ class RedisHistoryProvider(HistoryProvider):
             ValueError: If neither redis_url nor credential_provider is provided.
             ValueError: If both redis_url and credential_provider are provided.
             ValueError: If credential_provider is used without host parameter.
+            ValueError: If max_messages is less than or equal to 0.
         """
         super().__init__(
             source_id,
@@ -86,6 +87,8 @@ class RedisHistoryProvider(HistoryProvider):
             raise ValueError("redis_url and credential_provider are mutually exclusive")
         if credential_provider is not None and host is None:
             raise ValueError("host is required when using credential_provider")
+        if max_messages is not None and max_messages <= 0:
+            raise ValueError("max_messages must be greater than 0")
 
         self.key_prefix = key_prefix
         self.max_messages = max_messages

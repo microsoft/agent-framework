@@ -368,6 +368,27 @@ class TestRedisHistoryProviderInit:
         assert provider.store_outputs is False
         assert provider.store_inputs is False
 
+    @pytest.mark.parametrize("max_messages", [0, -1])
+    def test_invalid_max_messages_raises(self, max_messages: int):
+        with (
+            patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url,
+            pytest.raises(ValueError, match="max_messages must be greater than 0"),
+        ):
+            RedisHistoryProvider("mem", redis_url="redis://localhost:6379", max_messages=max_messages)
+
+        mock_from_url.assert_not_called()
+
+    @pytest.mark.parametrize("max_messages", [0, -1])
+    def test_invalid_max_messages_with_credential_provider_raises(self, max_messages: int):
+        mock_cred = MagicMock()
+        with (
+            patch("agent_framework_redis._history_provider.redis.Redis") as mock_redis,
+            pytest.raises(ValueError, match="max_messages must be greater than 0"),
+        ):
+            RedisHistoryProvider("mem", credential_provider=mock_cred, host="myhost", max_messages=max_messages)
+
+        mock_redis.assert_not_called()
+
     def test_no_redis_url_or_credential_raises(self):
         with pytest.raises(ValueError, match="Either redis_url or credential_provider must be provided"):
             RedisHistoryProvider("mem")
