@@ -31,7 +31,9 @@ from agent_framework._telemetry import get_user_agent
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
-from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
+from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
+from anthropic.lib.bedrock import AsyncAnthropicBedrock
+from anthropic.lib.vertex import AsyncAnthropicVertex
 from anthropic.types.beta import (
     BetaContentBlock,
     BetaMessage,

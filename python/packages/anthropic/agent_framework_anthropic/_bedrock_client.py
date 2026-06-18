@@ -14,7 +14,7 @@ from agent_framework import (
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
-from anthropic import AsyncAnthropicBedrock
+from anthropic.lib.bedrock import AsyncAnthropicBedrock
 
 from ._chat_client import AnthropicOptionsT, RawAnthropicClient
 
