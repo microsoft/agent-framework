@@ -107,7 +107,7 @@ def test_session_aliases_survive_restart(tmp_path: Path) -> None:
 
 def _build_simple_workflow() -> Any:
     """Build a no-op workflow for checkpoint-wiring tests."""
-    from ._workflow_fixtures import build_upper_workflow
+    from _workflow_fixtures import build_upper_workflow
 
     return build_upper_workflow()
 
@@ -211,9 +211,8 @@ def test_state_dir_checkpoints_for_agent_target_warns_when_explicit(
 
 def test_state_dir_checkpoints_conflicts_with_workflow_own_storage(tmp_path: Path) -> None:
     """Derived checkpoint path triggers the same conflict guard as explicit."""
+    from _workflow_fixtures import _UpperExecutor
     from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
-
-    from ._workflow_fixtures import _UpperExecutor
 
     workflow = WorkflowBuilder(
         start_executor=_UpperExecutor(id="upper"),
