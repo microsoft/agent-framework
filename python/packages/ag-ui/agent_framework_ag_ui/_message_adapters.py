@@ -46,6 +46,20 @@ def _append_synthetic_tool_results(
         )
 
 
+def _ordered_unique_tool_call_ids(contents: list[Content]) -> list[str]:
+    tool_ids: list[str] = []
+    seen: set[str] = set()
+    for content in contents:
+        if content.type != "function_call" or not content.call_id:
+            continue
+        tool_id = str(content.call_id)
+        if tool_id in seen:
+            continue
+        tool_ids.append(tool_id)
+        seen.add(tool_id)
+    return tool_ids
+
+
 def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
     """Normalize tool ordering and inject synthetic results for AG-UI edge cases."""
     sanitized: list[Message] = []
@@ -69,11 +83,7 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
 
-            tool_ids = [
-                str(content.call_id)
-                for content in msg.contents or []
-                if content.type == "function_call" and content.call_id
-            ]
+            tool_ids = _ordered_unique_tool_call_ids(msg.contents or [])
             confirm_changes_call = None
             for content in msg.contents or []:
                 if content.type == "function_call" and content.name == "confirm_changes":

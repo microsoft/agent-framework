@@ -1027,13 +1027,14 @@ def test_sanitize_history_ending_with_tool_call_closes_pending_call():
         contents=[
             Content.from_function_call(call_id="c1", name="get_weather", arguments="{}"),
             Content.from_function_call(call_id="c2", name="get_time", arguments="{}"),
+            Content.from_function_call(call_id="c1", name="get_weather", arguments="{}"),
         ],
     )
 
     result = _sanitize_tool_history([assistant_msg])
 
     assert [msg.role for msg in result] == ["assistant", "tool", "tool"]
-    assert {result[1].contents[0].call_id, result[2].contents[0].call_id} == {"c1", "c2"}
+    assert [result[1].contents[0].call_id, result[2].contents[0].call_id] == ["c1", "c2"]
     assert all("skipped" in str(msg.contents[0].result).lower() for msg in result[1:])
 
 
