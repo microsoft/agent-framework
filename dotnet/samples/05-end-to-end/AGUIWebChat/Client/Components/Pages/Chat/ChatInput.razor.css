@@ -1,0 +1,57 @@
+.input-box {
+    display: flex;
+    flex-direction: column;
+    background: white;
+    border: 1px solid rgb(229, 231, 235);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    margin-top: 0.75rem;
+}
+
+    .input-box:focus-within {
+        outline: 2px solid #4152d5;
+    }
+
+textarea {
+    resize: none;
+    border: none;
+    outline: none;
+    flex-grow: 1;
+}
+
+    textarea:placeholder-shown + .tools {
+        --send-button-color: #aaa;
+    }
+
+.tools {
+    display: flex;
+    margin-top: 1rem;
+    align-items: center;
+}
+
+.tool-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+.send-button {
+    color: var(--send-button-color);
+    margin-left: auto;
+}
+
+    .send-button:hover {
+        color: black;
+    }
+
+.attach {
+    background-color: white;
+    border-style: dashed;
+    color: #888;
+    border-color: #888;
+    padding: 3px 8px;
+}
+
+    .attach:hover {
+        background-color: #f0f0f0;
+        color: black;
+    }

@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._search_provider import AzureAISearchContextProvider, AzureAISearchSettings
+from ._context_provider import AzureAISearchContextProvider, AzureAISearchSettings
 
 try:
     __version__ = importlib.metadata.version(__name__)

@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import logging
+import time
 import uuid
 from collections.abc import Iterable, MutableMapping
 from typing import Any
 
-from agent_framework import ChatMessage
-from agent_framework._logging import get_logger
+from agent_framework import Message
 
 from ._cache import CacheProvider, InMemoryCacheProvider, create_protection_scopes_cache_key
 from ._client import PurviewClient
@@ -36,7 +37,7 @@ from ._models import (
 )
 from ._settings import PurviewSettings
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 
 def _is_valid_guid(value: str | None) -> bool:
@@ -56,19 +57,27 @@ class ScopedContentProcessor:
     def __init__(self, client: PurviewClient, settings: PurviewSettings, cache_provider: CacheProvider | None = None):
         self._client = client
         self._settings = settings
+        cache_ttl = settings.get("cache_ttl_seconds")
+        max_cache = settings.get("max_cache_size_bytes")
         self._cache: CacheProvider = cache_provider or InMemoryCacheProvider(
-            default_ttl_seconds=settings.cache_ttl_seconds, max_size_bytes=settings.max_cache_size_bytes
+            default_ttl_seconds=cache_ttl if cache_ttl is not None else 14400,
+            max_size_bytes=max_cache if max_cache is not None else 200 * 1024 * 1024,
         )
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
     async def process_messages(
-        self, messages: Iterable[ChatMessage], activity: Activity, user_id: str | None = None
+        self,
+        messages: Iterable[Message],
+        activity: Activity,
+        session_id: str | None = None,
+        user_id: str | None = None,
     ) -> tuple[bool, str | None]:
         """Process messages for policy evaluation.
 
         Args:
             messages: The messages to process
             activity: The activity type (e.g., UPLOAD_TEXT)
+            session_id: Optional session/conversation id. Else, a new GUID is generated.
             user_id: Optional user_id to use for all messages. If provided, this is the fallback.
 
         Returns:
@@ -76,7 +85,7 @@ class ScopedContentProcessor:
             The resolved_user_id can be stored and passed back when processing the response
             to ensure the same user context is maintained throughout the request/response cycle.
         """
-        pc_requests, resolved_user_id = await self._map_messages(messages, activity, user_id)
+        pc_requests, resolved_user_id = await self._map_messages(messages, activity, session_id, user_id)
         should_block = False
         for req in pc_requests:
             resp = await self._process_with_scopes(req)
@@ -90,13 +99,18 @@ class ScopedContentProcessor:
         return should_block, resolved_user_id
 
     async def _map_messages(
-        self, messages: Iterable[ChatMessage], activity: Activity, provided_user_id: str | None = None
+        self,
+        messages: Iterable[Message],
+        activity: Activity,
+        session_id: str | None = None,
+        provided_user_id: str | None = None,
     ) -> tuple[list[ProcessContentRequest], str | None]:
         """Map messages to ProcessContentRequests.
 
         Args:
             messages: The messages to map
             activity: The activity type
+            session_id: Optional session/conversation id to use for correlation
             provided_user_id: Optional user_id to use. If provided, this is the fallback.
 
         Returns:
@@ -105,10 +119,10 @@ class ScopedContentProcessor:
         results: list[ProcessContentRequest] = []
         token_info = None
 
-        if not (self._settings.tenant_id and self._settings.purview_app_location):
-            token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.tenant_id)
+        if not (self._settings.get("tenant_id") and self._settings.get("purview_app_location")):
+            token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.get("tenant_id"))
 
-        tenant_id = (token_info or {}).get("tenant_id") or self._settings.tenant_id
+        tenant_id = (token_info or {}).get("tenant_id") or self._settings.get("tenant_id")
         if not tenant_id or not _is_valid_guid(tenant_id):
             raise ValueError("Tenant id required or must be inferable from credential")
 
@@ -137,19 +151,23 @@ class ScopedContentProcessor:
         for m in messages:
             message_id = m.message_id or str(uuid.uuid4())
             content = PurviewTextContent(data=m.text or "")
+            correlation_id = (session_id or str(uuid.uuid4())) + "@AF"
             meta = ProcessConversationMetadata(
                 identifier=message_id,
                 content=content,
                 name=f"Agent Framework Message {message_id}",
                 is_truncated=False,
-                correlation_id=str(uuid.uuid4()),
+                correlation_id=correlation_id,
+                # This would be c# ticks equivalent and needs to fit inside c# long
+                sequence_number=time.time_ns() // 100 + 621355968000000000,
             )
             activity_meta = ActivityMetadata(activity=activity)
 
-            if self._settings.purview_app_location:
+            purview_app_location = self._settings.get("purview_app_location")
+            if purview_app_location:
                 policy_location = PolicyLocation(
-                    data_type=self._settings.purview_app_location.get_policy_location()["@odata.type"],
-                    value=self._settings.purview_app_location.location_value,
+                    data_type=purview_app_location.get_policy_location()["@odata.type"],
+                    value=purview_app_location.location_value,
                 )
             elif token_info and token_info.get("client_id"):
                 policy_location = PolicyLocation(
@@ -159,12 +177,13 @@ class ScopedContentProcessor:
             else:
                 raise ValueError("App location not provided or inferable")
 
+            app_name = self._settings.get("app_name") or "Unknown"
             protected_app = ProtectedAppMetadata(
-                name=self._settings.app_name,
-                version="1.0",
+                name=app_name,
+                version=self._settings.get("app_version", "Unknown"),
                 application_location=policy_location,
             )
-            integrated_app = IntegratedAppMetadata(name=self._settings.app_name, version="1.0")
+            integrated_app = IntegratedAppMetadata(name=app_name, version=self._settings.get("app_version", "Unknown"))
             device_meta = DeviceMetadata(
                 operating_system_specifications=OperatingSystemSpecifications(
                     operating_system_platform="Unknown", operating_system_version="Unknown"
@@ -211,18 +230,20 @@ class ScopedContentProcessor:
         cache_key = create_protection_scopes_cache_key(ps_req)
         cached_ps_resp = await self._cache.get(cache_key)
 
-        if cached_ps_resp is not None:
-            if isinstance(cached_ps_resp, ProtectionScopesResponse):
-                ps_resp = cached_ps_resp
-        else:
-            try:
-                ps_resp = await self._client.get_protection_scopes(ps_req)
-                await self._cache.set(cache_key, ps_resp, ttl_seconds=self._settings.cache_ttl_seconds)
-            except PurviewPaymentRequiredError as ex:
-                # Cache the exception at tenant level so all subsequent requests for this tenant fail fast
-                await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=self._settings.cache_ttl_seconds)
-                raise
+        if cached_ps_resp is not None and isinstance(cached_ps_resp, ProtectionScopesResponse):
+            return await self._process_with_cached_scopes(pc_request, cached_ps_resp, cache_key)
 
+        task = asyncio.create_task(self._refresh_protection_scopes_background(ps_req, cache_key, pc_request))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return await self._call_process_content(pc_request, cache_key, dlp_actions=[])
+
+    async def _process_with_cached_scopes(
+        self,
+        pc_request: ProcessContentRequest,
+        ps_resp: ProtectionScopesResponse,
+        cache_key: str,
+    ) -> ProcessContentResponse:
         if ps_resp.scope_identifier:
             pc_request.scope_identifier = ps_resp.scope_identifier
 
@@ -239,13 +260,7 @@ class ScopedContentProcessor:
                 task.add_done_callback(self._background_tasks.discard)
                 return ProcessContentResponse(id="204", correlation_id=pc_request.correlation_id)
 
-            pc_resp = await self._client.process_content(pc_request)
-
-            if pc_request.scope_identifier and pc_resp.protection_scope_state == ProtectionScopeState.MODIFIED:
-                await self._cache.remove(cache_key)
-
-            pc_resp.policy_actions = self._combine_policy_actions(pc_resp.policy_actions, dlp_actions)
-            return pc_resp
+            return await self._call_process_content(pc_request, cache_key, dlp_actions=dlp_actions)
 
         # No applicable scopes - send content activities in background
         ca_req = ContentActivitiesRequest(
@@ -261,12 +276,52 @@ class ScopedContentProcessor:
         # Respond with HttpStatusCode 204(No Content)
         return ProcessContentResponse(id="204", correlation_id=pc_request.correlation_id)
 
+    async def _call_process_content(
+        self,
+        pc_request: ProcessContentRequest,
+        cache_key: str,
+        dlp_actions: list[DlpActionInfo],
+    ) -> ProcessContentResponse:
+        pc_resp = await self._client.process_content(pc_request)
+
+        if pc_request.scope_identifier and pc_resp.protection_scope_state == ProtectionScopeState.MODIFIED:
+            await self._cache.remove(cache_key)
+
+        if dlp_actions:
+            pc_resp.policy_actions = self._combine_policy_actions(pc_resp.policy_actions, dlp_actions)
+        return pc_resp
+
+    async def _refresh_protection_scopes_background(
+        self, ps_req: ProtectionScopesRequest, cache_key: str, pc_request: ProcessContentRequest
+    ) -> None:
+        """Fetch protection scopes and warm the cache without blocking the foreground call."""
+        ttl = self._settings.get("cache_ttl_seconds")
+        ttl_seconds = ttl if ttl is not None else 14400
+        try:
+            ps_resp = await self._client.get_protection_scopes(ps_req)
+            await self._cache.set(cache_key, ps_resp, ttl_seconds=ttl_seconds)
+            should_process, _, _ = self._check_applicable_scopes(pc_request, ps_resp)
+            if not should_process:
+                ca_req = ContentActivitiesRequest(
+                    user_id=pc_request.user_id,
+                    tenant_id=pc_request.tenant_id,
+                    content_to_process=pc_request.content_to_process,
+                    correlation_id=pc_request.correlation_id,
+                )
+                await self._send_content_activities_background(ca_req)
+        except PurviewPaymentRequiredError as ex:
+            tenant_payment_cache_key = f"purview:payment_required:{ps_req.tenant_id}"
+            await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=ttl_seconds)
+            logger.warning("Background protection scopes refresh failed with payment required: %s", ex)
+        except Exception as ex:
+            logger.warning("Background protection scopes refresh failed: %s", ex)
+
     async def _process_content_background(self, pc_request: ProcessContentRequest, cache_key: str) -> None:
         """Process content in background for offline execution mode."""
         try:
             pc_resp = await self._client.process_content(pc_request)
 
-            # If protection scope state is modified, make another PC request and invalidate cache
+            # If protection scopes changed, invalidate cache and retry once.
             if pc_request.scope_identifier and pc_resp.protection_scope_state == ProtectionScopeState.MODIFIED:
                 await self._cache.remove(cache_key)
                 await self._client.process_content(pc_request)
@@ -286,14 +341,10 @@ class ScopedContentProcessor:
     def _combine_policy_actions(
         existing: list[DlpActionInfo] | None, new_actions: list[DlpActionInfo]
     ) -> list[DlpActionInfo]:
-        by_key: dict[str, DlpActionInfo] = {}
-        for a in existing or []:
-            if a.action:
-                by_key[a.action] = a
-        for a in new_actions:
-            if a.action:
-                by_key[a.action] = a
-        return list(by_key.values())
+        combined: dict[tuple[DlpAction | None, RestrictionAction | None], DlpActionInfo] = {}
+        for action_info in (existing or []) + new_actions:
+            combined.setdefault((action_info.action, action_info.restriction_action), action_info)
+        return list(combined.values())
 
     @staticmethod
     def _check_applicable_scopes(

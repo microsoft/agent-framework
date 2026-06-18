@@ -50,7 +50,7 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
 IChatClient client = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-    .GetOpenAIResponseClient(deploymentName)
+    .GetResponsesClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("My Sample App"))
@@ -186,7 +186,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent("You are a helpful assistant.")
+    .AsAIAgent("You are a helpful assistant.")
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))
     .Build();
@@ -198,7 +198,7 @@ Use the chat middleware when you attach directly to a chat client (e.g. minimal 
 IChatClient client = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-    .GetOpenAIResponseClient(deploymentName)
+    .GetResponsesClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))
@@ -211,15 +211,15 @@ The policy logic is identical; the only difference is the hook point in the pipe
 
 ## Middleware Lifecycle
 1. Before sending the prompt to the agent, the middleware checks the app and user metadata against Purview's protection scopes and evaluates all the `ChatMessage`s in the prompt.
-2. If the content was blocked, the middleware returns a `ChatResponse` or `AgentRunResponse` containing the `BlockedPromptMessage` text. The blocked content does not get passed to the agent.
+2. If the content was blocked, the middleware returns a `ChatResponse` or `AgentResponse` containing the `BlockedPromptMessage` text. The blocked content does not get passed to the agent.
 3. If the evaluation did not block the content, the middleware passes the prompt data to the agent and waits for a response.
 4. After receiving a response from the agent, the middleware calls Purview again to evaluate the response content.
 5. If the content was blocked, the middleware returns a response containing the `BlockedResponseMessage`.
 
 The user id from the prompt message(s) is reused for the response evaluation so both evaluations map consistently to the same user.
 
-There are several optimizations to speed up Purview calls. Protection scope lookups (the first step in evaluation) are cached to minimize network calls. 
-If the policies allow content to be processed offline, the middleware will add the process content request to a channel and run it in a background worker. Similarly, the middleware will run a background request if no scopes apply and the interaction only has to be logged in Audit.
+There are several optimizations to speed up Purview calls. Protection scope lookups (the first step in evaluation) are cached to minimize network calls. When a lookup is not cached, the middleware will refresh it in a background worker so the foreground ProcessContent request does not have to wait.
+If the policies allow content to be processed offline, the middleware will add the process content request to a channel and run it in a background worker. Similarly, the middleware will run a background request if no scopes apply and the interaction only has to be logged in Audit. Payment Required responses from background scope lookups are cached at the tenant level so subsequent requests for the tenant short-circuit.
 
 ## Exceptions
 | Exception | Scenario |

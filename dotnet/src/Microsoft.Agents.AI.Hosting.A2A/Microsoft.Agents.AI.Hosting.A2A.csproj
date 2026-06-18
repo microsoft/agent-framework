@@ -10,6 +10,8 @@
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

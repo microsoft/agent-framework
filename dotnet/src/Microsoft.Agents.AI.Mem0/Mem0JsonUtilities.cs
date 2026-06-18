@@ -65,7 +65,7 @@ public static partial class Mem0JsonUtilities
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 
     // Agent abstraction types
-    [JsonSerializable(typeof(Mem0Provider.Mem0State))]
+    [JsonSerializable(typeof(Mem0Provider.State))]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;

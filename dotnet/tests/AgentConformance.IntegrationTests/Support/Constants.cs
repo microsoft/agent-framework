@@ -2,7 +2,7 @@
 
 namespace AgentConformance.IntegrationTests.Support;
 
-internal static class Constants
+public static class Constants
 {
     public const int RetryCount = 3;
     public const int RetryDelay = 5000;

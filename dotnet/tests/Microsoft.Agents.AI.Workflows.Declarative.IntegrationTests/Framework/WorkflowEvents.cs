@@ -18,7 +18,7 @@ internal sealed class WorkflowEvents
         this.ExecutorInvokeEvents = workflowEvents.OfType<ExecutorInvokedEvent>().ToList();
         this.ExecutorCompleteEvents = workflowEvents.OfType<ExecutorCompletedEvent>().ToList();
         this.InputEvents = workflowEvents.OfType<RequestInfoEvent>().ToList();
-        this.AgentResponseEvents = workflowEvents.OfType<AgentRunResponseEvent>().ToList();
+        this.AgentResponseEvents = workflowEvents.OfType<AgentResponseEvent>().ToList();
     }
 
     public IReadOnlyList<WorkflowEvent> Events { get; }
@@ -29,5 +29,5 @@ internal sealed class WorkflowEvents
     public IReadOnlyList<ExecutorInvokedEvent> ExecutorInvokeEvents { get; }
     public IReadOnlyList<ExecutorCompletedEvent> ExecutorCompleteEvents { get; }
     public IReadOnlyList<RequestInfoEvent> InputEvents { get; }
-    public IReadOnlyList<AgentRunResponseEvent> AgentResponseEvents { get; }
+    public IReadOnlyList<AgentResponseEvent> AgentResponseEvents { get; }
 }

@@ -46,7 +46,7 @@ internal sealed class DurableAgentStateFunctionCallContent : DurableAgentStateCo
     {
         return new DurableAgentStateFunctionCallContent()
         {
-            Arguments = content.Arguments?.ToImmutableDictionary() ?? ImmutableDictionary<string, object?>.Empty,
+            Arguments = content.Arguments?.ToDictionary() ?? [],
             CallId = content.CallId,
             Name = content.Name
         };

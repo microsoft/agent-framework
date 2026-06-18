@@ -598,6 +598,86 @@ internal static class TestHelpers
     }
 
     /// <summary>
+    /// Mock IChatClient that captures the full message list on each call.
+    /// Used to verify conversation history is passed correctly.
+    /// </summary>
+    internal sealed class ConversationMemoryMockChatClient : IChatClient
+    {
+        private readonly string _responseText;
+
+        /// <summary>Each entry is the messages list received for that call.</summary>
+        public List<List<ChatMessage>> CallHistory { get; } = [];
+
+        public ConversationMemoryMockChatClient(string responseText = "Test response")
+        {
+            this._responseText = responseText;
+        }
+
+        public ChatClientMetadata Metadata { get; } = new("Test", new Uri("https://test.example.com"), "test-model");
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            this.CallHistory.Add(messages.ToList());
+
+            ChatMessage message = new(ChatRole.Assistant, this._responseText);
+            ChatResponse response = new([message])
+            {
+                ModelId = "test-model",
+                FinishReason = ChatFinishReason.Stop,
+                Usage = new UsageDetails
+                {
+                    InputTokenCount = 10,
+                    OutputTokenCount = 5,
+                    TotalTokenCount = 15
+                }
+            };
+            return Task.FromResult(response);
+        }
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            this.CallHistory.Add(messages.ToList());
+            await Task.Delay(1, cancellationToken);
+
+            string[] words = this._responseText.Split(' ');
+            for (int i = 0; i < words.Length; i++)
+            {
+                string content = i < words.Length - 1 ? words[i] + " " : words[i];
+                ChatResponseUpdate update = new()
+                {
+                    Contents = [new TextContent(content)],
+                    Role = ChatRole.Assistant
+                };
+
+                if (i == words.Length - 1)
+                {
+                    update.Contents.Add(new UsageContent(new UsageDetails
+                    {
+                        InputTokenCount = 10,
+                        OutputTokenCount = 5,
+                        TotalTokenCount = 15
+                    }));
+                }
+
+                yield return update;
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) =>
+            serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    /// <summary>
     /// Custom content mock implementation of IChatClient that returns custom content based on a provider function.
     /// </summary>
     internal sealed class CustomContentMockChatClient : IChatClient

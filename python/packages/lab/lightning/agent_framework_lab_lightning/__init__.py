@@ -2,10 +2,14 @@
 
 """RL Module for Microsoft Agent Framework."""
 
+from __future__ import annotations
+
 import importlib.metadata
 
-from agent_framework.observability import OBSERVABILITY_SETTINGS
-from agentlightning import AgentOpsTracer  # type: ignore
+from agent_framework.observability import enable_instrumentation
+from agentlightning.tracer import (  # type: ignore[reportMissingImports]
+    AgentOpsTracer,  # type: ignore[reportMissingImports, import-not-found]
+)
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -22,13 +26,12 @@ class AgentFrameworkTracer(AgentOpsTracer):  # type: ignore
 
     def init(self) -> None:
         """Initialize the agent-framework-lab-lightning for training."""
-        OBSERVABILITY_SETTINGS.enable_otel = True
-        super().init()
+        enable_instrumentation()
+        super().init()  # pyright: ignore[reportUnknownMemberType]
 
     def teardown(self) -> None:
         """Teardown the agent-framework-lab-lightning for training."""
-        super().teardown()
-        OBSERVABILITY_SETTINGS.enable_otel = False
+        super().teardown()  # pyright: ignore[reportUnknownMemberType]
 
 
 __all__: list[str] = ["AgentFrameworkTracer"]

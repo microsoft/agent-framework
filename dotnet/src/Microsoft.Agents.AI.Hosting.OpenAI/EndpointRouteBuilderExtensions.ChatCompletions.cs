@@ -61,7 +61,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
 
         path ??= $"/{agent.Name}/v1/chat/completions";
         var group = endpoints.MapGroup(path);
-        var endpointAgentName = agent.DisplayName;
+        var endpointAgentName = agent.Name ?? agent.Id;
 
         group.MapPost("/", async ([FromBody] CreateChatCompletion request, CancellationToken cancellationToken)
             => await AIAgentChatCompletionsProcessor.CreateChatCompletionAsync(agent, request, cancellationToken).ConfigureAwait(false))

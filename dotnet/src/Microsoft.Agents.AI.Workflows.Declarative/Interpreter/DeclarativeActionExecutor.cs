@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx;
@@ -39,6 +39,14 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         this.Model = model;
     }
 
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        return base.ConfigureProtocol(protocolBuilder)
+                   // We chain to HandleAsync, so let the protocol know we have additional Send/Yield types that may not be
+                   // available on the HandleAsync override.
+                   .AddDelegateAttributeTypes(this.ExecuteAsync);
+    }
+
     public DialogAction Model { get; }
 
     public string ParentId { get => field ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root(); }
@@ -54,14 +62,22 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     protected virtual bool EmitResultEvent => true;
 
     /// <inheritdoc/>
-    public ValueTask ResetAsync()
+    public virtual ValueTask ResetAsync()
     {
         return default;
     }
 
     /// <inheritdoc/>
+    [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        // Establish the Foundry ProductContext on the current async logical context before
+        // running any code that reads PropertyPath.VariableName / NamespaceAlias. ObjectModel
+        // resolves those lazily against AsyncLocal<ProductContext>; when the workflow is
+        // hosted (AsAIAgent + AddFoundryResponses) each HTTP request runs on a fresh logical
+        // context where the build-thread setting does not flow.
+        WorkflowDiagnostics.SetFoundryProduct();
+
         if (this.Model.Disabled)
         {
             Debug.WriteLine($"DISABLED {this.GetType().Name} [{this.Id}]");

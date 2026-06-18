@@ -3,11 +3,12 @@
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.A2A;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.Diagnostics;
 
 namespace A2A;
 
 /// <summary>
-/// Provides extension methods for <see cref="A2AClient"/>
+/// Provides extension methods for <see cref="IA2AClient"/>
 /// to simplify the creation of A2A agents.
 /// </summary>
 /// <remarks>
@@ -29,13 +30,34 @@ public static class A2AClientExtensions
     /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#3-direct-configuration--private-discovery">Direct Configuration / Private Discovery</see>
     /// discovery mechanism.
     /// </remarks>
-    /// <param name="client">The <see cref="A2AClient" /> to use for the agent.</param>
+    /// <param name="client">The <see cref="IA2AClient" /> to use for the agent.</param>
     /// <param name="id">The unique identifier for the agent.</param>
-    /// <param name="name">The the name of the agent.</param>
+    /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
-    /// <param name="displayName">The display name of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static AIAgent GetAIAgent(this A2AClient client, string? id = null, string? name = null, string? description = null, string? displayName = null, ILoggerFactory? loggerFactory = null) =>
-        new A2AAgent(client, id, name, description, displayName, loggerFactory);
+    public static AIAgent AsAIAgent(this IA2AClient client, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null) =>
+        new A2AAgent(client, id, name, description, loggerFactory);
+
+    /// <summary>
+    /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
+    /// </summary>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#3-direct-configuration--private-discovery">Direct Configuration / Private Discovery</see>
+    /// discovery mechanism.
+    /// </remarks>
+    /// <param name="client">The <see cref="IA2AClient" /> to use for the agent.</param>
+    /// <param name="options">
+    /// Configuration options that control the agent's identity, including its identifier, name, and description.
+    /// </param>
+    /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
+    /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
+    public static AIAgent AsAIAgent(this IA2AClient client, A2AAgentOptions options, ILoggerFactory? loggerFactory = null)
+    {
+        _ = Throw.IfNull(client);
+        _ = Throw.IfNull(options);
+
+        return new A2AAgent(client, options, loggerFactory);
+    }
 }

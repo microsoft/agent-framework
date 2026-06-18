@@ -28,7 +28,7 @@ Examples:
   devui ./agents                    # Scan specific directory
   devui --port 8000                 # Custom port
   devui --headless                  # API only, no UI
-  devui --tracing                   # Enable OpenTelemetry tracing
+  devui --instrumentation           # Enable OpenTelemetry instrumentation
         """,
     )
 
@@ -53,7 +53,7 @@ Examples:
 
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
 
-    parser.add_argument("--tracing", action="store_true", help="Enable OpenTelemetry tracing for Agent Framework")
+    parser.add_argument("--instrumentation", action="store_true", help="Enable OpenTelemetry instrumentation")
 
     parser.add_argument(
         "--mode",
@@ -79,15 +79,17 @@ Examples:
     )
 
     parser.add_argument(
-        "--auth",
+        "--no-auth",
         action="store_true",
-        help="Enable authentication via Bearer token (required for deployed environments)",
+        help=(
+            "Disable Bearer token authentication for loopback-only local development. Non-loopback hosts require auth."
+        ),
     )
 
     parser.add_argument(
         "--auth-token",
         type=str,
-        help="Custom authentication token (auto-generated if not provided with --auth)",
+        help="Custom Bearer token. Required for non-loopback hosts when DEVUI_AUTH_TOKEN is not set.",
     )
 
     parser.add_argument("--version", action="version", version=f"Agent Framework DevUI {get_version()}")
@@ -182,9 +184,9 @@ def main() -> None:
             host=args.host,
             auto_open=not args.no_open,
             ui_enabled=ui_enabled,
-            tracing_enabled=args.tracing,
+            instrumentation_enabled=args.instrumentation,
             mode=mode,
-            auth_enabled=args.auth,
+            auth_enabled=not args.no_auth,
             auth_token=args.auth_token,  # Pass through explicit token only
         )
 

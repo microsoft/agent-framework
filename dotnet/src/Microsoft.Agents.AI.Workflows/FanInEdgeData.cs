@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 internal sealed class FanInEdgeData : EdgeData
 {
-    internal FanInEdgeData(List<string> sourceIds, string sinkId, EdgeId id) : base(id)
+    internal FanInEdgeData(List<string> sourceIds, string sinkId, EdgeId id, string? label) : base(id, label)
     {
         this.SourceIds = sourceIds;
         this.SinkId = sinkId;

@@ -22,9 +22,9 @@ public sealed class A2AArtifactExtensionsTests
             Name = "comprehensive-artifact",
             Parts =
             [
-                new TextPart { Text = "First part" },
-                new TextPart { Text = "Second part" },
-                new TextPart { Text = "Third part" }
+                Part.FromText("First part"),
+                Part.FromText("Second part"),
+                Part.FromText("Third part")
             ],
             Metadata = new Dictionary<string, JsonElement>
             {
@@ -64,12 +64,12 @@ public sealed class A2AArtifactExtensionsTests
         {
             ArtifactId = "artifact-ai-multi",
             Name = "test",
-            Parts = new List<Part>
-            {
-                new TextPart { Text = "Part 1" },
-                new TextPart { Text = "Part 2" },
-                new TextPart { Text = "Part 3" }
-            },
+            Parts =
+            [
+                Part.FromText("Part 1"),
+                Part.FromText("Part 2"),
+                Part.FromText("Part 3")
+            ],
             Metadata = null
         };
 
@@ -93,7 +93,7 @@ public sealed class A2AArtifactExtensionsTests
         {
             ArtifactId = "artifact-empty",
             Name = "test",
-            Parts = new List<Part>(),
+            Parts = [],
             Metadata = null
         };
 

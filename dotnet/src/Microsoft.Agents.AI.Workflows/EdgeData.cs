@@ -14,10 +14,16 @@ public abstract class EdgeData
     /// </summary>
     internal abstract EdgeConnection Connection { get; }
 
-    internal EdgeData(EdgeId id)
+    internal EdgeData(EdgeId id, string? label = null)
     {
         this.Id = id;
+        this.Label = label;
     }
 
     internal EdgeId Id { get; }
+
+    /// <summary>
+    /// An optional label for the edge, allowing for arbitrary metadata to be associated with it.
+    /// </summary>
+    public string? Label { get; }
 }

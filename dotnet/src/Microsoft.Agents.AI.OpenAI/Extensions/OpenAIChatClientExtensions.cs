@@ -4,9 +4,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
-using OpenAI.Chat;
 
-namespace OpenAI;
+namespace OpenAI.Chat;
 
 /// <summary>
 /// Provides extension methods for <see cref="ChatClient"/>
@@ -33,7 +32,7 @@ public static class OpenAIChatClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this ChatClient client,
         string? instructions = null,
         string? name = null,
@@ -42,7 +41,7 @@ public static class OpenAIChatClientExtensions
         Func<IChatClient, IChatClient>? clientFactory = null,
         ILoggerFactory? loggerFactory = null,
         IServiceProvider? services = null) =>
-        client.CreateAIAgent(
+        client.AsAIAgent(
             new ChatClientAgentOptions()
             {
                 Name = name,
@@ -67,7 +66,7 @@ public static class OpenAIChatClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this ChatClient client,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,

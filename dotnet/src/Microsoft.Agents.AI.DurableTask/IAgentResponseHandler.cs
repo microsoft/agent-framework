@@ -17,7 +17,7 @@ public interface IAgentResponseHandler
     /// Signals that the operation should be cancelled.
     /// </param>
     ValueTask OnStreamingResponseUpdateAsync(
-        IAsyncEnumerable<AgentRunResponseUpdate> messageStream,
+        IAsyncEnumerable<AgentResponseUpdate> messageStream,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -30,6 +30,6 @@ public interface IAgentResponseHandler
     /// Signals that the operation should be cancelled.
     /// </param>
     ValueTask OnAgentResponseAsync(
-        AgentRunResponse message,
+        AgentResponse message,
         CancellationToken cancellationToken);
 }

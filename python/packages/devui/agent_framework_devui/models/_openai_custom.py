@@ -64,6 +64,7 @@ class CustomResponseOutputItemAddedEvent(BaseModel):
     output_index: int
     sequence_number: int
     item: dict[str, Any] | ExecutorActionItem | Any  # Flexible item type
+    created_at: float | None = None  # Unix timestamp; used by frontend for accurate workflow timings
 
 
 class CustomResponseOutputItemDoneEvent(BaseModel):
@@ -77,6 +78,7 @@ class CustomResponseOutputItemDoneEvent(BaseModel):
     output_index: int
     sequence_number: int
     item: dict[str, Any] | ExecutorActionItem | Any  # Flexible item type
+    created_at: float | None = None  # Unix timestamp; used by frontend for accurate workflow timings
 
 
 class ResponseWorkflowEventComplete(BaseModel):
@@ -324,7 +326,7 @@ class AgentFrameworkRequest(BaseModel):
             return self.metadata.get("entity_id")
         return None
 
-    def get_conversation_id(self) -> str | None:
+    def _get_conversation_id(self) -> str | None:
         """Extract conversation_id from conversation parameter.
 
         Supports both string and object forms:
@@ -390,7 +392,7 @@ class MetaResponse(BaseModel):
     """Backend runtime/language - 'python' or 'dotnet' for deployment guides and feature availability."""
 
     capabilities: dict[str, bool] = {}
-    """Server capabilities (e.g., tracing, openai_proxy)."""
+    """Server capabilities (e.g., instrumentation, openai_proxy)."""
 
     auth_required: bool = False
     """Whether the server requires Bearer token authentication."""

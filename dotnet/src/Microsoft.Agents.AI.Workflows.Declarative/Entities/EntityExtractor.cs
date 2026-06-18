@@ -3,7 +3,7 @@
 using System;
 using System.Net.Mail;
 using System.Text.RegularExpressions;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Entities;

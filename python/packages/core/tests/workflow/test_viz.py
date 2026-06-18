@@ -2,6 +2,9 @@
 
 """Tests for the workflow visualization module."""
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowExecutor, WorkflowViz, handler
@@ -25,13 +28,13 @@ class ListStrTargetExecutor(Executor):
 
 
 @pytest.fixture
-def basic_sub_workflow():
+def basic_sub_workflow() -> dict[str, Any]:
     """Fixture that creates a basic sub-workflow setup for testing."""
     # Create a sub-workflow
     sub_exec1 = MockExecutor(id="sub_exec1")
     sub_exec2 = MockExecutor(id="sub_exec2")
 
-    sub_workflow = WorkflowBuilder().add_edge(sub_exec1, sub_exec2).set_start_executor(sub_exec1).build()
+    sub_workflow = WorkflowBuilder(start_executor=sub_exec1).add_edge(sub_exec1, sub_exec2).build()
 
     # Create a workflow executor that wraps the sub-workflow
     workflow_executor = WorkflowExecutor(sub_workflow, id="workflow_executor_1")
@@ -41,10 +44,9 @@ def basic_sub_workflow():
     final_exec = MockExecutor(id="final_executor")
 
     main_workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=main_exec)
         .add_edge(main_exec, workflow_executor)
         .add_edge(workflow_executor, final_exec)
-        .set_start_executor(main_exec)
         .build()
     )
 
@@ -65,7 +67,7 @@ def test_workflow_viz_to_digraph():
     executor1 = MockExecutor(id="executor1")
     executor2 = MockExecutor(id="executor2")
 
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
     viz = WorkflowViz(workflow)
     dot_content = viz.to_digraph()
@@ -84,7 +86,7 @@ def test_workflow_viz_export_dot():
     executor1 = MockExecutor(id="executor1")
     executor2 = MockExecutor(id="executor2")
 
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
     viz = WorkflowViz(workflow)
 
@@ -99,12 +101,12 @@ def test_workflow_viz_export_dot():
     assert '"executor1" -> "executor2"' in content
 
 
-def test_workflow_viz_export_dot_with_filename(tmp_path):
+def test_workflow_viz_export_dot_with_filename(tmp_path: Path):
     """Test exporting workflow as DOT format with specified filename."""
     executor1 = MockExecutor(id="executor1")
     executor2 = MockExecutor(id="executor2")
 
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
     viz = WorkflowViz(workflow)
 
@@ -128,12 +130,11 @@ def test_workflow_viz_complex_workflow():
     executor4 = MockExecutor(id="end")
 
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=executor1)
         .add_edge(executor1, executor2)
         .add_edge(executor1, executor3)
         .add_edge(executor2, executor4)
         .add_edge(executor3, executor4)
-        .set_start_executor(executor1)
         .build()
     )
 
@@ -162,7 +163,7 @@ def test_workflow_viz_export_svg():
     executor1 = MockExecutor(id="executor1")
     executor2 = MockExecutor(id="executor2")
 
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
     viz = WorkflowViz(workflow)
 
@@ -178,7 +179,7 @@ def test_workflow_viz_unsupported_format():
     executor1 = MockExecutor(id="executor1")
     executor2 = MockExecutor(id="executor2")
 
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
     viz = WorkflowViz(workflow)
 
@@ -196,7 +197,7 @@ def test_workflow_viz_graphviz_binary_not_found():
     executor1 = MockExecutor(id="executor1")
     executor2 = MockExecutor(id="executor2")
 
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
     viz = WorkflowViz(workflow)
 
     # Mock graphviz.Source.render to raise ExecutableNotFound
@@ -205,7 +206,7 @@ def test_workflow_viz_graphviz_binary_not_found():
         mock_source_class.return_value = mock_source
 
         # Import the ExecutableNotFound exception for the test
-        from graphviz.backend.execute import ExecutableNotFound
+        from graphviz.backend.execute import ExecutableNotFound  # type: ignore[import-not-found]
 
         mock_source.render.side_effect = ExecutableNotFound("failed to execute PosixPath('dot')")
 
@@ -224,13 +225,7 @@ def test_workflow_viz_conditional_edge():
     def only_if_foo(msg: str) -> bool:  # pragma: no cover - simple predicate
         return msg == "foo"
 
-    wf = (
-        WorkflowBuilder()
-        .add_edge(start, mid, condition=only_if_foo)
-        .add_edge(mid, end)
-        .set_start_executor(start)
-        .build()
-    )
+    wf = WorkflowBuilder(start_executor=start).add_edge(start, mid, condition=only_if_foo).add_edge(mid, end).build()
 
     dot = WorkflowViz(wf).to_digraph()
 
@@ -249,13 +244,7 @@ def test_workflow_viz_fan_in_edge_group():
     t = ListStrTargetExecutor(id="t")
 
     # Build a connected workflow: start fans out to s1 and s2, which then fan-in to t
-    wf = (
-        WorkflowBuilder()
-        .add_fan_out_edges(start, [s1, s2])
-        .add_fan_in_edges([s1, s2], t)
-        .set_start_executor(start)
-        .build()
-    )
+    wf = WorkflowBuilder(start_executor=start).add_fan_out_edges(start, [s1, s2]).add_fan_in_edges([s1, s2], t).build()
 
     dot = WorkflowViz(wf).to_digraph()
 
@@ -287,7 +276,7 @@ def test_workflow_viz_to_mermaid_basic():
     executor1 = MockExecutor(id="executor1")
     executor2 = MockExecutor(id="executor2")
 
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
     mermaid = WorkflowViz(workflow).to_mermaid()
 
     # Start node and normal node
@@ -305,7 +294,7 @@ def test_workflow_viz_mermaid_conditional_edge():
     def only_if_foo(msg: str) -> bool:  # pragma: no cover - simple predicate
         return msg == "foo"
 
-    wf = WorkflowBuilder().add_edge(start, mid, condition=only_if_foo).set_start_executor(start).build()
+    wf = WorkflowBuilder(start_executor=start).add_edge(start, mid, condition=only_if_foo).build()
     mermaid = WorkflowViz(wf).to_mermaid()
 
     assert "start -. conditional .-> mid" in mermaid
@@ -318,13 +307,7 @@ def test_workflow_viz_mermaid_fan_in_edge_group():
     s2 = MockExecutor(id="s2")
     t = ListStrTargetExecutor(id="t")
 
-    wf = (
-        WorkflowBuilder()
-        .add_fan_out_edges(start, [s1, s2])
-        .add_fan_in_edges([s1, s2], t)
-        .set_start_executor(start)
-        .build()
-    )
+    wf = WorkflowBuilder(start_executor=start).add_fan_out_edges(start, [s1, s2]).add_fan_in_edges([s1, s2], t).build()
 
     mermaid = WorkflowViz(wf).to_mermaid()
     lines = [line.strip() for line in mermaid.splitlines()]
@@ -349,7 +332,7 @@ def test_workflow_viz_mermaid_fan_in_edge_group():
     assert "s2 --> t" not in mermaid
 
 
-def test_workflow_viz_sub_workflow_digraph(basic_sub_workflow):
+def test_workflow_viz_sub_workflow_digraph(basic_sub_workflow: dict[str, Any]):
     """Test that WorkflowViz can visualize sub-workflows in DOT format."""
     main_workflow = basic_sub_workflow["main_workflow"]
 
@@ -373,7 +356,7 @@ def test_workflow_viz_sub_workflow_digraph(basic_sub_workflow):
     assert '"workflow_executor_1/sub_exec1" -> "workflow_executor_1/sub_exec2"' in dot_content
 
 
-def test_workflow_viz_sub_workflow_mermaid(basic_sub_workflow):
+def test_workflow_viz_sub_workflow_mermaid(basic_sub_workflow: dict[str, Any]):
     """Test that WorkflowViz can visualize sub-workflows in Mermaid format."""
     main_workflow = basic_sub_workflow["main_workflow"]
 
@@ -398,23 +381,19 @@ def test_workflow_viz_nested_sub_workflows():
     """Test visualization of deeply nested sub-workflows."""
     # Create innermost sub-workflow
     inner_exec = MockExecutor(id="inner_exec")
-    inner_workflow = WorkflowBuilder().set_start_executor(inner_exec).build()
+    inner_workflow = WorkflowBuilder(start_executor=inner_exec).build()
 
     # Create middle sub-workflow that contains the inner one
     inner_workflow_executor = WorkflowExecutor(inner_workflow, id="inner_wf_exec")
     middle_exec = MockExecutor(id="middle_exec")
 
-    middle_workflow = (
-        WorkflowBuilder().add_edge(middle_exec, inner_workflow_executor).set_start_executor(middle_exec).build()
-    )
+    middle_workflow = WorkflowBuilder(start_executor=middle_exec).add_edge(middle_exec, inner_workflow_executor).build()
 
     # Create outer workflow
     middle_workflow_executor = WorkflowExecutor(middle_workflow, id="middle_wf_exec")
     outer_exec = MockExecutor(id="outer_exec")
 
-    outer_workflow = (
-        WorkflowBuilder().add_edge(outer_exec, middle_workflow_executor).set_start_executor(outer_exec).build()
-    )
+    outer_workflow = WorkflowBuilder(start_executor=outer_exec).add_edge(outer_exec, middle_workflow_executor).build()
 
     viz = WorkflowViz(outer_workflow)
     dot_content = viz.to_digraph()

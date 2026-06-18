@@ -1,8 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Text.Json;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -37,17 +38,14 @@ public sealed class ChatClientAgentOptions
     public ChatOptions? ChatOptions { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="ChatMessageStore"/>
-    /// which will be used to store chat messages for this agent.
+    /// Gets or sets the <see cref="ChatHistoryProvider"/> instance to use for providing chat history for this agent.
     /// </summary>
-    public Func<ChatMessageStoreFactoryContext, ChatMessageStore>? ChatMessageStoreFactory { get; set; }
+    public ChatHistoryProvider? ChatHistoryProvider { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="AIContextProvider"/>
-    /// which will be used to create a context provider for each new thread, and can then
-    /// provide additional context for each agent run.
+    /// Gets or sets the list of <see cref="AIContextProvider"/> instances to use for providing additional context for each agent run.
     /// </summary>
-    public Func<AIContextProviderFactoryContext, AIContextProvider>? AIContextProviderFactory { get; set; }
+    public IEnumerable<AIContextProvider>? AIContextProviders { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,
@@ -64,6 +62,156 @@ public sealed class ChatClientAgentOptions
     public bool UseProvidedChatClientAsIs { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to set the <see cref="ChatClientAgent.ChatHistoryProvider"/> to <see langword="null"/>
+    /// if the underlying AI service indicates that it manages chat history (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
+    /// </summary>
+    /// <remarks>
+    /// Note that even if this setting is set to <see langword="false"/>, the <see cref="ChatHistoryProvider"/> will still not be used if the underlying AI service indicates that it manages chat history.
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool ClearOnChatHistoryProviderConflict { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to log a warning if the underlying AI service indicates that it manages chat history
+    /// (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
+    /// </summary>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool WarnOnChatHistoryProviderConflict { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether an exception is thrown if the underlying AI service indicates that it manages chat history
+    /// (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
+    /// </summary>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool ThrowOnChatHistoryProviderConflict { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the <see cref="ChatClientAgent"/> should persist
+    /// chat history after each individual service call within the <see cref="FunctionInvokingChatClient"/>
+    /// loop, rather than at the end of the full agent run.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set to <see langword="true"/>, a <see cref="PerServiceCallChatHistoryPersistingChatClient"/>
+    /// decorator becomes active in the chat client pipeline. It handles two complementary scenarios:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>
+    /// <term>Framework-managed chat history</term>
+    /// <description>
+    /// The decorator loads history from the <see cref="ChatHistoryProvider"/> before each service call
+    /// and persists new request and response messages after each call. It returns a sentinel
+    /// <see cref="ChatOptions.ConversationId"/> on the response, causing the
+    /// <see cref="FunctionInvokingChatClient"/> to treat the conversation as service-managed — clearing
+    /// accumulated history between iterations and not injecting duplicate <see cref="FunctionCallContent"/>
+    /// during approval-response processing.
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <term>AI Service-stored chat history</term>
+    /// <description>
+    /// When the service manages its own chat history (returning a real <see cref="ChatOptions.ConversationId"/>),
+    /// the decorator updates <see cref="ChatClientAgentSession.ConversationId"/> after each service call so
+    /// that intermediate ConversationId changes are captured immediately. For some services (e.g., the
+    /// Conversations API with the Responses API), there is only one thread with one ID, so every service
+    /// call updates it anyway and updating the <see cref="ChatClientAgentSession.ConversationId"/> has little effect
+    /// since it's the same ID. For other services (e.g., Responses API with Response IDs), a new ID is generated
+    /// with each service call, so updating the <see cref="ChatClientAgentSession.ConversationId"/> ensures that the
+    /// latest ID is always captured, even mid-run.
+    /// Enabling this option ensures consistent per-service-call behavior across all service types.
+    /// </description>
+    /// </item>
+    /// </list>
+    /// <para>
+    /// When set to <see langword="false"/> (the default), the <see cref="ChatClientAgent"/> handles
+    /// chat history persistence at the end of the full agent run via the <see cref="ChatHistoryProvider"/> if using
+    /// framework-managed chat history. For AI service-stored chat history, the <see cref="ChatClientAgentSession.ConversationId"/>
+    /// updates happen only at the end of the run.
+    /// </para>
+    /// <para>
+    /// When setting the <see cref="UseProvidedChatClientAsIs"/> setting to <see langword="true"/> and
+    /// <see cref="RequirePerServiceCallChatHistoryPersistence"/> to <see langword="true"/>, ensure that your custom chat client stack includes a
+    /// <see cref="PerServiceCallChatHistoryPersistingChatClient"/> to enable per-service-call persistence.
+    /// If no <see cref="PerServiceCallChatHistoryPersistingChatClient"/> is provided, and you are not storing chat history via other means,
+    /// no chat history may be stored.
+    /// When using a custom chat client stack, you can add a <see cref="PerServiceCallChatHistoryPersistingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UsePerServiceCallChatHistoryPersistence"/>
+    /// extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public bool RequirePerServiceCallChatHistoryPersistence { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to include a <see cref="MessageInjectingChatClient"/>
+    /// in the chat client pipeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set to <see langword="true"/>, a <see cref="MessageInjectingChatClient"/> is added to the pipeline
+    /// between the <see cref="FunctionInvokingChatClient"/> and the inner client. This enables external code
+    /// (such as tool delegates) to inject messages into the function execution loop via the
+    /// <see cref="MessageInjectingChatClient"/> class, which can be resolved from the chat client using
+    /// <c>GetService&lt;MessageInjectingChatClient&gt;()</c>.
+    /// </para>
+    /// <para>
+    /// This setting can be used independently of <see cref="RequirePerServiceCallChatHistoryPersistence"/>,
+    /// however it is recommended to also enable per-service-call persistence when using message injection
+    /// so that injected messages are persisted to chat history between service calls.
+    /// </para>
+    /// <para>
+    /// When setting the <see cref="UseProvidedChatClientAsIs"/> setting to <see langword="true"/> and
+    /// <see cref="EnableMessageInjection"/> to <see langword="true"/>, ensure that your custom chat client stack
+    /// includes a <see cref="MessageInjectingChatClient"/>. You can add one manually via the
+    /// <see cref="ChatClientBuilderExtensions.UseMessageInjection"/> extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public bool EnableMessageInjection { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to store automatically approved function calls in the session state
+    /// for tools that do not require approval when they are returned alongside tools that do.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="FunctionInvokingChatClient"/> has an all-or-nothing behavior for approvals: when any tool
+    /// in a response is an <see cref="ApprovalRequiredAIFunction"/>, it converts all <see cref="FunctionCallContent"/>
+    /// items to <see cref="ToolApprovalRequestContent"/>, even for tools that do not require approval.
+    /// </para>
+    /// <para>
+    /// Setting this property to <see langword="true"/> injects an <see cref="NonApprovalRequiredFunctionBypassingChatClient"/>
+    /// decorator above <see cref="FunctionInvokingChatClient"/> in the pipeline. This decorator identifies approval
+    /// requests for non-approval-required tools, removes them from the response, and stores them in the session.
+    /// On the next request, the stored items are automatically re-injected as approved, so the caller only needs
+    /// to handle approval requests for tools that truly require human approval.
+    /// </para>
+    /// <para>
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, you can add an <see cref="NonApprovalRequiredFunctionBypassingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseNonApprovalRequiredFunctionBypassing"/>
+    /// extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public bool EnableNonApprovalRequiredFunctionBypassing { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -73,41 +221,14 @@ public sealed class ChatClientAgentOptions
             Name = this.Name,
             Description = this.Description,
             ChatOptions = this.ChatOptions?.Clone(),
-            ChatMessageStoreFactory = this.ChatMessageStoreFactory,
-            AIContextProviderFactory = this.AIContextProviderFactory,
+            ChatHistoryProvider = this.ChatHistoryProvider,
+            AIContextProviders = this.AIContextProviders is null ? null : new List<AIContextProvider>(this.AIContextProviders),
+            UseProvidedChatClientAsIs = this.UseProvidedChatClientAsIs,
+            ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
+            WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
+            ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
+            RequirePerServiceCallChatHistoryPersistence = this.RequirePerServiceCallChatHistoryPersistence,
+            EnableMessageInjection = this.EnableMessageInjection,
+            EnableNonApprovalRequiredFunctionBypassing = this.EnableNonApprovalRequiredFunctionBypassing,
         };
-
-    /// <summary>
-    /// Context object passed to the <see cref="AIContextProviderFactory"/> to create a new instance of <see cref="AIContextProvider"/>.
-    /// </summary>
-    public class AIContextProviderFactoryContext
-    {
-        /// <summary>
-        /// Gets or sets the serialized state of the <see cref="AIContextProvider"/>, if any.
-        /// </summary>
-        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="AIContextProvider"/> is first created.</value>
-        public JsonElement SerializedState { get; set; }
-
-        /// <summary>
-        /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
-        /// </summary>
-        public JsonSerializerOptions? JsonSerializerOptions { get; set; }
-    }
-
-    /// <summary>
-    /// Context object passed to the <see cref="ChatMessageStoreFactory"/> to create a new instance of <see cref="ChatMessageStore"/>.
-    /// </summary>
-    public class ChatMessageStoreFactoryContext
-    {
-        /// <summary>
-        /// Gets or sets the serialized state of the chat message store, if any.
-        /// </summary>
-        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="ChatMessageStore"/> is first created.</value>
-        public JsonElement SerializedState { get; set; }
-
-        /// <summary>
-        /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
-        /// </summary>
-        public JsonSerializerOptions? JsonSerializerOptions { get; set; }
-    }
 }

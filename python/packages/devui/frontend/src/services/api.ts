@@ -16,9 +16,10 @@ import type {
 import type { AgentFrameworkRequest } from "@/types/agent-framework";
 import type { ExtendedResponseStreamEvent } from "@/types/openai";
 import {
+  applyStreamingEventToState,
+  createStreamingState,
   loadStreamingState,
-  updateStreamingState,
-  markStreamingCompleted,
+  saveStreamingState,
   clearStreamingState,
 } from "./streaming-state";
 import { isAbortError } from "@/hooks";
@@ -42,7 +43,7 @@ interface BackendEntityInfo {
   instructions?: string;
   model_id?: string;
   chat_client_type?: string;
-  context_providers?: string[];
+  context_provider?: string[];
   middleware?: string[];
   // Workflow-specific fields (present when type === "workflow")
   executors?: string[];
@@ -72,12 +73,13 @@ const DEFAULT_API_BASE_URL =
 // Retry configuration for streaming
 const RETRY_INTERVAL_MS = 1000; // Base retry interval (will use exponential backoff)
 const MAX_RETRY_ATTEMPTS = 10; // Max 10 retries (~30 seconds with exponential backoff)
+const STREAMING_STATE_SAVE_INTERVAL_MS = 250;
 
 // Get backend URL from localStorage or default
 function getBackendUrl(): string {
   const stored = localStorage.getItem("devui_backend_url");
   if (stored) return stored;
-  
+
   return DEFAULT_API_BASE_URL;
 }
 
@@ -221,13 +223,13 @@ class ApiClient {
           instructions: entity.instructions,
           model_id: entity.model_id,
           chat_client_type: entity.chat_client_type,
-          context_providers: entity.context_providers,
+          context_provider: entity.context_provider,
           middleware: entity.middleware,
-        };
+        } as AgentInfo;
       } else {
         // Workflow - prefer executors field, fall back to tools for backward compatibility
         const executorList = entity.executors || entity.tools || [];
-        
+
         // Determine start_executor_id: use entity value, or first executor if it's a string
         let startExecutorId = entity.start_executor_id || "";
         if (!startExecutorId && executorList.length > 0) {
@@ -236,7 +238,7 @@ class ApiClient {
             startExecutorId = firstExecutor;
           }
         }
-        
+
         return {
           id: entity.id,
           name: entity.name,
@@ -263,7 +265,7 @@ class ApiClient {
           input_type_name: entity.input_type_name || "Input",
           start_executor_id: startExecutorId,
           tools: [],
-        };
+        } as WorkflowInfo;
       }
     });
 
@@ -398,7 +400,11 @@ class ApiClient {
   async listConversationItems(
     conversationId: string,
     options?: { limit?: number; after?: string; order?: "asc" | "desc" }
-  ): Promise<{ data: unknown[]; has_more: boolean }> {
+  ): Promise<{
+    data: unknown[];
+    has_more: boolean;
+    metadata?: { traces?: unknown[] };
+  }> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.after) params.set("after", options.after);
@@ -409,7 +415,11 @@ class ApiClient {
       queryString ? `?${queryString}` : ""
     }`;
 
-    return this.request<{ data: unknown[]; has_more: boolean }>(url);
+    return this.request<{
+      data: unknown[];
+      has_more: boolean;
+      metadata?: { traces?: unknown[] };
+    }>(url);
   }
 
   async getConversationItem(
@@ -476,31 +486,66 @@ class ApiClient {
     let hasYieldedAnyEvent = false;
     let currentResponseId: string | undefined = resumeResponseId;
     let lastMessageId: string | undefined = undefined;
+    let lastStreamingStateSaveAt = 0;
+    let storedState = conversationId ? loadStreamingState(conversationId) : null;
+    let streamingState = storedState ? { ...storedState } : null;
+
+    const persistStreamingState = (force: boolean = false): void => {
+      if (!conversationId || !streamingState) {
+        return;
+      }
+
+      const now = Date.now();
+      if (!force && now - lastStreamingStateSaveAt < STREAMING_STATE_SAVE_INTERVAL_MS) {
+        return;
+      }
+
+      lastStreamingStateSaveAt = now;
+      saveStreamingState({
+        ...streamingState,
+        timestamp: now,
+      });
+    };
+
+    const recordStreamingEvent = (event: ExtendedResponseStreamEvent): void => {
+      if (!conversationId || !currentResponseId) {
+        return;
+      }
+
+      streamingState = applyStreamingEventToState(
+        streamingState ?? createStreamingState({
+          conversationId,
+          responseId: currentResponseId,
+          lastMessageId,
+          lastSequenceNumber,
+          accumulatedText: storedState?.accumulatedText,
+          accumulatedTextIsPreview: storedState?.accumulatedTextIsPreview,
+        }),
+        event,
+        currentResponseId,
+        lastMessageId
+      );
+
+      const isTextDelta =
+        event.type === "response.output_text.delta" &&
+        "delta" in event &&
+        typeof event.delta === "string" &&
+        event.delta.length > 0;
+      persistStreamingState(!isTextDelta);
+    };
 
     // Try to resume from stored state if conversation ID is provided
-    if (conversationId) {
-      const storedState = loadStreamingState(conversationId);
-      if (storedState) {
-        // Use stored response ID if no explicit one provided
-        if (!resumeResponseId) {
-          currentResponseId = storedState.responseId;
-        }
-        
-        lastSequenceNumber = storedState.lastSequenceNumber;
-        lastMessageId = storedState.lastMessageId;
-        
-        // Replay stored events only if we're not explicitly resuming
-        // (explicit resume means the caller already has the events)
-        if (!resumeResponseId) {
-          for (const event of storedState.events) {
-            hasYieldedAnyEvent = true;
-            yield event;
-          }
-        } else {
-          // Mark that we've already seen events up to this sequence number
-          hasYieldedAnyEvent = storedState.events.length > 0;
-        }
+    if (storedState) {
+      // Use stored response ID if no explicit one provided
+      if (!resumeResponseId) {
+        currentResponseId = storedState.responseId;
       }
+
+      lastSequenceNumber = storedState.lastSequenceNumber;
+      lastMessageId = storedState.lastMessageId;
+      hasYieldedAnyEvent =
+        storedState.lastSequenceNumber >= 0 ||
+        Boolean(storedState.accumulatedText);
     }
 
     while (retryCount <= MAX_RETRY_ATTEMPTS) {
@@ -613,7 +658,8 @@ class ApiClient {
             if (done) {
               // Stream completed successfully
               if (conversationId) {
-                markStreamingCompleted(conversationId);
+                clearStreamingState(conversationId);
+                streamingState = null;
               }
               return;
             }
@@ -632,7 +678,8 @@ class ApiClient {
                 // Handle [DONE] signal
                 if (dataStr === "[DONE]") {
                   if (conversationId) {
-                    markStreamingCompleted(conversationId);
+                    clearStreamingState(conversationId);
+                    streamingState = null;
                   }
                   return;
                 }
@@ -668,6 +715,9 @@ class ApiClient {
                       if (conversationId) {
                         clearStreamingState(conversationId);
                       }
+                      storedState = null;
+                      streamingState = null;
+                      lastStreamingStateSaveAt = 0;
                       yield {
                         type: "error",
                         message: "Connection lost - previous response failed. Starting new response.",
@@ -676,9 +726,7 @@ class ApiClient {
                       hasYieldedAnyEvent = true;
 
                       // Save new event to storage
-                      if (conversationId && currentResponseId) {
-                        updateStreamingState(conversationId, openAIEvent, currentResponseId, lastMessageId);
-                      }
+                      recordStreamingEvent(openAIEvent);
 
                       yield openAIEvent;
                     }
@@ -690,9 +738,7 @@ class ApiClient {
                       hasYieldedAnyEvent = true;
 
                       // Save event to storage before yielding
-                      if (conversationId && currentResponseId) {
-                        updateStreamingState(conversationId, openAIEvent, currentResponseId, lastMessageId);
-                      }
+                      recordStreamingEvent(openAIEvent);
 
                       yield openAIEvent;
                     }
@@ -701,9 +747,7 @@ class ApiClient {
                     hasYieldedAnyEvent = true;
 
                     // Still save to storage if we have conversation context
-                    if (conversationId && currentResponseId) {
-                      updateStreamingState(conversationId, openAIEvent, currentResponseId, lastMessageId);
-                    }
+                    recordStreamingEvent(openAIEvent);
 
                     yield openAIEvent;
                   }
@@ -722,7 +766,8 @@ class ApiClient {
         // Don't retry on abort
         if (isAbortError(error)) {
           if (conversationId) {
-            markStreamingCompleted(conversationId); // Clean up state
+            clearStreamingState(conversationId);
+            streamingState = null;
           }
           throw error; // Re-throw abort error without retrying
         }
@@ -800,34 +845,68 @@ class ApiClient {
     yield* this.streamOpenAIResponse(openAIRequest, request.conversation_id, signal);
   }
 
-  // REMOVED: Legacy streaming methods - use streamAgentExecutionOpenAI and streamWorkflowExecutionOpenAI instead
+  // ========================================
+  // Non-Streaming Execution Methods
+  // ========================================
 
-  // Non-streaming execution (for testing)
-  async runAgent(
+  // Non-streaming agent execution using /v1/responses with stream=false
+  async runAgentSync(
     agentId: string,
     request: RunAgentRequest
-  ): Promise<{
-    conversation_id: string;
-    result: unknown[];
-    message_count: number;
-  }> {
-    return this.request(`/agents/${agentId}/run`, {
+  ): Promise<import("@/types/openai").OpenAIResponse> {
+    // Check if OAI proxy mode is enabled
+    const { oaiMode } = await import("@/stores").then((m) => ({
+      oaiMode: m.useDevUIStore.getState().oaiMode,
+    }));
+
+    const openAIRequest: AgentFrameworkRequest = {
+      metadata: { entity_id: agentId },
+      input: request.input,
+      stream: false,
+      conversation: request.conversation_id,
+    };
+
+    // Apply OAI mode settings if enabled
+    if (oaiMode.enabled) {
+      openAIRequest.model = oaiMode.model;
+      if (oaiMode.temperature !== undefined) {
+        openAIRequest.temperature = oaiMode.temperature;
+      }
+      if (oaiMode.max_output_tokens !== undefined) {
+        openAIRequest.max_output_tokens = oaiMode.max_output_tokens;
+      }
+    }
+
+    const headers: Record<string, string> = {};
+    if (oaiMode.enabled) {
+      headers["X-Proxy-Backend"] = "openai";
+    }
+
+    return this.request<import("@/types/openai").OpenAIResponse>("/v1/responses", {
       method: "POST",
-      body: JSON.stringify(request),
+      headers,
+      body: JSON.stringify(openAIRequest),
     });
   }
 
-  async runWorkflow(
+  // Non-streaming workflow execution using /v1/responses with stream=false
+  async runWorkflowSync(
     workflowId: string,
     request: RunWorkflowRequest
-  ): Promise<{
-    result: string;
-    events: number;
-    message_count: number;
-  }> {
-    return this.request(`/workflows/${workflowId}/run`, {
+  ): Promise<import("@/types/openai").OpenAIResponse> {
+    const openAIRequest: AgentFrameworkRequest = {
+      metadata: { entity_id: workflowId },
+      input: JSON.stringify(request.input_data || {}),
+      stream: false,
+      conversation: request.conversation_id,
+      extra_body: request.checkpoint_id
+        ? { entity_id: workflowId, checkpoint_id: request.checkpoint_id }
+        : undefined,
+    };
+
+    return this.request<import("@/types/openai").OpenAIResponse>("/v1/responses", {
       method: "POST",
-      body: JSON.stringify(request),
+      body: JSON.stringify(openAIRequest),
     });
   }
 

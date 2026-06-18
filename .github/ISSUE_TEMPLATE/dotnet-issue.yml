@@ -1,0 +1,70 @@
+name: .NET Bug Report
+description: Report a bug in the Agent Framework .NET SDK
+title: ".NET: [Bug]: "
+labels: ["bug", ".NET"]
+type: bug
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Please provide a clear and detailed description of the bug.
+      placeholder: |
+        - What happened?
+        - What did you expect to happen?
+        - Steps to reproduce the issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-sample
+    attributes:
+      label: Code Sample
+      description: If applicable, provide a minimal code sample that demonstrates the issue.
+      placeholder: |
+        ```csharp
+        // Your code here
+        ```
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: error-messages
+    attributes:
+      label: Error Messages / Stack Traces
+      description: Include any error messages or stack traces you received.
+      placeholder: |
+        ```
+        Paste error messages or stack traces here
+        ```
+      render: markdown
+    validations:
+      required: false
+
+  - type: input
+    id: dotnet-packages
+    attributes:
+      label: Package Versions
+      description: List the Microsoft.Agents.* packages and versions you are using
+      placeholder: "e.g., Microsoft.Agents.AI.Abstractions: 1.0.0, Microsoft.Agents.AI.OpenAI: 1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: dotnet-version
+    attributes:
+      label: .NET Version
+      description: What version of .NET are you using?
+      placeholder: "e.g., .NET 8.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context or screenshots that might be helpful.
+      placeholder: "Any additional information..."
+    validations:
+      required: false

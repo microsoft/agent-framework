@@ -8,7 +8,7 @@ using System.Dynamic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 

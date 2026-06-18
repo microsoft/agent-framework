@@ -24,7 +24,7 @@ public sealed class ChatHistoryMemoryProviderScope
 
         this.ApplicationId = sourceScope.ApplicationId;
         this.AgentId = sourceScope.AgentId;
-        this.ThreadId = sourceScope.ThreadId;
+        this.SessionId = sourceScope.SessionId;
         this.UserId = sourceScope.UserId;
     }
 
@@ -41,9 +41,9 @@ public sealed class ChatHistoryMemoryProviderScope
     public string? AgentId { get; set; }
 
     /// <summary>
-    /// Gets or sets an optional ID for the thread to scope chat history to.
+    /// Gets or sets an optional ID for the session to scope chat history to.
     /// </summary>
-    public string? ThreadId { get; set; }
+    public string? SessionId { get; set; }
 
     /// <summary>
     /// Gets or sets an optional ID for the user to scope chat history to.

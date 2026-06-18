@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 
 namespace Microsoft.Agents.AI.Declarative.UnitTests;
 
@@ -170,7 +170,7 @@ internal static class PromptAgents
                 topP: 0.95
             connection:
                 kind: apiKey
-                key: =Env.OPENAI_APIKEY
+                key: =Env.OPENAI_API_KEY
         outputSchema:
             properties:
                 language:

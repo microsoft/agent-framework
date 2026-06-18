@@ -1,0 +1,317 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""High-level :class:`LocalShellTool` facade."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from collections.abc import Callable, Mapping, Sequence
+from typing import Literal
+
+from agent_framework import FunctionTool, tool
+from agent_framework._tools import SHELL_TOOL_KIND_VALUE
+
+from ._executor import run_stateless
+from ._policy import ShellPolicy, ShellRequest
+from ._resolve import is_powershell, resolve_shell
+from ._session import ShellSession
+from ._types import ShellCommandError, ShellMode, ShellResult
+
+logger = logging.getLogger(__name__)
+
+
+def _quote_posix(value: str) -> str:
+    r"""Return ``value`` wrapped in POSIX single quotes.
+
+    Single-quoted strings have no interpolation in POSIX shells. Embedded
+    single quotes are handled by closing the quote, inserting an escaped
+    quote, and reopening: ``a'b`` becomes ``'a'\''b'``.
+    """
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _quote_powershell(value: str) -> str:
+    """Return ``value`` wrapped in PowerShell single quotes.
+
+    Single-quoted strings in PowerShell are literal — ``$`` and ``"`` carry
+    no special meaning. Embedded single quotes are doubled (``''``).
+    """
+    return "'" + value.replace("'", "''") + "'"
+
+
+_PERSISTENT_DESCRIPTION = (
+    "Execute a single shell command on the local machine and return its "
+    "stdout, stderr, and exit code. Commands run in a persistent session so "
+    "`cd` and environment variables from previous calls are preserved. "
+    "Approval is required by default."
+)
+
+_STATELESS_DESCRIPTION = (
+    "Execute a single shell command on the local machine and return its "
+    "stdout, stderr, and exit code. Each command runs in a fresh subprocess, "
+    "so `cd` and environment variables do not persist between calls. "
+    "Approval is required by default."
+)
+
+
+def _default_description(mode: ShellMode) -> str:
+    return _PERSISTENT_DESCRIPTION if mode == "persistent" else _STATELESS_DESCRIPTION
+
+
+class LocalShellTool:
+    """Cross-OS local shell tool that plugs into any agent-framework chat client.
+
+    Typical use::
+
+        shell = LocalShellTool()
+        agent = Agent(
+            client=client,
+            tools=[client.get_shell_tool(func=shell.as_function())],
+        )
+
+    Or as an async context manager (recommended in persistent mode so the
+    session is cleaned up on exit)::
+
+        async with LocalShellTool() as shell:
+            ...
+
+    **Single-session ownership.** A persistent-mode :class:`LocalShellTool`
+    is owned by a single conversation / agent session — i.e. one user.
+    The backing shell process carries mutable state (cwd, exported
+    variables, shell history, background jobs) that every subsequent
+    command can observe, and a single stdin/stdout pipe serializes every
+    call. Do not share one instance across users, tenants, or concurrent
+    conversations: state leaks between them and commands queue behind
+    each other. Create one tool per session, close it (or use ``async
+    with``) when the session ends. If a shared instance is genuinely
+    required, construct with ``mode="stateless"`` so each call spawns a
+    fresh subprocess.
+
+    Args:
+        mode: ``"persistent"`` (default) keeps a single long-lived shell
+            subprocess so ``cd`` / ``export`` carry across calls.
+            ``"stateless"`` spawns a fresh subprocess per call.
+        shell: Optional shell argv override. String values are tokenised.
+            When omitted, the platform default is used (``pwsh`` or
+            ``powershell`` on Windows, ``bash`` or ``sh`` on Unix). May also
+            be overridden via the ``AGENT_FRAMEWORK_SHELL`` env var.
+        workdir: Working directory for commands. Defaults to the current
+            working directory. In persistent mode, each command is
+            re-anchored to this directory when ``confine_workdir=True`` —
+            see that argument for the exact semantics and caveats.
+        confine_workdir: When ``True`` (default), each command in persistent
+            mode is prefixed with a ``cd`` back into ``workdir`` so
+            ``cd``-wandering in one call does not leak to the next. This is
+            a **re-anchor**, not a hard confinement — a command that does
+            ``cd /tmp && rm -rf .`` in one call can still touch ``/tmp``.
+            Use :class:`ShellPolicy` or a sandboxed executor for true
+            confinement.
+        env: Seed environment. In stateless mode this replaces the child's
+            environment unless ``clean_env=False``. In persistent mode the
+            variables are exported before the session is used.
+        clean_env: When ``True``, do **not** inherit ``os.environ``; only
+            the variables supplied in ``env`` are visible to commands.
+        policy: Policy applied before approval. Defaults to an empty
+            :class:`ShellPolicy()` which allows every command; supply
+            explicit ``denylist``/``allowlist`` patterns to filter. The
+            policy is a UX pre-filter, not a security boundary — approval
+            gating + sandbox tier are the real defenses.
+        timeout: Per-command timeout in seconds. ``None`` disables. Default
+            30 s.
+        max_output_bytes: Combined stdout/stderr byte cap before truncation.
+            Default 64 KiB.
+        approval_mode: ``"always_require"`` (default) or ``"never_require"``.
+            Controls the ``FunctionTool.approval_mode`` on the returned
+            function, which the framework uses to gate execution via
+            ``user_input_requests``. **Approval is the actual security
+            boundary of this tool** — disabling it requires
+            ``acknowledge_unsafe=True``.
+        acknowledge_unsafe: Required to be ``True`` if you set
+            ``approval_mode="never_require"``. ``ShellPolicy`` is a UX
+            pre-filter, not a security boundary; without approval the tool
+            will execute any command the model emits.
+        on_command: Optional audit hook called with the command string for
+            every command that passes policy. Use for logging / telemetry.
+    """
+
+    def __init__(
+        self,
+        *,
+        mode: ShellMode = "persistent",
+        shell: str | Sequence[str] | None = None,
+        workdir: str | os.PathLike[str] | None = None,
+        confine_workdir: bool = True,
+        env: Mapping[str, str] | None = None,
+        clean_env: bool = False,
+        policy: ShellPolicy | None = None,
+        timeout: float | None = 30.0,
+        max_output_bytes: int = 64 * 1024,
+        approval_mode: Literal["always_require", "never_require"] = "always_require",
+        acknowledge_unsafe: bool = False,
+        on_command: Callable[[str], None] | None = None,
+    ) -> None:
+        if mode not in ("persistent", "stateless"):
+            raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
+        if approval_mode == "never_require" and not acknowledge_unsafe:
+            raise ValueError(
+                "Setting approval_mode='never_require' disables the only built-in "
+                "security boundary of LocalShellTool. If you understand the risk "
+                "(arbitrary commands run on the host with the agent's privileges; "
+                "ShellPolicy is a UX pre-filter, not a defense), pass "
+                "acknowledge_unsafe=True. For untrusted input prefer a "
+                "sandboxed executor (e.g. DockerShellTool or HyperlightCodeActProvider)."
+            )
+        self._mode: ShellMode = mode
+        self._shell_override = shell
+        self._workdir: str | None = os.fspath(workdir) if workdir is not None else None
+        self._confine_workdir = confine_workdir
+        self._policy = policy or ShellPolicy()
+        self._timeout = timeout
+        self._max_output_bytes = max_output_bytes
+        self._approval_mode: Literal["always_require", "never_require"] = approval_mode
+        self._on_command = on_command
+
+        merged_env: dict[str, str] | None
+        if env is None and not clean_env:
+            merged_env = None  # inherit
+        elif clean_env:
+            merged_env = dict(env) if env is not None else {}
+        else:
+            merged_env = {**os.environ, **dict(env or {})}
+        self._env = merged_env
+
+        self._interactive_argv = resolve_shell(self._shell_override, interactive=True)
+        self._stateless_argv = resolve_shell(self._shell_override, interactive=False)
+        self._session: ShellSession | None = None
+        self._session_lock: asyncio.Lock | None = None
+
+    def _get_session_lock(self) -> asyncio.Lock:
+        # Lazily create in the running loop so construction outside a loop is fine.
+        if self._session_lock is None:
+            self._session_lock = asyncio.Lock()
+        return self._session_lock
+
+    # ------------------------------------------------------------------ lifecycle
+
+    async def start(self) -> None:
+        """Eagerly spawn the persistent session (no-op in stateless mode)."""
+        if self._mode != "persistent":
+            return
+        async with self._get_session_lock():
+            if self._session is None:
+                self._session = ShellSession(
+                    self._interactive_argv,
+                    workdir=self._workdir,
+                    env=self._env,
+                    max_output_bytes=self._max_output_bytes,
+                )
+            await self._session.start()
+
+    async def close(self) -> None:
+        """Terminate the persistent session if any."""
+        async with self._get_session_lock():
+            if self._session is not None:
+                try:
+                    await self._session.close()
+                finally:
+                    self._session = None
+
+    async def __aenter__(self) -> LocalShellTool:
+        await self.start()
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        await self.close()
+
+    # ------------------------------------------------------------------ core run
+
+    async def run(self, command: str, *, timeout: float | None = None) -> ShellResult:
+        """Execute ``command`` directly and return its :class:`ShellResult`.
+
+        Applies policy and the audit hook, but **not** approval (that is
+        handled by the framework when this tool is wrapped via
+        :meth:`as_function`).
+
+        Args:
+            command: The shell command to execute.
+            timeout: Optional per-call timeout in seconds that overrides
+                the tool's configured default. When ``None``, the tool's
+                ``timeout`` setting is used. The timeout is enforced
+                inside the executor (the subprocess is killed / the
+                persistent session tears down the command on timeout)
+                so callers do not need to wrap this call in
+                :func:`asyncio.wait_for`.
+        """
+        request = ShellRequest(command=command, workdir=self._workdir)
+        decision = self._policy.evaluate(request)
+        if decision.decision == "deny":
+            raise ShellCommandError(f"Command rejected by policy: {decision.reason}")
+        if self._on_command is not None:
+            try:
+                self._on_command(command)
+            except Exception:
+                logger.exception("on_command hook raised")
+
+        effective_timeout = self._timeout if timeout is None else timeout
+
+        if self._mode == "persistent":
+            if self._session is None:
+                await self.start()
+            if self._session is None:
+                raise RuntimeError("LocalShellTool session failed to start")
+            effective = self._maybe_reanchor(command)
+            return await self._session.run(effective, timeout=effective_timeout)
+
+        return await run_stateless(
+            self._stateless_argv,
+            command,
+            workdir=self._workdir,
+            env=self._env,
+            timeout=effective_timeout,
+            max_output_bytes=self._max_output_bytes,
+        )
+
+    # ------------------------------------------------------------------ AF wiring
+
+    def as_function(
+        self,
+        *,
+        name: str = "run_shell",
+        description: str | None = None,
+    ) -> FunctionTool:
+        """Return an :class:`~agent_framework.FunctionTool` bound to this instance.
+
+        The returned tool has ``kind="shell"`` so provider-specific
+        ``get_shell_tool(func=...)`` factories recognise it as a local shell.
+        """
+
+        async def _run_shell(command: str) -> str:
+            try:
+                result = await self.run(command)
+            except ShellCommandError as exc:
+                return str(exc)
+            return result.format_for_model()
+
+        effective_description = description or _default_description(self._mode)
+        _run_shell.__doc__ = effective_description
+        return tool(
+            func=_run_shell,
+            name=name,
+            description=effective_description,
+            approval_mode=self._approval_mode,
+            kind=SHELL_TOOL_KIND_VALUE,
+        )
+
+    # ------------------------------------------------------------------ helpers
+
+    def _maybe_reanchor(self, command: str) -> str:
+        """Prefix ``cd`` when confinement is enabled and workdir is set."""
+        if not self._confine_workdir or self._workdir is None:
+            return command
+        # Idempotent prefix: cd back before each command so a `cd` in one
+        # call does not leak workdir state to the next.
+        if self._interactive_argv and is_powershell(self._interactive_argv):
+            return f"Set-Location -LiteralPath {_quote_powershell(self._workdir)}\n{command}"
+        return f"cd -- {_quote_posix(self._workdir)}\n{command}"

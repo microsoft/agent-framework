@@ -99,10 +99,30 @@ public static class WorkflowVisualizer
         }
 
         // Emit normal edges
-        foreach (var (src, target, isConditional) in ComputeNormalEdges(workflow))
+        foreach (var (src, target, isConditional, label) in ComputeNormalEdges(workflow))
         {
-            var edgeAttr = isConditional ? " [style=dashed, label=\"conditional\"]" : "";
-            lines.Add($"{indent}\"{MapId(src)}\" -> \"{MapId(target)}\"{edgeAttr};");
+            // Build edge attributes
+            var attributes = new List<string>();
+
+            // Add style for conditional edges
+            if (isConditional)
+            {
+                attributes.Add("style=dashed");
+            }
+
+            // Add label (custom label or default "conditional" for conditional edges)
+            if (label != null)
+            {
+                attributes.Add($"label=\"{EscapeDotLabel(label)}\"");
+            }
+            else if (isConditional)
+            {
+                attributes.Add("label=\"conditional\"");
+            }
+
+            // Combine attributes
+            var attrString = attributes.Count > 0 ? $" [{string.Join(", ", attributes)}]" : "";
+            lines.Add($"{indent}\"{MapId(src)}\" -> \"{MapId(target)}\"{attrString};");
         }
     }
 
@@ -133,23 +153,52 @@ public static class WorkflowVisualizer
 
     private static void EmitWorkflowMermaid(Workflow workflow, List<string> lines, string indent, string? ns = null)
     {
-        string sanitize(string input)
-        {
-            return input;
-        }
+        // Build a mapping from raw IDs to Mermaid-safe node aliases that preserve
+        // as much of the original ID as possible for readability.
+        // Mermaid node IDs cannot contain spaces, dots, pipes, or most special characters.
+        var aliasMap = new Dictionary<string, string>();
+        var usedAliases = new HashSet<string>(StringComparer.Ordinal);
 
-        string MapId(string id) => ns != null ? $"{sanitize(ns)}/{sanitize(id)}" : id;
+        string GetSafeId(string id)
+        {
+            var key = ns != null ? $"{ns}/{id}" : id;
+            if (!aliasMap.TryGetValue(key, out var alias))
+            {
+                alias = SanitizeMermaidNodeId(key);
+
+                // Handle collisions by appending a numeric suffix
+                if (!usedAliases.Add(alias))
+                {
+                    var i = 2;
+                    while (!usedAliases.Add($"{alias}_{i}"))
+                    {
+                        if (i >= 10_000)
+                        {
+                            throw new InvalidOperationException($"Unable to generate a unique Mermaid node ID for '{key}'.");
+                        }
+
+                        i++;
+                    }
+
+                    alias = $"{alias}_{i}";
+                }
+
+                aliasMap[key] = alias;
+            }
+
+            return alias;
+        }
 
         // Add start node
         var startExecutorId = workflow.StartExecutorId;
-        lines.Add($"{indent}{MapId(startExecutorId)}[\"{startExecutorId} (Start)\"];");
+        lines.Add($"{indent}{GetSafeId(startExecutorId)}[\"{EscapeMermaidLabel(startExecutorId)} (Start)\"];");
 
         // Add other executor nodes
         foreach (var executorId in workflow.ExecutorBindings.Keys)
         {
             if (executorId != startExecutorId)
             {
-                lines.Add($"{indent}{MapId(executorId)}[\"{executorId}\"];");
+                lines.Add($"{indent}{GetSafeId(executorId)}[\"{EscapeMermaidLabel(executorId)}\"];");
             }
         }
 
@@ -160,7 +209,7 @@ public static class WorkflowVisualizer
             lines.Add("");
             foreach (var (nodeId, _, _) in fanInDescriptors)
             {
-                lines.Add($"{indent}{MapId(nodeId)}((fan-in))");
+                lines.Add($"{indent}{GetSafeId(nodeId)}((fan-in))");
             }
         }
 
@@ -169,21 +218,30 @@ public static class WorkflowVisualizer
         {
             foreach (var src in sources)
             {
-                lines.Add($"{indent}{MapId(src)} --> {MapId(nodeId)};");
+                lines.Add($"{indent}{GetSafeId(src)} --> {GetSafeId(nodeId)};");
             }
-            lines.Add($"{indent}{MapId(nodeId)} --> {MapId(target)};");
+            lines.Add($"{indent}{GetSafeId(nodeId)} --> {GetSafeId(target)};");
         }
 
         // Emit normal edges
-        foreach (var (src, target, isConditional) in ComputeNormalEdges(workflow))
+        foreach (var (src, target, isConditional, label) in ComputeNormalEdges(workflow))
         {
             if (isConditional)
             {
-                lines.Add($"{indent}{MapId(src)} -. conditional .--> {MapId(target)};");
+                string effectiveLabel = label != null ? EscapeMermaidLabel(label) : "conditional";
+
+                // Conditional edge, with user label or default
+                lines.Add($"{indent}{GetSafeId(src)} -. {effectiveLabel} .-> {GetSafeId(target)};");
+            }
+            else if (label != null)
+            {
+                // Regular edge with label
+                lines.Add($"{indent}{GetSafeId(src)} -->|{EscapeMermaidLabel(label)}| {GetSafeId(target)};");
             }
             else
             {
-                lines.Add($"{indent}{MapId(src)} --> {MapId(target)};");
+                // Regular edge without label
+                lines.Add($"{indent}{GetSafeId(src)} --> {GetSafeId(target)};");
             }
         }
     }
@@ -214,9 +272,9 @@ public static class WorkflowVisualizer
         return result;
     }
 
-    private static List<(string Source, string Target, bool IsConditional)> ComputeNormalEdges(Workflow workflow)
+    private static List<(string Source, string Target, bool IsConditional, string? Label)> ComputeNormalEdges(Workflow workflow)
     {
-        var edges = new List<(string, string, bool)>();
+        var edges = new List<(string, string, bool, string?)>();
         foreach (var edgeGroup in workflow.Edges.Values.SelectMany(x => x))
         {
             if (edgeGroup.Kind == EdgeKind.FanIn)
@@ -229,14 +287,15 @@ public static class WorkflowVisualizer
                 case EdgeKind.Direct when edgeGroup.DirectEdgeData != null:
                     var directData = edgeGroup.DirectEdgeData;
                     var isConditional = directData.Condition != null;
-                    edges.Add((directData.SourceId, directData.SinkId, isConditional));
+                    var label = directData.Label;
+                    edges.Add((directData.SourceId, directData.SinkId, isConditional, label));
                     break;
 
                 case EdgeKind.FanOut when edgeGroup.FanOutEdgeData != null:
                     var fanOutData = edgeGroup.FanOutEdgeData;
                     foreach (var sinkId in fanOutData.SinkIds)
                     {
-                        edges.Add((fanOutData.SourceId, sinkId, false));
+                        edges.Add((fanOutData.SourceId, sinkId, false, fanOutData.Label));
                     }
                     break;
             }
@@ -274,6 +333,69 @@ public static class WorkflowVisualizer
 
         workflow = null;
         return false;
+    }
+
+    /// <summary>
+    /// Converts a raw node ID into a Mermaid-safe identifier that preserves as much
+    /// of the original text as possible. ASCII letters, digits, and underscores are kept
+    /// as-is (including existing consecutive underscores). All other characters (including
+    /// non-ASCII letters) are replaced with underscores, with consecutive invalid characters
+    /// collapsed into a single underscore. A leading digit gets a prefix.
+    /// </summary>
+    private static string SanitizeMermaidNodeId(string id)
+    {
+        Throw.IfNull(id);
+
+        var sb = new StringBuilder(id.Length);
+        bool lastWasUnderscore = false;
+        foreach (var ch in id)
+        {
+            bool isAsciiSafe = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+            if (isAsciiSafe)
+            {
+                sb.Append(ch);
+                lastWasUnderscore = ch == '_';
+            }
+            else if (!lastWasUnderscore)
+            {
+                sb.Append('_');
+                lastWasUnderscore = true;
+            }
+        }
+
+        // Trim trailing underscore
+        while (sb.Length > 0 && sb[sb.Length - 1] == '_')
+        {
+            sb.Length--;
+        }
+
+        // Mermaid IDs must not start with a digit
+        if (sb.Length > 0 && sb[0] >= '0' && sb[0] <= '9')
+        {
+            sb.Insert(0, "n_");
+        }
+
+        // Guard against empty result (e.g. id was all special chars)
+        return sb.Length == 0 ? "node" : sb.ToString();
+    }
+
+    // Helper method to escape special characters in DOT labels
+    private static string EscapeDotLabel(string label)
+    {
+        return label.Replace("\"", "\\\"").Replace("\n", "\\n");
+    }
+
+    // Helper method to escape special characters in Mermaid labels
+    private static string EscapeMermaidLabel(string label)
+    {
+        return label
+            .Replace("&", "&amp;")      // Must be first to avoid double-escaping
+            .Replace("|", "&#124;")     // Pipe breaks Mermaid delimiter syntax
+            .Replace("\"", "&quot;")    // Quote character
+            .Replace("<", "&lt;")       // Less than
+            .Replace(">", "&gt;")       // Greater than
+            .Replace("\n", "<br/>")     // Newline to HTML break
+            .Replace("\r", "");         // Remove carriage return
     }
 
     #endregion

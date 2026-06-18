@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
@@ -13,6 +14,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -30,6 +32,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         // Arrange
         Mock<IEndpointRouteBuilder> endpointsMock = new();
         Mock<IServiceProvider> serviceProviderMock = new();
+        serviceProviderMock.As<IKeyedServiceProvider>();
 
         endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
         endpointsMock.Setup(e => e.DataSources).Returns([]);
@@ -42,6 +45,155 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         // Assert
         Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void MapAGUI_WithAgentName_ResolvesKeyedAgentFromDI()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        AIAgent agent = new NamedTestAgent();
+
+        serviceProviderMock.As<IKeyedServiceProvider>()
+            .Setup(sp => sp.GetRequiredKeyedService(typeof(AIAgent), "test-agent"))
+            .Returns(agent);
+
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        // Act
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI("test-agent", "/api/agent");
+
+        // Assert
+        Assert.NotNull(result);
+        serviceProviderMock.As<IKeyedServiceProvider>()
+            .Verify(sp => sp.GetRequiredKeyedService(typeof(AIAgent), "test-agent"), Times.Once);
+    }
+
+    [Fact]
+    public void MapAGUI_WithHostedAgentBuilder_ResolvesAgentByBuilderName()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        Mock<IHostedAgentBuilder> agentBuilderMock = new();
+        AIAgent agent = new NamedTestAgent();
+
+        agentBuilderMock.Setup(b => b.Name).Returns("test-agent");
+
+        serviceProviderMock.As<IKeyedServiceProvider>()
+            .Setup(sp => sp.GetRequiredKeyedService(typeof(AIAgent), "test-agent"))
+            .Returns(agent);
+
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        // Act
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(agentBuilderMock.Object, "/api/agent");
+
+        // Assert
+        Assert.NotNull(result);
+        serviceProviderMock.As<IKeyedServiceProvider>()
+            .Verify(sp => sp.GetRequiredKeyedService(typeof(AIAgent), "test-agent"), Times.Once);
+    }
+
+    [Fact]
+    public void MapAGUI_WithAgent_ResolvesSessionStoreFromDI()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        Mock<AgentSessionStore> sessionStoreMock = new();
+        AIAgent agent = new NamedTestAgent();
+
+        serviceProviderMock.As<IKeyedServiceProvider>()
+            .Setup(sp => sp.GetKeyedService(typeof(AgentSessionStore), "test-agent"))
+            .Returns(sessionStoreMock.Object);
+
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        // Act
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI("/api/agent", agent);
+
+        // Assert
+        Assert.NotNull(result);
+        serviceProviderMock.As<IKeyedServiceProvider>()
+            .Verify(sp => sp.GetKeyedService(typeof(AgentSessionStore), "test-agent"), Times.Once);
+    }
+
+    [Fact]
+    public void MapAGUI_WithoutSessionStore_FallsBackToNoopStore()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        AIAgent agent = new TestAgent();
+
+        // No session store registered - IKeyedServiceProvider returns null by default
+        serviceProviderMock.As<IKeyedServiceProvider>();
+
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        // Act - should not throw (falls back to NoopAgentSessionStore)
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI("/api/agent", agent);
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void MapAGUI_WithNullEndpoints_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AIAgent agent = new TestAgent();
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            AGUIEndpointRouteBuilderExtensions.MapAGUI(null!, "/api/agent", agent));
+    }
+
+    [Fact]
+    public void MapAGUI_WithNullAgent_ThrowsArgumentNullException()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        serviceProviderMock.As<IKeyedServiceProvider>();
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            endpointsMock.Object.MapAGUI("/api/agent", (AIAgent)null!));
+    }
+
+    [Fact]
+    public void MapAGUI_WithNullAgentName_ThrowsArgumentNullException()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        serviceProviderMock.As<IKeyedServiceProvider>();
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            endpointsMock.Object.MapAGUI((string)null!, "/api/agent"));
+    }
+
+    [Fact]
+    public void MapAGUI_WithNullAgentBuilder_ThrowsArgumentNullException()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            endpointsMock.Object.MapAGUI((IHostedAgentBuilder)null!, "/api/agent"));
     }
 
     [Fact]
@@ -355,7 +507,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
-    public async Task MapAGUIAgent_ProducesCorrectThreadAndRunIds_InAllEventsAsync()
+    public async Task MapAGUIAgent_ProducesCorrectSessionAndRunIds_InAllEventsAsync()
     {
         // Arrange
         DefaultHttpContext httpContext = new();
@@ -421,30 +573,41 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
     private sealed class MultiResponseAgent : AIAgent
     {
-        public override string Id => "multi-response-agent";
+        protected override string? IdCore => "multi-response-agent";
 
         public override string? Description => "Agent that produces multiple text chunks";
 
-        public override AgentThread GetNewThread() => new TestInMemoryAgentThread();
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+            new(new TestAgentSession());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
-            new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions);
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(serializedState.Deserialize<TestAgentSession>(jsonSerializerOptions)!);
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (session is not TestAgentSession testSession)
+            {
+                throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(TestAgentSession)}' can be serialized by this agent.");
+            }
+
+            return new(JsonSerializer.SerializeToElement(testSession, jsonSerializerOptions));
+        }
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "First"));
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " part"));
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " of response"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "First"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " part"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " of response"));
         }
     }
 
@@ -495,43 +658,93 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         };
     }
 
-    private sealed class TestInMemoryAgentThread : InMemoryAgentThread
+    private sealed class TestAgentSession : AgentSession
     {
-        public TestInMemoryAgentThread()
-            : base()
+        public TestAgentSession()
         {
         }
 
-        public TestInMemoryAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(serializedThreadState, jsonSerializerOptions, null)
+        [JsonConstructor]
+        public TestAgentSession(AgentSessionStateBag stateBag) : base(stateBag)
         {
         }
     }
 
     private sealed class TestAgent : AIAgent
     {
-        public override string Id => "test-agent";
+        protected override string? IdCore => "test-agent";
 
         public override string? Description => "Test agent";
 
-        public override AgentThread GetNewThread() => new TestInMemoryAgentThread();
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+            new(new TestAgentSession());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
-            new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions);
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(serializedState.Deserialize<TestAgentSession>(jsonSerializerOptions)!);
 
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (session is not TestAgentSession testSession)
+            {
+                throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(TestAgentSession)}' can be serialized by this agent.");
+            }
+
+            return new(JsonSerializer.SerializeToElement(testSession, jsonSerializerOptions));
+        }
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
-            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Test response"));
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Test response"));
+        }
+    }
+
+    private sealed class NamedTestAgent : AIAgent
+    {
+        protected override string? IdCore => "test-agent";
+
+        public override string? Name => "test-agent";
+
+        public override string? Description => "Named test agent";
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+            new(new TestAgentSession());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(serializedState.Deserialize<TestAgentSession>(jsonSerializerOptions)!);
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (session is not TestAgentSession testSession)
+            {
+                throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(TestAgentSession)}' can be serialized by this agent.");
+            }
+
+            return new(JsonSerializer.SerializeToElement(testSession, jsonSerializerOptions));
+        }
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
+        }
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Test response"));
         }
     }
 }

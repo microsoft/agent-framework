@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Default": {
+      "commandName": "Project"
+    },
+    "Water Bottle": {
+      "commandName": "Project",
+      "commandLineArgs": "\"An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours.\""
+    }
+  }
+}

@@ -10,14 +10,15 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
+[SendsMessage(typeof(ExternalInputRequest))]
+internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<InvokeAzureAgent>(model, state)
 {
     public static class Steps
@@ -26,9 +27,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         public static string Resume(string id) => $"{id}_{nameof(Resume)}";
     }
 
-    public static bool RequiresInput(object? message) => message is ExternalInputRequest;
+    public static bool RequiresInput(object? message) =>
+        message is ExternalInputRequest || (message is PortableValue pv && pv.IsType(out ExternalInputRequest? _));
 
-    public static bool RequiresNothing(object? message) => message is ActionExecutorResult;
+    public static bool RequiresNothing(object? message) =>
+        message is ActionExecutorResult || (message is PortableValue pv && pv.IsType(out ActionExecutorResult? _));
 
     private AzureAgentUsage AgentUsage => Throw.IfNull(this.Model.Agent, $"{nameof(this.Model)}.{nameof(this.Model.Agent)}");
     private AzureAgentInput? AgentInput => this.Model.Input;
@@ -46,7 +49,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
     public async ValueTask ResumeAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken)
     {
-        await context.SetLastMessageAsync(response.Messages.Last()).ConfigureAwait(false);
+        ChatMessage? lastMessage = response.Messages.LastOrDefault();
+        if (lastMessage is not null)
+        {
+            await context.SetLastMessageAsync(lastMessage).ConfigureAwait(false);
+        }
         await this.InvokeAgentAsync(context, response.Messages, cancellationToken).ConfigureAwait(false);
     }
 
@@ -61,12 +68,12 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         string agentName = this.GetAgentName();
         bool autoSend = this.GetAutoSendValue();
         Dictionary<string, object?>? inputParameters = this.GetStructuredInputs();
-        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
+        AgentResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
 
         ChatMessage[] actionableMessages = FilterActionableContent(agentResponse).ToArray();
         if (actionableMessages.Length > 0)
         {
-            AgentRunResponse filteredResponse =
+            AgentResponse filteredResponse =
                 new(actionableMessages)
                 {
                     AdditionalProperties = agentResponse.AdditionalProperties,
@@ -82,15 +89,19 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
 
         // Attempt to parse the last message as JSON and assign to the response object variable.
-        try
+        string? lastMessageText = agentResponse.Messages.LastOrDefault()?.Text;
+        if (!string.IsNullOrEmpty(lastMessageText))
         {
-            JsonDocument jsonDocument = JsonDocument.Parse(agentResponse.Messages.Last().Text);
-            Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
-            await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Not valid json, skip assignment.
+            try
+            {
+                using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
+                Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
+                await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                // Not valid json, skip assignment.
+            }
         }
 
         if (this.Model.Input?.ExternalLoop?.When is not null)
@@ -137,7 +148,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         return userInput?.ToChatMessages();
     }
 
-    private static IEnumerable<ChatMessage> FilterActionableContent(AgentRunResponse agentResponse)
+    private static IEnumerable<ChatMessage> FilterActionableContent(AgentResponse agentResponse)
     {
         HashSet<string> functionResultIds =
             [.. agentResponse.Messages
@@ -149,7 +160,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         foreach (ChatMessage responseMessage in agentResponse.Messages)
         {
-            if (responseMessage.Contents.Any(content => content is UserInputRequestContent))
+            if (responseMessage.Contents.Any(content => content is ToolApprovalRequestContent))
             {
                 yield return responseMessage;
                 continue;
@@ -181,13 +192,16 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
     private bool GetAutoSendValue()
     {
-        if (this.AgentOutput?.AutoSend is null)
+        // AzureAgentOutput.AutoSend is never null — it returns a literal-false default
+        // when the YAML omits the field. Use AutoSendIsDefaultValue to distinguish an
+        // explicit autoSend value from the implicit default, and treat the implicit
+        // default as autoSend = true (the historical behavior for actions that omit
+        // autoSend or have no output block at all).
+        if (this.AgentOutput is { AutoSendIsDefaultValue: false } output)
         {
-            return true;
+            return this.Evaluator.GetValue(output.AutoSend).Value;
         }
 
-        EvaluationResult<bool> autoSendResult = this.Evaluator.GetValue(this.AgentOutput.AutoSend);
-
-        return autoSendResult.Value;
+        return true;
     }
 }

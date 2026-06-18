@@ -1,0 +1,12 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_vision
+      conversationId: =System.ConversationId
+      agent:
+        name: VisionAgent

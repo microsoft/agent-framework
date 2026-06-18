@@ -60,8 +60,8 @@ public static class WorkflowProvider
                     NEVER 1!
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
     
             return default;
         }
@@ -81,8 +81,8 @@ public static class WorkflowProvider
                     NEVER 2!
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
     
             return default;
         }
@@ -102,8 +102,8 @@ public static class WorkflowProvider
                     NEVER 3!
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
     
             return default;
         }

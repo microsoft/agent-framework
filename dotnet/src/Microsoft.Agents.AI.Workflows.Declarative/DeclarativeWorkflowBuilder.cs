@@ -5,8 +5,8 @@ using System.IO;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Yaml;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Yaml;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -56,6 +56,13 @@ public static class DeclarativeWorkflowBuilder
     /// <param name="options">Configuration options for workflow execution.</param>
     /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
+    /// <remarks>
+    /// The returned workflow's root executor accepts <typeparamref name="TInput"/>,
+    /// <see cref="ChatMessage"/>, <see cref="System.Collections.Generic.IEnumerable{T}"/> of
+    /// <see cref="ChatMessage"/>, <see cref="string"/>, and <see cref="TurnToken"/>. This
+    /// makes the workflow usable both for direct invocation and for hosting via
+    /// <see cref="WorkflowHostingExtensions.AsAIAgent(Workflow, string?, string?, string?, IWorkflowExecutionEnvironment?, bool, bool)"/>.
+    /// </remarks>
     public static Workflow Build<TInput>(
         TextReader yamlReader,
         DeclarativeWorkflowOptions options,
@@ -78,55 +85,6 @@ public static class DeclarativeWorkflowBuilder
         walker.Visit(workflowElement);
 
         return visitor.Complete();
-    }
-
-    /// <summary>
-    /// Generates source code (provider/executor scaffolding) for the workflow defined in the YAML file.
-    /// </summary>
-    /// <param name="workflowFile">The path to the workflow YAML file.</param>
-    /// <param name="workflowLanguage">The language to use for the generated code.</param>
-    /// <param name="workflowNamespace">Optional target namespace for the generated code.</param>
-    /// <param name="workflowPrefix">Optional prefix for generated workflow type.</param>
-    /// <returns>The generated source code representing the workflow.</returns>
-    public static string Eject(
-        string workflowFile,
-        DeclarativeWorkflowLanguage workflowLanguage,
-        string? workflowNamespace = null,
-        string? workflowPrefix = null)
-    {
-        using StreamReader yamlReader = File.OpenText(workflowFile);
-        return Eject(yamlReader, workflowLanguage, workflowNamespace, workflowPrefix);
-    }
-
-    /// <summary>
-    /// Generates source code (provider/executor scaffolding) for the workflow defined in the provided YAML reader.
-    /// </summary>
-    /// <param name="yamlReader">The reader supplying the workflow YAML.</param>
-    /// <param name="workflowLanguage">The language to use for the generated code.</param>
-    /// <param name="workflowNamespace">Optional target namespace for the generated code.</param>
-    /// <param name="workflowPrefix">Optional prefix for generated workflow type.</param>
-    /// <returns>The generated source code representing the workflow.</returns>
-    public static string Eject(
-        TextReader yamlReader,
-        DeclarativeWorkflowLanguage workflowLanguage,
-        string? workflowNamespace = null,
-        string? workflowPrefix = null)
-    {
-        if (workflowLanguage != DeclarativeWorkflowLanguage.CSharp)
-        {
-            throw new NotSupportedException($"Converting workflow to {workflowLanguage} is not currently supported.");
-        }
-
-        AdaptiveDialog workflowElement = ReadWorkflow(yamlReader);
-
-        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement);
-        WorkflowTypeInfo typeInfo = workflowElement.WrapWithBot().Describe();
-
-        WorkflowTemplateVisitor visitor = new(rootId, typeInfo);
-        WorkflowElementWalker walker = new(visitor);
-        walker.Visit(workflowElement);
-
-        return visitor.Complete(workflowNamespace, workflowPrefix);
     }
 
     private static AdaptiveDialog ReadWorkflow(TextReader yamlReader)

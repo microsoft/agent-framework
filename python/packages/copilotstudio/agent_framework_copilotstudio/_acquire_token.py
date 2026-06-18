@@ -6,7 +6,7 @@
 import logging
 from typing import Any
 
-from agent_framework.exceptions import ServiceException
+from agent_framework.exceptions import AgentException
 from msal import PublicClientApplication
 
 logger = logging.getLogger(__name__)
@@ -39,13 +39,13 @@ def acquire_token(
         The access token string.
 
     Raises:
-        ServiceException: If authentication token cannot be acquired.
+        AgentException: If authentication token cannot be acquired.
     """
     if not client_id:
-        raise ServiceException("Client ID is required for token acquisition.")
+        raise ValueError("Client ID is required for token acquisition.")
 
     if not tenant_id:
-        raise ServiceException("Tenant ID is required for token acquisition.")
+        raise ValueError("Tenant ID is required for token acquisition.")
 
     authority = f"https://login.microsoftonline.com/{tenant_id}"
     target_scopes = scopes or DEFAULT_SCOPES
@@ -87,9 +87,9 @@ def acquire_token(
                 )
         except Exception as ex:
             logger.error("Interactive token acquisition failed with exception: %s", ex)
-            raise ServiceException(f"Failed to acquire authentication token: {ex}") from ex
+            raise AgentException(f"Failed to acquire authentication token: {ex}") from ex
 
     if not token:
-        raise ServiceException("Authentication token cannot be acquired.")
+        raise AgentException("Authentication token cannot be acquired.")
 
     return token

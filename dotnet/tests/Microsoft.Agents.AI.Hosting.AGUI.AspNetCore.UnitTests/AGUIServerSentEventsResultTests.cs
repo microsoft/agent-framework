@@ -100,9 +100,6 @@ public sealed class AGUIServerSentEventsResultTests
 
         // Act
         await result.ExecuteAsync(httpContext);
-
-        // Assert
-        Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
     }
 
     [Fact]

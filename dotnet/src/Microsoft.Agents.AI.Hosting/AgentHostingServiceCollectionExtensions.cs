@@ -1,8 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
-using Microsoft.Agents.AI.Hosting.Local;
+using System.Linq;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Shared.Diagnostics;
@@ -20,18 +19,19 @@ public static class AgentHostingServiceCollectionExtensions
     /// <param name="services">The service collection to configure.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="instructions">The instructions for the agent.</param>
+    /// <param name="lifetime">The DI service lifetime for the agent registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
     /// <returns>The same <see cref="IServiceCollection"/> instance so that additional calls can be chained.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
-    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, string? instructions)
+    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, string? instructions, ServiceLifetime lifetime = ServiceLifetime.Singleton)
     {
         Throw.IfNull(services);
         Throw.IfNullOrEmpty(name);
         return services.AddAIAgent(name, (sp, key) =>
         {
             var chatClient = sp.GetRequiredService<IChatClient>();
-            var tools = GetRegisteredToolsForAgent(sp, name);
+            var tools = sp.GetKeyedServices<AITool>(name).ToList();
             return new ChatClientAgent(chatClient, instructions, key, tools: tools);
-        });
+        }, lifetime);
     }
 
     /// <summary>
@@ -41,17 +41,18 @@ public static class AgentHostingServiceCollectionExtensions
     /// <param name="name">The name of the agent.</param>
     /// <param name="instructions">The instructions for the agent.</param>
     /// <param name="chatClient">The chat client which the agent will use for inference.</param>
+    /// <param name="lifetime">The DI service lifetime for the agent registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
     /// <returns>The same <see cref="IServiceCollection"/> instance so that additional calls can be chained.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
-    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, string? instructions, IChatClient chatClient)
+    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, string? instructions, IChatClient chatClient, ServiceLifetime lifetime = ServiceLifetime.Singleton)
     {
         Throw.IfNull(services);
         Throw.IfNullOrEmpty(name);
         return services.AddAIAgent(name, (sp, key) =>
         {
-            var tools = GetRegisteredToolsForAgent(sp, name);
+            var tools = sp.GetKeyedServices<AITool>(name).ToList();
             return new ChatClientAgent(chatClient, instructions, key, tools: tools);
-        });
+        }, lifetime);
     }
 
     /// <summary>
@@ -61,18 +62,19 @@ public static class AgentHostingServiceCollectionExtensions
     /// <param name="name">The name of the agent.</param>
     /// <param name="instructions">The instructions for the agent.</param>
     /// <param name="chatClientServiceKey">The key to use when resolving the chat client from the service provider. If <see langword="null"/>, a non-keyed service will be resolved.</param>
+    /// <param name="lifetime">The DI service lifetime for the agent registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
     /// <returns>The same <see cref="IServiceCollection"/> instance so that additional calls can be chained.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
-    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, string? instructions, object? chatClientServiceKey)
+    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, string? instructions, object? chatClientServiceKey, ServiceLifetime lifetime = ServiceLifetime.Singleton)
     {
         Throw.IfNull(services);
         Throw.IfNullOrEmpty(name);
         return services.AddAIAgent(name, (sp, key) =>
         {
             var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
-            var tools = GetRegisteredToolsForAgent(sp, name);
+            var tools = sp.GetKeyedServices<AITool>(name).ToList();
             return new ChatClientAgent(chatClient, instructions, key, tools: tools);
-        });
+        }, lifetime);
     }
 
     /// <summary>
@@ -83,18 +85,19 @@ public static class AgentHostingServiceCollectionExtensions
     /// <param name="instructions">The instructions for the agent.</param>
     /// <param name="description">A description of the agent.</param>
     /// <param name="chatClientServiceKey">The key to use when resolving the chat client from the service provider. If <see langword="null"/>, a non-keyed service will be resolved.</param>
+    /// <param name="lifetime">The DI service lifetime for the agent registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
     /// <returns>The same <see cref="IServiceCollection"/> instance so that additional calls can be chained.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
-    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, string? instructions, string? description, object? chatClientServiceKey)
+    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, string? instructions, string? description, object? chatClientServiceKey, ServiceLifetime lifetime = ServiceLifetime.Singleton)
     {
         Throw.IfNull(services);
         Throw.IfNullOrEmpty(name);
         return services.AddAIAgent(name, (sp, key) =>
         {
             var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
-            var tools = GetRegisteredToolsForAgent(sp, name);
+            var tools = sp.GetKeyedServices<AITool>(name).ToList();
             return new ChatClientAgent(chatClient, instructions: instructions, name: key, description: description, tools: tools);
-        });
+        }, lifetime);
     }
 
     /// <summary>
@@ -103,15 +106,16 @@ public static class AgentHostingServiceCollectionExtensions
     /// <param name="services">The service collection to configure.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="createAgentDelegate">A factory delegate that creates the AI agent instance. The delegate receives the service provider and agent key as parameters.</param>
+    /// <param name="lifetime">The DI service lifetime for the agent registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
     /// <returns>The same <see cref="IServiceCollection"/> instance so that additional calls can be chained.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/>, <paramref name="name"/>, or <paramref name="createAgentDelegate"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">Thrown when the agent factory delegate returns <see langword="null"/> or an agent whose <see cref="AIAgent.Name"/> does not match <paramref name="name"/>.</exception>
-    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, Func<IServiceProvider, string, AIAgent> createAgentDelegate)
+    public static IHostedAgentBuilder AddAIAgent(this IServiceCollection services, string name, Func<IServiceProvider, string, AIAgent> createAgentDelegate, ServiceLifetime lifetime = ServiceLifetime.Singleton)
     {
         Throw.IfNull(services);
         Throw.IfNull(name);
         Throw.IfNull(createAgentDelegate);
-        services.AddKeyedSingleton(name, (sp, key) =>
+        services.AddKeyedService(name, (sp, key) =>
         {
             Throw.IfNull(key);
             var keyString = key as string;
@@ -123,14 +127,18 @@ public static class AgentHostingServiceCollectionExtensions
             }
 
             return agent;
-        });
+        }, lifetime);
 
-        return new HostedAgentBuilder(name, services);
+        return new HostedAgentBuilder(name, services, lifetime);
     }
 
-    private static IList<AITool> GetRegisteredToolsForAgent(IServiceProvider serviceProvider, string agentName)
+    /// <summary>
+    /// Registers a keyed service with the specified lifetime.
+    /// </summary>
+    internal static void AddKeyedService<T>(this IServiceCollection services, object? serviceKey, Func<IServiceProvider, object?, T> factory, ServiceLifetime lifetime)
+        where T : class
     {
-        var registry = serviceProvider.GetService<LocalAgentToolRegistry>();
-        return registry?.GetTools(agentName) ?? [];
+        var descriptor = new ServiceDescriptor(typeof(T), serviceKey, (sp, key) => factory(sp, key), lifetime);
+        services.Add(descriptor);
     }
 }

@@ -9,7 +9,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
-TModel = TypeVar("TModel", bound="DictConvertible")
+ModelT = TypeVar("ModelT", bound="DictConvertible")
 
 
 class DictConvertible:
@@ -19,7 +19,7 @@ class DictConvertible:
         raise NotImplementedError
 
     @classmethod
-    def from_dict(cls: type[TModel], data: dict[str, Any]) -> TModel:
+    def from_dict(cls: type[ModelT], data: dict[str, Any]) -> ModelT:
         return cls(**data)  # type: ignore[arg-type]
 
     def clone(self, *, deep: bool = True) -> Self:
@@ -31,7 +31,7 @@ class DictConvertible:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_json(cls: type[TModel], raw: str) -> TModel:
+    def from_json(cls: type[ModelT], raw: str) -> ModelT:
         import json
 
         data = json.loads(raw)

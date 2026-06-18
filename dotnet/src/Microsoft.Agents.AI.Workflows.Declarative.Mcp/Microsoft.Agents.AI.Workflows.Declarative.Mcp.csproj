@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsReleased>true</IsReleased>
+    <NoWarn>$(NoWarn);MEAI001;OPENAI001</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+    <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- First Stable release after the RC milestone. Baseline against the latest 
+       published RC so package validation catches accidental breaking changes. 
+       Future releases should bump this to the previous stable version. -->
+  <PropertyGroup>
+    <PackageValidationBaselineVersion>1.8.0-rc1</PackageValidationBaselineVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Declarative Workflows MCP</Title>
+    <Description>Provides Microsoft Agent Framework support for MCP (Model Context Protocol) server integration in declarative workflows.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests" />
+  </ItemGroup>
+</Project>

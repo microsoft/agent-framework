@@ -4,9 +4,9 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
-using Microsoft.Bot.ObjectModel.Yaml;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel.Yaml;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Shared.Diagnostics;
 

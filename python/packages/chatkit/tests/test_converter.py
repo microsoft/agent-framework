@@ -5,7 +5,7 @@
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import ChatMessage, Role, TextContent
+from agent_framework import Message
 from chatkit.types import UserMessageTextContent
 
 from agent_framework_chatkit import ThreadItemConverter, simple_to_agent_input
@@ -43,8 +43,8 @@ class TestThreadItemConverter:
         result = await converter.to_agent_input(input_item)
 
         assert len(result) == 1
-        assert isinstance(result[0], ChatMessage)
-        assert result[0].role == Role.USER
+        assert isinstance(result[0], Message)
+        assert result[0].role == "user"
         assert result[0].text == "Hello, how can you help me?"
 
     async def test_to_agent_input_empty_text(self, converter):
@@ -110,14 +110,14 @@ class TestThreadItemConverter:
         assert result[0].text == "Hello world!"
 
     def test_hidden_context_to_input(self, converter):
-        """Test converting hidden context item to ChatMessage."""
+        """Test converting hidden context item to Message."""
         hidden_item = Mock()
         hidden_item.content = "This is hidden context information"
 
         result = converter.hidden_context_to_input(hidden_item)
 
-        assert isinstance(result, ChatMessage)
-        assert result.role == Role.SYSTEM
+        assert isinstance(result, Message)
+        assert result.role == "system"
         assert result.text == "<HIDDEN_CONTEXT>This is hidden context information</HIDDEN_CONTEXT>"
 
     def test_tag_to_message_content(self, converter):
@@ -133,7 +133,7 @@ class TestThreadItemConverter:
         )
 
         result = converter.tag_to_message_content(tag)
-        assert isinstance(result, TextContent)
+        assert result.type == "text"
         # Since data is a dict, getattr won't work, so it will fall back to text
         assert result.text == "<TAG>Name:john</TAG>"
 
@@ -150,7 +150,7 @@ class TestThreadItemConverter:
         )
 
         result = converter.tag_to_message_content(tag)
-        assert isinstance(result, TextContent)
+        assert result.type == "text"
         assert result.text == "<TAG>Name:jane</TAG>"
 
     async def test_attachment_to_message_content_file_without_fetcher(self, converter):
@@ -169,7 +169,6 @@ class TestThreadItemConverter:
 
     async def test_attachment_to_message_content_image_with_preview_url(self, converter):
         """Test that ImageAttachment with preview_url creates UriContent."""
-        from agent_framework import UriContent
         from chatkit.types import ImageAttachment
 
         attachment = ImageAttachment(
@@ -181,13 +180,12 @@ class TestThreadItemConverter:
         )
 
         result = await converter.attachment_to_message_content(attachment)
-        assert isinstance(result, UriContent)
+        assert result.type == "uri"
         assert result.uri == "https://example.com/photo.jpg"
         assert result.media_type == "image/jpeg"
 
     async def test_attachment_to_message_content_with_data_fetcher(self):
         """Test attachment conversion with data fetcher."""
-        from agent_framework import DataContent
         from chatkit.types import FileAttachment
 
         # Mock data fetcher
@@ -204,14 +202,13 @@ class TestThreadItemConverter:
         )
 
         result = await converter.attachment_to_message_content(attachment)
-        assert isinstance(result, DataContent)
+        assert result.type == "data"
         assert result.media_type == "application/pdf"
 
     async def test_to_agent_input_with_image_attachment(self):
         """Test converting user message with text and image attachment."""
         from datetime import datetime
 
-        from agent_framework import UriContent
         from chatkit.types import ImageAttachment, UserMessageItem
 
         attachment = ImageAttachment(
@@ -237,15 +234,15 @@ class TestThreadItemConverter:
 
         assert len(result) == 1
         message = result[0]
-        assert message.role == Role.USER
+        assert message.role == "user"
         assert len(message.contents) == 2
 
         # First content should be text
-        assert isinstance(message.contents[0], TextContent)
+        assert message.contents[0].type == "text"
         assert message.contents[0].text == "Check out this photo!"
 
         # Second content should be UriContent for the image
-        assert isinstance(message.contents[1], UriContent)
+        assert message.contents[1].type == "uri"
         assert message.contents[1].uri == "https://example.com/photo.jpg"
         assert message.contents[1].media_type == "image/jpeg"
 
@@ -253,7 +250,6 @@ class TestThreadItemConverter:
         """Test converting user message with file attachment using data fetcher."""
         from datetime import datetime
 
-        from agent_framework import DataContent
         from chatkit.types import FileAttachment, UserMessageItem
 
         attachment = FileAttachment(
@@ -285,14 +281,14 @@ class TestThreadItemConverter:
         assert len(message.contents) == 2
 
         # First content should be text
-        assert isinstance(message.contents[0], TextContent)
+        assert message.contents[0].type == "text"
 
         # Second content should be DataContent for the file
-        assert isinstance(message.contents[1], DataContent)
+        assert message.contents[1].type == "data"
         assert message.contents[1].media_type == "application/pdf"
 
     def test_task_to_input(self, converter):
-        """Test converting TaskItem to ChatMessage."""
+        """Test converting TaskItem to Message."""
         from datetime import datetime
 
         from chatkit.types import CustomTask, TaskItem
@@ -306,8 +302,8 @@ class TestThreadItemConverter:
         )
 
         result = converter.task_to_input(task_item)
-        assert isinstance(result, ChatMessage)
-        assert result.role == Role.USER
+        assert isinstance(result, Message)
+        assert result.role == "user"
         assert "Analysis: Analyzed the data" in result.text
         assert "<Task>" in result.text
 
@@ -351,7 +347,7 @@ class TestThreadItemConverter:
         result = converter.workflow_to_input(workflow_item)
         assert isinstance(result, list)
         assert len(result) == 2
-        assert all(isinstance(msg, ChatMessage) for msg in result)
+        assert all(isinstance(msg, Message) for msg in result)
         assert "Step 1: First step" in result[0].text
         assert "Step 2: Second step" in result[1].text
 
@@ -373,7 +369,7 @@ class TestThreadItemConverter:
         assert result is None
 
     def test_widget_to_input(self, converter):
-        """Test converting WidgetItem to ChatMessage."""
+        """Test converting WidgetItem to Message."""
         from datetime import datetime
 
         from chatkit.types import WidgetItem
@@ -388,8 +384,8 @@ class TestThreadItemConverter:
         )
 
         result = converter.widget_to_input(widget_item)
-        assert isinstance(result, ChatMessage)
-        assert result.role == Role.USER
+        assert isinstance(result, Message)
+        assert result.role == "user"
         assert "widget_1" in result.text
         assert "graphical UI widget" in result.text
 
@@ -421,6 +417,6 @@ class TestSimpleToAgentInput:
         result = await simple_to_agent_input(input_item)
 
         assert len(result) == 1
-        assert isinstance(result[0], ChatMessage)
-        assert result[0].role == Role.USER
+        assert isinstance(result[0], Message)
+        assert result[0].role == "user"
         assert result[0].text == "Test message"

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -14,7 +15,6 @@ namespace OpenAIChatCompletion.IntegrationTests;
 
 public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 {
-    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
     private readonly bool _useReasoningModel;
 
     private ChatClientAgent _agent = null!;
@@ -28,11 +28,16 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
 
-        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
+        if (chatHistoryProvider is null)
+        {
+            return [];
+        }
+
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(
@@ -40,8 +45,8 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        var chatClient = new OpenAIClient(s_config.ApiKey)
-            .GetChatClient(this._useReasoningModel ? s_config.ChatReasoningModelId : s_config.ChatModelId)
+        var chatClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey))
+            .GetChatClient(this._useReasoningModel ? TestConfiguration.GetRequiredValue(TestSettings.OpenAIReasoningModelName) : TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName))
             .AsIChatClient();
 
         return Task.FromResult(new ChatClientAgent(chatClient, options: new()
@@ -55,13 +60,16 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
         // Chat Completion does not require/support deleting agents, so this is a no-op.
         Task.CompletedTask;
 
-    public Task DeleteThreadAsync(AgentThread thread) =>
+    public Task DeleteSessionAsync(AgentSession session) =>
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 
-    public async Task InitializeAsync() =>
+    public async ValueTask InitializeAsync() =>
         this._agent = await this.CreateChatClientAgentAsync();
 
-    public Task DisposeAsync() =>
-        Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

@@ -14,10 +14,10 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 /// <param name="id">The executor id</param>
 /// <param name="session">Session to support formula expressions.</param>
 /// <param name="agentProvider">Provider for accessing and manipulating agents and conversations.</param>
-public abstract class AgentExecutor(string id, FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id, session)
+public abstract class AgentExecutor(string id, FormulaSession session, ResponseAgentProvider agentProvider) : ActionExecutor(id, session)
 {
     /// <summary>
-    /// Invokes an agent using the provided <see cref="WorkflowAgentProvider"/>.
+    /// Invokes an agent using the provided <see cref="ResponseAgentProvider"/>.
     /// </summary>
     /// <param name="context">The workflow execution context providing messaging and state services.</param>
     /// <param name="agentName">The name or identifier of the agent.</param>
@@ -26,7 +26,7 @@ public abstract class AgentExecutor(string id, FormulaSession session, WorkflowA
     /// <param name="inputMessages">Optional messages to add to the conversation prior to invocation.</param>
     /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
     /// <returns></returns>
-    protected ValueTask<AgentRunResponse> InvokeAgentAsync(
+    protected ValueTask<AgentResponse> InvokeAgentAsync(
         IWorkflowContext context,
         string agentName,
         string? conversationId,

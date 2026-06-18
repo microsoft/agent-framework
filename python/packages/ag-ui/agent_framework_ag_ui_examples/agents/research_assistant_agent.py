@@ -3,12 +3,13 @@
 """Example agent demonstrating agentic generative UI with custom events during execution."""
 
 import asyncio
+from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import Agent, SupportsChatGetResponse, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 
-@ai_function
+@tool
 async def research_topic(topic: str) -> str:
     """Research a topic and generate a comprehensive report.
 
@@ -34,7 +35,7 @@ async def research_topic(topic: str) -> str:
     return f"Research report on '{topic}':\n" + "\n".join(results)
 
 
-@ai_function
+@tool
 async def create_presentation(title: str, num_slides: int) -> str:
     """Create a presentation with multiple slides.
 
@@ -54,7 +55,7 @@ async def create_presentation(title: str, num_slides: int) -> str:
     return f"Created presentation '{title}' with {num_slides} slides:\n" + "\n".join(slides)
 
 
-@ai_function
+@tool
 async def analyze_data(dataset: str) -> str:
     """Analyze a dataset and produce insights.
 
@@ -87,19 +88,19 @@ _RESEARCH_ASSISTANT_INSTRUCTIONS = (
 )
 
 
-def research_assistant_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
-    """Create a research assistant agent with progress events.
+def research_assistant_agent(client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
+    """Create a research assistant agent.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance with research capabilities
     """
-    agent = ChatAgent(
+    agent = Agent(
         name="research_assistant",
         instructions=_RESEARCH_ASSISTANT_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
         tools=[research_topic, create_presentation, analyze_data],
     )
 

@@ -25,7 +25,7 @@ public class DurableAgentContext
         IServiceProvider services)
     {
         this.EntityContext = entityContext;
-        this.CurrentThread = new DurableAgentThread(entityContext.Id);
+        this.CurrentSession = new DurableAgentSession(entityContext.Id);
         this.Client = client;
         this._services = services;
         this._cancellationToken = lifetime.ApplicationStopping;
@@ -51,7 +51,7 @@ public class DurableAgentContext
     /// <summary>
     /// Gets the current agent thread.
     /// </summary>
-    public DurableAgentThread CurrentThread { get; }
+    public DurableAgentSession CurrentSession { get; }
 
     /// <summary>
     /// Sets the current durable agent context instance.

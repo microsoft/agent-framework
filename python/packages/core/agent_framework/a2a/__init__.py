@@ -1,11 +1,22 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""A2A integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-a2a``
+
+Supported classes:
+- A2AAgent
+- A2AAgentSession
+- A2AExecutor
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_a2a"
 PACKAGE_NAME = "agent-framework-a2a"
-_IMPORTS = ["__version__", "A2AAgent"]
+_IMPORTS = ["A2AAgent", "A2AAgentSession", "A2AExecutor"]
 
 
 def __getattr__(name: str) -> Any:

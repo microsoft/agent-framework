@@ -1,0 +1,25 @@
+.chat-header-container {
+    top: 0;
+    padding: 1.5rem;
+}
+
+.chat-header-controls {
+    margin-bottom: 1.5rem;
+}
+
+h1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.new-chat-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    color: rgb(55, 65, 81);
+}
+
+@media (min-width: 768px) {
+    .chat-header-container {
+        position: sticky;
+    }
+}

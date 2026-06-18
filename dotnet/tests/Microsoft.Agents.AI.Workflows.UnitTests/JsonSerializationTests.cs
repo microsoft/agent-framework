@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -118,7 +119,7 @@ public class JsonSerializationTests
         RunJsonRoundtrip(TestFanOutEdgeInfo_Assigner, predicate: TestFanOutEdgeInfo_Assigner.CreateValidator());
     }
 
-    private static FanInEdgeData TestFanInEdgeData => new(["SourceExecutor1", "SourceExecutor2"], "TargetExecutor", TakeEdgeId());
+    private static FanInEdgeData TestFanInEdgeData => new(["SourceExecutor1", "SourceExecutor2"], "TargetExecutor", TakeEdgeId(), null);
     private static FanInEdgeInfo TestFanInEdgeInfo => new(TestFanInEdgeData);
 
     [Fact]
@@ -186,8 +187,12 @@ public class JsonSerializationTests
         actual.InputType.Should().Match(prototype.InputType.CreateValidator());
         actual.StartExecutorId.Should().Be(prototype.StartExecutorId);
 
-        actual.OutputExecutorIds.Should().HaveCount(prototype.OutputExecutorIds.Count)
-                            .And.AllSatisfy(id => prototype.OutputExecutorIds.Contains(id));
+        actual.OutputExecutorIds.Should().HaveCount(prototype.OutputExecutorIds.Count);
+        foreach (KeyValuePair<string, HashSet<OutputTag>> kvp in prototype.OutputExecutorIds)
+        {
+            actual.OutputExecutorIds.Should().ContainKey(kvp.Key);
+            actual.OutputExecutorIds[kvp.Key].Should().BeEquivalentTo(kvp.Value);
+        }
 
         void ValidateExecutorDictionary(Dictionary<string, ExecutorInfo> expected,
                                         Dictionary<string, List<EdgeInfo>> expectedEdges,
@@ -671,5 +676,247 @@ public class JsonSerializationTests
         Checkpoint? retrievedCheckpoint = await result.LookupCheckpointAsync(runId, checkpointInfo);
 
         ValidateCheckpoint(retrievedCheckpoint, prototype);
+    }
+
+    [Fact]
+    public void Test_SessionState_JsonRoundtrip_WithPendingRequests()
+    {
+        // Arrange
+        Dictionary<string, ExternalRequest> pendingRequests = new()
+        {
+            ["call-1"] = TestExternalRequest,
+            ["call-2"] = ExternalRequest.Create(TestPort, "Request2", "OtherData"),
+        };
+
+        WorkflowSession.SessionState prototype = new(
+            sessionId: "test-session-123",
+            lastCheckpoint: TestParentCheckpointInfo,
+            pendingRequests: pendingRequests);
+
+        // Act
+        WorkflowSession.SessionState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.SessionId.Should().Be(prototype.SessionId);
+        result.LastCheckpoint.Should().Be(prototype.LastCheckpoint);
+        result.StateBag.Should().NotBeNull();
+        result.PendingRequests.Should().NotBeNull()
+            .And.HaveCount(pendingRequests.Count);
+
+        foreach (string key in pendingRequests.Keys)
+        {
+            result.PendingRequests.Should().ContainKey(key);
+            ValidateExternalRequest(result.PendingRequests![key], pendingRequests[key]);
+        }
+    }
+
+    [Fact]
+    public void Test_SessionState_JsonRoundtrip_WithoutPendingRequests()
+    {
+        // Arrange
+        WorkflowSession.SessionState prototype = new(
+            sessionId: "test-session-456",
+            lastCheckpoint: null);
+
+        // Act
+        WorkflowSession.SessionState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.SessionId.Should().Be(prototype.SessionId);
+        result.LastCheckpoint.Should().BeNull();
+        result.PendingRequests.Should().BeNull();
+    }
+
+    [Fact]
+    public void Test_HandoffSharedState_JsonRoundtrip_Empty()
+    {
+        // Arrange
+        HandoffSharedState prototype = new();
+
+        // Act
+        HandoffSharedState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.PreviousAgentId.Should().Be(prototype.PreviousAgentId);
+        result.Conversation.CloneHistory().Should().BeEquivalentTo(prototype.Conversation.CloneHistory());
+    }
+
+    [Fact]
+    public void Test_HandoffSharedState_JsonRoundtrip_WithConversation()
+    {
+        // Arrange
+        HandoffSharedState prototype = new();
+        prototype.Conversation.AddMessage(TestUserMessage);
+        prototype.Conversation.AddMessage(new(ChatRole.Assistant, "Hi"));
+        prototype.PreviousAgentId = "agent-123";
+
+        // Act
+        HandoffSharedState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.PreviousAgentId.Should().Be(prototype.PreviousAgentId);
+        result.Conversation.CloneHistory().Should().BeEquivalentTo(prototype.Conversation.CloneHistory());
+    }
+
+    [Fact]
+    public void Test_HandoffAgentHostState_JsonRoundtrip_TakingTurn()
+    {
+        // Arrange
+        HandoffState handoffState = new(new TurnToken(emitEvents: true),
+                                        nameof(HandoffState.RequestedHandoffTargetAgentId),
+                                        nameof(handoffState.PreviousAgentId));
+
+        HandoffAgentHostState prototype = new(handoffState, 42);
+
+        // Act
+        HandoffAgentHostState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.IncomingState.Should().BeEquivalentTo(prototype.IncomingState);
+        result.ConversationBookmark.Should().Be(prototype.ConversationBookmark);
+        result.IsTakingTurn.Should().Be(prototype.IsTakingTurn);
+    }
+
+    [Fact]
+    public void Test_HandoffAgentHostState_JsonRoundtrip_NotTakingTurn()
+    {
+        // Arrange
+        HandoffAgentHostState prototype = new(null, 42);
+
+        // Act
+        HandoffAgentHostState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.IncomingState.Should().BeEquivalentTo(prototype.IncomingState);
+        result.ConversationBookmark.Should().Be(prototype.ConversationBookmark);
+        result.IsTakingTurn.Should().Be(prototype.IsTakingTurn);
+    }
+
+    [Fact]
+    public void Test_GroupChatManagerState_JsonRoundtrip()
+    {
+        // Arrange
+        GroupChatManagerState prototype = new(IterationCount: 7);
+
+        // Act
+        GroupChatManagerState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.Should().Be(prototype);
+        result.IterationCount.Should().Be(prototype.IterationCount);
+    }
+
+    [Fact]
+    public void Test_RoundRobinGroupChatManagerState_JsonRoundtrip()
+    {
+        // Arrange
+        RoundRobinGroupChatManagerState prototype = new(NextIndex: 3);
+
+        // Act
+        RoundRobinGroupChatManagerState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.Should().Be(prototype);
+        result.NextIndex.Should().Be(prototype.NextIndex);
+    }
+
+    /// <summary>
+    /// Verifies that the default behavior (without AllowOutOfOrderMetadataProperties) fails
+    /// when $type metadata is not the first property, demonstrating the PostgreSQL jsonb issue.
+    /// See: https://github.com/microsoft/agent-framework/issues/2962
+    /// </summary>
+    [Fact]
+    public void Test_OutOfOrderMetadataProperties_WithoutOption_Fails()
+    {
+        // Arrange
+        JsonMarshaller marshaller = new();
+        EdgeInfo edgeInfo = TestEdgeInfo_DirectNoCondition;
+
+        // Serialize to JSON
+        JsonElement serialized = marshaller.Marshal(edgeInfo);
+        string json = serialized.GetRawText();
+
+        // Simulate PostgreSQL jsonb behavior: reorder properties so $type is not first
+        string reorderedJson = ReorderJsonPropertiesToMoveTypeDiscriminatorLast(json);
+
+        // Act & Assert - Without the option, deserialization should fail
+        JsonElement reorderedElement = JsonDocument.Parse(reorderedJson).RootElement;
+        Action act = () => marshaller.Marshal<EdgeInfo>(reorderedElement);
+
+        act.Should().Throw<JsonException>();
+    }
+
+    /// <summary>
+    /// Simulates PostgreSQL jsonb behavior where property order is not preserved,
+    /// causing $type metadata to not be the first property.
+    /// This test verifies that deserialization works when AllowOutOfOrderMetadataProperties is enabled.
+    /// See: https://github.com/microsoft/agent-framework/issues/2962
+    /// </summary>
+    [Fact]
+    public void Test_OutOfOrderMetadataProperties_WithOptionEnabled_Succeeds()
+    {
+        // Arrange
+        EdgeInfo edgeInfo = TestEdgeInfo_DirectNoCondition;
+
+        // Serialize to JSON using standard marshaller
+        JsonMarshaller marshaller = new();
+        JsonElement serialized = marshaller.Marshal(edgeInfo);
+        string json = serialized.GetRawText();
+
+        // Simulate PostgreSQL jsonb behavior: reorder properties so $type is not first
+        string reorderedJson = ReorderJsonPropertiesToMoveTypeDiscriminatorLast(json);
+        JsonElement reorderedElement = JsonDocument.Parse(reorderedJson).RootElement;
+
+        // Act - Deserialize with AllowOutOfOrderMetadataProperties enabled via JsonSerializerOptions
+        JsonSerializerOptions options = new() { AllowOutOfOrderMetadataProperties = true };
+        JsonMarshaller marshallerWithOption = new(options);
+        EdgeInfo deserialized = marshallerWithOption.Marshal<EdgeInfo>(reorderedElement);
+
+        // Assert
+        deserialized.Should().Match(edgeInfo.CreatePolyValidator());
+    }
+
+    private static string ReorderJsonPropertiesToMoveTypeDiscriminatorLast(string json)
+    {
+        // Parse JSON, extract $type, rebuild with $type at end
+        using JsonDocument doc = JsonDocument.Parse(json);
+        JsonElement root = doc.RootElement;
+
+        Dictionary<string, JsonElement> properties = [];
+        JsonElement? typeValue = null;
+
+        foreach (JsonProperty prop in root.EnumerateObject())
+        {
+            if (prop.Name == "$type")
+            {
+                typeValue = prop.Value.Clone();
+            }
+            else
+            {
+                properties[prop.Name] = prop.Value.Clone();
+            }
+        }
+
+        // Rebuild JSON with $type last
+        using System.IO.MemoryStream ms = new();
+        using (Utf8JsonWriter writer = new(ms))
+        {
+            writer.WriteStartObject();
+            foreach (KeyValuePair<string, JsonElement> kvp in properties)
+            {
+                writer.WritePropertyName(kvp.Key);
+                kvp.Value.WriteTo(writer);
+            }
+
+            if (typeValue.HasValue)
+            {
+                writer.WritePropertyName("$type");
+                typeValue.Value.WriteTo(writer);
+            }
+
+            writer.WriteEndObject();
+        }
+
+        return System.Text.Encoding.UTF8.GetString(ms.ToArray());
     }
 }

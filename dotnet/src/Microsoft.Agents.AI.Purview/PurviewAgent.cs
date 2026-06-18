@@ -30,28 +30,34 @@ internal class PurviewAgent : AIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return this._innerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
+        return this._innerAgent.SerializeSessionAsync(session, jsonSerializerOptions, cancellationToken);
     }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread()
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return this._innerAgent.GetNewThread();
+        return this._innerAgent.DeserializeSessionAsync(serializedState, jsonSerializerOptions, cancellationToken);
     }
 
     /// <inheritdoc/>
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
     {
-        return this._purviewWrapper.ProcessAgentContentAsync(messages, thread, options, this._innerAgent, cancellationToken);
+        return this._innerAgent.CreateSessionAsync(cancellationToken);
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var response = await this._purviewWrapper.ProcessAgentContentAsync(messages, thread, options, this._innerAgent, cancellationToken).ConfigureAwait(false);
-        foreach (var update in response.ToAgentRunResponseUpdates())
+        return this._purviewWrapper.ProcessAgentContentAsync(messages, session, options, this._innerAgent, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var response = await this._purviewWrapper.ProcessAgentContentAsync(messages, session, options, this._innerAgent, cancellationToken).ConfigureAwait(false);
+        foreach (var update in response.ToAgentResponseUpdates())
         {
             yield return update;
         }

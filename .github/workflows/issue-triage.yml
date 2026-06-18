@@ -1,0 +1,197 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened, typed]
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: >-
+    issue-triage-${{ github.repository }}-${{
+      github.event.issue.type.name == 'Bug' && github.event.issue.number
+      || github.run_id
+    }}
+  cancel-in-progress: true
+
+env:
+  DEVFLOW_REPOSITORY: ${{ vars.DF_REPO }}
+  DEVFLOW_REF: main
+  TARGET_REPO_PATH: ${{ github.workspace }}/target-repo
+  DEVFLOW_PATH: ${{ github.workspace }}/devflow
+
+jobs:
+  team_check:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.issue.type.name == 'Bug' }}
+    outputs:
+      is_team_member: ${{ steps.check.outputs.is_team_member }}
+      issue_number: ${{ steps.issue.outputs.issue_number }}
+      repo: ${{ steps.issue.outputs.repo }}
+    steps:
+      - name: Resolve issue metadata
+        id: issue
+        shell: bash
+        env:
+          ISSUE_NUMBER_EVENT: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          issue_number="${ISSUE_NUMBER_EVENT}"
+
+          if [[ ! "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Could not determine issue number from event payload." >&2
+            exit 1
+          fi
+
+          echo "issue_number=${issue_number}" >> "$GITHUB_OUTPUT"
+          echo "repo=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check issue author team membership
+        id: check
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
+        with:
+          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          script: |
+            const checkTeamMembership = require('./.github/scripts/check_team_membership.js');
+            const { author, isTeamMember } = await checkTeamMembership({
+              github,
+              context,
+              core,
+              teamSlug: process.env.TEAM_NAME,
+              issueNumber: process.env.ISSUE_NUMBER,
+            });
+            core.setOutput('is_team_member', isTeamMember ? 'true' : 'false');
+            if (isTeamMember) {
+              core.info(`Author ${author} is a team member; skipping auto-triage.`);
+            } else {
+              core.info(`Author ${author} is not a team member; proceeding with triage.`);
+            }
+
+  triage:
+    runs-on: ubuntu-latest
+    needs: team_check
+    if: ${{ needs.team_check.outputs.is_team_member == 'false' }}
+    environment: integration
+    timeout-minutes: 60
+
+    steps:
+      # Safe checkout: base repo only.
+      - name: Checkout target repo base
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: target-repo
+
+      # Private DevFlow (maf-dashboard) checkout.
+      - name: Checkout DevFlow
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: ${{ env.DEVFLOW_REPOSITORY }}
+          ref: ${{ env.DEVFLOW_REF }}
+          token: ${{ secrets.DEVFLOW_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: devflow
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.x"
+          enable-cache: true
+
+      - name: Install DevFlow dependencies
+        working-directory: ${{ env.DEVFLOW_PATH }}
+        run: uv sync --frozen
+
+      - name: Azure CLI Login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Classify issue relevance
+        id: spam
+        working-directory: ${{ env.DEVFLOW_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}
+          SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
+          AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
+          ISSUE_REPO: ${{ needs.team_check.outputs.repo }}
+          ISSUE_NUMBER: ${{ needs.team_check.outputs.issue_number }}
+        run: |
+          uv run python scripts/classify_issue_spam.py \
+            --repo "$ISSUE_REPO" \
+            --issue-number "$ISSUE_NUMBER" \
+            --repo-path "${TARGET_REPO_PATH}" \
+            --apply-labels
+
+      - name: Stop after spam gate
+        if: ${{ steps.spam.outputs.allow_triage != 'true' }}
+        shell: bash
+        run: |
+          echo "Stopping: issue triage preflight did not allow automation."
+          exit 1
+
+      - name: Reproduce reported issue
+        if: ${{ steps.spam.outputs.allow_triage == 'true' }}
+        id: repro
+        working-directory: ${{ env.DEVFLOW_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_COPILOT_TOKEN: ${{ secrets.GH_COPILOT_TOKEN }}
+          # Not seen by the agent prompt; used only to push a paper-trail
+          # branch back to maf-dashboard at run end.
+          DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}
+          SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
+          AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
+          ISSUE_REPO: ${{ needs.team_check.outputs.repo }}
+          ISSUE_NUMBER: ${{ needs.team_check.outputs.issue_number }}
+          # Model-provider settings for generated repro code. Never enter the
+          # agent prompt; consumed by SDK constructors via os.environ. Azure
+          # OpenAI and Foundry auth via AAD from the azure/login step above.
+          OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+          OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+          OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+          OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+          OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
+          AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+          AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+          AZURE_OPENAI_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+          AZURE_OPENAI_EMBEDDING_MODEL: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+          FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME }}
+          FOUNDRY_AGENT_VERSION: ${{ vars.FOUNDRY_AGENT_VERSION }}
+          FOUNDRY_MODELS_ENDPOINT: ${{ vars.FOUNDRY_MODELS_ENDPOINT || '' }}
+          FOUNDRY_MODELS_API_KEY: ${{ secrets.FOUNDRY_MODELS_API_KEY || '' }}
+          FOUNDRY_EMBEDDING_MODEL: ${{ vars.FOUNDRY_EMBEDDING_MODEL || '' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
+        run: |
+          uv run python scripts/trigger_issue_repro.py \
+            --repo "$ISSUE_REPO" \
+            --issue-number "$ISSUE_NUMBER" \
+            --github-username "$GITHUB_ACTOR"
