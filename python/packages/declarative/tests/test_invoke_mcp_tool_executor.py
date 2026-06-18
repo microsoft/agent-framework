@@ -65,7 +65,7 @@ class StubMcpHandler:
 
 
 def _ok(outputs: list[Content] | None = None) -> MCPToolResult:
-    return MCPToolResult(outputs=outputs or [Content.from_text("hello")])
+    return MCPToolResult(outputs=outputs if outputs is not None else [Content.from_text("hello")])
 
 
 def _err(message: str = "boom") -> MCPToolResult:
@@ -287,6 +287,15 @@ class TestOutput:
         await workflow.run({})
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == ["ok"]
+
+    @pytest.mark.asyncio
+    async def test_empty_successful_outputs_assigns_empty_result(self) -> None:
+        handler = StubMcpHandler(_ok([]))
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
+        await workflow.run({})
+        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        assert decl["Local"]["Result"] == []
 
 
 # ---------- Conversation append --------------------------------------------
@@ -587,6 +596,15 @@ class TestAutoSend:
         events = await workflow.run({})
         outputs = events.get_outputs()
         assert outputs == []
+
+    @pytest.mark.asyncio
+    async def test_empty_successful_outputs_auto_send_yields_empty_string(self) -> None:
+        handler = StubMcpHandler(_ok([]))
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+        events = await workflow.run({})
+        outputs = events.get_outputs()
+        assert outputs == [""]
 
 
 # ---------- Protocol structure --------------------------------------------

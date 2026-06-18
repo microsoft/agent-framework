@@ -486,7 +486,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             return
 
         parsed_results = _parse_outputs(result.outputs)
-        if output_result_path is not None and parsed_results:
+        if output_result_path is not None:
             state.set(output_result_path, parsed_results)
 
         # Single Tool-role message (matches .NET line 178 contract). Differs
@@ -496,7 +496,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         if output_messages_path is not None:
             state.set(output_messages_path, tool_message)
 
-        if auto_send and parsed_results:
+        if auto_send:
             await ctx.yield_output(_format_outputs_for_send(parsed_results))
 
         if conversation_id:
