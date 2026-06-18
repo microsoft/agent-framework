@@ -1,4 +1,4 @@
-# Samples Structure & Design Choices — .NET
+﻿# Samples Structure & Design Choices — .NET
 
 > This file documents the structure and conventions of the .NET samples so that
 > agents (AI or human) can maintain them without rediscovering decisions.
@@ -17,18 +17,24 @@ dotnet/samples/
 ├── 02-agents/                         # Deep-dive concept samples
 │   ├── Agents/                        # Core agent patterns (tools, structured output,
 │   │                                  #   conversations, middleware, plugins, MCP, etc.)
-│   ├── AgentProviders/                # One project per provider (Azure OpenAI, OpenAI,
-│   │                                  #   Anthropic, Gemini, Ollama, ONNX, Foundry, etc.)
+│   ├── AgentProviders/                # Provider-grouped samples
+│   │   ├── a2a/                       # A2A provider sample
+│   │   ├── anthropic/                 # Anthropic provider samples
+│   │   ├── azure/                     # Azure/OpenAI/Foundry model provider samples
+│   │   ├── custom/                    # Custom agent implementation sample
+│   │   ├── foundry/                   # Microsoft Foundry agent samples
+│   │   ├── github-copilot/            # GitHub Copilot provider sample
+│   │   ├── google-gemini/             # Google Gemini provider sample
+│   │   ├── ollama/                    # Ollama provider sample
+│   │   ├── onnx/                      # ONNX Runtime provider sample
+│   │   └── openai/                    # OpenAI provider samples
 │   ├── AgentOpenTelemetry/            # OpenTelemetry integration
 │   ├── AgentSkills/                   # Agent skills patterns
-│   ├── AgentWithAnthropic/            # Anthropic-specific samples
 │   ├── AgentWithMemory/               # Memory providers (chat history, Mem0, Foundry)
-│   ├── AgentWithOpenAI/               # OpenAI-specific samples
 │   ├── AgentWithRAG/                  # RAG patterns (text, vector store, Foundry)
 │   ├── AGUI/                          # AG-UI protocol samples
 │   ├── DeclarativeAgents/             # Declarative agent definitions
 │   ├── DevUI/                         # DevUI samples
-│   ├── AgentsWithFoundry/             # Microsoft Foundry samples (FoundryAgent + AsAIAgent extensions)
 │   └── ModelContextProtocol/          # MCP server/client patterns
 ├── 03-workflows/                      # Workflow patterns
 │   ├── _StartHere/                    # Introductory workflow samples
@@ -128,3 +134,5 @@ dotnet run
 - Prefer `client.GetChatClient(deployment).AsAIAgent(...)` extension method pattern
 - Azure Functions hosting uses `ConfigureDurableAgents(options => options.AddAIAgent(agent))`
 - Workflows use `WorkflowBuilder` with `Executor<TIn, TOut>` and edge connections
+
+

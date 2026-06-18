@@ -34,9 +34,9 @@ using Microsoft.Extensions.AI;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
 string skillNames = Environment.GetEnvironmentVariable("SKILL_NAMES")
     ?? throw new InvalidOperationException("SKILL_NAMES is not set. Provide a comma-separated list of skill names (e.g., support-style,escalation-policy).");
 
@@ -56,6 +56,9 @@ foreach (string name in requestedSkills)
     }
 }
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
 TokenCredential credential = new ChainedTokenCredential(
@@ -165,9 +168,11 @@ static void SafeExtractZip(ZipArchive archive, string destinationDir)
 
     foreach (ZipArchiveEntry entry in archive.Entries)
     {
+        // Resolve the entry against the destination, then require the result to stay within the
+        // destination subtree. A single StartsWith containment check is the only gate to extraction,
+        // so any entry that escapes (for example via '..') is rejected.
         string entryPath = Path.GetFullPath(Path.Combine(destRoot, entry.FullName));
-        if (!entryPath.StartsWith(destRootWithSep, comparison)
-            && !string.Equals(entryPath, destRoot, comparison))
+        if (!entryPath.StartsWith(destRootWithSep, comparison))
         {
             throw new InvalidOperationException(
                 $"Refusing to extract unsafe path '{entry.FullName}' outside of '{destRoot}'.");

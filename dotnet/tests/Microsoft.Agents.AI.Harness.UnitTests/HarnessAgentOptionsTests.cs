@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Threading.Tasks;
 using Moq;
 #if NET
 using Microsoft.Agents.AI.Tools.Shell;
@@ -26,6 +27,8 @@ public class HarnessAgentOptionsTests
         Assert.Null(options.HarnessInstructions);
         Assert.Null(options.ChatHistoryProvider);
         Assert.Null(options.AIContextProviders);
+        Assert.Null(options.LoopEvaluators);
+        Assert.Null(options.LoopAgentOptions);
         Assert.False(options.DisableToolApproval);
         Assert.False(options.DisableNonApprovalRequiredFunctionBypassing);
         Assert.False(options.DisableFileMemory);
@@ -64,6 +67,8 @@ public class HarnessAgentOptionsTests
         var skillsSource = new Mock<AgentSkillsSource>().Object;
         var backgroundAgents = new AIAgent[] { new Mock<AIAgent>().Object };
         var backgroundAgentsOptions = new BackgroundAgentsProviderOptions();
+        var loopEvaluators = new LoopEvaluator[] { new DelegateLoopEvaluator((_, _) => new ValueTask<LoopEvaluation>(LoopEvaluation.Stop())) };
+        var loopAgentOptions = new LoopAgentOptions();
 #if NET
         var shellExecutor = new Mock<ShellExecutor>().Object;
         var shellEnvOptions = new ShellEnvironmentProviderOptions();
@@ -96,6 +101,8 @@ public class HarnessAgentOptionsTests
             OpenTelemetrySourceName = "custom-source",
             BackgroundAgents = backgroundAgents,
             BackgroundAgentsProviderOptions = backgroundAgentsOptions,
+            LoopEvaluators = loopEvaluators,
+            LoopAgentOptions = loopAgentOptions,
 #if NET
             ShellExecutor = shellExecutor,
             ShellEnvironmentProviderOptions = shellEnvOptions,
@@ -129,6 +136,8 @@ public class HarnessAgentOptionsTests
         Assert.Equal("custom-source", options.OpenTelemetrySourceName);
         Assert.Same(backgroundAgents, options.BackgroundAgents);
         Assert.Same(backgroundAgentsOptions, options.BackgroundAgentsProviderOptions);
+        Assert.Same(loopEvaluators, options.LoopEvaluators);
+        Assert.Same(loopAgentOptions, options.LoopAgentOptions);
 #if NET
         Assert.Same(shellExecutor, options.ShellExecutor);
         Assert.Same(shellEnvOptions, options.ShellEnvironmentProviderOptions);

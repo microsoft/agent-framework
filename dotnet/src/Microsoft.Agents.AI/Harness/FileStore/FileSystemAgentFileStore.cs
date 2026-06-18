@@ -142,6 +142,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         string directory,
         string regexPattern,
         string? filePattern = null,
+        bool recursive = false,
         CancellationToken cancellationToken = default)
     {
         string fullDir = this.ResolveSafeDirectoryPath(directory);
@@ -156,22 +157,13 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         Matcher? matcher = filePattern is not null ? StorePaths.CreateGlobMatcher(filePattern) : null;
         var results = new List<FileSearchResult>();
 
-        foreach (string filePath in Directory.GetFiles(fullDir))
+        foreach (string filePath in EnumerateFiles(fullDir, recursive))
         {
-            // Skip files that are symlinks/reparse points to prevent reading outside the root.
-            if ((File.GetAttributes(filePath) & FileAttributes.ReparsePoint) != 0)
-            {
-                continue;
-            }
+            // The file path relative to the search directory, using forward slashes.
+            string relativeName = GetRelativeStorePath(fullDir, filePath);
 
-            string? fileName = Path.GetFileName(filePath);
-            if (fileName is null)
-            {
-                continue;
-            }
-
-            // Apply the optional glob filter on the file name.
-            if (!StorePaths.MatchesGlob(fileName, matcher))
+            // Apply the optional glob filter on the relative path.
+            if (!StorePaths.MatchesGlob(relativeName, matcher))
             {
                 continue;
             }
@@ -218,7 +210,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
             {
                 results.Add(new FileSearchResult
                 {
-                    FileName = fileName,
+                    FileName = relativeName,
                     Snippet = firstSnippet!,
                     MatchingLines = matchingLines,
                 });
@@ -226,6 +218,76 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         }
 
         return results;
+    }
+
+    /// <inheritdoc />
+    public override Task<IReadOnlyList<string>> ListDirectoriesAsync(string directory, CancellationToken cancellationToken = default)
+    {
+        string fullDir = this.ResolveSafeDirectoryPath(directory);
+
+        if (!Directory.Exists(fullDir))
+        {
+            return Task.FromResult<IReadOnlyList<string>>([]);
+        }
+
+        var directories = Directory.GetDirectories(fullDir)
+            .Where(d => (File.GetAttributes(d) & FileAttributes.ReparsePoint) == 0)
+            .Select(Path.GetFileName)
+            .Where(name => name is not null)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<string>>(directories!);
+    }
+
+    /// <summary>
+    /// Enumerates the files directly under <paramref name="directory"/> (or all descendant files when
+    /// <paramref name="recursive"/> is <see langword="true"/>), skipping symlinks/reparse points for both
+    /// files and directories to prevent reading outside the root.
+    /// </summary>
+    private static IEnumerable<string> EnumerateFiles(string directory, bool recursive)
+    {
+        foreach (string filePath in Directory.EnumerateFiles(directory))
+        {
+            // Skip files that are symlinks/reparse points.
+            if ((File.GetAttributes(filePath) & FileAttributes.ReparsePoint) != 0)
+            {
+                continue;
+            }
+
+            yield return filePath;
+        }
+
+        if (!recursive)
+        {
+            yield break;
+        }
+
+        foreach (string subDir in Directory.EnumerateDirectories(directory))
+        {
+            // Skip symlinked/reparse-point directories so recursion cannot escape the root.
+            if ((File.GetAttributes(subDir) & FileAttributes.ReparsePoint) != 0)
+            {
+                continue;
+            }
+
+            foreach (string filePath in EnumerateFiles(subDir, recursive: true))
+            {
+                yield return filePath;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns the path of <paramref name="filePath"/> relative to <paramref name="baseDirectory"/>,
+    /// normalized to forward-slash separators. Assumes <paramref name="filePath"/> resides under
+    /// <paramref name="baseDirectory"/> (as produced by <see cref="EnumerateFiles"/>).
+    /// </summary>
+    private static string GetRelativeStorePath(string baseDirectory, string filePath)
+    {
+        string baseTrimmed = baseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string relative = filePath.Substring(baseTrimmed.Length)
+            .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return relative.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
     }
 
     /// <inheritdoc />

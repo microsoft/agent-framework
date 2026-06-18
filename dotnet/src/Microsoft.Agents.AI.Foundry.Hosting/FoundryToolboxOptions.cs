@@ -16,14 +16,15 @@ public sealed class FoundryToolboxOptions
     /// Gets the list of toolbox names to connect to at startup.
     /// Each name corresponds to a toolbox registered in the Foundry project.
     /// The platform proxy URL is constructed as:
-    /// <c>{FOUNDRY_AGENT_TOOLSET_ENDPOINT}/{toolboxName}/mcp?api-version={ApiVersion}</c>
+    /// <c>{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{toolboxName}/mcp?api-version={ApiVersion}</c>
+    /// per <c>tools-integration-spec.md</c> §2–§3.
     /// </summary>
     public IList<string> ToolboxNames { get; } = [];
 
     /// <summary>
-    /// Gets or sets the Toolsets API version to use when constructing proxy URLs.
+    /// Gets or sets the Toolboxes API version to use when constructing proxy URLs.
     /// </summary>
-    public string ApiVersion { get; set; } = "2025-05-01-preview";
+    public string ApiVersion { get; set; } = "v1";
 
     /// <summary>
     /// Gets or sets a value indicating whether per-request toolbox markers (referenced via
@@ -36,7 +37,9 @@ public sealed class FoundryToolboxOptions
     public bool StrictMode { get; set; } = true;
 
     /// <summary>
-    /// For testing only: overrides <c>FOUNDRY_AGENT_TOOLSET_ENDPOINT</c>.
+    /// For testing only: overrides the toolbox proxy base URL (skipping the
+    /// <c>FOUNDRY_PROJECT_ENDPOINT</c>-derived default). When set, the proxy URL
+    /// becomes <c>{EndpointOverride}/toolboxes/{toolboxName}/mcp?api-version={ApiVersion}</c>.
     /// Not part of the public API.
     /// </summary>
     internal string? EndpointOverride { get; set; }

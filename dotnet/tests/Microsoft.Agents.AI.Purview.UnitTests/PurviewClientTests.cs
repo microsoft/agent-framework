@@ -116,6 +116,24 @@ public sealed class PurviewClientTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessContentAsync_WithProcessInline_IncludesPreferHeaderAsync()
+    {
+        // Arrange
+        var request = CreateValidProcessContentRequest();
+        request.ProcessInline = true;
+        var expectedResponse = new ProcessContentResponse { Id = "test-id" };
+
+        this._handler.StatusCodeToReturn = HttpStatusCode.OK;
+        this._handler.ResponseToReturn = JsonSerializer.Serialize(expectedResponse, PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProcessContentResponse)));
+
+        // Act
+        await this._client.ProcessContentAsync(request, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("evaluateInline", this._handler.PreferHeader);
+    }
+
+    [Fact]
     public async Task ProcessContentAsync_WithRateLimitError_ThrowsPurviewRateLimitExceptionAsync()
     {
         // Arrange
@@ -530,6 +548,7 @@ public sealed class PurviewClientTests : IDisposable
         public HttpMethod? RequestMethod { get; private set; }
         public string? AuthorizationHeader { get; private set; }
         public string? IfNoneMatchHeader { get; private set; }
+        public string? PreferHeader { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -545,6 +564,11 @@ public sealed class PurviewClientTests : IDisposable
             if (request.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues))
             {
                 this.IfNoneMatchHeader = string.Join(", ", ifNoneMatchValues);
+            }
+
+            if (request.Headers.TryGetValues("Prefer", out var preferValues))
+            {
+                this.PreferHeader = string.Join(", ", preferValues);
             }
 
             // Throw HttpRequestException if configured

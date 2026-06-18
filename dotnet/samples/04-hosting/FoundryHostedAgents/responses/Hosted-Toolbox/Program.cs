@@ -1,21 +1,29 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// Foundry Toolbox Agent - A hosted agent that uses Foundry Toolset MCP tools.
+// Foundry Toolbox Agent - A hosted agent that uses Foundry Toolbox MCP tools.
 //
-// Demonstrates how to register one or more Foundry toolsets so the agent can
+// Demonstrates how to register one or more Foundry toolboxes so the agent can
 // call tools provided by the Foundry platform's managed MCP proxy.
 //
 // Required environment variables:
-//   AZURE_AI_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME    - Model deployment name (default: gpt-4o)
-//   FOUNDRY_AGENT_TOOLSET_ENDPOINT    - Foundry Toolsets proxy base URL
-//                                       (injected automatically by Foundry platform at runtime)
+//   FOUNDRY_PROJECT_ENDPOINT (hosted runtime) OR AZURE_AI_PROJECT_ENDPOINT (local-dev)
+//                                     - Azure AI Foundry project endpoint. The Foundry hosted
+//                                       runtime auto-injects FOUNDRY_PROJECT_ENDPOINT; locally
+//                                       set AZURE_AI_PROJECT_ENDPOINT.
+//   FOUNDRY_MODEL                     - Model deployment name (default: gpt-4o)
 //
 // Optional:
-//   FOUNDRY_TOOLBOX_NAME              - Name of the toolset to load (default: my-toolset)
-//   FOUNDRY_AGENT_NAME                - Client name reported to MCP server
-//   FOUNDRY_AGENT_VERSION             - Client version reported to MCP server
-//   FOUNDRY_AGENT_TOOLSET_FEATURES    - Feature flags sent to Foundry proxy via header
+//   FOUNDRY_TOOLBOX_NAME              - Name of the toolbox to load (default: my-toolset)
+//   FOUNDRY_AGENT_TOOLSET_ENDPOINT    - Foundry Toolsets proxy base URL
+//                                       (injected automatically by Foundry platform at runtime)
+//   FOUNDRY_AGENT_NAME                - Client name reported to MCP server (auto-injected in hosted runtime)
+//   FOUNDRY_AGENT_VERSION             - Client version reported to MCP server (auto-injected in hosted runtime)
+//   FOUNDRY_AGENT_TOOLSET_FEATURES    - Additional Foundry-Features header flags (the mandatory
+//                                       Toolboxes=V1Preview flag is always sent; this env var
+//                                       appends additional flags if present).
+//
+// The Foundry.Hosting package builds the toolbox proxy URL from FOUNDRY_PROJECT_ENDPOINT
+// per tools-integration-spec.md §2–§3.
 
 using Azure.AI.Projects;
 using Azure.Core;
@@ -28,11 +36,19 @@ using Microsoft.Agents.AI.Foundry.Hosting;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
-string toolboxName = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_NAME") ?? "my-toolset";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException(
+        "Neither FOUNDRY_PROJECT_ENDPOINT (platform-injected in hosted runtime) " +
+        "nor AZURE_AI_PROJECT_ENDPOINT (local-dev convention) is set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL")
+    ?? Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+string toolboxName = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_NAME")
+    ?? Environment.GetEnvironmentVariable("TOOLBOX_NAME") ?? "my-toolset";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
 TokenCredential credential = new ChainedTokenCredential(
@@ -45,12 +61,12 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
     .AsAIAgent(
         model: deploymentName,
         instructions: """
-            You are a helpful assistant with access to tools provided by the Foundry Toolset.
+            You are a helpful assistant with access to tools provided by the Foundry Toolbox.
             Use the available tools to answer user questions.
             If a tool is not available for a request, let the user know clearly.
             """,
         name: Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-toolbox-agent",
-        description: "Hosted agent backed by Foundry Toolset MCP tools");
+        description: "Hosted agent backed by Foundry Toolbox MCP tools");
 
 // ── Build the host ────────────────────────────────────────────────────────────
 
@@ -61,8 +77,8 @@ builder.Services.AddFoundryResponses(agent);
 builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 // Register Foundry Toolbox: connects to the MCP proxy at startup and makes tools available.
-// The toolset name must match a toolset registered in your Foundry project.
-// When FOUNDRY_AGENT_TOOLSET_ENDPOINT is absent (e.g., in local development without Foundry
+// The toolbox name must match a toolbox registered in your Foundry project.
+// When FOUNDRY_PROJECT_ENDPOINT is absent (e.g., in local development without Foundry
 // infrastructure), startup succeeds without error and no toolbox tools are loaded.
 builder.Services.AddFoundryToolboxes(toolboxName);
 

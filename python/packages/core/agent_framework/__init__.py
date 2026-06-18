@@ -27,6 +27,7 @@ from ._clients import (
     SupportsGetEmbeddings,
     SupportsImageGenerationTool,
     SupportsMCPTool,
+    SupportsShellTool,
     SupportsWebSearchTool,
 )
 from ._compaction import (
@@ -101,6 +102,12 @@ from ._harness._file_access import (
     FileSystemAgentFileStore,
     InMemoryAgentFileStore,
 )
+from ._harness._loop import (
+    AgentLoopMiddleware,
+    JudgeVerdict,
+    background_tasks_running,
+    todos_remaining,
+)
 from ._harness._memory import (
     DEFAULT_MEMORY_SOURCE_ID,
     MemoryContextProvider,
@@ -124,7 +131,16 @@ from ._harness._todo import (
     TodoSessionStore,
     TodoStore,
 )
-from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool
+from ._harness._tool_approval import (
+    DEFAULT_TOOL_APPROVAL_SOURCE_ID,
+    ToolApprovalMiddleware,
+    ToolApprovalRule,
+    ToolApprovalRuleCallback,
+    ToolApprovalState,
+    create_always_approve_tool_response,
+    create_always_approve_tool_with_arguments_response,
+)
+from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool, SamplingApprovalCallback
 from ._middleware import (
     AgentContext,
     AgentMiddleware,
@@ -330,6 +346,7 @@ __all__ = [
     "DEFAULT_MEMORY_SOURCE_ID",
     "DEFAULT_MODE_SOURCE_ID",
     "DEFAULT_TODO_SOURCE_ID",
+    "DEFAULT_TOOL_APPROVAL_SOURCE_ID",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
     "GROUP_ANNOTATION_KEY",
@@ -352,6 +369,7 @@ __all__ = [
     "AgentExecutorResponse",
     "AgentFileStore",
     "AgentFrameworkException",
+    "AgentLoopMiddleware",
     "AgentMiddleware",
     "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
@@ -443,6 +461,7 @@ __all__ = [
     "InlineSkill",
     "InlineSkillResource",
     "InlineSkillScript",
+    "JudgeVerdict",
     "LocalEvaluator",
     "MCPSkill",
     "MCPSkillResource",
@@ -472,6 +491,7 @@ __all__ = [
     "RunContext",
     "Runner",
     "RunnerContext",
+    "SamplingApprovalCallback",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
     "SessionContext",
@@ -495,6 +515,7 @@ __all__ = [
     "SupportsGetEmbeddings",
     "SupportsImageGenerationTool",
     "SupportsMCPTool",
+    "SupportsShellTool",
     "SupportsWebSearchTool",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
@@ -508,6 +529,10 @@ __all__ = [
     "TodoStore",
     "TokenBudgetComposedStrategy",
     "TokenizerProtocol",
+    "ToolApprovalMiddleware",
+    "ToolApprovalRule",
+    "ToolApprovalRuleCallback",
+    "ToolApprovalState",
     "ToolMode",
     "ToolResultCompactionStrategy",
     "ToolTypes",
@@ -541,7 +566,10 @@ __all__ = [
     "agent_middleware",
     "annotate_message_groups",
     "apply_compaction",
+    "background_tasks_running",
     "chat_middleware",
+    "create_always_approve_tool_response",
+    "create_always_approve_tool_with_arguments_response",
     "create_edge_runner",
     "create_harness_agent",
     "detect_media_type_from_base64",
@@ -569,6 +597,7 @@ __all__ = [
     "response_handler",
     "set_agent_mode",
     "step",
+    "todos_remaining",
     "tool",
     "tool_call_args_match",
     "tool_called_check",

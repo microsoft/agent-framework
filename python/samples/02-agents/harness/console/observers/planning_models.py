@@ -42,7 +42,16 @@ class PlanningQuestion(BaseModel):
         default=None,
         description=(
             "For clarifications, this has a list of options that the user can "
-            "choose from. null for approvals."
+            "choose from. null for approvals.\n\n"
+            "Note: for clarifications, the user will always also be presented with "
+            "a free form input option, so make sure that each choice provided here "
+            "is a valid input for the next turn.\n"
+            'E.g. if the question is "Which stock are you referring to?" then valid '
+            'choices might be ["AAPL", "MSFT", "GOOG"], and the user could also type '
+            "their own answer.\n"
+            'Invalid choices would be ["Enter tickers directly", "Paste tickers"], '
+            "since these conflict with the already existing freeform option, and "
+            "don't directly provide valid inputs for the next turn."
         ),
     )
 

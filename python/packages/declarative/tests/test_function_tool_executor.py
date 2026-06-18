@@ -35,14 +35,12 @@ pytestmark = pytest.mark.skipif(
 from agent_framework_declarative._workflows import (  # noqa: E402
     DECLARATIVE_STATE_KEY,
     FUNCTION_TOOL_REGISTRY_KEY,
-    TOOL_APPROVAL_STATE_KEY,
     ActionComplete,
     ActionTrigger,
     DeclarativeWorkflowBuilder,
     InvokeFunctionToolExecutor,
     ToolApprovalRequest,
     ToolApprovalResponse,
-    ToolApprovalState,
     ToolInvocationResult,
     WorkflowFactory,
 )
@@ -392,21 +390,6 @@ class TestToolApprovalTypes:
         response = ToolApprovalResponse(approved=False, reason="Not authorized")
         assert response.approved is False
         assert response.reason == "Not authorized"
-
-    def test_approval_state(self):
-        """Test creating approval state for yield/resume."""
-        state = ToolApprovalState(
-            function_name="delete_user",
-            arguments={"user_id": "123"},
-            output_messages_var="Local.messages",
-            output_result_var="Local.result",
-            auto_send=True,
-        )
-        assert state.function_name == "delete_user"
-        assert state.arguments == {"user_id": "123"}
-        assert state.output_messages_var == "Local.messages"
-        assert state.output_result_var == "Local.result"
-        assert state.auto_send is True
 
 
 class TestInvokeFunctionToolEdgeCases:
@@ -1075,13 +1058,6 @@ class TestApprovalFlow:
         # Should NOT have sent ActionComplete (workflow yields)
         mock_context.send_message.assert_not_called()
 
-        # Approval state should be saved in state
-        approval_key = f"{TOOL_APPROVAL_STATE_KEY}_approval_test"
-        saved_state = mock_state._data[approval_key]
-        assert isinstance(saved_state, ToolApprovalState)
-        assert saved_state.function_name == "my_tool"
-        assert saved_state.arguments == {"x": 5}
-
     @pytest.mark.asyncio
     async def test_approval_response_approved(self, mock_state, mock_context):
         """When approval response is approved, the tool should be invoked."""
@@ -1104,17 +1080,7 @@ class TestApprovalFlow:
 
         executor = InvokeFunctionToolExecutor(action_def, tools={"my_tool": my_tool})
 
-        # Pre-populate approval state (simulating what handle_action stores)
-        approval_key = f"{TOOL_APPROVAL_STATE_KEY}_approval_approved"
-        mock_state._data[approval_key] = ToolApprovalState(
-            function_name="my_tool",
-            arguments={"x": 7},
-            output_messages_var=None,
-            output_result_var="Local.result",
-            auto_send=True,
-        )
-
-        # Simulate the response
+        # Simulate the response — invocation params come from original_request
         original_request = ToolApprovalRequest(
             request_id="req-123",
             function_name="my_tool",
@@ -1124,16 +1090,13 @@ class TestApprovalFlow:
 
         await executor.handle_approval_response(original_request, response, mock_context)
 
-        # Tool should have been called
+        # Tool should have been called with the approved arguments
         assert call_log == [7]
 
         # ActionComplete should have been sent
         mock_context.send_message.assert_called_once()
         sent = mock_context.send_message.call_args[0][0]
         assert isinstance(sent, ActionComplete)
-
-        # Approval state should be cleaned up
-        assert approval_key not in mock_state._data
 
     @pytest.mark.asyncio
     async def test_approval_response_rejected(self, mock_state, mock_context):
@@ -1153,16 +1116,6 @@ class TestApprovalFlow:
         }
 
         executor = InvokeFunctionToolExecutor(action_def, tools={"my_tool": my_tool})
-
-        # Pre-populate approval state
-        approval_key = f"{TOOL_APPROVAL_STATE_KEY}_approval_rejected"
-        mock_state._data[approval_key] = ToolApprovalState(
-            function_name="my_tool",
-            arguments={"x": 5},
-            output_messages_var=None,
-            output_result_var="Local.result",
-            auto_send=True,
-        )
 
         original_request = ToolApprovalRequest(
             request_id="req-456",
@@ -1184,36 +1137,6 @@ class TestApprovalFlow:
         assert result["rejected"] is True
         assert result["reason"] == "Not authorized"
         assert result["approved"] is False
-
-    @pytest.mark.asyncio
-    async def test_approval_response_missing_state(self, mock_state, mock_context):
-        """When approval state is missing on resume, should log error and complete."""
-        self._init_state(mock_state)
-
-        action_def = {
-            "kind": "InvokeFunctionTool",
-            "id": "missing_state_test",
-            "functionName": "my_tool",
-            "requireApproval": True,
-            "output": {"result": "Local.result"},
-        }
-
-        executor = InvokeFunctionToolExecutor(action_def, tools={})
-
-        # Don't populate approval state - simulate missing state
-        original_request = ToolApprovalRequest(
-            request_id="req-789",
-            function_name="my_tool",
-            arguments={},
-        )
-        response = ToolApprovalResponse(approved=True)
-
-        await executor.handle_approval_response(original_request, response, mock_context)
-
-        # Should still send ActionComplete
-        mock_context.send_message.assert_called_once()
-        sent = mock_context.send_message.call_args[0][0]
-        assert isinstance(sent, ActionComplete)
 
 
 # ============================================================================

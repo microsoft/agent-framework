@@ -30,6 +30,7 @@ from agent_framework._mcp import (
     MCPTool,
     _build_prefixed_mcp_name,
     _get_input_model_from_mcp_prompt,
+    _normalize_additional_tool_argument_names,
     _normalize_mcp_name,
     _should_propagate_cancelled_error,
     logger,
@@ -339,6 +340,69 @@ def test_parse_tool_result_from_mcp_resource_link_text_resource_and_unknown():
     assert result[0].uri == "https://example.com/resource"
     assert result[1].type == "text"
     assert result[1].text == "Embedded result"
+
+
+def test_parse_tool_result_from_mcp_structured_content_only():
+    """Test that structuredContent is parsed when content list is empty."""
+    mcp_result = types.CallToolResult(
+        content=[],
+        structuredContent={"Tables": [{"Name": "Sales", "Columns": ["Amount", "Date"]}]},
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    parsed = json.loads(result[0].text)
+    assert parsed == {"Tables": [{"Name": "Sales", "Columns": ["Amount", "Date"]}]}
+
+
+def test_parse_tool_result_from_mcp_structured_content_with_text():
+    """Test that structuredContent is appended alongside regular content items."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Summary")],
+        structuredContent={"data": [1, 2, 3]},
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].type == "text"
+    assert result[0].text == "Summary"
+    assert result[1].type == "text"
+    parsed = json.loads(result[1].text)
+    assert parsed == {"data": [1, 2, 3]}
+
+
+def test_parse_tool_result_from_mcp_structured_content_none():
+    """Test that None structuredContent does not affect results."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Hello")],
+        structuredContent=None,
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "Hello"
+
+
+def test_parse_tool_result_from_mcp_structured_content_non_serializable():
+    """Test that non-JSON-serializable values in structuredContent degrade gracefully."""
+    mcp_result = types.CallToolResult(
+        content=[],
+        structuredContent={"data": b"raw bytes", "count": 42},
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    parsed = json.loads(result[0].text)
+    assert parsed["count"] == 42
+    # bytes should be converted to string representation via default=str
+    assert "raw bytes" in parsed["data"]
 
 
 def test_mcp_content_types_to_ai_content_text():
@@ -1466,6 +1530,7 @@ def test_mcp_tool_approval_mode_returns_none_for_unmatched_names() -> None:
             3,
             ["tool_one", "tool_two", "tool_three"],
         ),  # None means all tools are allowed
+        ([], 0, []),  # Empty list means no tools are allowed
         (["tool_one"], 1, ["tool_one"]),  # Only tool_one is allowed
         (
             ["tool_one", "tool_three"],
@@ -1812,6 +1877,18 @@ async def test_mcp_tool_message_handler_cancel_and_replace():
     assert len(tool._pending_reload_tasks) == 0
 
 
+def _approve(_params: object) -> bool:
+    """Approving sampling gate used by tests that exercise forwarding behavior."""
+    return True
+
+
+def _make_sampling_response(text: str = "response", model: str = "test-model") -> Mock:
+    mock_response = Mock()
+    mock_response.messages = [Message(role="assistant", contents=[Content.from_text(text)])]
+    mock_response.model = model
+    return mock_response
+
+
 async def test_mcp_tool_sampling_callback_no_client():
     """Test sampling callback error path when no chat client is available."""
     tool = MCPStdioTool(name="test_tool", command="python")
@@ -1827,9 +1904,190 @@ async def test_mcp_tool_sampling_callback_no_client():
     assert "No chat client available" in result.message
 
 
+async def test_mcp_tool_sampling_callback_denies_by_default():
+    """Sampling is denied when no approval callback is configured (safe default)."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+    mock_chat_client = AsyncMock()
+    tool.client = mock_chat_client
+
+    params = Mock()
+    params.messages = []
+    params.maxTokens = 128
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+    assert result.code == types.INVALID_REQUEST
+    assert "denied" in result.message
+    assert "sampling_approval_callback" in result.message
+    mock_chat_client.get_response.assert_not_called()
+
+
+async def test_mcp_tool_sampling_callback_denied_by_callback():
+    """Sampling is denied when the approval callback returns a falsy value."""
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=lambda params: False)
+    mock_chat_client = AsyncMock()
+    tool.client = mock_chat_client
+
+    params = Mock()
+    params.messages = []
+    params.maxTokens = 128
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+    assert result.code == types.INVALID_REQUEST
+    assert "denied by the 'sampling_approval_callback'" in result.message
+    mock_chat_client.get_response.assert_not_called()
+
+
+async def test_mcp_tool_sampling_callback_callback_exception_denies():
+    """An approval callback that raises results in denial, not an LLM call."""
+
+    def boom(_params: object) -> bool:
+        raise RuntimeError("approval error")
+
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=boom)
+    mock_chat_client = AsyncMock()
+    tool.client = mock_chat_client
+
+    params = Mock()
+    params.messages = []
+    params.maxTokens = 128
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+    assert result.code == types.INVALID_REQUEST
+    mock_chat_client.get_response.assert_not_called()
+
+
+async def test_mcp_tool_sampling_callback_async_approval():
+    """An async approval callback that approves allows the request through."""
+
+    async def approve(_params: object) -> bool:
+        return True
+
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=approve)
+    mock_chat_client = AsyncMock()
+    mock_chat_client.get_response.return_value = _make_sampling_response("ok")
+    tool.client = mock_chat_client
+
+    params = Mock()
+    params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
+    params.temperature = None
+    params.maxTokens = 100
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    assert result.content.text == "ok"
+    mock_chat_client.get_response.assert_awaited_once()
+
+
+async def test_mcp_tool_sampling_callback_clamps_max_tokens():
+    """An approved request's maxTokens is clamped to sampling_max_tokens."""
+    tool = MCPStdioTool(
+        name="test_tool",
+        command="python",
+        sampling_approval_callback=_approve,
+        sampling_max_tokens=512,
+    )
+    mock_chat_client = AsyncMock()
+    mock_chat_client.get_response.return_value = _make_sampling_response()
+    tool.client = mock_chat_client
+
+    params = Mock()
+    params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
+    params.temperature = None
+    params.maxTokens = 1_000_000
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    options = mock_chat_client.get_response.call_args.kwargs.get("options") or {}
+    assert options["max_tokens"] == 512
+
+
+async def test_mcp_tool_sampling_callback_does_not_clamp_under_cap():
+    """A request below the cap keeps its requested maxTokens."""
+    tool = MCPStdioTool(
+        name="test_tool",
+        command="python",
+        sampling_approval_callback=_approve,
+        sampling_max_tokens=512,
+    )
+    mock_chat_client = AsyncMock()
+    mock_chat_client.get_response.return_value = _make_sampling_response()
+    tool.client = mock_chat_client
+
+    params = Mock()
+    params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
+    params.temperature = None
+    params.maxTokens = 100
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    options = mock_chat_client.get_response.call_args.kwargs.get("options") or {}
+    assert options["max_tokens"] == 100
+
+
+async def test_mcp_tool_sampling_callback_rate_limited():
+    """Sampling requests beyond sampling_max_requests are rejected per session."""
+    tool = MCPStdioTool(
+        name="test_tool",
+        command="python",
+        sampling_approval_callback=_approve,
+        sampling_max_requests=2,
+    )
+    mock_chat_client = AsyncMock()
+    mock_chat_client.get_response.return_value = _make_sampling_response()
+    tool.client = mock_chat_client
+
+    def make_params() -> Mock:
+        params = Mock()
+        params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
+        params.temperature = None
+        params.maxTokens = 100
+        params.stopSequences = None
+        params.systemPrompt = None
+        params.tools = None
+        params.toolChoice = None
+        return params
+
+    first = await tool.sampling_callback(Mock(), make_params())
+    second = await tool.sampling_callback(Mock(), make_params())
+    third = await tool.sampling_callback(Mock(), make_params())
+
+    assert isinstance(first, types.CreateMessageResult)
+    assert isinstance(second, types.CreateMessageResult)
+    assert isinstance(third, types.ErrorData)
+    assert third.code == types.INVALID_REQUEST
+    assert "rate limit" in third.message.lower()
+    assert mock_chat_client.get_response.await_count == 2
+
+    # The counter resets on a session reset.
+    tool._reset_session_state()
+    fourth = await tool.sampling_callback(Mock(), make_params())
+    assert isinstance(fourth, types.CreateMessageResult)
+
+
 async def test_mcp_tool_sampling_callback_chat_client_exception():
     """Test sampling callback when chat client raises exception."""
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     # Mock chat client that raises exception
     mock_chat_client = AsyncMock()
@@ -1845,7 +2103,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = None
+    params.maxTokens = 100
     params.stopSequences = None
     params.systemPrompt = None
     params.tools = None
@@ -1862,7 +2120,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     """Test sampling callback when response has no valid content types."""
     from agent_framework import Message
 
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     # Mock chat client with response containing only invalid content types
     mock_chat_client = AsyncMock()
@@ -1891,7 +2149,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = None
+    params.maxTokens = 100
     params.stopSequences = None
     params.systemPrompt = None
     params.tools = None
@@ -1904,18 +2162,18 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     assert "Failed to get right content types from the response." in result.message
     mock_chat_client.get_response.assert_awaited_once()
     _, kwargs = mock_chat_client.get_response.await_args
-    assert kwargs["options"] == {"max_tokens": None}
+    assert kwargs["options"] == {"max_tokens": 100}
 
 
 async def test_mcp_tool_sampling_callback_no_response_and_successful_message_creation():
     """Test sampling callback when the chat client returns no response and then valid content."""
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
     tool.client = AsyncMock()
 
     params = Mock()
     params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
     params.temperature = None
-    params.maxTokens = None
+    params.maxTokens = 100
     params.stopSequences = None
     params.systemPrompt = None
     params.tools = None
@@ -1954,7 +2212,7 @@ async def test_mcp_tool_sampling_callback_forwards_system_prompt():
     """Test sampling callback passes systemPrompt as instructions in options."""
     from agent_framework import Message
 
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     mock_chat_client = AsyncMock()
     mock_response = Mock()
@@ -1971,7 +2229,7 @@ async def test_mcp_tool_sampling_callback_forwards_system_prompt():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = None
+    params.maxTokens = 100
     params.stopSequences = None
     params.systemPrompt = "You are a helpful assistant"
     params.tools = None
@@ -1989,7 +2247,7 @@ async def test_mcp_tool_sampling_callback_forwards_tools():
     """Test sampling callback converts MCP tools to FunctionTools and passes them in options."""
     from agent_framework import FunctionTool, Message
 
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     mock_chat_client = AsyncMock()
     mock_response = Mock()
@@ -2012,7 +2270,7 @@ async def test_mcp_tool_sampling_callback_forwards_tools():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = None
+    params.maxTokens = 100
     params.stopSequences = None
     params.systemPrompt = None
     params.tools = [mcp_tool]
@@ -2035,7 +2293,7 @@ async def test_mcp_tool_sampling_callback_forwards_tool_choice():
     """Test sampling callback passes toolChoice mode in options."""
     from agent_framework import Message
 
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     mock_chat_client = AsyncMock()
     mock_response = Mock()
@@ -2052,7 +2310,7 @@ async def test_mcp_tool_sampling_callback_forwards_tool_choice():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = None
+    params.maxTokens = 100
     params.stopSequences = None
     params.systemPrompt = None
     params.tools = None
@@ -2070,7 +2328,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_system_prompt():
     """Test sampling callback forwards empty string systemPrompt as instructions."""
     from agent_framework import Message
 
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     mock_chat_client = AsyncMock()
     mock_response = Mock()
@@ -2087,7 +2345,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_system_prompt():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = None
+    params.maxTokens = 100
     params.stopSequences = None
     params.systemPrompt = ""
     params.tools = None
@@ -2105,7 +2363,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_tools_list():
     """Test sampling callback forwards empty tools list in options."""
     from agent_framework import Message
 
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     mock_chat_client = AsyncMock()
     mock_response = Mock()
@@ -2122,7 +2380,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_tools_list():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = None
+    params.maxTokens = 100
     params.stopSequences = None
     params.systemPrompt = None
     params.tools = []
@@ -2140,7 +2398,7 @@ async def test_mcp_tool_sampling_callback_forwards_generation_params_in_options(
     """Test sampling callback passes temperature, max_tokens, and stop in options."""
     from agent_framework import Message
 
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     mock_chat_client = AsyncMock()
     mock_response = Mock()
@@ -2181,7 +2439,7 @@ async def test_mcp_tool_sampling_callback_omits_temperature_when_none():
     """Test sampling callback does not set temperature in options when it is None."""
     from agent_framework import Message
 
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     mock_chat_client = AsyncMock()
     mock_response = Mock()
@@ -2218,7 +2476,7 @@ async def test_mcp_tool_sampling_callback_always_passes_max_tokens():
     """Test sampling callback always sets max_tokens in options since maxTokens is a required int field."""
     from agent_framework import Message
 
-    tool = MCPStdioTool(name="test_tool", command="python")
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
     mock_chat_client = AsyncMock()
     mock_response = Mock()
@@ -6054,6 +6312,208 @@ async def test_max_wait_interrupts_long_poll_sleep(monkeypatch: pytest.MonkeyPat
     pending = list(tool._pending_reload_tasks)
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
+
+
+# endregion
+
+
+# region additional_tool_argument_names / allowlist filtering
+
+
+def test_normalize_additional_tool_argument_names_none() -> None:
+    global_extras, per_tool = _normalize_additional_tool_argument_names(None)
+    assert global_extras == set()
+    assert per_tool == {}
+
+
+def test_normalize_additional_tool_argument_names_sequence() -> None:
+    global_extras, per_tool = _normalize_additional_tool_argument_names(["a", "b", "a"])
+    assert global_extras == {"a", "b"}
+    assert per_tool == {}
+
+
+def test_normalize_additional_tool_argument_names_single_string() -> None:
+    # A bare string must be treated as a single name, not split into characters.
+    global_extras, per_tool = _normalize_additional_tool_argument_names("conversation_id")
+    assert global_extras == {"conversation_id"}
+    assert per_tool == {}
+
+
+def test_normalize_additional_tool_argument_names_mapping_with_global_key() -> None:
+    global_extras, per_tool = _normalize_additional_tool_argument_names({
+        "*": ["g1"],
+        "tool_a": ["a1", "a2"],
+        "tool_b": ["b1"],
+    })
+    assert global_extras == {"g1"}
+    assert per_tool == {"tool_a": {"a1", "a2"}, "tool_b": {"b1"}}
+
+
+def test_normalize_additional_tool_argument_names_mapping_with_string_values() -> None:
+    # A bare string mapping value is a single name, not an iterable of characters.
+    global_extras, per_tool = _normalize_additional_tool_argument_names({
+        "*": "conversation_id",
+        "tool_a": "custom",
+    })
+    assert global_extras == {"conversation_id"}
+    assert per_tool == {"tool_a": {"custom"}}
+
+
+def test_prepare_call_kwargs_strips_undeclared_arguments() -> None:
+    server = MCPTool(name="test_server")
+    server._tool_param_names_by_name = {"test_tool": {"param"}}
+
+    filtered, meta = server._prepare_call_kwargs(
+        "test_tool",
+        {"param": "value", "conversation_id": "c", "thread": object(), "unexpected": 1},
+    )
+
+    assert filtered == {"param": "value"}
+    assert meta is None
+
+
+def test_prepare_call_kwargs_global_extras_allowed() -> None:
+    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])
+    server._tool_param_names_by_name = {"test_tool": {"param"}}
+
+    filtered, _ = server._prepare_call_kwargs(
+        "test_tool",
+        {"param": "value", "conversation_id": "c", "options": {}},
+    )
+
+    assert filtered == {"param": "value", "conversation_id": "c"}
+
+
+def test_prepare_call_kwargs_per_tool_and_global_extras() -> None:
+    server = MCPTool(
+        name="test_server",
+        additional_tool_argument_names={"*": ["conversation_id"], "test_tool": ["custom"]},
+    )
+    server._tool_param_names_by_name = {"test_tool": {"param"}, "other_tool": {"x"}}
+
+    filtered, _ = server._prepare_call_kwargs(
+        "test_tool",
+        {"param": "v", "conversation_id": "c", "custom": "y", "thread": object()},
+    )
+    assert filtered == {"param": "v", "conversation_id": "c", "custom": "y"}
+
+    # The per-tool extra does not leak to other tools; the global one still applies.
+    filtered_other, _ = server._prepare_call_kwargs(
+        "other_tool",
+        {"x": 1, "conversation_id": "c", "custom": "y"},
+    )
+    assert filtered_other == {"x": 1, "conversation_id": "c"}
+
+
+def test_prepare_call_kwargs_denylist_guards_server_declared_names() -> None:
+    # The denylist is a safety net for framework-named params a server *declares* in its
+    # schema: they are dropped so internal objects never leak. Names explicitly opted in
+    # via extras always win.
+    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])
+    server._tool_param_names_by_name = {"test_tool": {"param", "thread"}}
+
+    filtered, _ = server._prepare_call_kwargs(
+        "test_tool",
+        {"param": "v", "thread": object(), "conversation_id": "c"},
+    )
+    # "thread" is declared by the schema but denylisted -> dropped; conversation_id opted in -> kept.
+    assert filtered == {"param": "v", "conversation_id": "c"}
+
+
+def test_prepare_call_kwargs_extras_override_denylist() -> None:
+    # Opting a denylisted framework name back in via extras takes precedence over the
+    # denylist safety net. "thread" is on the framework denylist, but an explicit extra wins.
+    server = MCPTool(name="test_server", additional_tool_argument_names=["thread"])
+    server._tool_param_names_by_name = {"test_tool": {"param"}}
+
+    sentinel = object()
+    filtered, _ = server._prepare_call_kwargs(
+        "test_tool",
+        {"param": "v", "thread": sentinel, "conversation_id": "c"},
+    )
+    # "thread" opted in via extras -> kept despite the denylist; conversation_id is denylisted,
+    # not declared, and not opted in -> dropped.
+    assert filtered == {"param": "v", "thread": sentinel}
+
+
+def test_prepare_call_kwargs_zero_arg_tool_passes_no_arguments() -> None:
+    server = MCPTool(name="test_server")
+    server._tool_param_names_by_name = {"test_tool": set()}
+
+    filtered, _ = server._prepare_call_kwargs(
+        "test_tool",
+        {"conversation_id": "c", "thread": object(), "stray": 1},
+    )
+    assert filtered == {}
+
+
+def test_prepare_call_kwargs_unknown_tool_passes_only_global_extras() -> None:
+    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])
+    # No entry in _tool_param_names_by_name for this tool name.
+
+    filtered, _ = server._prepare_call_kwargs(
+        "unknown_tool",
+        {"conversation_id": "c", "other": 1},
+    )
+    assert filtered == {"conversation_id": "c"}
+
+
+def test_prepare_call_kwargs_extracts_meta() -> None:
+    server = MCPTool(name="test_server")
+    server._tool_param_names_by_name = {"test_tool": {"param"}}
+
+    filtered, meta = server._prepare_call_kwargs(
+        "test_tool",
+        {"param": "v", "_meta": {"trace": "abc"}},
+    )
+    assert filtered == {"param": "v"}
+    assert meta is not None
+    assert meta.get("trace") == "abc"
+
+
+async def test_call_tool_forwards_only_declared_arguments() -> None:
+    """End-to-end: framework runtime kwargs are stripped before reaching the server."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server", additional_tool_argument_names=["conversation_id"])
+    async with server:
+        await server.load_tools()
+        session_mock = server.session
+        await server.call_tool(
+            "test_tool",
+            param="value",
+            conversation_id="c",
+            thread=object(),
+            response_format=object(),
+        )
+
+        session_mock.call_tool.assert_called_once()
+        _, call_kwargs = session_mock.call_tool.call_args
+        assert call_kwargs["arguments"] == {"param": "value", "conversation_id": "c"}
 
 
 # endregion

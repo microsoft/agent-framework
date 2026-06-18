@@ -741,11 +741,19 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     /// <summary>
     /// Serializes function call arguments to a string dictionary for storage and comparison.
     /// </summary>
-    private static Dictionary<string, string>? SerializeArguments(IDictionary<string, object?>? arguments, JsonSerializerOptions jsonSerializerOptions)
+    /// <remarks>
+    /// Always returns a non-null dictionary so that an argument-scoped standing approval
+    /// (the <see cref="AlwaysApproveToolApprovalResponseContent.AlwaysApproveToolWithArguments"/>
+    /// path) records an exact-arguments rule. A <see langword="null"/> or empty source dictionary
+    /// yields an empty dictionary, which matches only future no-argument calls. A <see langword="null"/>
+    /// value is reserved on <see cref="ToolApprovalRule.Arguments"/> for tool-level rules and is never
+    /// produced here, preventing an exact-arguments approval from widening into a tool-level approval.
+    /// </remarks>
+    private static Dictionary<string, string> SerializeArguments(IDictionary<string, object?>? arguments, JsonSerializerOptions jsonSerializerOptions)
     {
         if (arguments is null || arguments.Count == 0)
         {
-            return null;
+            return new Dictionary<string, string>(StringComparer.Ordinal);
         }
 
         var serialized = new Dictionary<string, string>(arguments.Count, StringComparer.Ordinal);
