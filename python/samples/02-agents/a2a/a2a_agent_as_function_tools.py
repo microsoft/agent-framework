@@ -6,6 +6,7 @@ import re
 
 import httpx
 from a2a.client import A2ACardResolver
+from agent_framework import Agent
 from agent_framework.a2a import A2AAgent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
@@ -86,7 +87,8 @@ async def main() -> None:
             model=model,
             credential=credential,
         )
-        host_agent = client.as_agent(
+        host_agent = Agent(
+            client=client,
             name="assistant",
             instructions="You are a helpful assistant. Use your tools to answer questions.",
             tools=skill_tools,

@@ -9,16 +9,16 @@ A parent agent receives a list of stock tickers and uses a web-search background
 ### Architecture
 
 ```
-┌────────────────────────────────────────┐
-│     StockPriceResearcher               │
-│         (Parent Agent)                 │
-│                                        │
-│  BackgroundAgentsProvider              │
-│    ├─ BackgroundAgents_StartTask       │
-│    ├─ BackgroundAgents_WaitFor...      │
-│    ├─ BackgroundAgents_GetTaskResults  │
-│    └─ ...                              │
-└────────────┬───────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│     StockPriceResearcher                         │
+│         (Parent Agent)                           │
+│                                                  │
+│  BackgroundAgentsProvider                        │
+│    ├─ background_agents_start_task               │
+│    ├─ background_agents_wait_for_first_completion│
+│    ├─ background_agents_get_task_results         │
+│    └─ ...                                        │
+└─────────────┬────────────────────────────────────┘
              │  delegates to
              ▼
 ┌─────────────────────────────────┐
