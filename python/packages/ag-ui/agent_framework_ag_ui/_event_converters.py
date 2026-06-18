@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from agent_framework import (
     ChatResponseUpdate,
     Content,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AGUIEventConverter:
@@ -27,6 +30,16 @@ class AGUIEventConverter:
         self.accumulated_tool_args: str = ""
         self.thread_id: str | None = None
         self.run_id: str | None = None
+
+    @staticmethod
+    def _get_tool_call_id(event: dict[str, Any]) -> str | None:
+        """Return a normalized AG-UI tool call id from either supported field name."""
+        tool_call_id = event.get("toolCallId")
+        if tool_call_id is None:
+            tool_call_id = event.get("tool_call_id")
+        if tool_call_id is None:
+            return None
+        return str(tool_call_id)
 
     def convert_event(self, event: dict[str, Any]) -> ChatResponseUpdate | None:
         """Convert a single AG-UI event to ChatResponseUpdate.
@@ -126,7 +139,7 @@ class AGUIEventConverter:
 
     def _handle_tool_call_start(self, event: dict[str, Any]) -> ChatResponseUpdate:
         """Handle TOOL_CALL_START event."""
-        self.current_tool_call_id = event.get("toolCallId")
+        self.current_tool_call_id = self._get_tool_call_id(event)
         self.current_tool_name = event.get("toolName") or event.get("toolCallName") or event.get("tool_call_name")
         self.accumulated_tool_args = ""
 
@@ -141,8 +154,20 @@ class AGUIEventConverter:
             ],
         )
 
-    def _handle_tool_call_args(self, event: dict[str, Any]) -> ChatResponseUpdate:
+    def _handle_tool_call_args(self, event: dict[str, Any]) -> ChatResponseUpdate | None:
         """Handle TOOL_CALL_ARGS event."""
+        event_tool_call_id = self._get_tool_call_id(event)
+        if event_tool_call_id is not None:
+            if self.current_tool_call_id and event_tool_call_id != self.current_tool_call_id:
+                logger.warning(
+                    "Ignoring TOOL_CALL_ARGS for toolCallId=%s while current toolCallId=%s",
+                    event_tool_call_id,
+                    self.current_tool_call_id,
+                )
+                return None
+            if not self.current_tool_call_id:
+                self.current_tool_call_id = event_tool_call_id
+
         delta = event.get("delta", "")
         self.accumulated_tool_args += delta
 
@@ -159,7 +184,15 @@ class AGUIEventConverter:
 
     def _handle_tool_call_end(self, event: dict[str, Any]) -> ChatResponseUpdate | None:
         """Handle TOOL_CALL_END event."""
-        self.accumulated_tool_args = ""
+        event_tool_call_id = self._get_tool_call_id(event)
+        if (
+            self.current_tool_call_id is None
+            or event_tool_call_id is None
+            or event_tool_call_id == self.current_tool_call_id
+        ):
+            self.current_tool_call_id = None
+            self.current_tool_name = None
+            self.accumulated_tool_args = ""
         return None
 
     def _handle_tool_call_result(self, event: dict[str, Any]) -> ChatResponseUpdate:

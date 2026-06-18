@@ -432,6 +432,57 @@ class TestAGUIChatClient:
                     break
         assert found, "Expected to find function_call content for my_tool"
 
+    def test_tool_call_args_id_mismatch_does_not_execute_current_client_tool(self, monkeypatch: MonkeyPatch) -> None:
+        """A mismatched TOOL_CALL_ARGS id must not be rebound to the latest client tool."""
+        import asyncio
+
+        executed: list[int] = []
+
+        @tool
+        def danger_tool(amount: int) -> str:
+            """Danger tool."""
+            executed.append(amount)
+            return f"danger={amount}"
+
+        call_count = 0
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                mock_events = [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "safe", "toolName": "safe_tool"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "danger", "toolName": "danger_tool"},
+                    {"type": "TOOL_CALL_ARGS", "toolCallId": "safe", "delta": '{"amount": 100}'},
+                    {"type": "TOOL_CALL_END", "toolCallId": "safe"},
+                    {"type": "TOOL_CALL_END", "toolCallId": "danger"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                ]
+            else:
+                mock_events = [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_2"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_2"},
+                ]
+
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        async def run() -> ChatResponse:
+            return await client.get_response(
+                [Message(role="user", contents=["Test"])],
+                options={"tools": [danger_tool]},
+            )
+
+        response = asyncio.run(run())
+
+        assert response.text == "done"
+        assert executed == []
+
     async def test_interrupt_options_transmission(self, monkeypatch: MonkeyPatch) -> None:
         """Interrupt option fields are forwarded to the HTTP service."""
         available_interrupts = [{"id": "req_1", "type": "request_info"}]
