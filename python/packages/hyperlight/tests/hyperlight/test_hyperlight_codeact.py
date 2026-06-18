@@ -594,6 +594,128 @@ def test_path_tree_signature_walks_through_symlinked_root(tmp_path: Path) -> Non
     assert signature_v1 != signature_v2, "signature should change when symlinked target contents change"
 
 
+class _OutputDirShim:
+    """Minimal stand-in for ``TemporaryDirectory`` exposing only ``.name``."""
+
+    def __init__(self, path: Path) -> None:
+        self.name = str(path)
+
+
+class _SandboxWithListing:
+    def __init__(self, output_files: list[str]) -> None:
+        self._output_files = output_files
+
+    def get_output_files(self) -> list[str]:
+        return self._output_files
+
+
+def _decode_content_bytes(item: Content) -> bytes:
+    import base64
+
+    assert item.uri is not None
+    _, _, encoded = item.uri.partition("base64,")
+    return base64.b64decode(encoded)
+
+
+def test_collect_output_relative_paths_skips_symlinked_file(tmp_path: Path) -> None:
+    """A final-component symlink planted in /output must not be surfaced."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    (output_root / "report.txt").write_text("real-report", encoding="utf-8")
+    secret = tmp_path / "host_secret.txt"
+    secret.write_text("HOST_SECRET", encoding="utf-8")
+    (output_root / "leak.txt").symlink_to(secret)
+
+    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+
+    assert "report.txt" in relative_paths
+    assert "leak.txt" not in relative_paths
+
+
+def test_collect_output_relative_paths_skips_symlinked_directory(tmp_path: Path) -> None:
+    """A symlinked directory in /output must not be descended into."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-secret", encoding="utf-8")
+    (output_root / "linked_dir").symlink_to(outside_dir, target_is_directory=True)
+
+    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+
+    assert relative_paths == set()
+
+
+def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end: a /output symlink to a host file is never returned as Content."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    (output_root / "report.txt").write_text("real-report", encoding="utf-8")
+    secret = tmp_path / "host_secret.txt"
+    secret.write_text("HOST_SECRET", encoding="utf-8")
+    (output_root / "leak.txt").symlink_to(secret)
+
+    contents = execute_code_module._parse_output_files(
+        sandbox=object(),
+        output_dir=_OutputDirShim(output_root),
+        expect_output_files=False,
+    )
+
+    paths = {item.additional_properties["path"] for item in contents if item.type == "data"}
+    assert "/output/report.txt" in paths
+    assert "/output/leak.txt" not in paths
+    assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
+
+
+def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backend-listed path traversing an intermediate dir symlink must be rejected."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "leak.txt").write_text("HOST_SECRET", encoding="utf-8")
+    (output_root / "sub").symlink_to(outside_dir, target_is_directory=True)
+
+    contents = execute_code_module._parse_output_files(
+        sandbox=_SandboxWithListing(["/output/sub/leak.txt"]),
+        output_dir=_OutputDirShim(output_root),
+        expect_output_files=False,
+    )
+
+    assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
+    assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
+
+
+def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:
+    """Regression: a genuine /output file is still collected and returned."""
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    (output_root / "report.txt").write_text("artifact", encoding="utf-8")
+
+    contents = execute_code_module._parse_output_files(
+        sandbox=object(),
+        output_dir=_OutputDirShim(output_root),
+        expect_output_files=True,
+    )
+
+    data_items = [item for item in contents if item.type == "data"]
+    assert len(data_items) == 1
+    assert data_items[0].additional_properties["path"] == "/output/report.txt"
+    assert _decode_content_bytes(data_items[0]) == b"artifact"
+
+
 def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by_target() -> None:
     execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
 
