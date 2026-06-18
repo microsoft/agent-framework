@@ -48,10 +48,6 @@ jobs:
           filters: |
             dotnet:
               - 'dotnet/**'
-              - '!dotnet/AGENTS.md'
-              - '!dotnet/**/AGENTS.md'
-              - '!dotnet/.github/skills/*'
-              - '!dotnet/.github/skills/**'
             cosmosdb:
               - 'dotnet/src/Microsoft.Agents.AI.CosmosNoSql/**'
             # The Foundry hosted-agent IT is costly (builds a container, pushes to ACR,
@@ -321,9 +317,10 @@ jobs:
           AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
           AZURE_AI_BING_CONNECTION_ID: ${{ vars.AZURE_AI_BING_CONNECTION_ID }}
           # Anthropic Models
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_CHAT_MODEL_NAME: ${{ vars.ANTHROPIC_CHAT_MODEL_NAME }}
-          ANTHROPIC_REASONING_MODEL_NAME: ${{ vars.ANTHROPIC_REASONING_MODEL_NAME }}
+          # Disable Anthropic tests by not providing environment vars until 404 failure is resolved
+          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # ANTHROPIC_CHAT_MODEL_NAME: ${{ vars.ANTHROPIC_CHAT_MODEL_NAME }}
+          # ANTHROPIC_REASONING_MODEL_NAME: ${{ vars.ANTHROPIC_REASONING_MODEL_NAME }}
 
       # Generate test reports and check coverage
       - name: Generate test reports

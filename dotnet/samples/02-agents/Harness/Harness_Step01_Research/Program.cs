@@ -89,6 +89,13 @@ AIAgent agent =
         OpenTelemetrySourceName = TracingSourceName,        // Use our custom source name so spans are captured by the TracerProvider above.
         FileMemoryStore = new FileSystemAgentFileStore(     // Configure the file memory provider to store files in a local folder called "agent-files".
             Path.Combine(AppContext.BaseDirectory, "agent-files")),
+        // The built in ModeProvider has two default modes: "plan" and "execute".
+        // Adding a loop evaluator so that in "execute" mode, the harness keeps re-invoking itself until every todo item is complete.
+        LoopEvaluators =
+        [
+            new TodoCompletionLoopEvaluator(new TodoCompletionLoopEvaluatorOptions { Modes = ["execute"] }),
+        ],
+        LoopAgentOptions = new LoopAgentOptions { MaxIterations = 10 }, // Safety cap on the number of autonomous passes per turn.
         ChatOptions = new ChatOptions
         {
             Instructions = instructions,

@@ -24,6 +24,7 @@ from ._background_agents import BackgroundAgentsProvider
 from ._memory import MemoryContextProvider, MemoryStore
 from ._mode import AgentModeProvider
 from ._todo import TodoProvider
+from ._tool_approval import ToolApprovalMiddleware
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from .._compaction import CompactionStrategy, TokenizerProtocol
     from .._middleware import MiddlewareTypes
     from .._tools import ToolTypes
+    from ._tool_approval import ToolApprovalRuleCallback
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +252,8 @@ def create_harness_agent(
     shell_executor: ShellExecutor | None = None,
     shell_environment_provider_options: ShellEnvironmentProviderOptions | None = None,
     disable_web_search: bool = False,
+    disable_tool_auto_approval: bool = False,
+    auto_approval_rules: Sequence[ToolApprovalRuleCallback] | None = None,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
@@ -267,6 +271,8 @@ def create_harness_agent(
     - **MemoryContextProvider** — file-based durable memory (when ``memory_store`` provided)
     - **SkillsProvider** — skill discovery and progressive loading
     - **BackgroundAgentsProvider** — delegate work to background sub-agents
+    - **Tool approval** — "don't ask again" standing approval rules plus heuristic
+      auto-approval callbacks
     - **OpenTelemetry** — observability via ``AgentTelemetryLayer``
 
     Each feature can be disabled or customized via keyword arguments.
@@ -364,6 +370,16 @@ def create_harness_agent(
             When False (default), the web search tool is automatically added if the
             client implements SupportsWebSearchTool. A warning is logged if the client
             does not support web search.
+        disable_tool_auto_approval: When True, do not wire the tool auto-approval middleware.
+            When False (default), a :class:`~agent_framework.ToolApprovalMiddleware` is added
+            (outermost) to coordinate "don't ask again" standing approval rules and queued
+            approval prompts; callers must pass an :class:`~agent_framework.AgentSession` to
+            :meth:`~agent_framework.Agent.run` when enabled.
+        auto_approval_rules: Optional heuristic callbacks that can auto-approve a function call
+            that would otherwise require approval. Each callback receives the ``function_call``
+            content and returns ``True`` to approve it. Rules are evaluated after standing rules
+            (derived from prior user approvals) but before prompting the user. Only used when
+            ``disable_tool_auto_approval`` is False.
         otel_provider_name: Custom OpenTelemetry provider/source name for telemetry.
         context_providers: Additional context providers to include after the built-in ones.
         middleware: Additional middleware to include.
@@ -455,6 +471,16 @@ def create_harness_agent(
     if max_output_tokens is not None:
         default_opts.setdefault("max_tokens", max_output_tokens)
 
+    # Assemble middleware. Tool approval is enabled by default (like the .NET harness) and is
+    # placed first so it sits outermost: it intercepts inbound "always approve" responses and
+    # outbound approval requests at the caller boundary, and its re-invocation loop re-runs any
+    # user-supplied middleware. ToolApprovalMiddleware requires an AgentSession at run time.
+    assembled_middleware: list[MiddlewareTypes] = []
+    if not disable_tool_auto_approval:
+        assembled_middleware.append(ToolApprovalMiddleware(auto_approval_rules=auto_approval_rules))
+    if middleware:
+        assembled_middleware.extend(middleware)
+
     agent = Agent(
         client,
         instructions,
@@ -464,7 +490,7 @@ def create_harness_agent(
         tools=final_tools,
         default_options=default_opts,  # type: ignore[arg-type]
         context_providers=assembled_providers,
-        middleware=list(middleware) if middleware else None,
+        middleware=assembled_middleware or None,
         require_per_service_call_history_persistence=True,
     )
 

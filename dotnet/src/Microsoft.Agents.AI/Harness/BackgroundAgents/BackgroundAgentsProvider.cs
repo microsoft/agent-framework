@@ -26,12 +26,12 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// This provider exposes the following tools to the agent:
 /// <list type="bullet">
-/// <item><description><c>BackgroundAgents_StartTask</c> — Start a background task on a named agent with text input. Returns the task ID.</description></item>
-/// <item><description><c>BackgroundAgents_WaitForFirstCompletion</c> — Block until the first of the specified tasks completes. Returns the completed task's ID.</description></item>
-/// <item><description><c>BackgroundAgents_GetTaskResults</c> — Retrieve the text output of a completed background task.</description></item>
-/// <item><description><c>BackgroundAgents_GetAllTasks</c> — List all background tasks with their IDs, statuses, descriptions, and agent names.</description></item>
-/// <item><description><c>BackgroundAgents_ContinueTask</c> — Send follow-up input to a completed background task's session to resume work.</description></item>
-/// <item><description><c>BackgroundAgents_ClearCompletedTask</c> — Remove a completed background task and release its session to free memory.</description></item>
+/// <item><description><c>background_agents_start_task</c> — Start a background task on a named agent with text input. Returns the task ID.</description></item>
+/// <item><description><c>background_agents_wait_for_first_completion</c> — Block until the first of the specified tasks completes. Returns the completed task's ID.</description></item>
+/// <item><description><c>background_agents_get_task_results</c> — Retrieve the text output of a completed background task.</description></item>
+/// <item><description><c>background_agents_get_all_tasks</c> — List all background tasks with their IDs, statuses, descriptions, and agent names.</description></item>
+/// <item><description><c>background_agents_continue_task</c> — Send follow-up input to a completed background task's session to resume work.</description></item>
+/// <item><description><c>background_agents_clear_completed_task</c> — Remove a completed background task and release its session to free memory.</description></item>
 /// </list>
 /// </para>
 /// </remarks>
@@ -43,10 +43,10 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
         ## BackgroundAgents
         You have access to background agents that can perform work on your behalf.
 
-        - Use the `BackgroundAgents_*` list of tools to start tasks on background agents and check their results.
+        - Use the `background_agents_*` list of tools to start tasks on background agents and check their results.
         - Creating a background task does not block, and background tasks run concurrently.
         - Important: Always wait for outstanding tasks to finish before you finish processing.
-        - Important: After retrieving results from a completed task, clear it with BackgroundAgents_ClearCompletedTask to free memory, unless you plan to continue it with BackgroundAgents_ContinueTask.
+        - Important: After retrieving results from a completed task, clear it with background_agents_clear_completed_task to free memory, unless you plan to continue it with background_agents_continue_task.
 
         {background_agents}
         """;
@@ -256,7 +256,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "BackgroundAgents_StartTask",
+                    Name = "background_agents_start_task",
                     Description = "Start a background task on a named background agent. Returns a confirmation message containing the task ID.",
                     SerializerOptions = serializerOptions,
                 }),
@@ -314,7 +314,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "BackgroundAgents_WaitForFirstCompletion",
+                    Name = "background_agents_wait_for_first_completion",
                     Description = "Block until the first of the specified background tasks completes. Provide one or more task IDs. Returns a status message containing the ID of the task that completed first.",
                     SerializerOptions = serializerOptions,
                 }),
@@ -341,7 +341,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "BackgroundAgents_GetTaskResults",
+                    Name = "background_agents_get_task_results",
                     Description = "Get the text output of a background task by its ID. Returns the result text if complete, or status information if still running or failed.",
                     SerializerOptions = serializerOptions,
                 }),
@@ -367,7 +367,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "BackgroundAgents_GetAllTasks",
+                    Name = "background_agents_get_all_tasks",
                     Description = "List all background tasks with their IDs, statuses, agent names, and descriptions.",
                     SerializerOptions = serializerOptions,
                 }),
@@ -416,7 +416,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "BackgroundAgents_ContinueTask",
+                    Name = "background_agents_continue_task",
                     Description = "Send follow-up input to a completed or failed background task to resume its work. The background task's session is preserved, so the agent retains conversational context.",
                     SerializerOptions = serializerOptions,
                 }),
@@ -449,7 +449,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "BackgroundAgents_ClearCompletedTask",
+                    Name = "background_agents_clear_completed_task",
                     Description = "Remove a completed or failed background task and release its session to free memory. Use this after retrieving results when you no longer need to continue the task.",
                     SerializerOptions = serializerOptions,
                 }),

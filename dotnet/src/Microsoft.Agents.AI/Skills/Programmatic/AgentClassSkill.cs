@@ -102,12 +102,18 @@ public abstract class AgentClassSkill<
     private readonly Lazy<IReadOnlyList<AgentSkillResource>?> _resources;
     private readonly Lazy<IReadOnlyList<AgentSkillScript>?> _scripts;
     private readonly Lazy<string> _content;
+    private readonly Func<JsonElement?, AIFunctionArguments>? _argumentMarshaler;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentClassSkill{TSelf}"/> class.
     /// </summary>
-    protected AgentClassSkill()
+    /// <param name="argumentMarshaler">
+    /// Optional argument marshaler applied to all scripts in this skill.
+    /// When <see langword="null"/>, the default marshaler is used which expects arguments as a JSON object.
+    /// </param>
+    protected AgentClassSkill(Func<JsonElement?, AIFunctionArguments>? argumentMarshaler = null)
     {
+        this._argumentMarshaler = argumentMarshaler;
         this._resources = new Lazy<IReadOnlyList<AgentSkillResource>?>(this.DiscoverResources);
         this._scripts = new Lazy<IReadOnlyList<AgentSkillScript>?>(this.DiscoverScripts);
         this._content = new Lazy<string>(() => AgentInlineSkillContentBuilder.Build(
@@ -240,7 +246,7 @@ public abstract class AgentClassSkill<
     /// </param>
     /// <returns>A new <see cref="AgentSkillScript"/> instance.</returns>
     protected AgentSkillScript CreateScript(string name, Delegate method, string? description = null, JsonSerializerOptions? serializerOptions = null)
-        => new AgentInlineSkillScript(name, method, description, serializerOptions ?? this.SerializerOptions);
+        => new AgentInlineSkillScript(name, method, description, serializerOptions ?? this.SerializerOptions, this._argumentMarshaler);
 
     private List<AgentSkillResource>? DiscoverResources()
     {
@@ -356,7 +362,8 @@ public abstract class AgentClassSkill<
                 method: method,
                 target: method.IsStatic ? null : this,
                 description: method.GetCustomAttribute<DescriptionAttribute>()?.Description,
-                serializerOptions: this.SerializerOptions));
+                serializerOptions: this.SerializerOptions,
+                argumentMarshaler: this._argumentMarshaler));
         }
 
         return scripts;

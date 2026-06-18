@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.8.1,<2",
     "agent-framework-openai>=1.8.1,<2",
+    "aiohttp>=3.9,<4",
     "azure-ai-inference>=1.0.0b9,<1.0.0b10",
     "azure-ai-projects>=2.2.0,<3.0",
 ]
