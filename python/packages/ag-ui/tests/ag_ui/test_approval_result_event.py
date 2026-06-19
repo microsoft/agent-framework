@@ -155,6 +155,80 @@ async def test_approval_resume_result_has_content() -> None:
     assert result_event.content == "Sunny in Portland"
 
 
+async def test_approval_resume_snapshot_replaces_approval_payload_with_tool_result() -> None:
+    """Approved HITL tools persist their executed result in MESSAGES_SNAPSHOT for replay."""
+    from agent_framework_ag_ui._message_adapters import normalize_agui_input_messages
+
+    call_id = "call_snapshot_replay"
+    weather_tool = _make_weather_tool()
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="The weather is sunny.")], role="assistant")],
+        default_options={"tools": [weather_tool]},
+    )
+    config = AgentConfig()
+    resume_messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "What's the weather in Seattle?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": json.dumps({"city": "Seattle"}),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "content": json.dumps({"accepted": True}),
+            "toolCallId": call_id,
+        },
+    ]
+
+    events: list[Any] = []
+    async for event in run_agent_stream(
+        {
+            "thread_id": "thread-snapshot-replay",
+            "run_id": "run-snapshot-replay",
+            "messages": resume_messages,
+        },
+        agent,
+        config,
+    ):
+        events.append(event)
+
+    snapshots = [event.messages for event in events if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"]
+    assert snapshots
+    snapshot_messages = [
+        message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message
+        for message in snapshots[-1]
+    ]
+    tool_messages = [message for message in snapshot_messages if message.get("role") == "tool"]
+    assert any(
+        message.get("toolCallId") == call_id and message.get("content") == "Sunny in Seattle"
+        for message in tool_messages
+    )
+    assert not any(message.get("content") == json.dumps({"accepted": True}) for message in tool_messages)
+
+    replay_messages = snapshot_messages + [{"role": "user", "content": "What is the weather now?"}]
+    provider_messages, _ = normalize_agui_input_messages(replay_messages)
+
+    assert not any(
+        content.type == "function_approval_response"
+        for message in provider_messages
+        for content in message.contents or []
+    )
+    assert any(
+        content.type == "function_result" and content.call_id == call_id and content.result == "Sunny in Seattle"
+        for message in provider_messages
+        for content in message.contents or []
+    )
+
+
 async def test_no_approval_no_extra_tool_result() -> None:
     """When no approval response is present, no extra TOOL_CALL_RESULT events should be emitted."""
     agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text(text="Hello.")], role="assistant")])
