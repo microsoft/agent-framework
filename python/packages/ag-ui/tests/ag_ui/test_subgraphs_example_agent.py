@@ -154,7 +154,7 @@ async def test_subgraphs_example_resume_flow_reaches_completion() -> None:
 
 
 async def test_subgraphs_example_requires_structured_resume_for_selection() -> None:
-    """Agent should re-issue interrupts when user sends plain text instead of resume payload."""
+    """Agent should fail when user sends plain text instead of a resume payload."""
     agent = subgraphs_agent()
     thread_id = "thread-subgraphs-text"
 
@@ -178,10 +178,9 @@ async def test_subgraphs_example_requires_structured_resume_for_selection() -> N
             "messages": [{"role": "user", "content": "Let's do the United flight"}],
         },
     )
-    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0]
-    second_interrupt = _interrupts_from_finished(second_finished)
-    assert _interrupt_value(second_interrupt[0])["agent"] == "flights"
-    assert "TOOL_CALL_START" in [event.type for event in second_events]
+    run_errors = [event for event in second_events if event.type == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0].code == "WORKFLOW_RESUME_REQUIRED"
     assert "TEXT_MESSAGE_CONTENT" not in [event.type for event in second_events]
 
     third_events = await _run(
@@ -192,7 +191,7 @@ async def test_subgraphs_example_requires_structured_resume_for_selection() -> N
             "resume": {
                 "interrupts": [
                     {
-                        "id": second_interrupt[0]["id"],
+                        "id": first_interrupt[0]["id"],
                         "value": json.dumps(
                             {
                                 "airline": "United",
@@ -216,7 +215,7 @@ async def test_subgraphs_example_requires_structured_resume_for_selection() -> N
 
 
 async def test_subgraphs_example_forwarded_command_resume_reaches_hotels_interrupt() -> None:
-    """CopilotKit-style forwarded command.resume should continue workflow interrupts."""
+    """Forwarded command.resume should continue workflow interrupts with canonical resume entries."""
     agent = subgraphs_agent()
     thread_id = "thread-subgraphs-forwarded-resume"
 
@@ -239,15 +238,19 @@ async def test_subgraphs_example_forwarded_command_resume_reaches_hotels_interru
             "messages": [],
             "forwarded_props": {
                 "command": {
-                    "resume": json.dumps(
+                    "resume": [
                         {
-                            "airline": "KLM",
-                            "departure": "Amsterdam (AMS)",
-                            "arrival": "San Francisco (SFO)",
-                            "price": "$650",
-                            "duration": "11h 30m",
+                            "interruptId": first_interrupt["id"],
+                            "status": "resolved",
+                            "payload": {
+                                "airline": "KLM",
+                                "departure": "Amsterdam (AMS)",
+                                "arrival": "San Francisco (SFO)",
+                                "price": "$650",
+                                "duration": "11h 30m",
+                            },
                         }
-                    )
+                    ]
                 }
             },
         },

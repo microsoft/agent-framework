@@ -128,6 +128,100 @@ def _extract_resume_payload(input_data: dict[str, Any]) -> Any:
     return forwarded_props_dict.get("resume")
 
 
+def _strict_resume_entries(resume_payload: Any) -> tuple[list[dict[str, Any]], str | None]:
+    """Parse resume entries for pending interrupt contract validation."""
+    if isinstance(resume_payload, list):
+        candidates = resume_payload
+    elif isinstance(resume_payload, dict):
+        resume_dict = cast(dict[str, Any], resume_payload)
+        if isinstance(resume_dict.get("interrupts"), list):
+            candidates = cast(list[Any], resume_dict["interrupts"])
+        elif isinstance(resume_dict.get("interrupt"), list):
+            candidates = cast(list[Any], resume_dict["interrupt"])
+        else:
+            candidates = [resume_dict]
+    else:
+        return [], "Resume payload must be a list of entries or an object containing interrupt entries."
+
+    if not candidates:
+        return [], "Resume payload must include at least one interrupt entry."
+
+    entries: list[dict[str, Any]] = []
+    for item in candidates:
+        model_dump = getattr(item, "model_dump", None)
+        if callable(model_dump):
+            item = model_dump(by_alias=True, exclude_none=True)
+        if not isinstance(item, dict):
+            return [], "Each resume entry must be an object."
+
+        item_dict = cast(dict[str, Any], item)
+        interrupt_id = item_dict.get("interruptId") or item_dict.get("interrupt_id") or item_dict.get("id")
+        if not interrupt_id:
+            return [], "Each resume entry must include interruptId."
+
+        status = item_dict.get("status") or "resolved"
+        if status not in {"resolved", "cancelled"}:
+            return [], f"Unsupported resume status '{status}'."
+
+        if "payload" in item_dict:
+            payload = item_dict.get("payload")
+        elif "value" in item_dict:
+            payload = item_dict.get("value")
+        elif "response" in item_dict:
+            payload = item_dict.get("response")
+        else:
+            payload = {
+                key: value
+                for key, value in item_dict.items()
+                if key not in {"id", "interruptId", "interrupt_id", "type", "status"}
+            }
+
+        entries.append({"interrupt_id": str(interrupt_id), "status": str(status), "payload": payload})
+
+    return entries, None
+
+
+def _resume_contract_error(
+    resume_payload: Any,
+    pending_interrupt_ids: set[str],
+    *,
+    required_code: str,
+    invalid_code: str,
+    unknown_code: str,
+    missing_code: str,
+) -> tuple[list[dict[str, Any]], str | None, str | None]:
+    """Validate that resume entries address every pending interrupt exactly once."""
+    if not pending_interrupt_ids:
+        entries, error = _strict_resume_entries(resume_payload)
+        return entries, error, invalid_code if error else None
+
+    if resume_payload is None:
+        return [], "Pending interrupts require a resume entry for every interruptId.", required_code
+
+    entries, error = _strict_resume_entries(resume_payload)
+    if error is not None:
+        return [], error, invalid_code
+
+    seen: set[str] = set()
+    for entry in entries:
+        interrupt_id = str(entry["interrupt_id"])
+        if interrupt_id in seen:
+            return [], f"Resume includes duplicate interruptId '{interrupt_id}'.", invalid_code
+        seen.add(interrupt_id)
+
+    unknown = seen - pending_interrupt_ids
+    if unknown:
+        interrupt_id = sorted(unknown)[0]
+        return [], f"No pending interrupt found for resume interruptId '{interrupt_id}'.", unknown_code
+
+    missing = pending_interrupt_ids - seen
+    if missing:
+        interrupt_id = sorted(missing)[0]
+        return [], f"Resume omitted pending interruptId '{interrupt_id}'.", missing_code
+
+    return entries, None, None
+
+
 def _canonical_interrupt_message(value: Any) -> str | None:
     """Extract a human-readable message from legacy interruption metadata."""
     if isinstance(value, str):

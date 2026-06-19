@@ -196,7 +196,7 @@ async def test_workflow_run_request_info_interrupt_uses_raw_dict_value():
 
 
 async def test_workflow_run_resume_from_forwarded_command_payload() -> None:
-    """forwarded_props.command.resume should resume a pending dict request."""
+    """forwarded_props.command.resume should support canonical resume entries."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -212,7 +212,15 @@ async def test_workflow_run_resume_from_forwarded_command_payload() -> None:
             {
                 "messages": [],
                 "forwarded_props": {
-                    "command": {"resume": json.dumps({"airline": "KLM", "departure": "AMS", "arrival": "SFO"})}
+                    "command": {
+                        "resume": [
+                            {
+                                "interruptId": "flights-choice",
+                                "status": "resolved",
+                                "payload": {"airline": "KLM", "departure": "AMS", "arrival": "SFO"},
+                            }
+                        ]
+                    }
                 },
             },
             workflow,
@@ -225,8 +233,8 @@ async def test_workflow_run_resume_from_forwarded_command_payload() -> None:
     assert "interrupt" not in finished
 
 
-async def test_workflow_run_structured_user_json_resumes_single_pending_request() -> None:
-    """A JSON user reply should resume a single pending dict request without heuristics."""
+async def test_workflow_run_structured_user_json_with_pending_request_emits_run_error() -> None:
+    """A pending request requires canonical resume entries, not heuristic JSON user replies."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -247,9 +255,9 @@ async def test_workflow_run_structured_user_json_resumes_single_pending_request(
     ]
 
     resumed_types = [event.type for event in resumed_events]
-    assert "RUN_ERROR" not in resumed_types
-    finished = [event for event in resumed_events if event.type == "RUN_FINISHED"][0].model_dump()
-    assert "interrupt" not in finished
+    assert resumed_types == ["RUN_STARTED", "RUN_ERROR"]
+    run_error = [event for event in resumed_events if event.type == "RUN_ERROR"][0]
+    assert run_error.code == "WORKFLOW_RESUME_REQUIRED"
 
 
 async def test_workflow_run_resume_content_response_from_json_payload() -> None:
@@ -444,18 +452,13 @@ async def test_workflow_run_plain_text_follow_up_does_not_infer_interrupt_respon
     ]
 
     follow_up_types = [event.type for event in follow_up_events]
-    assert "RUN_ERROR" not in follow_up_types
-    assert "TOOL_CALL_START" in follow_up_types
-
-    run_finished = [event for event in follow_up_events if event.type == "RUN_FINISHED"][0]
-    interrupt_payload = _interrupts_from_run_finished(run_finished)
-    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
-    assert interrupt_payload[0]["id"] == "flights-choice"
-    assert interrupt_value["agent"] == "flights"
+    assert follow_up_types == ["RUN_STARTED", "RUN_ERROR"]
+    run_error = [event for event in follow_up_events if event.type == "RUN_ERROR"][0]
+    assert getattr(run_error, "code") == "WORKFLOW_RESUME_REQUIRED"
 
 
-async def test_workflow_run_empty_turn_with_pending_request_preserves_interrupts():
-    """An empty turn should still return pending workflow interrupts without errors."""
+async def test_workflow_run_empty_turn_with_pending_request_emits_run_error():
+    """An empty turn with pending workflow interrupts must provide resume entries."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -467,13 +470,9 @@ async def test_workflow_run_empty_turn_with_pending_request_preserves_interrupts
 
     events = [event async for event in run_workflow_stream({"messages": []}, workflow)]
     types = [event.type for event in events]
-    assert types[0] == "RUN_STARTED"
-    assert "RUN_FINISHED" in types
-    assert "RUN_ERROR" not in types
-
-    finished = [event for event in events if event.type == "RUN_FINISHED"][0]
-    interrupts = _interrupts_from_run_finished(finished)
-    assert interrupts[0]["id"] == "pick-one"
+    assert types == ["RUN_STARTED", "RUN_ERROR"]
+    run_error = [event for event in events if event.type == "RUN_ERROR"][0]
+    assert getattr(run_error, "code") == "WORKFLOW_RESUME_REQUIRED"
 
 
 async def test_workflow_run_agent_response_output_uses_latest_assistant_message_only() -> None:
@@ -1320,8 +1319,8 @@ class TestExtractResponsesFromMessages:
 # ── Stream integration tests ──
 
 
-async def test_workflow_run_approval_via_messages_approved() -> None:
-    """Approval response sent via messages (function_approvals) should satisfy the pending request."""
+async def test_workflow_run_approval_resume_entry_approved() -> None:
+    """Approval response sent via canonical resume entry should satisfy the pending request."""
 
     class ApprovalExecutor(Executor):
         def __init__(self) -> None:
@@ -1352,24 +1351,22 @@ async def test_workflow_run_approval_via_messages_approved() -> None:
     interrupt_payload = _interrupts_from_run_finished(first_finished)
     assert isinstance(interrupt_payload, list) and len(interrupt_payload) == 1
 
-    # Second turn: send approval via function_approvals on a message (not resume.interrupts)
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
     resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
-                "messages": [
+                "messages": [],
+                "resume": [
                     {
-                        "role": "user",
-                        "content": "",
-                        "function_approvals": [
-                            {
-                                "approved": True,
-                                "id": "approval-1",
-                                "call_id": "refund-call",
-                                "name": "submit_refund",
-                                "arguments": {"order_id": "12345", "amount": "$89.99"},
-                            }
-                        ],
+                        "interruptId": "approval-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": True,
+                            "id": "approval-1",
+                            "function_call": interrupt_value.get("function_call"),
+                        },
                     }
                 ],
             },
@@ -1388,8 +1385,8 @@ async def test_workflow_run_approval_via_messages_approved() -> None:
     assert "outcome" not in resumed_finished
 
 
-async def test_workflow_run_approval_argument_mismatch_keeps_interrupt_pending() -> None:
-    """Workflow approval responses must not resume with changed function arguments."""
+async def test_workflow_run_approval_argument_mismatch_emits_run_error() -> None:
+    """Workflow approval responses must fail when function arguments change."""
 
     handled_responses: list[dict[str, Any]] = []
 
@@ -1422,24 +1419,25 @@ async def test_workflow_run_approval_argument_mismatch_keeps_interrupt_pending()
     first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
     interrupt_payload = _interrupts_from_run_finished(first_finished)
     assert isinstance(interrupt_payload, list) and len(interrupt_payload) == 1
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+    mismatched_function_call = dict(cast(dict[str, Any], interrupt_value["function_call"]))
+    mismatched_function_call["arguments"] = {"order_id": "99999", "amount": "$1000.00"}
 
     resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
-                "messages": [
+                "messages": [],
+                "resume": [
                     {
-                        "role": "user",
-                        "content": "",
-                        "function_approvals": [
-                            {
-                                "approved": True,
-                                "id": "approval-1",
-                                "call_id": "refund-call",
-                                "name": "submit_refund",
-                                "arguments": {"order_id": "99999", "amount": "$1000.00"},
-                            }
-                        ],
+                        "interruptId": "approval-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": True,
+                            "id": "approval-1",
+                            "function_call": mismatched_function_call,
+                        },
                     }
                 ],
             },
@@ -1448,12 +1446,14 @@ async def test_workflow_run_approval_argument_mismatch_keeps_interrupt_pending()
     ]
 
     assert handled_responses == []
-    resumed_finished = [event for event in resumed_events if event.type == "RUN_FINISHED"][0]
-    assert _interrupts_from_run_finished(resumed_finished)
+    resumed_types = [event.type for event in resumed_events]
+    assert resumed_types == ["RUN_STARTED", "RUN_ERROR"]
+    run_error = [event for event in resumed_events if event.type == "RUN_ERROR"][0]
+    assert run_error.code == "WORKFLOW_RESUME_INVALID_RESPONSE"
 
 
-async def test_workflow_run_approval_via_messages_denied() -> None:
-    """Denied approval response sent via messages (function_approvals) should satisfy the pending request."""
+async def test_workflow_run_approval_resume_entry_denied() -> None:
+    """Denied approval response sent via canonical resume entry should satisfy the pending request."""
 
     class ApprovalExecutor(Executor):
         def __init__(self) -> None:
@@ -1483,25 +1483,23 @@ async def test_workflow_run_approval_via_messages_denied() -> None:
     first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
     interrupt_payload = _interrupts_from_run_finished(first_finished)
     assert isinstance(interrupt_payload, list) and len(interrupt_payload) == 1
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
 
-    # Second turn: send denial via function_approvals on a message (not resume.interrupts)
     resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
-                "messages": [
+                "messages": [],
+                "resume": [
                     {
-                        "role": "user",
-                        "content": "",
-                        "function_approvals": [
-                            {
-                                "approved": False,
-                                "id": "deny-1",
-                                "call_id": "delete-call",
-                                "name": "delete_record",
-                                "arguments": {"record_id": "abc"},
-                            }
-                        ],
+                        "interruptId": "deny-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": False,
+                            "id": "deny-1",
+                            "function_call": interrupt_value.get("function_call"),
+                        },
                     }
                 ],
             },

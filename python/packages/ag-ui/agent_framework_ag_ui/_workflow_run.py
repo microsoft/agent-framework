@@ -34,6 +34,7 @@ from ._run_common import (
     _emit_content,
     _extract_resume_payload,
     _normalize_resume_interrupts,
+    _resume_contract_error,
 )
 from ._utils import canonical_function_arguments, generate_event_id, make_json_safe
 
@@ -225,24 +226,32 @@ def _resume_to_workflow_responses(resume_payload: Any) -> dict[str, Any]:
     return responses
 
 
-def _resume_error_for_pending_workflow_requests(
-    resume_payload: Any,
-    pending_events: dict[str, Any],
-) -> RunErrorEvent | None:
-    """Return a workflow resume error for explicit non-resolved canonical resume entries."""
-    if resume_payload is None or not pending_events:
-        return None
+def _resume_entries_to_workflow_responses(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Convert validated resume entries into workflow responses."""
+    responses: dict[str, Any] = {}
+    for entry in entries:
+        if entry.get("status") == "resolved":
+            responses[str(entry["interrupt_id"])] = _coerce_json_value(entry.get("payload"))
+    return responses
 
+
+def _pending_workflow_interrupt_ids(pending_events: dict[str, Any]) -> set[str]:
+    """Return canonical interrupt ids for pending workflow request_info events."""
     pending_ids: set[str] = set()
     for request_id, request_event in pending_events.items():
         pending_id = getattr(request_event, "request_id", None) or request_id
         if pending_id:
             pending_ids.add(str(pending_id))
-    for interrupt in _normalize_resume_interrupts(resume_payload):
-        interrupt_id = str(interrupt["id"])
-        if interrupt_id not in pending_ids:
-            continue
-        status = interrupt.get("status")
+    return pending_ids
+
+
+def _resume_error_for_pending_workflow_requests(
+    resume_entries: list[dict[str, Any]],
+) -> RunErrorEvent | None:
+    """Return a workflow resume error for explicit non-resolved canonical resume entries."""
+    for entry in resume_entries:
+        interrupt_id = str(entry["interrupt_id"])
+        status = entry.get("status")
         if status == "cancelled":
             return RunErrorEvent(
                 message=f"Workflow resume for interruptId '{interrupt_id}' was cancelled.",
@@ -481,7 +490,12 @@ def _coerce_responses_for_pending_requests(
         return responses
 
     normalized: dict[str, Any] = {}
-    pending_by_id = {str(request_id): event for request_id, event in pending_events.items()}
+    pending_by_id: dict[str, Any] = {}
+    for request_id, event in pending_events.items():
+        pending_by_id[str(request_id)] = event
+        event_request_id = getattr(event, "request_id", None)
+        if event_request_id:
+            pending_by_id[str(event_request_id)] = event
 
     for request_id, value in responses.items():
         request_key = str(request_id)
@@ -506,6 +520,48 @@ def _coerce_responses_for_pending_requests(
             continue
         normalized[request_key] = coerced_value
     return normalized
+
+
+def _coerce_responses_for_pending_requests_strict(
+    responses: dict[str, Any],
+    pending_events: dict[str, Any],
+) -> tuple[dict[str, Any], RunErrorEvent | None]:
+    """Coerce resume responses or return RUN_ERROR for invalid pending response payloads."""
+    if not responses or not pending_events:
+        return responses, None
+
+    normalized: dict[str, Any] = {}
+    pending_by_id = {str(request_id): event for request_id, event in pending_events.items()}
+
+    for request_id, value in responses.items():
+        request_key = str(request_id)
+        request_event = pending_by_id.get(request_key)
+        if request_event is None:
+            normalized[request_key] = value
+            continue
+
+        coerced_value = _coerce_response_for_request(request_event, value)
+        if coerced_value is None:
+            return (
+                {},
+                RunErrorEvent(
+                    message=(
+                        f"Workflow resume for interruptId '{request_key}' does not match expected "
+                        f"response type {_response_type_name(request_event)}."
+                    ),
+                    code="WORKFLOW_RESUME_INVALID_RESPONSE",
+                ),
+            )
+        if not _approval_response_matches_request(request_key, request_event, coerced_value):
+            return (
+                {},
+                RunErrorEvent(
+                    message=f"Workflow resume for interruptId '{request_key}' does not match pending approval request.",
+                    code="WORKFLOW_RESUME_INVALID_RESPONSE",
+                ),
+            )
+        normalized[request_key] = coerced_value
+    return normalized, None
 
 
 def _latest_user_text(messages: list[Message]) -> str | None:
@@ -674,20 +730,39 @@ async def run_workflow_stream(
 
     resume_payload = _extract_resume_payload(input_data)
     pending_before_run = await _pending_request_events(workflow)
-    resume_error = _resume_error_for_pending_workflow_requests(resume_payload, pending_before_run)
-    if resume_error is not None:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        yield resume_error
-        return
+    pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
+    resume_entries: list[dict[str, Any]] = []
+    if pending_interrupt_ids:
+        resume_entries, contract_error, contract_code = _resume_contract_error(
+            resume_payload,
+            pending_interrupt_ids,
+            required_code="WORKFLOW_RESUME_REQUIRED",
+            invalid_code="WORKFLOW_RESUME_INVALID",
+            unknown_code="WORKFLOW_RESUME_NOT_FOUND",
+            missing_code="WORKFLOW_RESUME_MISSING_INTERRUPT",
+        )
+        if contract_error is not None and contract_code is not None:
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunErrorEvent(message=contract_error, code=contract_code)
+            return
+        resume_error = _resume_error_for_pending_workflow_requests(resume_entries)
+        if resume_error is not None:
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield resume_error
+            return
 
-    responses = _resume_to_workflow_responses(resume_payload)
+    responses = (
+        _resume_entries_to_workflow_responses(resume_entries)
+        if pending_interrupt_ids
+        else _resume_to_workflow_responses(resume_payload)
+    )
     responses.update(_extract_responses_from_messages(messages))
-    responses = _coerce_responses_for_pending_requests(responses, pending_before_run)
+    responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
+    if response_error is not None:
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield response_error
+        return
     pending_interrupts = _interrupts_from_pending_requests(pending_before_run)
-    if not responses and pending_before_run:
-        responses.update(_single_pending_response_from_value(pending_before_run, resume_payload))
-    if not responses and pending_before_run:
-        responses.update(_single_pending_response_from_value(pending_before_run, _latest_user_text(messages)))
 
     if not responses and pending_before_run:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)

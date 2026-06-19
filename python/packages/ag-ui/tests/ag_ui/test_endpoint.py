@@ -111,7 +111,7 @@ async def test_add_endpoint_with_workflow_protocol():
 
     @executor(id="start")
     async def start(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
-        await ctx.yield_output("Workflow response")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        await ctx.yield_output("Workflow response")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
 
     app = FastAPI()
     workflow = WorkflowBuilder(start_executor=start).build()
@@ -480,6 +480,122 @@ async def test_endpoint_agent_approval_unknown_resume_entry_emits_run_error():
     assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
 
 
+async def test_endpoint_agent_approval_new_input_with_pending_interrupt_emits_run_error():
+    """New non-resume input on an approval-interrupted thread must fail with RUN_ERROR."""
+    client, agent, executed_cities = _build_weather_approval_endpoint()
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Should not run")], role="assistant")]
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-new-input",
+            "threadId": "thread-weather",
+            "messages": [{"role": "user", "content": "Actually, what about Portland?"}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_REQUIRED"
+    assert executed_cities == []
+    assert not [event for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+
+async def test_endpoint_agent_approval_malformed_resume_entry_emits_run_error():
+    """Malformed resume entries hidden in forwarded props must fail as stream RUN_ERROR events."""
+    client, _, executed_cities = _build_weather_approval_endpoint()
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-malformed",
+            "threadId": "thread-weather",
+            "messages": [],
+            "forwardedProps": {"command": {"resume": [{"status": "resolved", "payload": {"accepted": True}}]}},
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_INVALID"
+    assert executed_cities == []
+
+
+async def test_endpoint_agent_approval_resume_omitting_pending_interrupt_emits_run_error():
+    """A resume must address every open approval interrupt exactly once."""
+    executed: list[str] = []
+
+    def record_city(city: str) -> str:
+        executed.append(city)
+        return f"Recorded {city}"
+
+    tool = FunctionTool(
+        name="record_city",
+        description="Record a city",
+        func=record_city,
+        approval_mode="always_require",
+    )
+    approval_requests = [
+        Content.from_function_approval_request(
+            id="call_seattle",
+            function_call=Content.from_function_call(
+                call_id="call_seattle",
+                name="record_city",
+                arguments={"city": "Seattle"},
+            ),
+        ),
+        Content.from_function_approval_request(
+            id="call_portland",
+            function_call=Content.from_function_call(
+                call_id="call_portland",
+                name="record_city",
+                arguments={"city": "Portland"},
+            ),
+        ),
+    ]
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=approval_requests, role="assistant")],
+        default_options={"tools": [tool]},
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        path="/approval",
+    )
+    client = TestClient(app)
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-two-approvals",
+            "messages": [{"role": "user", "content": "Record two cities"}],
+        },
+    )
+    assert pause_response.status_code == 200
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-partial",
+            "threadId": "thread-two-approvals",
+            "messages": [],
+            "resume": [{"interruptId": "call_seattle", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_MISSING_INTERRUPT"
+    assert executed == []
+
+
 def _build_workflow_request_info_app() -> FastAPI:
     class FlightChoiceExecutor(Executor):
         def __init__(self) -> None:
@@ -497,7 +613,7 @@ def _build_workflow_request_info_app() -> FastAPI:
         @response_handler
         async def handle_choice(self, original_request: dict, response: dict, ctx: WorkflowContext[Any, Any]) -> None:
             del original_request
-            await ctx.yield_output(f"Booked {response['airline']}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            await ctx.yield_output(f"Booked {response['airline']}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
 
     app = FastAPI()
     workflow = WorkflowBuilder(start_executor=FlightChoiceExecutor()).build()
@@ -588,6 +704,102 @@ async def test_endpoint_workflow_request_info_cancelled_resume_emits_run_error()
         assert len(run_errors) == 1
         assert run_errors[0]["code"] == "WORKFLOW_RESUME_CANCELLED"
         assert not [event for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+
+async def test_endpoint_workflow_request_info_new_input_with_pending_interrupt_emits_run_error():
+    """New non-resume input on a workflow-interrupted thread must fail with RUN_ERROR."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-flights",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+        response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-new-input",
+                "threadId": "thread-flights",
+                "messages": [{"role": "user", "content": "I prefer KLM"}],
+            },
+        )
+
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+        assert len(run_errors) == 1
+        assert run_errors[0]["code"] == "WORKFLOW_RESUME_REQUIRED"
+        assert not [event for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+
+async def test_endpoint_workflow_request_info_malformed_resume_entry_emits_run_error():
+    """Malformed workflow resume entries must fail as observable stream RUN_ERROR events."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-flights",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+        response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-malformed",
+                "threadId": "thread-flights",
+                "messages": [],
+                "forwardedProps": {"command": {"resume": [{"status": "resolved", "payload": {"airline": "KLM"}}]}},
+            },
+        )
+
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+        assert len(run_errors) == 1
+        assert run_errors[0]["code"] == "WORKFLOW_RESUME_INVALID"
+
+
+async def test_endpoint_workflow_request_info_invalid_response_payload_emits_run_error():
+    """Workflow resume payloads that fail declared response-schema coercion must RUN_ERROR."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-flights",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+        response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-invalid-payload",
+                "threadId": "thread-flights",
+                "messages": [],
+                "resume": [{"interruptId": "flight-choice", "status": "resolved", "payload": "KLM"}],
+            },
+        )
+
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+        assert len(run_errors) == 1
+        assert run_errors[0]["code"] == "WORKFLOW_RESUME_INVALID_RESPONSE"
 
 
 async def test_endpoint_with_workflow_as_agent_stream_output(build_chat_client):

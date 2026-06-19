@@ -57,6 +57,7 @@ from ._run_common import (
     _has_only_tool_calls,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
     _reconstruct_messages_from_thread_snapshot,  # type: ignore
+    _resume_contract_error,  # type: ignore
     _resolve_ui_payload,  # type: ignore
     _stringify_tool_result,  # type: ignore
 )
@@ -488,6 +489,36 @@ def _thread_has_pending_approvals(
     return any(key.startswith(prefix) for key in pending_approvals)
 
 
+def _pending_approval_interrupt_ids(
+    pending_approvals: dict[str, PendingApprovalEntry] | None,
+    thread_id: str,
+) -> set[str]:
+    if pending_approvals is None:
+        return set()
+    prefix = f"{thread_id}:"
+    interrupt_ids: set[str] = set()
+    for key, entry in pending_approvals.items():
+        if not key.startswith(prefix):
+            continue
+        if isinstance(entry, str):
+            interrupt_ids.add(key.removeprefix(prefix))
+            continue
+        interrupt_id = entry.get("interrupt_id") or entry.get("request_id") or key.removeprefix(prefix)
+        interrupt_ids.add(str(interrupt_id))
+    return interrupt_ids
+
+
+def _stored_interrupt_ids(interrupts: list[dict[str, Any]] | None) -> set[str]:
+    if not interrupts:
+        return set()
+    interrupt_ids: set[str] = set()
+    for interrupt in interrupts:
+        interrupt_id = interrupt.get("id") or interrupt.get("interruptId")
+        if interrupt_id:
+            interrupt_ids.add(str(interrupt_id))
+    return interrupt_ids
+
+
 def _find_pending_approval_entry(
     pending_approvals: dict[str, PendingApprovalEntry] | None,
     thread_id: str,
@@ -523,44 +554,27 @@ def _approval_arguments_match_pending(pending_arguments: str | None, response_ar
     return pending_arguments is None or response_arguments == pending_arguments
 
 
-def _resume_entries(resume_payload: Any) -> list[dict[str, Any]]:
-    if resume_payload is None:
-        return []
-
-    if isinstance(resume_payload, list):
-        candidates = resume_payload
-    elif isinstance(resume_payload, dict):
-        resume_dict = cast(dict[str, Any], resume_payload)
-        if isinstance(resume_dict.get("interrupts"), list):
-            candidates = cast(list[Any], resume_dict["interrupts"])
-        elif isinstance(resume_dict.get("interrupt"), list):
-            candidates = cast(list[Any], resume_dict["interrupt"])
-        else:
-            candidates = [resume_dict]
-    else:
-        return []
-
-    entries: list[dict[str, Any]] = []
-    for item in candidates:
-        model_dump = getattr(item, "model_dump", None)
-        if callable(model_dump):
-            item = model_dump(by_alias=True, exclude_none=True)
-        if not isinstance(item, dict):
-            continue
-        item_dict = cast(dict[str, Any], item)
-        interrupt_id = item_dict.get("interruptId") or item_dict.get("interrupt_id") or item_dict.get("id")
-        if not interrupt_id:
-            continue
-        status = item_dict.get("status") or "resolved"
-        payload = item_dict.get("payload") if "payload" in item_dict else item_dict.get("value")
-        entries.append({"interrupt_id": str(interrupt_id), "status": str(status), "payload": payload})
-    return entries
+def _json_schema_value_matches(original_value: Any, edited_value: Any) -> bool:
+    if isinstance(original_value, bool):
+        return isinstance(edited_value, bool)
+    if isinstance(original_value, int) and not isinstance(original_value, bool):
+        return isinstance(edited_value, int) and not isinstance(edited_value, bool)
+    if isinstance(original_value, float):
+        return isinstance(edited_value, (int, float)) and not isinstance(edited_value, bool)
+    if isinstance(original_value, str):
+        return isinstance(edited_value, str)
+    if isinstance(original_value, list):
+        return isinstance(edited_value, list)
+    if isinstance(original_value, dict):
+        return isinstance(edited_value, dict)
+    return True
 
 
 def _canonical_approval_resume_messages(
     resume_payload: Any,
     pending_approvals: dict[str, PendingApprovalEntry] | None,
     thread_id: str,
+    expected_interrupt_ids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], set[str], RunErrorEvent | None]:
     """Translate canonical ResumeEntry approvals into existing approval response messages."""
     if pending_approvals is None:
@@ -568,8 +582,24 @@ def _canonical_approval_resume_messages(
 
     messages: list[dict[str, Any]] = []
     handled_ids: set[str] = set()
+    pending_interrupt_ids = _pending_approval_interrupt_ids(pending_approvals, thread_id)
+    contract_interrupt_ids = set(expected_interrupt_ids or set()) | pending_interrupt_ids
+    if not contract_interrupt_ids:
+        return messages, handled_ids, None
+
+    entries, contract_error, contract_code = _resume_contract_error(
+        resume_payload,
+        contract_interrupt_ids,
+        required_code="APPROVAL_RESUME_REQUIRED",
+        invalid_code="APPROVAL_RESUME_INVALID",
+        unknown_code="APPROVAL_RESUME_NOT_FOUND",
+        missing_code="APPROVAL_RESUME_MISSING_INTERRUPT",
+    )
+    if contract_error is not None and contract_code is not None:
+        return [], handled_ids, RunErrorEvent(message=contract_error, code=contract_code)
+
     has_pending_for_thread = _thread_has_pending_approvals(pending_approvals, thread_id)
-    for entry in _resume_entries(resume_payload):
+    for entry in entries:
         interrupt_id = cast(str, entry["interrupt_id"])
         status = entry["status"]
         pending_entry = _find_pending_approval_entry(pending_approvals, thread_id, interrupt_id)
@@ -638,6 +668,20 @@ def _canonical_approval_resume_messages(
                     code="APPROVAL_RESUME_INVALID",
                 ),
             )
+        for name, edited_value in edited_arguments.items():
+            original_value = original_arguments[name]
+            if not _json_schema_value_matches(original_value, edited_value):
+                return (
+                    [],
+                    handled_ids,
+                    RunErrorEvent(
+                        message=(
+                            f"Approval resume for interruptId '{interrupt_id}' has invalid type for edited "
+                            f"argument '{name}'."
+                        ),
+                        code="APPROVAL_RESUME_INVALID_RESPONSE",
+                    ),
+                )
 
         arguments = {**original_arguments, **edited_arguments}
         if not isinstance(pending_entry, str):
@@ -1154,6 +1198,9 @@ async def run_agent_stream(
         resume_payload,
         pending_approvals,
         thread_id,
+        expected_interrupt_ids=_stored_interrupt_ids(stored_snapshot.interrupt)
+        if stored_snapshot is not None
+        else None,
     )
     if resume_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
