@@ -25,7 +25,6 @@ jobs:
       # Match the existing Python dependency maintenance workflows. Reevaluate if package
       # installability starts differing across supported Python versions.
       UV_PYTHON: "3.13"
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -92,6 +91,7 @@ jobs:
         if: steps.validate_bounds_test.outcome != 'success'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require("fs")
             const reportPath = "python/scripts/dependencies/dependency-bounds-test-results.json"
@@ -161,6 +161,7 @@ jobs:
         if: always()
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require("fs")
             const reportPath = "python/scripts/dependencies/dependency-range-results.json"
@@ -321,6 +322,8 @@ jobs:
 
       - name: Create or update pull request with GitHub CLI
         if: steps.commit_updates.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BRANCH="automation/python-dependency-maintenance"
           PR_TITLE="Python: chore: update dependencies"
