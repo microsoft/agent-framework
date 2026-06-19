@@ -47,6 +47,28 @@ class WorkflowOrchestrationContext(Protocol):
         ...
 
     @property
+    def supports_event_streaming(self) -> bool:
+        """Whether this host streams the workflow event timeline via custom status.
+
+        The orchestrator accumulates the full :class:`WorkflowEvent` history and can
+        publish it to the orchestration custom status so a streaming client can
+        replay it (see ``DurableWorkflowClient.stream_workflow``). A host returns
+        ``True`` only when both are true: it has a streaming consumer *and* its
+        custom status can carry an accumulating, payload-bearing event log.
+
+        The Azure Functions host returns ``False``: its Durable Functions custom
+        status is capped at 16 KB (UTF-16) by the WebJobs extension, and its HTTP
+        status endpoint exposes only ``state`` / ``pending_requests`` / ``output``,
+        never the event stream. Publishing the accumulating event log there would
+        overflow the cap and fail the orchestrator without serving any consumer.
+
+        When ``False``, the orchestrator skips event accumulation and omits
+        ``events`` from the custom status; ``state`` and any ``pending_requests``
+        (needed for human-in-the-loop) are still published.
+        """
+        ...
+
+    @property
     def current_utc_datetime(self) -> datetime:
         """The current replay-safe UTC datetime."""
         ...

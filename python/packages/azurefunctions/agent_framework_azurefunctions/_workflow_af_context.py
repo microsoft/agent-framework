@@ -41,6 +41,15 @@ class AzureFunctionsWorkflowContext:
         return is_replaying
 
     @property
+    def supports_event_streaming(self) -> bool:
+        # The Azure Functions host has no workflow event-streaming endpoint, and its
+        # Durable Functions custom status is capped at 16 KB by the WebJobs extension.
+        # Publishing the accumulating event log would overflow that cap and fail the
+        # orchestrator, so events are omitted; state, pending HITL requests, and the
+        # final output remain available via the workflow status endpoint.
+        return False
+
+    @property
     def current_utc_datetime(self) -> datetime:
         current: datetime = self._context.current_utc_datetime
         return current

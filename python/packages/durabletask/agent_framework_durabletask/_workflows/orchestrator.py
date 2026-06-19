@@ -50,10 +50,10 @@ from agent_framework._workflows._state import State
 
 from .context import WorkflowOrchestrationContext
 from .serialization import (
-    deserialize_value,
+    _deserialize_value,
+    _serialize_value,
     reconstruct_to_type,
     resolve_type,
-    serialize_value,
     strip_pickle_markers,
 )
 
@@ -242,7 +242,7 @@ def _prepare_activity_task(
     """Prepare an activity task for execution via the context adapter."""
     activity_input = {
         "executor_id": executor_id,
-        "message": serialize_value(message),
+        "message": _serialize_value(message),
         "shared_state_snapshot": shared_state_snapshot,
         "source_executor_ids": [source_executor_id],
     }
@@ -345,7 +345,7 @@ def _route_result_messages(
             # Use an explicit None check so legitimately falsy payloads
             # (empty string, 0, False) are still routed.
             if sent_msg is not None:
-                sent_msg = deserialize_value(sent_msg)
+                sent_msg = _deserialize_value(sent_msg)
                 messages_to_route.append((sent_msg, target_id))
 
     for msg_to_route, explicit_target in messages_to_route:
@@ -503,7 +503,7 @@ def _coerce_initial_input(workflow: Workflow, raw_value: Any) -> Any:
     A durable workflow runs as a durable orchestration, so its initial payload
     arrives as plain JSON via ``context.get_input()`` -- without the type markers
     that inter-executor messages carry (those are reconstructed by
-    :func:`deserialize_value`). This single entry hop therefore needs explicit
+    :func:`_deserialize_value`). This single entry hop therefore needs explicit
     reconstruction to mirror in-process delivery, where the start executor
     receives its declared type:
 
@@ -528,7 +528,7 @@ def _coerce_initial_input(workflow: Workflow, raw_value: Any) -> Any:
         return raw_value
     # The initial payload is untrusted external input (HTTP body / client input) with no
     # legitimate checkpoint type markers, so neutralize any pickle-marker injection before
-    # it can reach deserialize_value() inside reconstruct_to_type() (avoids pickle RCE).
+    # it can reach _deserialize_value() inside reconstruct_to_type() (avoids pickle RCE).
     return reconstruct_to_type(strip_pickle_markers(raw_value), input_type)
 
 
@@ -557,7 +557,7 @@ async def execute_hitl_response_handler(
     response_data = hitl_message.get("response")
     response_type_str = hitl_message.get("response_type")
 
-    original_request = deserialize_value(original_request_data)
+    original_request = _deserialize_value(original_request_data)
     response = _deserialize_hitl_response(response_data, response_type_str)
 
     handler = executor._find_response_handler(original_request, response)  # pyright: ignore[reportPrivateUsage]
@@ -726,15 +726,22 @@ def run_workflow_orchestrator(
     # with data payloads (replayed via append_activity_events); agents contribute only
     # synthesized invoked/completed lifecycle events. Events are per executor / per
     # yielded output, not token-level, and accumulate for the run.
+    #
+    # Only hosts that stream this timeline (ctx.supports_event_streaming) accumulate
+    # and publish it. The Azure Functions host opts out: its custom status is capped
+    # at 16 KB and it has no event-streaming endpoint, so accumulating the log would
+    # only grow orchestrator memory and overflow the cap on publish.
     live_events: list[dict[str, Any]] = []
 
     def emit_event(event_type: str, executor_id: str) -> None:
+        if not ctx.supports_event_streaming:
+            return
         live_events.append({"type": event_type, "executor_id": executor_id, "iteration": iteration})
 
     def append_activity_events(activity_result: dict[str, Any] | None) -> None:
         # Replay the events captured inside the activity, tagging each with the current
         # superstep iteration so clients can group events by superstep.
-        if not activity_result:
+        if not ctx.supports_event_streaming or not activity_result:
             return
         captured = activity_result.get("events")
         if not isinstance(captured, list):
@@ -749,7 +756,12 @@ def run_workflow_orchestrator(
         # (the custom status set during the first execution already persisted).
         if ctx.is_replaying:
             return
-        status: dict[str, Any] = {"state": state, "events": live_events}
+        status: dict[str, Any] = {"state": state}
+        # Hosts that don't stream the event timeline (e.g. Azure Functions, whose
+        # custom status is 16 KB-capped) omit the events key entirely, preserving the
+        # compact {state, pending_requests} status those hosts expect.
+        if ctx.supports_event_streaming:
+            status["events"] = live_events
         if pending_requests is not None:
             status["pending_requests"] = pending_requests
         ctx.set_custom_status(status)
@@ -894,8 +906,6 @@ def run_workflow_orchestrator(
     # Match the core WorkflowRunner: if the loop stopped because max_iterations
     # was reached while messages are still pending, the workflow did not converge.
     if pending_messages:
-        raise WorkflowConvergenceException(
-            f"Workflow did not converge after {workflow.max_iterations} iterations."
-        )
+        raise WorkflowConvergenceException(f"Workflow did not converge after {workflow.max_iterations} iterations.")
 
     return workflow_outputs  # noqa: B901

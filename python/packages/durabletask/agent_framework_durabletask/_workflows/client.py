@@ -111,7 +111,7 @@ class DurableWorkflowClient:
 
         if metadata.serialized_output is None:
             return None
-        # The shared activity encodes each yielded output with serialize_value()
+        # The shared activity encodes each yielded output with _serialize_value()
         # before it reaches the orchestrator, so typed objects come back as
         # checkpoint-marker dicts. Reconstruct the originals before returning.
         return deserialize_workflow_output(json.loads(metadata.serialized_output))

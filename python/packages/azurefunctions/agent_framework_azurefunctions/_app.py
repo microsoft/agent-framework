@@ -43,11 +43,11 @@ from agent_framework_durabletask import (
     execute_workflow_activity,
     plan_workflow_registration,
 )
+from agent_framework_durabletask._workflows.serialization import strip_pickle_markers
 
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
-from ._serialization import strip_pickle_markers
 from ._workflow import run_workflow_orchestrator
 
 logger = logging.getLogger("agent_framework.azurefunctions")
@@ -349,11 +349,16 @@ class AgentFunctionApp(DFAppBase):
         ) -> func.HttpResponse:
             """HTTP endpoint to start the workflow."""
             try:
-                req_body = req.get_json()
+                client_input: Any = req.get_json()
             except ValueError:
-                return self._build_error_response("Invalid JSON body")
+                # The orchestrator accepts plain strings as well as JSON objects, so fall
+                # back to the raw request body (e.g. text/plain) instead of rejecting it.
+                raw_body = req.get_body()
+                if not raw_body:
+                    return self._build_error_response("Request body is required")
+                client_input = raw_body.decode("utf-8")
 
-            instance_id = await client.start_new(WORKFLOW_ORCHESTRATOR_NAME, client_input=req_body)
+            instance_id = await client.start_new(WORKFLOW_ORCHESTRATOR_NAME, client_input=client_input)
 
             base_url = self._build_base_url(req.url)
             status_url = f"{base_url}/api/workflow/status/{instance_id}"

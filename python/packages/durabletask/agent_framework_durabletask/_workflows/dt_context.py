@@ -45,6 +45,13 @@ class DurableTaskWorkflowContext:
         return self._context.is_replaying
 
     @property
+    def supports_event_streaming(self) -> bool:
+        # The standalone DurableTask host exposes the event timeline to clients via
+        # DurableWorkflowClient.stream_workflow, and its DTS backend imposes no 16 KB
+        # custom-status cap, so the full accumulated event stream is published.
+        return True
+
+    @property
     def current_utc_datetime(self) -> datetime:
         return self._context.current_utc_datetime
 
