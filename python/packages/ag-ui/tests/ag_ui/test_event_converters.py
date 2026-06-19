@@ -232,6 +232,59 @@ class TestAGUIEventConverter:
         assert update.additional_properties["interrupt"] == [{"id": "req_1", "value": {"question": "Continue?"}}]
         assert update.additional_properties["result"] == {"status": "paused"}
 
+    def test_run_finished_event_with_canonical_interrupt_outcome(self) -> None:
+        """RUN_FINISHED outcome.interrupts metadata is preserved in additional_properties."""
+        converter = AGUIEventConverter()
+        converter.thread_id = "thread_123"
+        converter.run_id = "run_456"
+
+        outcome = {
+            "type": "interrupt",
+            "interrupts": [
+                {
+                    "id": "req_1",
+                    "reason": "input_required",
+                    "message": "Choose a value",
+                    "responseSchema": {"type": "string"},
+                    "metadata": {"agent_framework": {"request_type": "str"}},
+                }
+            ],
+        }
+        event = {
+            "type": "RUN_FINISHED",
+            "threadId": "thread_123",
+            "runId": "run_456",
+            "outcome": outcome,
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.additional_properties is not None
+        assert update.additional_properties["outcome"] == outcome
+        assert update.additional_properties["interrupts"] == outcome["interrupts"]
+
+    def test_run_finished_event_with_success_outcome_preserves_normal_completion(self) -> None:
+        """Non-interrupt RUN_FINISHED outcome metadata stays a normal stop update."""
+        converter = AGUIEventConverter()
+        converter.thread_id = "thread_123"
+        converter.run_id = "run_456"
+
+        event = {
+            "type": "RUN_FINISHED",
+            "threadId": "thread_123",
+            "runId": "run_456",
+            "outcome": {"type": "success"},
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.finish_reason == "stop"
+        assert update.additional_properties is not None
+        assert update.additional_properties["outcome"] == {"type": "success"}
+        assert "interrupts" not in update.additional_properties
+
     def test_run_error_event(self) -> None:
         """Test conversion of RUN_ERROR event."""
         converter = AGUIEventConverter()

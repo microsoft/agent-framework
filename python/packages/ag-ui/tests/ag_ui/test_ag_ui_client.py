@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncGenerator, Awaitable, MutableSequence
 from typing import Any
 
+from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
     ChatOptions,
     ChatResponse,
@@ -443,6 +444,7 @@ class TestAGUIChatClient:
     async def test_interrupt_options_transmission(self, monkeypatch: MonkeyPatch) -> None:
         """Interrupt option fields are forwarded to the HTTP service."""
         available_interrupts = [{"id": "req_1", "type": "request_info"}]
+        expected_available_interrupts = [{"id": "req_1", "reason": "input_required"}]
         resume_payload = {"interrupts": [{"id": "req_1", "value": "approved"}]}
 
         mock_events = [
@@ -451,7 +453,7 @@ class TestAGUIChatClient:
         ]
 
         async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
-            assert kwargs.get("available_interrupts") == available_interrupts
+            assert kwargs.get("available_interrupts") == expected_available_interrupts
             assert kwargs.get("resume") == resume_payload
             for event in mock_events:
                 yield event
@@ -466,4 +468,48 @@ class TestAGUIChatClient:
         }
 
         response = await client.inner_get_response(messages=messages, options=options)
+        assert response is not None
+
+    async def test_typed_interrupt_options_forward_canonical_protocol_shape(self, monkeypatch: MonkeyPatch) -> None:
+        """Typed interrupt options are forwarded as canonical protocol JSON."""
+        mock_events = [
+            {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+            {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+        ]
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            assert kwargs.get("available_interrupts") == [
+                {
+                    "id": "approval_1",
+                    "reason": "tool_call",
+                    "toolCallId": "call_1",
+                    "responseSchema": {"type": "object"},
+                }
+            ]
+            assert kwargs.get("resume") == [
+                {"interruptId": "approval_1", "status": "resolved", "payload": {"approved": True}}
+            ]
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        options: dict[str, Any] = {
+            "available_interrupts": [
+                Interrupt(
+                    id="approval_1",
+                    reason="tool_call",
+                    tool_call_id="call_1",
+                    response_schema={"type": "object"},
+                )
+            ],
+            "resume": [ResumeEntry(interrupt_id="approval_1", status="resolved", payload={"approved": True})],
+        }
+
+        response = await client.inner_get_response(
+            messages=[Message(role="user", contents=["continue"])],
+            options=options,
+        )
+
         assert response is not None

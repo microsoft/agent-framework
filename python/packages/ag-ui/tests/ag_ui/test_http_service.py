@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
+from ag_ui.core import Interrupt, ResumeEntry
 
 from agent_framework_ag_ui._http_service import AGUIHttpService
 
@@ -128,6 +129,7 @@ async def test_post_run_with_state_tools_and_interrupts(mock_http_client):
     state = {"user_context": {"name": "Alice"}}
     tools = [{"type": "function", "function": {"name": "test_tool"}}]
     available_interrupts = [{"id": "req_1", "type": "request_info"}]
+    expected_available_interrupts = [{"id": "req_1", "reason": "input_required"}]
     resume = {"interrupts": [{"id": "req_1", "value": "approved"}]}
 
     async for _ in service.post_run(
@@ -146,8 +148,56 @@ async def test_post_run_with_state_tools_and_interrupts(mock_http_client):
     request_data = call_args.kwargs["json"]
     assert request_data["state"] == state
     assert request_data["tools"] == tools
-    assert request_data["availableInterrupts"] == available_interrupts
+    assert request_data["availableInterrupts"] == expected_available_interrupts
     assert request_data["resume"] == resume
+
+
+async def test_post_run_serializes_typed_interrupts_and_resume_with_protocol_aliases(mock_http_client):
+    """Typed protocol interrupt and resume models are serialized to canonical wire fields."""
+
+    async def mock_aiter_lines():
+        return
+        yield  # Make it an async generator
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.aiter_lines = mock_aiter_lines
+
+    mock_stream_context = AsyncMock()
+    mock_stream_context.__aenter__.return_value = mock_response
+    mock_stream_context.__aexit__.return_value = None
+    mock_http_client.stream.return_value = mock_stream_context
+
+    service = AGUIHttpService("http://localhost:8888/", http_client=mock_http_client)
+
+    async for _ in service.post_run(
+        thread_id="thread_123",
+        run_id="run_456",
+        messages=[],
+        available_interrupts=[
+            Interrupt(
+                id="approval_1",
+                reason="tool_call",
+                tool_call_id="call_1",
+                response_schema={"type": "object"},
+            )
+        ],
+        resume=[ResumeEntry(interrupt_id="approval_1", status="resolved", payload={"approved": True})],
+    ):
+        pass
+
+    request_data = mock_http_client.stream.call_args.kwargs["json"]
+    assert request_data["availableInterrupts"] == [
+        {
+            "id": "approval_1",
+            "reason": "tool_call",
+            "toolCallId": "call_1",
+            "responseSchema": {"type": "object"},
+        }
+    ]
+    assert request_data["resume"] == [
+        {"interruptId": "approval_1", "status": "resolved", "payload": {"approved": True}}
+    ]
 
 
 async def test_post_run_http_error(mock_http_client):

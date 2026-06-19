@@ -185,6 +185,13 @@ class AGUIEventConverter:
         }
         if "interrupt" in event:
             additional_properties["interrupt"] = event.get("interrupt")
+        if "outcome" in event:
+            outcome = event.get("outcome")
+            additional_properties["outcome"] = outcome
+            if isinstance(outcome, dict) and outcome.get("type") == "interrupt":
+                interrupts = outcome.get("interrupts")
+                if isinstance(interrupts, list):
+                    additional_properties["interrupts"] = interrupts
         if "result" in event:
             additional_properties["result"] = event.get("result")
 
