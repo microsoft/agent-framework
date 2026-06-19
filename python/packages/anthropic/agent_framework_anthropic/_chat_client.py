@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, cast
 
 from agent_framework import (
     Annotation,
@@ -719,11 +719,19 @@ class RawAnthropicClient(
 
     def _message_has_tool_use(self, message: dict[str, Any]) -> bool:
         """Return whether an Anthropic message contains tool_use blocks."""
-        content = message.get("content")
-        return isinstance(content, list) and any(
-            isinstance(item, dict) and item.get("type") in {"tool_use", "mcp_tool_use", "server_tool_use"}
-            for item in content
-        )
+        content: object = message.get("content")
+        if not isinstance(content, list):
+            return False
+
+        content_blocks = cast(list[object], content)
+        for content_block in content_blocks:
+            match content_block:
+                case {"type": "tool_use" | "mcp_tool_use" | "server_tool_use"}:
+                    return True
+                case _:
+                    pass
+
+        return False
 
     def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
