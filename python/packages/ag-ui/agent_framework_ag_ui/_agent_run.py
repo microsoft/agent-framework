@@ -594,7 +594,7 @@ async def _resolve_approval_responses(
             Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")
         )
 
-    _replace_approval_contents_with_results(messages, fcc_todo, approved_results)  # type: ignore
+    _replace_approval_contents_with_results(messages, fcc_todo, approved_results)
 
     # Post-process: Convert user messages with function_result content to proper tool messages.
     # After _replace_approval_contents_with_results, approved tool calls have their results

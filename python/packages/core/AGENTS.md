@@ -100,6 +100,14 @@ agent_framework/
 - **`FileSearchResult`** / **`FileSearchMatch`** - `SerializationMixin` DTOs returned by `search_files`, carrying the matching file name, a context snippet, and the matching lines with 1-based line numbers.
 - **`FileAccessProvider`** - `ContextProvider` that adds shared file-access tools (`file_access_save_file`, `file_access_read_file`, `file_access_delete_file`, `file_access_list_files`, `file_access_list_subdirectories`, `file_access_search_files`) plus default usage instructions to each invocation. `file_access_list_files`/`file_access_list_subdirectories` enumerate direct children (files / subdirectories) so the agent can walk the tree level by level; `file_access_search_files` searches recursively from the store root and returns store-root-relative `file_name` paths, scoped via an `fnmatch` glob (where `*` crosses `/`, e.g. `*.md`, `reports/*`). Unlike `MemoryContextProvider`, the store is intentionally shared across sessions and agents.
 
+### File Memory Harness (`_harness/_file_memory.py`)
+
+- **`FileMemoryProvider`** - `ContextProvider` that gives an agent a session-scoped, file-based memory backed by the same `AgentFileStore` abstraction. Adds five tools (`file_memory_save_file`, `file_memory_read_file`, `file_memory_delete_file`, `file_memory_list_files`, `file_memory_search_files`) plus default usage instructions. Port of the .NET `FileMemoryProvider`.
+- **Scoping** - Memories are isolated per session by default: each session writes under a working folder derived from `context.session_id`. Pass an explicit `scope` (e.g. a user id) to group memories across sessions, mirroring `FoundryMemoryProvider`'s `scope` arg.
+- **Descriptions & index** - `file_memory_save_file` accepts an optional `description`, stored in a companion `<stem>_description.md` sidecar. After each save/delete the provider rebuilds a capped (50-entry) `memories.md` index, and `before_run` injects that index as a `user` context message so the model knows what memories exist. Sidecars and the index are internal files hidden from `file_memory_list_files`/`file_memory_search_files` and rejected as save targets.
+- **`DEFAULT_FILE_MEMORY_SOURCE_ID`** / **`DEFAULT_FILE_MEMORY_INSTRUCTIONS`** - Public defaults for the provider's source id and instruction banner.
+- **Harness wiring** - `create_harness_agent` includes both `FileMemoryProvider` and `FileAccessProvider` by default. Disable via `disable_file_memory` / `disable_file_access`; override the backing store via `file_memory_store` / `file_access_store`. When no store is supplied, defaults are `FileSystemAgentFileStore` rooted at `{cwd}/agent-file-memory` (memory) and `{cwd}/working` (access), mirroring the .NET `HarnessAgent`.
+
 ### Tool Approval Harness (`_harness/_tool_approval.py`)
 
 - **`ToolApprovalMiddleware`** - Experimental opt-in agent middleware that coordinates session-backed approval

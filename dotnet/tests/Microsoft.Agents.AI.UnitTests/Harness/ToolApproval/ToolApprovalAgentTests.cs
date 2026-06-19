@@ -262,6 +262,95 @@ public class ToolApprovalAgentTests
         Assert.Equal("ReadFile", ((FunctionCallContent)requests[0].ToolCall).Name);
     }
 
+    /// <summary>
+    /// Verify that approving a no-argument call with the "always approve with exact arguments"
+    /// option does NOT auto-approve a later same-tool call that supplies arguments. The later
+    /// call must still surface for explicit approval (security regression for #6486).
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_EmptyArgsToolWithArgsRule_DoesNotAutoApproveCallWithArgumentsAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+
+        // Approve a no-argument SendPayment call with "always approve with exact arguments".
+        var ruleRequest = new ToolApprovalRequestContent("req0", new FunctionCallContent("call0", "SendPayment"));
+        var alwaysApproveResponse = ruleRequest.CreateAlwaysApproveToolWithArgumentsResponse();
+
+        // The inner agent then requests SendPayment WITH sensitive arguments.
+        var sensitiveArgs = new Dictionary<string, object?>
+        {
+            ["recipient"] = "attacker@example.test",
+            ["amount"] = 5000,
+        };
+        var newApprovalRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "SendPayment", sensitiveArgs));
+        var approvalResponseMsg = new AgentResponse([new ChatMessage(ChatRole.Assistant, [newApprovalRequest])]);
+
+        var innerAgent = CreateMockAgent(approvalResponseMsg);
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, [alwaysApproveResponse]),
+        };
+
+        // Act
+        var response = await agent.RunAsync(inputMessages, session);
+
+        // Assert — the argument-bearing request must surface, not be auto-approved.
+        var requests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(requests);
+        Assert.Equal("SendPayment", ((FunctionCallContent)requests[0].ToolCall).Name);
+    }
+
+    /// <summary>
+    /// Verify that approving a no-argument call with the "always approve with exact arguments"
+    /// option still auto-approves a later same-tool call that also supplies no arguments,
+    /// preserving the intended narrow behavior.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_EmptyArgsToolWithArgsRule_AutoApprovesLaterEmptyArgsCallAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+
+        var ruleRequest = new ToolApprovalRequestContent("req0", new FunctionCallContent("call0", "SendPayment"));
+        var alwaysApproveResponse = ruleRequest.CreateAlwaysApproveToolWithArgumentsResponse();
+
+        // Inner agent first re-requests SendPayment with no arguments, then returns a final response.
+        var emptyArgsRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "SendPayment"));
+        var approvalResponse = new AgentResponse([new ChatMessage(ChatRole.Assistant, [emptyArgsRequest])]);
+        var finalResponse = new AgentResponse([new ChatMessage(ChatRole.Assistant, "Payment sent")]);
+
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return callCount == 1 ? approvalResponse : finalResponse;
+            });
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, [alwaysApproveResponse]),
+        };
+
+        // Act
+        var response = await agent.RunAsync(inputMessages, session);
+
+        // Assert — the no-argument call is auto-approved and the inner agent reaches its final response.
+        Assert.Equal("Payment sent", response.Text);
+        var requests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Empty(requests);
+    }
+
     #endregion
 
     #region Mixed Auto-Approve
@@ -726,6 +815,56 @@ public class ToolApprovalAgentTests
 
         // Act & Assert
         Assert.True(ToolApprovalAgent.MatchesRule(request, rules, AgentJsonUtilities.DefaultOptions));
+    }
+
+    /// <summary>
+    /// Verify that an empty-arguments rule (non-null but empty) matches only a call that
+    /// supplies no arguments, and never widens into a tool-level match.
+    /// </summary>
+    [Fact]
+    public void MatchesRule_EmptyArgumentsRule_MatchesEmptyArgumentCall_ReturnsTrue()
+    {
+        // Arrange — an exact-arguments approval of a no-argument call is stored as an empty dictionary.
+        var rules = new List<ToolApprovalRule>
+        {
+            new()
+            {
+                ToolName = "SendPayment",
+                Arguments = new Dictionary<string, string>(),
+            },
+        };
+        var request = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "SendPayment"));
+
+        // Act & Assert
+        Assert.True(ToolApprovalAgent.MatchesRule(request, rules, AgentJsonUtilities.DefaultOptions));
+    }
+
+    /// <summary>
+    /// Verify that an empty-arguments rule does NOT match a later same-tool call that supplies
+    /// arguments. This guards against an exact-arguments approval of a no-argument call being
+    /// widened into a tool-level approval.
+    /// </summary>
+    [Fact]
+    public void MatchesRule_EmptyArgumentsRule_DoesNotMatchCallWithArguments_ReturnsFalse()
+    {
+        // Arrange
+        var rules = new List<ToolApprovalRule>
+        {
+            new()
+            {
+                ToolName = "SendPayment",
+                Arguments = new Dictionary<string, string>(),
+            },
+        };
+        var request = new ToolApprovalRequestContent("req1",
+            new FunctionCallContent("call1", "SendPayment", new Dictionary<string, object?>
+            {
+                ["recipient"] = "attacker@example.test",
+                ["amount"] = 5000,
+            }));
+
+        // Act & Assert
+        Assert.False(ToolApprovalAgent.MatchesRule(request, rules, AgentJsonUtilities.DefaultOptions));
     }
 
     #endregion
@@ -1537,6 +1676,74 @@ public class ToolApprovalAgentTests
     #endregion
 
     #region Auto-Approval Rules (Heuristics)
+
+    /// <summary>
+    /// Verify that <see cref="ToolApprovalAgent.AllToolsAutoApprovalRule"/> approves any tool call regardless of name.
+    /// </summary>
+    [Theory]
+    [InlineData("ReadTool")]
+    [InlineData("DangerousTool")]
+    [InlineData("file_access_delete_file")]
+    public async Task AllToolsAutoApprovalRule_ApprovesAnyToolAsync(string toolName)
+    {
+        // Arrange
+        var functionCall = new FunctionCallContent("call1", toolName);
+
+        // Act
+        bool approved = await ToolApprovalAgent.AllToolsAutoApprovalRule(functionCall);
+
+        // Assert
+        Assert.True(approved);
+    }
+
+    /// <summary>
+    /// Verify that wiring <see cref="ToolApprovalAgent.AllToolsAutoApprovalRule"/> auto-approves an approval
+    /// request rather than surfacing it to the caller.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AllToolsAutoApprovalRule_ApprovesAnyToolAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var approvalRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "DangerousTool"));
+
+        // Inner agent: first call returns approval request, second returns final response.
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    return new AgentResponse([new ChatMessage(ChatRole.Assistant, [approvalRequest])]);
+                }
+
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant, "Done")]);
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule]
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var response = await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, "Hi")],
+            session);
+
+        // Assert — the approval request was auto-approved, inner agent called twice, nothing surfaced to caller.
+        Assert.Equal(2, callCount);
+        Assert.Equal("Done", response.Text);
+        Assert.Empty(response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+    }
 
     /// <summary>
     /// Verify that an auto-approval rule can approve a function call that would otherwise need user approval.

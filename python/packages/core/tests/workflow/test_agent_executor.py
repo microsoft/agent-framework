@@ -243,7 +243,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     assert resumed_output is not None
 
     # Verify the restored executor's session state was restored
-    restored_session_obj = restored_exec_a._session  # type: ignore[reportPrivateUsage]
+    restored_session_obj = restored_exec_a._session  # pyright: ignore[reportPrivateUsage]
     assert restored_session_obj is not None
     assert restored_session_obj.session_id == initial_session.session_id
 
@@ -269,7 +269,7 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
         Message(role="user", contents=["Cached user message"]),
         Message(role="assistant", contents=["Cached assistant response"]),
     ]
-    executor._cache = list(cache_messages)  # type: ignore[reportPrivateUsage]
+    executor._cache = list(cache_messages)  # pyright: ignore[reportPrivateUsage]
 
     # Snapshot the state
     state = await executor.on_checkpoint_save()
@@ -289,20 +289,20 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
     new_executor = AgentExecutor(new_agent, session=new_session)
 
     # Verify new executor starts empty
-    assert len(new_executor._cache) == 0  # type: ignore[reportPrivateUsage]
+    assert len(new_executor._cache) == 0  # pyright: ignore[reportPrivateUsage]
     assert len(new_session.state) == 0
 
     # Restore state
     await new_executor.on_checkpoint_restore(state)
 
     # Verify cache is restored
-    restored_cache = new_executor._cache  # type: ignore[reportPrivateUsage]
+    restored_cache = new_executor._cache  # pyright: ignore[reportPrivateUsage]
     assert len(restored_cache) == len(cache_messages)
     assert restored_cache[0].text == "Cached user message"
     assert restored_cache[1].text == "Cached assistant response"
 
     # Verify session was restored with correct session_id
-    restored_session = new_executor._session  # type: ignore[reportPrivateUsage]
+    restored_session = new_executor._session  # pyright: ignore[reportPrivateUsage]
     assert restored_session.session_id == session.session_id
 
 
@@ -368,7 +368,7 @@ async def test_agent_executor_workflow_with_non_copyable_raw_representation() ->
     agent_a = _AgentWithRawRepr(raw=raw, id="a", name="AgentA")
     agent_b = _CountingAgent(id="b", name="AgentB")
 
-    exec_a = AgentExecutor(agent_a, id="exec_a")
+    exec_a = AgentExecutor(agent_a, id="exec_a")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     exec_b = AgentExecutor(agent_b, id="exec_b")
 
     workflow = WorkflowBuilder(start_executor=exec_a).add_edge(exec_a, exec_b).build()
@@ -429,7 +429,7 @@ class _MessageCapturingAgent(BaseAgent):
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         captured: list[Message] = []
         if messages:
-            for m in messages:  # type: ignore[union-attr]
+            for m in messages:  # type: ignore[union-attr]  # ty: ignore[not-iterable]
                 if isinstance(m, Message):
                     captured.append(m)
                 elif isinstance(m, str):
@@ -696,7 +696,7 @@ async def test_resolve_executor_kwargs_empty_per_executor_does_not_fallback_to_g
 
     # Per-executor entry for exec_a is empty, but global has values.
     # The empty dict should be honoured (no fallback to global).
-    resolved = {"exec_a": {}, GLOBAL_KWARGS_KEY: {"global_key": "global_val"}}
+    resolved = {"exec_a": {}, GLOBAL_KWARGS_KEY: {"global_key": "global_val"}}  # type: ignore[var-annotated]
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
     assert result == {}
 

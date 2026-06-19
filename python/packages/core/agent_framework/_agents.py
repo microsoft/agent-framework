@@ -56,13 +56,13 @@ from .exceptions import AgentInvalidRequestException, AgentInvalidResponseExcept
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    pass  # type: ignore # pragma: no cover
+    pass
 else:
-    pass  # type: ignore[import] # pragma: no cover
+    pass  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # pragma: no cover
 else:
@@ -582,7 +582,7 @@ class BaseAgent(SerializationMixin):
 # region Agent
 
 
-class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
+class RawAgent(BaseAgent, Generic[OptionsCoT]):
     """A Chat Client Agent without middleware or telemetry layers.
 
     This is the core chat agent implementation. For most use cases,
@@ -1128,7 +1128,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         response_format: Any | None = None,
     ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
-        return AgentResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
+        return AgentResponse.from_updates(
             updates,
             output_format_type=response_format,
         )
@@ -1269,7 +1269,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     duplicate_error_message=mcp_duplicate_message,
                 )
             else:
-                _append_unique_tools(final_tools, [tool])  # type: ignore[list-item]
+                _append_unique_tools(final_tools, [tool])
 
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
@@ -1477,7 +1477,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=provider_session,
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
@@ -1543,7 +1543,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         if kwargs:
             server_args.update(kwargs)
 
-        server: Server[Any] = Server(**server_args)  # type: ignore[call-arg]
+        server: Server[Any] = Server(**server_args)
 
         agent_tool = self.as_tool(name=self._get_agent_name())
 
@@ -1557,7 +1557,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 except Exception as e:
                     logger.error("Failed to send log message to server: %s", e)
 
-        @server.list_tools()  # type: ignore
+        @server.list_tools()
         async def _list_tools() -> list[types.Tool]:  # type: ignore
             """List all tools in the agent."""
             schema = agent_tool.parameters()
@@ -1571,7 +1571,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             await _log(level="debug", data=f"Agent tool: {agent_tool}")
             return [tool]
 
-        @server.call_tool()  # type: ignore
+        @server.call_tool()
         async def _call_tool(  # type: ignore
             name: str, arguments: dict[str, Any]
         ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
@@ -1603,18 +1603,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             # Convert result to MCP content.
             # Currently only text items are forwarded over MCP; rich content
             # (images, audio) is not yet supported in the MCP server path.
-            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []  # type: ignore[attr-defined]
+            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []
             for c in result:
                 if c.type == "text" and c.text:
-                    mcp_content.append(types.TextContent(type="text", text=c.text))  # type: ignore[attr-defined]
+                    mcp_content.append(types.TextContent(type="text", text=c.text))
                 elif c.type in ("data", "uri"):
                     logger.warning(
                         "MCP server does not yet forward rich content (images, audio) "
                         "in tool results. Rich content items will be omitted."
                     )
-            return mcp_content or [types.TextContent(type="text", text="")]  # type: ignore[attr-defined]
+            return mcp_content or [types.TextContent(type="text", text="")]
 
-        @server.set_logging_level()  # type: ignore
+        @server.set_logging_level()
         async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore
             """Set the logging level for the server."""
             logger.setLevel(LOG_LEVEL_MAPPING[level])
@@ -1712,9 +1712,9 @@ class Agent(
         """Run the agent."""
         super_run = cast(
             "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
-            super().run,  # type: ignore[misc]
+            super().run,
         )
-        return super_run(  # type: ignore[no-any-return]
+        return super_run(
             messages=messages,
             stream=stream,
             session=session,

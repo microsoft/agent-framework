@@ -72,9 +72,9 @@ class PurviewClient:
         # Callable token provider — returns a token string directly
         if callable(cred) and not isinstance(cred, (TokenCredential, AsyncTokenCredential)):
             result = cred()
-            return await result if inspect.isawaitable(result) else result  # type: ignore[return-value]
+            return await result if inspect.isawaitable(result) else result
         scopes = get_purview_scopes(self._settings)
-        token = cred.get_token(*scopes, tenant_id=tenant_id)  # type: ignore[union-attr]
+        token = cred.get_token(*scopes, tenant_id=tenant_id)
         token = await token if inspect.isawaitable(token) else token
         return token.token
 
@@ -203,7 +203,7 @@ class PurviewClient:
             raise PurviewAuthenticationError(f"Auth failure {resp.status_code}: {resp.text}")
         if resp.status_code == 402:
             if self._settings.get("ignore_payment_required", False):
-                return response_type()  # type: ignore[call-arg]
+                return response_type()
             raise PurviewPaymentRequiredError(f"Payment required {resp.status_code}: {resp.text}")
         if resp.status_code == 429:
             raise PurviewRateLimitError(f"Rate limited {resp.status_code}: {resp.text}")
@@ -217,7 +217,7 @@ class PurviewClient:
         try:
             # Prefer pydantic-style model_validate if present, else fall back to constructor.
             model_validate = getattr(response_type, "model_validate", None)
-            response_obj = model_validate(data) if callable(model_validate) else response_type(**data)  # type: ignore[call-arg]
+            response_obj = model_validate(data) if callable(model_validate) else response_type(**data)
 
             # Extract correlation_id from response headers if response object supports it
             if "client-request-id" in resp.headers and hasattr(response_obj, "correlation_id"):

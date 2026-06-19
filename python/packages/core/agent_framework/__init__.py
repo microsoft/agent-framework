@@ -102,6 +102,11 @@ from ._harness._file_access import (
     FileSystemAgentFileStore,
     InMemoryAgentFileStore,
 )
+from ._harness._file_memory import (
+    DEFAULT_FILE_MEMORY_INSTRUCTIONS,
+    DEFAULT_FILE_MEMORY_SOURCE_ID,
+    FileMemoryProvider,
+)
 from ._harness._loop import (
     AgentLoopMiddleware,
     JudgeVerdict,
@@ -341,6 +346,8 @@ __all__ = [
     "DEFAULT_BACKGROUND_AGENTS_SOURCE_ID",
     "DEFAULT_FILE_ACCESS_INSTRUCTIONS",
     "DEFAULT_FILE_ACCESS_SOURCE_ID",
+    "DEFAULT_FILE_MEMORY_INSTRUCTIONS",
+    "DEFAULT_FILE_MEMORY_SOURCE_ID",
     "DEFAULT_HARNESS_INSTRUCTIONS",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_MEMORY_SOURCE_ID",
@@ -431,6 +438,7 @@ __all__ = [
     "FileAccessProvider",
     "FileCheckpointStorage",
     "FileHistoryProvider",
+    "FileMemoryProvider",
     "FileSearchMatch",
     "FileSearchResult",
     "FileSkill",

@@ -58,7 +58,7 @@ class AgentConfig:
             base_model_type = None
 
         if base_model_type is not None and isinstance(state_schema, base_model_type):
-            schema_dict = state_schema.__class__.model_json_schema()  # type: ignore[union-attr]
+            schema_dict = state_schema.__class__.model_json_schema()
             return schema_dict.get("properties", {}) or {}
 
         if base_model_type is not None and isinstance(state_schema, type) and issubclass(state_schema, base_model_type):

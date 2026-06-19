@@ -59,17 +59,17 @@ from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 from ._tools import _sanitize_foundry_response_tool  # pyright: ignore[reportPrivateUsage]
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import ChatAndFunctionMiddlewareTypes, ToolTypes
@@ -131,7 +131,7 @@ FoundryChatOptionsT = TypeVar(
 FoundryChatOptions = OpenAIChatOptions
 
 
-class RawFoundryChatClient(  # type: ignore[misc]
+class RawFoundryChatClient(
     RawOpenAIChatClient[FoundryChatOptionsT],
     Generic[FoundryChatOptionsT],
 ):
@@ -149,8 +149,8 @@ class RawFoundryChatClient(  # type: ignore[misc]
         for a fully-featured client with middleware, telemetry, and function invocation.
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
-    SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = False  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
+    SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -219,7 +219,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
                 raise ValueError("Azure credential is required when using project_endpoint without a project_client.")
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": project_endpoint,
-                "credential": credential,  # type: ignore[arg-type]
+                "credential": credential,
                 "user_agent": get_user_agent(),
             }
             if allow_preview is not None:
@@ -394,7 +394,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
         )
 
     @staticmethod
-    def get_web_search_tool(  # type: ignore[override]
+    def get_web_search_tool(
         *,
         user_location: dict[str, str] | None = None,
         search_context_size: Literal["low", "medium", "high"] | None = None,
@@ -581,7 +581,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
         )
 
     @staticmethod
-    def get_image_generation_tool(  # type: ignore[override]
+    def get_image_generation_tool(
         *,
         model: Literal["gpt-image-1"] | str | None = None,
         size: Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None = None,
@@ -609,8 +609,8 @@ class RawFoundryChatClient(  # type: ignore[misc]
         Returns:
             An ImageGenTool ready to pass to an Agent.
         """
-        return ImageGenTool(  # type: ignore[misc]
-            model=model,  # type: ignore[arg-type]
+        return ImageGenTool(
+            model=model,
             size=size,
             output_format=output_format,
             quality=quality,
@@ -897,7 +897,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
     # endregion
 
 
-class FoundryChatClient(  # type: ignore[misc]
+class FoundryChatClient(
     FunctionInvocationLayer[FoundryChatOptionsT],
     ChatMiddlewareLayer[FoundryChatOptionsT],
     ChatTelemetryLayer[FoundryChatOptionsT],
@@ -952,7 +952,7 @@ class FoundryChatClient(  # type: ignore[misc]
             )
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
 
     def __init__(
         self,

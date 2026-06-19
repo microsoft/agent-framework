@@ -21,7 +21,7 @@ _SKILLS_ROOT = str(Path(__file__).resolve().parent.parent)
 if _SKILLS_ROOT not in sys.path:
     sys.path.insert(0, _SKILLS_ROOT)
 
-from subprocess_script_runner import subprocess_script_runner  # noqa: E402
+from subprocess_script_runner import subprocess_script_runner  # pyrefly: ignore[missing-import]  # noqa: E402
 
 """
 Skill Filtering — Using FilteringSkillsSource with file-based skills

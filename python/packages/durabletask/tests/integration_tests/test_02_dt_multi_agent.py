@@ -10,7 +10,19 @@ Tests operations with multiple specialized agents:
 - Agent isolation and tool routing
 """
 
+from typing import Any, Protocol
+
 import pytest
+
+from agent_framework_durabletask import DurableAIAgentClient
+
+
+class AgentClientFactoryProtocol(Protocol):
+    """Protocol for the agent client factory fixture."""
+
+    @classmethod
+    def create(cls, max_poll_retries: int = 90) -> tuple[Any, DurableAIAgentClient]: ...
+
 
 # Agent names from the 02_multi_agent sample
 WEATHER_AGENT_NAME: str = "WeatherAgent"
@@ -31,7 +43,7 @@ class TestMultiAgent:
     """Test suite for multi-agent functionality."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, agent_client_factory: type) -> None:
+    def setup(self, agent_client_factory: type[AgentClientFactoryProtocol]) -> None:
         """Setup test fixtures."""
         # Create agent client using the factory fixture
         _, self.agent_client = agent_client_factory.create()

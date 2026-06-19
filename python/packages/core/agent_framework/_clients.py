@@ -43,9 +43,9 @@ from ._types import (
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 if TYPE_CHECKING:
@@ -343,7 +343,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         response_format: Any | None = None,
     ) -> ChatResponse[Any]:
         """Finalize response updates into a single ChatResponse."""
-        return ChatResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
+        return ChatResponse.from_updates(
             updates,
             output_format_type=response_format,
         )
@@ -514,7 +514,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             return self._inner_get_response(
                 messages=messages,
                 stream=stream,
-                options=options or {},  # type: ignore[arg-type]
+                options=options or {},
                 **merged_client_kwargs,
             )
 

@@ -151,7 +151,9 @@ def test_valid_approval_accepted_with_server_data(executor: AgentFrameworkExecut
     # Verify SERVER-STORED data is used, not the client's forged data
     assert approval.function_call.name == "safe_tool"
     assert approval.function_call.call_id == "call_server"
-    fc_args = approval.function_call.parse_arguments() if hasattr(approval.function_call, "parse_arguments") else {}
+    fc_args: dict[str, Any] = (
+        approval.function_call.parse_arguments() if hasattr(approval.function_call, "parse_arguments") else {}
+    )
     assert fc_args.get("key") == "server_value"
 
 

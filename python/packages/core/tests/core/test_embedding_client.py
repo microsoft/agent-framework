@@ -24,9 +24,9 @@ class MockEmbeddingClient(BaseEmbeddingClient):
         *,
         options: EmbeddingGenerationOptions | None = None,
     ) -> GeneratedEmbeddings[list[float]]:
-        return GeneratedEmbeddings(
+        return GeneratedEmbeddings(  # ty: ignore[invalid-return-type]
             [Embedding(vector=[0.1, 0.2, 0.3], model="mock-model") for _ in values],
-            usage={"prompt_tokens": len(values), "total_tokens": len(values)},
+            usage={"prompt_tokens": len(values), "total_tokens": len(values)},  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type, invalid-key]
         )
 
 
@@ -52,7 +52,7 @@ async def test_base_get_embeddings_usage() -> None:
     client = MockEmbeddingClient()
     result = await client.get_embeddings(["a", "b", "c"])
     assert result.usage is not None
-    assert result.usage["prompt_tokens"] == 3
+    assert result.usage["prompt_tokens"] == 3  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
 
 
 def test_base_additional_properties_default() -> None:
@@ -67,7 +67,7 @@ def test_base_additional_properties_custom() -> None:
 
 def test_base_embedding_client_rejects_unknown_kwargs() -> None:
     with pytest.raises(TypeError):
-        MockEmbeddingClient(legacy_key="value")  # type: ignore[call-arg]
+        MockEmbeddingClient(legacy_key="value")  # type: ignore[call-arg]  # ty: ignore[unknown-argument]
 
 
 # --- SupportsGetEmbeddings protocol tests ---

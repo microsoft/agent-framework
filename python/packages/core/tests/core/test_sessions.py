@@ -174,7 +174,7 @@ class TestSessionContext:
         ctx = SessionContext(input_messages=[])
         ctx.extend_messages("a", [Message(role="user", contents=["a"])])
         ctx.extend_messages("b", [Message(role="user", contents=["b"])])
-        result = ctx.get_messages(sources=["a"])
+        result = ctx.get_messages(sources=["a"])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         assert len(result) == 1
         assert result[0].text == "a"
 
@@ -182,7 +182,7 @@ class TestSessionContext:
         ctx = SessionContext(input_messages=[])
         ctx.extend_messages("a", [Message(role="user", contents=["a"])])
         ctx.extend_messages("b", [Message(role="user", contents=["b"])])
-        result = ctx.get_messages(exclude_sources=["a"])
+        result = ctx.get_messages(exclude_sources=["a"])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         assert len(result) == 1
         assert result[0].text == "b"
 
@@ -233,13 +233,13 @@ class TestContextProvider:
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
         # Should not raise
-        await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
+        await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     async def test_after_run_is_noop(self) -> None:
         provider = ContextProvider(source_id="test")
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
-        await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +289,7 @@ class TestHistoryProviderBase:
         provider = ConcreteHistoryProvider("mem", stored_messages=msgs)
         session = AgentSession()
         ctx = SessionContext(session_id="s1", input_messages=[])
-        await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
+        await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert len(ctx.context_messages["mem"]) == 1
         assert ctx.context_messages["mem"][0].text == "history"
 
@@ -302,7 +302,7 @@ class TestHistoryProviderBase:
         resp_msg = Message(role="assistant", contents=["hi"])
         ctx = SessionContext(session_id="s1", input_messages=[input_msg])
         ctx._response = AgentResponse(messages=[resp_msg])
-        await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert len(provider.stored) == 2
         assert provider.stored[0].text == "hello"
         assert provider.stored[1].text == "hi"
@@ -352,7 +352,7 @@ class TestHistoryProviderBase:
         ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["make a sheet"])])
         ctx._response = AgentResponse.from_updates(updates)
 
-        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
         assert len(provider.stored) == 1
         stored_contents = provider.stored[0].contents
@@ -370,7 +370,7 @@ class TestHistoryProviderBase:
         provider = ConcreteHistoryProvider("mem", store_inputs=False)
         ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["hello"])])
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
-        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert len(provider.stored) == 1
         assert provider.stored[0].text == "hi"
 
@@ -380,7 +380,7 @@ class TestHistoryProviderBase:
         provider = ConcreteHistoryProvider("mem", store_outputs=False)
         ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["hello"])])
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
-        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert len(provider.stored) == 1
         assert provider.stored[0].text == "hello"
 
@@ -391,7 +391,7 @@ class TestHistoryProviderBase:
         ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["hello"])])
         ctx.extend_messages("rag", [Message(role="system", contents=["context"])])
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
-        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         # Should store: context from rag + input + response
         texts = [m.text for m in provider.stored]
         assert "context" in texts
@@ -408,7 +408,7 @@ class TestHistoryProviderBase:
         ctx.extend_messages("rag", [Message(role="system", contents=["rag-context"])])
         ctx.extend_messages("other", [Message(role="system", contents=["other-context"])])
         ctx._response = AgentResponse(messages=[])
-        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         texts = [m.text for m in provider.stored]
         assert "rag-context" in texts
         assert "other-context" not in texts
@@ -483,7 +483,7 @@ class TestInMemoryHistoryProvider:
         session = AgentSession()
         ctx = SessionContext(session_id="s1", input_messages=[])
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx,
             state=session.state.setdefault(provider.source_id, {}),
@@ -501,14 +501,14 @@ class TestInMemoryHistoryProvider:
         resp_msg = Message(role="assistant", contents=["hi there"])
         ctx1 = SessionContext(session_id="s1", input_messages=[input_msg])
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx1,
             state=session.state.setdefault(provider.source_id, {}),
         )
         ctx1._response = AgentResponse(messages=[resp_msg])
         await provider.after_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx1,
             state=session.state.setdefault(provider.source_id, {}),
@@ -517,7 +517,7 @@ class TestInMemoryHistoryProvider:
         # Second run: should load previous messages
         ctx2 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["again"])])
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx2,
             state=session.state.setdefault(provider.source_id, {}),
@@ -536,14 +536,14 @@ class TestInMemoryHistoryProvider:
         input_msg = Message(role="user", contents=["test"])
         ctx = SessionContext(session_id="s1", input_messages=[input_msg])
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx,
             state=session.state.setdefault(provider.source_id, {}),
         )
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
         await provider.after_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx,
             state=session.state.setdefault(provider.source_id, {}),
@@ -573,8 +573,8 @@ class TestInMemoryHistoryProvider:
 
 class TestFileHistoryProvider:
     def test_is_marked_experimental(self) -> None:
-        assert FileHistoryProvider.__feature_stage__ == "experimental"
-        assert FileHistoryProvider.__feature_id__ == ExperimentalFeature.FILE_HISTORY.value
+        assert FileHistoryProvider.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert FileHistoryProvider.__feature_id__ == ExperimentalFeature.FILE_HISTORY.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert FileHistoryProvider.__doc__ is not None
         assert ".. warning:: Experimental" in FileHistoryProvider.__doc__
 
@@ -589,14 +589,14 @@ class TestFileHistoryProvider:
         first_context = SessionContext(session_id=session.session_id, input_messages=[input_message])
 
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=first_context,
             state={},
         )
         first_context._response = AgentResponse(messages=[response_message])
         await provider.after_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=first_context,
             state={},
@@ -615,7 +615,7 @@ class TestFileHistoryProvider:
             session_id=session.session_id, input_messages=[Message(role="user", contents=["again"])]
         )
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=second_context,
             state={},
@@ -742,7 +742,7 @@ class TestFileHistoryProvider:
             def __init__(self, wrapped: Any) -> None:
                 self._wrapped = wrapped
 
-            def __enter__(self) -> "_TrackingFile":
+            def __enter__(self) -> "_TrackingFile":  # type: ignore[name-defined]
                 self._wrapped.__enter__()
                 return self
 

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
@@ -39,10 +40,71 @@ namespace Microsoft.Agents.AI;
 /// <item><description><c>file_access_search_files</c> — Recursively search file contents using a regular expression pattern.</description></item>
 /// </list>
 /// </para>
+/// <para>
+/// All of these tools always require approval: each is exposed as an <see cref="ApprovalRequiredAIFunction"/>.
+/// </para>
+/// <para>
+/// To auto-approve these tools without prompting, use the <see cref="ToolApprovalAgent"/> and add one of the provided rules to
+/// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/>:
+/// <list type="bullet">
+/// <item><description>
+/// <see cref="ReadOnlyToolsAutoApprovalRule"/> — auto-approves only the read-only tools (read, list, list subdirectories,
+/// and search), while still prompting for the tools that modify the store (save and delete).
+/// </description></item>
+/// <item><description>
+/// <see cref="AllToolsAutoApprovalRule"/> — auto-approves every file access tool, including save and delete.
+/// </description></item>
+/// </list>
+/// For example, to auto-approve all file access tools:
+/// <code>
+/// builder.UseToolApproval(new ToolApprovalAgentOptions
+/// {
+///     AutoApprovalRules = [FileAccessProvider.AllToolsAutoApprovalRule],
+/// });
+/// </code>
+/// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FileAccessProvider : AIContextProvider
 {
+    /// <summary>The name of the tool that saves a file.</summary>
+    public const string SaveFileToolName = "file_access_save_file";
+
+    /// <summary>The name of the tool that reads a file.</summary>
+    public const string ReadFileToolName = "file_access_read_file";
+
+    /// <summary>The name of the tool that deletes a file.</summary>
+    public const string DeleteFileToolName = "file_access_delete_file";
+
+    /// <summary>The name of the tool that lists the files in a directory.</summary>
+    public const string ListFilesToolName = "file_access_list_files";
+
+    /// <summary>The name of the tool that lists the subdirectories of a directory.</summary>
+    public const string ListSubdirectoriesToolName = "file_access_list_subdirectories";
+
+    /// <summary>The name of the tool that searches file contents.</summary>
+    public const string SearchFilesToolName = "file_access_search_files";
+
+    /// <summary>The names of the tools that only read from (never modify) the file store.</summary>
+    private static readonly HashSet<string> s_readOnlyToolNames = new(StringComparer.Ordinal)
+    {
+        ReadFileToolName,
+        ListFilesToolName,
+        ListSubdirectoriesToolName,
+        SearchFilesToolName,
+    };
+
+    /// <summary>The names of all tools exposed by this provider.</summary>
+    private static readonly HashSet<string> s_allToolNames = new(StringComparer.Ordinal)
+    {
+        SaveFileToolName,
+        ReadFileToolName,
+        DeleteFileToolName,
+        ListFilesToolName,
+        ListSubdirectoriesToolName,
+        SearchFilesToolName,
+    };
+
     private const string DefaultInstructions =
         """
         ## File Access
@@ -67,7 +129,7 @@ public sealed class FileAccessProvider : AIContextProvider
     /// The store should already be scoped to the desired folder or storage location.
     /// </param>
     /// <param name="options">Optional settings that control provider behavior. When <see langword="null"/>, defaults are used.</param>
-    /// <exception cref="System.ArgumentNullException">Thrown when <paramref name="fileStore"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="fileStore"/> is <see langword="null"/>.</exception>
     public FileAccessProvider(AgentFileStore fileStore, FileAccessProviderOptions? options = null)
     {
         Throw.IfNull(fileStore);
@@ -75,6 +137,44 @@ public sealed class FileAccessProvider : AIContextProvider
         this._fileStore = fileStore;
         this._instructions = options?.Instructions ?? DefaultInstructions;
     }
+
+    /// <summary>
+    /// Gets an auto-approval rule that approves the read-only file access tools
+    /// (<see cref="ReadFileToolName"/>, <see cref="ListFilesToolName"/>,
+    /// <see cref="ListSubdirectoriesToolName"/>, and <see cref="SearchFilesToolName"/>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The tools exposed by <see cref="FileAccessProvider"/> always require approval. Add this rule to
+    /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve only the tools
+    /// that read from the file store, while still prompting for tools that modify it
+    /// (<see cref="SaveFileToolName"/> and <see cref="DeleteFileToolName"/>).
+    /// </para>
+    /// <para>
+    /// The rule matches on the tool name, returning <see langword="true"/> for read-only file access tools
+    /// and <see langword="false"/> for all other tool calls so that subsequent rules continue to be evaluated.
+    /// </para>
+    /// </remarks>
+    public static Func<FunctionCallContent, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
+        functionCall => new ValueTask<bool>(s_readOnlyToolNames.Contains(functionCall.Name));
+
+    /// <summary>
+    /// Gets an auto-approval rule that approves all file access tools, including the tools that modify the
+    /// file store (<see cref="SaveFileToolName"/> and <see cref="DeleteFileToolName"/>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The tools exposed by <see cref="FileAccessProvider"/> always require approval. Add this rule to
+    /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve every file access
+    /// tool without prompting the user.
+    /// </para>
+    /// <para>
+    /// The rule matches on the tool name, returning <see langword="true"/> for any file access tool
+    /// and <see langword="false"/> for all other tool calls so that subsequent rules continue to be evaluated.
+    /// </para>
+    /// </remarks>
+    public static Func<FunctionCallContent, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
+        functionCall => new ValueTask<bool>(s_allToolNames.Contains(functionCall.Name));
 
     /// <inheritdoc />
     public override IReadOnlyList<string> StateKeys => [];
@@ -197,14 +297,17 @@ public sealed class FileAccessProvider : AIContextProvider
     {
         var serializerOptions = AgentJsonUtilities.DefaultOptions;
 
+        // All file access tools always require approval. Callers can use the
+        // ReadOnlyToolsAutoApprovalRule or AllToolsAutoApprovalRule with the ToolApprovalAgent
+        // to automatically approve these tools.
         return
         [
-            AIFunctionFactory.Create(this.SaveFileAsync, new AIFunctionFactoryOptions { Name = "file_access_save_file", SerializerOptions = serializerOptions }),
-            AIFunctionFactory.Create(this.ReadFileAsync, new AIFunctionFactoryOptions { Name = "file_access_read_file", SerializerOptions = serializerOptions }),
-            AIFunctionFactory.Create(this.DeleteFileAsync, new AIFunctionFactoryOptions { Name = "file_access_delete_file", SerializerOptions = serializerOptions }),
-            AIFunctionFactory.Create(this.ListFilesAsync, new AIFunctionFactoryOptions { Name = "file_access_list_files", SerializerOptions = serializerOptions }),
-            AIFunctionFactory.Create(this.ListSubdirectoriesAsync, new AIFunctionFactoryOptions { Name = "file_access_list_subdirectories", SerializerOptions = serializerOptions }),
-            AIFunctionFactory.Create(this.SearchFilesAsync, new AIFunctionFactoryOptions { Name = "file_access_search_files", SerializerOptions = serializerOptions }),
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.SaveFileAsync, new AIFunctionFactoryOptions { Name = SaveFileToolName, SerializerOptions = serializerOptions })),
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.ReadFileAsync, new AIFunctionFactoryOptions { Name = ReadFileToolName, SerializerOptions = serializerOptions })),
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.DeleteFileAsync, new AIFunctionFactoryOptions { Name = DeleteFileToolName, SerializerOptions = serializerOptions })),
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.ListFilesAsync, new AIFunctionFactoryOptions { Name = ListFilesToolName, SerializerOptions = serializerOptions })),
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.ListSubdirectoriesAsync, new AIFunctionFactoryOptions { Name = ListSubdirectoriesToolName, SerializerOptions = serializerOptions })),
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.SearchFilesAsync, new AIFunctionFactoryOptions { Name = SearchFilesToolName, SerializerOptions = serializerOptions })),
         ];
     }
 }
