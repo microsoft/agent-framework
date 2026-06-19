@@ -40,7 +40,7 @@ public static class Program
                 await RunWorkflowAsync(
                     AgentWorkflowBuilder.BuildSequential(
                         chainOnlyAgentResponses: true,
-                        from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client)),
+                        from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, aiProjectClient, deploymentName)),
                     [new(ChatRole.User, "Hello, world!")]);
                 break;
 

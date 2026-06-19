@@ -25,6 +25,7 @@
 using System.ComponentModel;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -35,7 +36,7 @@ var store = Environment.GetEnvironmentVariable("FOUNDRY_RESPONSES_STORE") ?? "fa
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new global::Azure.Identity.DefaultAzureCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Define multiple tools so the model makes several tool calls in a single run.
 [Description("Get the current weather for a city.")]
