@@ -12,6 +12,7 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     WorkflowBuilder,
     WorkflowContext,
     executor,
@@ -288,6 +289,192 @@ async def test_endpoint_agent_approval_pause_emits_canonical_interrupt_outcome()
         "name": "write_doc",
         "arguments": {"content": "Draft"},
     }
+
+
+def _build_weather_approval_endpoint() -> tuple[TestClient, StubAgent, list[str]]:
+    executed_cities: list[str] = []
+
+    def get_weather(city: str) -> str:
+        executed_cities.append(city)
+        return f"Sunny in {city}"
+
+    weather_tool = FunctionTool(
+        name="get_weather",
+        description="Get the weather for a city",
+        func=get_weather,
+        approval_mode="always_require",
+    )
+    function_call = Content.from_function_call(
+        call_id="call_get_weather",
+        name="get_weather",
+        arguments={"city": "Seattle"},
+    )
+    approval_request = Content.from_function_approval_request(
+        id="call_get_weather",
+        function_call=function_call,
+    )
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[approval_request], role="assistant")],
+        default_options={"tools": [weather_tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+
+    client = TestClient(app)
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-weather",
+            "messages": [{"role": "user", "content": "What is the weather?"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_events = _decode_sse_events(pause_response)
+    pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
+    assert pause_finished
+    assert _run_finished_interrupts(pause_finished[-1])[0]["id"] == "call_get_weather"
+
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")]
+    return client, agent, executed_cities
+
+
+async def test_endpoint_agent_approval_resume_entry_executes_approved_tool():
+    """A resolved canonical approval resume should execute the pending approved tool."""
+    client, _, executed_cities = _build_weather_approval_endpoint()
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"accepted": True},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    tool_results = [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert len(tool_results) == 1
+    assert tool_results[0]["toolCallId"] == "call_get_weather"
+    assert tool_results[0]["content"] == "Sunny in Seattle"
+    assert executed_cities == ["Seattle"]
+    assert "outcome" not in [event for event in events if event.get("type") == "RUN_FINISHED"][-1]
+
+
+async def test_endpoint_agent_approval_resume_entry_denial_does_not_execute_tool():
+    """A resolved canonical denial resume should not execute the pending tool."""
+    client, _, executed_cities = _build_weather_approval_endpoint()
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-deny",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"accepted": False},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert executed_cities == []
+    assert [event for event in events if event.get("type") == "RUN_FINISHED"]
+
+
+async def test_endpoint_agent_approval_resume_entry_applies_edited_arguments():
+    """A resolved canonical approval resume should apply advertised edited arguments."""
+    client, _, executed_cities = _build_weather_approval_endpoint()
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-edit",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"accepted": True, "city": "Portland"},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    tool_results = [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert len(tool_results) == 1
+    assert tool_results[0]["content"] == "Sunny in Portland"
+    assert executed_cities == ["Portland"]
+
+
+async def test_endpoint_agent_approval_cancelled_resume_entry_emits_run_error():
+    """A cancelled canonical approval resume should fail safely instead of proceeding."""
+    client, _, executed_cities = _build_weather_approval_endpoint()
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-cancel",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [{"interruptId": "call_get_weather", "status": "cancelled"}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_CANCELLED"
+    assert executed_cities == []
+    assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+
+
+async def test_endpoint_agent_approval_unknown_resume_entry_emits_run_error():
+    """A canonical approval resume for an unknown pending interrupt should fail safely."""
+    client, _, executed_cities = _build_weather_approval_endpoint()
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-forged",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_forged",
+                    "status": "resolved",
+                    "payload": {"accepted": True},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_NOT_FOUND"
+    assert executed_cities == []
+    assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
 
 
 async def test_endpoint_with_workflow_as_agent_stream_output(build_chat_client):

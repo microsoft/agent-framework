@@ -15,6 +15,7 @@ from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     MessagesSnapshotEvent,
+    RunErrorEvent,
     RunStartedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
@@ -176,10 +177,16 @@ def _extract_approved_state_updates(
     return updates
 
 
-def _resume_to_tool_messages(resume_payload: Any) -> list[dict[str, Any]]:
+def _resume_to_tool_messages(
+    resume_payload: Any,
+    *,
+    exclude_interrupt_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
     """Convert a resume payload into AG-UI tool messages for approval continuation."""
     result: list[dict[str, Any]] = []
     for interrupt in _normalize_resume_interrupts(resume_payload):
+        if exclude_interrupt_ids and interrupt["id"] in exclude_interrupt_ids:
+            continue
         value = interrupt.get("value")
         content: str
         if isinstance(value, str):
@@ -418,13 +425,21 @@ class _PendingApproval(TypedDict):
 
     name: str
     arguments: str | None
+    request_id: str | None
+    interrupt_id: str | None
 
 
 PendingApprovalEntry = _PendingApproval | str
 
 
-def _make_pending_approval_entry(name: str, arguments: str | None) -> _PendingApproval:
-    return {"name": name, "arguments": arguments}
+def _make_pending_approval_entry(
+    name: str,
+    arguments: str | None,
+    *,
+    request_id: str | None = None,
+    interrupt_id: str | None = None,
+) -> _PendingApproval:
+    return {"name": name, "arguments": arguments, "request_id": request_id, "interrupt_id": interrupt_id}
 
 
 def _pending_approval_name(entry: PendingApprovalEntry) -> str | None:
@@ -437,6 +452,212 @@ def _pending_approval_arguments(entry: PendingApprovalEntry) -> str | None:
     if isinstance(entry, str):
         return None
     return entry["arguments"]
+
+
+def _pending_approval_request_id(entry: PendingApprovalEntry) -> str | None:
+    if isinstance(entry, str):
+        return None
+    return entry.get("request_id")
+
+
+def _pending_approval_interrupt_id(entry: PendingApprovalEntry) -> str | None:
+    if isinstance(entry, str):
+        return None
+    return entry.get("interrupt_id")
+
+
+def _parse_json_object(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return cast(dict[str, Any], value)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
+
+
+def _thread_has_pending_approvals(
+    pending_approvals: dict[str, PendingApprovalEntry] | None,
+    thread_id: str,
+) -> bool:
+    if pending_approvals is None:
+        return False
+    prefix = f"{thread_id}:"
+    return any(key.startswith(prefix) for key in pending_approvals)
+
+
+def _find_pending_approval_entry(
+    pending_approvals: dict[str, PendingApprovalEntry] | None,
+    thread_id: str,
+    interrupt_id: str,
+) -> PendingApprovalEntry | None:
+    if pending_approvals is None:
+        return None
+    return pending_approvals.get(f"{thread_id}:{interrupt_id}")
+
+
+def _pending_approval_alias_keys(thread_id: str, entry: PendingApprovalEntry, *ids: str | None) -> set[str]:
+    aliases = {item for item in ids if item}
+    request_id = _pending_approval_request_id(entry)
+    interrupt_id = _pending_approval_interrupt_id(entry)
+    if request_id:
+        aliases.add(request_id)
+    if interrupt_id:
+        aliases.add(interrupt_id)
+    return {f"{thread_id}:{alias}" for alias in aliases}
+
+
+def _consume_pending_approval_entry(
+    pending_approvals: dict[str, PendingApprovalEntry],
+    thread_id: str,
+    entry: PendingApprovalEntry,
+    *ids: str | None,
+) -> None:
+    for alias_key in _pending_approval_alias_keys(thread_id, entry, *ids):
+        pending_approvals.pop(alias_key, None)
+
+
+def _approval_arguments_match_pending(pending_arguments: str | None, response_arguments: str | None) -> bool:
+    return pending_arguments is None or response_arguments == pending_arguments
+
+
+def _resume_entries(resume_payload: Any) -> list[dict[str, Any]]:
+    if resume_payload is None:
+        return []
+
+    if isinstance(resume_payload, list):
+        candidates = resume_payload
+    elif isinstance(resume_payload, dict):
+        resume_dict = cast(dict[str, Any], resume_payload)
+        if isinstance(resume_dict.get("interrupts"), list):
+            candidates = cast(list[Any], resume_dict["interrupts"])
+        elif isinstance(resume_dict.get("interrupt"), list):
+            candidates = cast(list[Any], resume_dict["interrupt"])
+        else:
+            candidates = [resume_dict]
+    else:
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for item in candidates:
+        model_dump = getattr(item, "model_dump", None)
+        if callable(model_dump):
+            item = model_dump(by_alias=True, exclude_none=True)
+        if not isinstance(item, dict):
+            continue
+        item_dict = cast(dict[str, Any], item)
+        interrupt_id = item_dict.get("interruptId") or item_dict.get("interrupt_id") or item_dict.get("id")
+        if not interrupt_id:
+            continue
+        status = item_dict.get("status") or "resolved"
+        payload = item_dict.get("payload") if "payload" in item_dict else item_dict.get("value")
+        entries.append({"interrupt_id": str(interrupt_id), "status": str(status), "payload": payload})
+    return entries
+
+
+def _canonical_approval_resume_messages(
+    resume_payload: Any,
+    pending_approvals: dict[str, PendingApprovalEntry] | None,
+    thread_id: str,
+) -> tuple[list[dict[str, Any]], set[str], RunErrorEvent | None]:
+    """Translate canonical ResumeEntry approvals into existing approval response messages."""
+    if pending_approvals is None:
+        return [], set(), None
+
+    messages: list[dict[str, Any]] = []
+    handled_ids: set[str] = set()
+    has_pending_for_thread = _thread_has_pending_approvals(pending_approvals, thread_id)
+    for entry in _resume_entries(resume_payload):
+        interrupt_id = cast(str, entry["interrupt_id"])
+        status = entry["status"]
+        pending_entry = _find_pending_approval_entry(pending_approvals, thread_id, interrupt_id)
+        if pending_entry is None:
+            if has_pending_for_thread:
+                return (
+                    [],
+                    handled_ids,
+                    RunErrorEvent(
+                        message=f"No pending approval interrupt found for resume interruptId '{interrupt_id}'.",
+                        code="APPROVAL_RESUME_NOT_FOUND",
+                    ),
+                )
+            continue
+
+        handled_ids.add(interrupt_id)
+        if status == "cancelled":
+            return (
+                [],
+                handled_ids,
+                RunErrorEvent(
+                    message=f"Approval resume for interruptId '{interrupt_id}' was cancelled.",
+                    code="APPROVAL_RESUME_CANCELLED",
+                ),
+            )
+        if status != "resolved":
+            return (
+                [],
+                handled_ids,
+                RunErrorEvent(
+                    message=f"Unsupported approval resume status '{status}' for interruptId '{interrupt_id}'.",
+                    code="APPROVAL_RESUME_INVALID",
+                ),
+            )
+
+        payload = _parse_json_object(entry.get("payload"))
+        if payload is None:
+            return (
+                [],
+                handled_ids,
+                RunErrorEvent(
+                    message=f"Approval resume for interruptId '{interrupt_id}' must include an object payload.",
+                    code="APPROVAL_RESUME_INVALID",
+                ),
+            )
+        accepted = payload.get("accepted", payload.get("approved"))
+        if not isinstance(accepted, bool):
+            return (
+                [],
+                handled_ids,
+                RunErrorEvent(
+                    message=f"Approval resume for interruptId '{interrupt_id}' must include a boolean accepted value.",
+                    code="APPROVAL_RESUME_INVALID",
+                ),
+            )
+
+        pending_arguments = _pending_approval_arguments(pending_entry)
+        original_arguments = _parse_json_object(pending_arguments) or {}
+        edited_arguments = {key: value for key, value in payload.items() if key not in {"accepted", "approved"}}
+        if not set(edited_arguments).issubset(set(original_arguments)):
+            return (
+                [],
+                handled_ids,
+                RunErrorEvent(
+                    message=f"Approval resume for interruptId '{interrupt_id}' includes unsupported edited arguments.",
+                    code="APPROVAL_RESUME_INVALID",
+                ),
+            )
+
+        arguments = {**original_arguments, **edited_arguments}
+        if not isinstance(pending_entry, str):
+            pending_entry["arguments"] = json.dumps(make_json_safe(arguments), sort_keys=True, separators=(",", ":"))
+        messages.append(
+            {
+                "role": "user",
+                "function_approvals": [
+                    {
+                        "id": interrupt_id,
+                        "call_id": interrupt_id,
+                        "name": _pending_approval_name(pending_entry) or "",
+                        "approved": accepted,
+                        "arguments": arguments,
+                    }
+                ],
+            }
+        )
+
+    return messages, handled_ids, None
 
 
 def _evict_oldest_approvals(registry: dict[str, PendingApprovalEntry], max_size: int = 10_000) -> None:
@@ -526,7 +747,7 @@ async def _resolve_approval_responses(
 
             pending_arguments = _pending_approval_arguments(pending_entry)
             response_arguments = canonical_function_arguments(resp.function_call)
-            if pending_arguments is not None and response_arguments != pending_arguments:
+            if not _approval_arguments_match_pending(pending_arguments, response_arguments):
                 logger.warning(
                     "Rejected approval response id=%s: function arguments mismatch",
                     resp_id,
@@ -535,7 +756,13 @@ async def _resolve_approval_responses(
                 continue
 
             # Valid — consume entry to prevent replay
-            del pending_approvals[registry_key]
+            _consume_pending_approval_entry(
+                pending_approvals,
+                thread_id,
+                pending_entry,
+                resp_id,
+                resp.function_call.call_id if resp.function_call else None,
+            )
             if resp.approved:
                 validated.append(resp)
             else:
@@ -923,9 +1150,21 @@ async def run_agent_stream(
             current_state=flow.current_state,
         )
 
-    resume_messages = _resume_to_tool_messages(resume_payload)
+    approval_resume_messages, handled_resume_ids, resume_error = _canonical_approval_resume_messages(
+        resume_payload,
+        pending_approvals,
+        thread_id,
+    )
+    if resume_error is not None:
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield resume_error
+        return
+    resume_messages = _resume_to_tool_messages(resume_payload, exclude_interrupt_ids=handled_resume_ids)
     if available_interrupts:
         logger.debug("Received available interrupts metadata: %s", available_interrupts)
+    if approval_resume_messages:
+        logger.info(f"Appending {len(approval_resume_messages)} synthesized approval resume message(s).")
+        raw_messages.extend(approval_resume_messages)
     if resume_messages:
         logger.info(f"Appending {len(resume_messages)} synthesized resume message(s) to AG-UI input.")
         raw_messages.extend(resume_messages)
@@ -1094,10 +1333,16 @@ async def run_agent_stream(
             # Register pending approval requests so we can validate responses later
             if content_type == "function_approval_request" and pending_approvals is not None:
                 if content.id and content.function_call and content.function_call.name:
-                    pending_approvals[f"{thread_id}:{content.id}"] = _make_pending_approval_entry(
+                    canonical_interrupt_id = content.function_call.call_id or content.id
+                    pending_entry = _make_pending_approval_entry(
                         content.function_call.name,
                         canonical_function_arguments(content.function_call),
+                        request_id=str(content.id),
+                        interrupt_id=str(canonical_interrupt_id),
                     )
+                    pending_approvals[f"{thread_id}:{content.id}"] = pending_entry
+                    if canonical_interrupt_id:
+                        pending_approvals[f"{thread_id}:{canonical_interrupt_id}"] = pending_entry
                     # Evict oldest entries if the registry exceeds a safe bound (LRU)
                     _evict_oldest_approvals(pending_approvals, max_size=10_000)
                 else:
