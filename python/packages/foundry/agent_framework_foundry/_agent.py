@@ -754,6 +754,41 @@ class RawFoundryAgent(
 
         return agent_session_id
 
+    async def create_conversation_session(self, *, session_id: str | None = None) -> AgentSession:
+        """Create a project-level Foundry conversation session.
+
+        This creates a server-side conversation through the Foundry project's OpenAI
+        client and returns an ``AgentSession`` configured to continue that
+        conversation.
+
+        Keyword Args:
+            session_id: Optional local session ID (generated if not provided).
+
+        Returns:
+            A new ``AgentSession`` whose ``service_session_id`` is the created
+            Foundry conversation ID.
+
+        Raises:
+            TypeError: If the agent does not use a Foundry agent chat client.
+            RuntimeError: If the Foundry project client does not expose project conversations.
+            ValueError: If conversation creation does not return a non-empty ID.
+        """
+        if not isinstance(self.client, RawFoundryAgentChatClient):
+            raise TypeError("create_conversation_session requires a RawFoundryAgentChatClient-based client.")
+
+        openai_client = self.client.project_client.get_openai_client()
+        conversations = getattr(openai_client, "conversations", None)
+        create_conversation = getattr(conversations, "create", None)
+        if create_conversation is None:
+            raise RuntimeError("The Foundry project OpenAI client does not expose project conversation creation.")
+
+        conversation = await create_conversation()
+        conversation_id = getattr(conversation, "id", None)
+        if not isinstance(conversation_id, str) or not conversation_id:
+            raise ValueError("Foundry conversation creation did not return a non-empty id.")
+
+        return self.get_session(conversation_id, session_id=session_id)
+
     @override
     async def _prepare_run_context(
         self,

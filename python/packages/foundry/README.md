@@ -106,6 +106,30 @@ Generally available factories: `get_code_interpreter_tool`,
 | `get_browser_automation_tool(connection_id)` | `BrowserAutomationPreviewTool` |
 | `get_bing_custom_search_tool(connection_id, instance_name, ...)` | `BingCustomSearchPreviewTool` |
 | `get_a2a_tool(base_url=..., project_connection_id=..., ...)` | `A2APreviewTool` |
+
+## Creating Foundry conversation sessions
+
+`FoundryAgent.create_conversation_session()` creates a server-side Foundry
+project conversation and returns an `AgentSession` that can be passed to
+`agent.run(...)` without reaching into the raw OpenAI client.
+
+```python
+from agent_framework.foundry import FoundryAgent
+
+agent = FoundryAgent(
+    project_endpoint=project_endpoint,
+    agent_name="travel-agent",
+    credential=credential,
+)
+
+session = await agent.create_conversation_session()
+response = await agent.run("Help me plan a trip to Seattle.", session=session)
+```
+
+This is separate from hosted-agent `isolation_key` sessions: the created
+conversation ID is stored on `AgentSession.service_session_id`, while the local
+`session_id` remains available for application/session storage.
+
 ## Publishing an agent as a Foundry prompt agent
 
 > **Experimental — `ExperimentalFeature.TO_PROMPT_AGENT`.** `to_prompt_agent`
