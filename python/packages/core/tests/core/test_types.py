@@ -208,6 +208,19 @@ def test_data_content_detect_image_format_from_base64():
         detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
 
 
+def test_detect_media_type_rejects_non_base64_data_uri():
+    """A data URI without a ';base64,' segment must raise a clear ValueError.
+
+    Data URIs may carry URL-encoded (non-base64) payloads, e.g.
+    "data:image/svg+xml,<svg/>". detect_media_type_from_base64 only understands
+    base64 payloads, so such a URI should hit the documented ValueError instead
+    of leaking an IndexError out of the internal split.
+    """
+    for uri in ("data:image/svg+xml,<svg/>", "data:text/plain,Hello", "data:image/png,rawbytes"):
+        with pytest.raises(ValueError, match="base64"):
+            detect_media_type_from_base64(data_uri=uri)
+
+
 def test_data_content_create_data_uri_from_base64():
     """Test the create_data_uri_from_base64 class method."""
     # Test with PNG data

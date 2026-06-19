@@ -121,7 +121,12 @@ def detect_media_type_from_base64(
     if data_uri is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
-        # Remove data URI prefix if present
+        # Strip the data URI prefix. Only base64-encoded payloads are
+        # supported here, so a URI without ";base64," (e.g. a URL-encoded
+        # "data:image/svg+xml,<svg/>") gets the documented ValueError rather
+        # than an opaque IndexError from the split below.
+        if ";base64," not in data_uri:
+            raise ValueError("data_uri must be a base64-encoded data URI (e.g. 'data:image/png;base64,<data>').")
         data_str = data_uri.split(";base64,", 1)[1]
     if data_str is not None:
         if data is not None:
