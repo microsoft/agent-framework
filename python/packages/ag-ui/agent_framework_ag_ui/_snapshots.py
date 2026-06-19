@@ -40,7 +40,7 @@ class AGUIThreadSnapshot:
     Attributes:
         messages: Replayable AG-UI message snapshots.
         state: Optional AG-UI Shared State snapshot.
-        interrupt: Optional interruption state from ``RUN_FINISHED.interrupt``.
+        interrupt: Optional interruption state from ``RUN_FINISHED.outcome.interrupts``.
     """
 
     messages: list[dict[str, Any]] = field(default_factory=list)

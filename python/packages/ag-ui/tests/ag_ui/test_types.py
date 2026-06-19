@@ -248,15 +248,31 @@ class TestAGUIRequest:
         assert dumped["parent_run_id"] == "parent-456"
 
     def test_agui_request_available_interrupts_alias_round_trip(self) -> None:
-        """availableInterrupts should deserialize, while dumps remain snake_case."""
+        """availableInterrupts should deserialize to canonical Interrupt models."""
         request = AGUIRequest.model_validate(
             {
                 "messages": [{"role": "user", "content": "Hello"}],
-                "availableInterrupts": [{"id": "req_1", "value": {"choice": "A"}}],
+                "availableInterrupts": [{"id": "req_1", "reason": "input_required", "message": "Choose"}],
             }
         )
 
-        assert request.available_interrupts == [{"id": "req_1", "value": {"choice": "A"}}]
+        assert request.available_interrupts is not None
+        assert request.available_interrupts[0].id == "req_1"
+        assert request.available_interrupts[0].reason == "input_required"
         dumped = request.model_dump(exclude_none=True)
-        assert dumped["available_interrupts"] == [{"id": "req_1", "value": {"choice": "A"}}]
+        assert dumped["available_interrupts"] == [{"id": "req_1", "reason": "input_required", "message": "Choose"}]
         assert "availableInterrupts" not in dumped
+
+    def test_agui_request_resume_accepts_canonical_entries(self) -> None:
+        """resume should deserialize AG-UI ResumeEntry arrays."""
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "resume": [{"interruptId": "req_1", "status": "resolved", "payload": {"approved": True}}],
+            }
+        )
+
+        assert request.resume is not None
+        assert request.resume[0].interrupt_id == "req_1"
+        assert request.resume[0].status == "resolved"
+        assert request.resume[0].payload == {"approved": True}

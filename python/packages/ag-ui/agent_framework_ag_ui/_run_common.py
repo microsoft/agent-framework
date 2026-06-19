@@ -14,6 +14,7 @@ from typing import Any, cast
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
+    Interrupt,
     ReasoningEncryptedValueEvent,
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
@@ -21,6 +22,7 @@ from ag_ui.core import (
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
     RunFinishedEvent,
+    RunFinishedInterruptOutcome,
     StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -72,16 +74,27 @@ def _normalize_resume_interrupts(resume_payload: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         item_dict = cast(dict[str, Any], item)
-        interrupt_id = item_dict.get("id") or item_dict.get("interruptId") or item_dict.get("toolCallId")
+        interrupt_id = (
+            item_dict.get("id")
+            or item_dict.get("interruptId")
+            or item_dict.get("interrupt_id")
+            or item_dict.get("toolCallId")
+        )
         if not interrupt_id:
             continue
 
         if "value" in item_dict:
             value = item_dict.get("value")
+        elif "payload" in item_dict:
+            value = item_dict.get("payload")
         elif "response" in item_dict:
             value = item_dict.get("response")
         else:
-            value = {k: v for k, v in item_dict.items() if k not in {"id", "interruptId", "toolCallId", "type"}}
+            value = {
+                k: v
+                for k, v in item_dict.items()
+                if k not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
+            }
 
         normalized.append({"id": str(interrupt_id), "value": value})
 
@@ -108,12 +121,107 @@ def _extract_resume_payload(input_data: dict[str, Any]) -> Any:
     return forwarded_props_dict.get("resume")
 
 
+def _canonical_interrupt_message(value: Any) -> str | None:
+    """Extract a human-readable message from legacy interruption metadata."""
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, Mapping):
+        return None
+    value_mapping = cast(Mapping[str, Any], value)
+    for key in ("message", "prompt", "question", "data"):
+        message = value_mapping.get(key)
+        if isinstance(message, str) and message:
+            return message
+    return None
+
+
+def _canonical_interrupt_tool_call_id(interrupt: Mapping[str, Any], value: Any) -> str | None:
+    """Extract a tool call id from canonical fields or legacy interruption metadata."""
+    direct_tool_call_id = interrupt.get("toolCallId") or interrupt.get("tool_call_id")
+    if direct_tool_call_id:
+        return str(direct_tool_call_id)
+
+    if not isinstance(value, Mapping):
+        return None
+    value_mapping = cast(Mapping[str, Any], value)
+    function_call = value_mapping.get("function_call") or value_mapping.get("functionCall")
+    if not isinstance(function_call, Mapping):
+        return None
+    function_call_mapping = cast(Mapping[str, Any], function_call)
+    tool_call_id = function_call_mapping.get("call_id") or function_call_mapping.get("callId")
+    return str(tool_call_id) if tool_call_id else None
+
+
+def _canonical_interrupt_reason(interrupt: Mapping[str, Any], value: Any) -> str:
+    """Infer the canonical AG-UI interrupt reason from existing interruption metadata."""
+    reason = interrupt.get("reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    if isinstance(value, Mapping):
+        value_mapping = cast(Mapping[str, Any], value)
+        if value_mapping.get("type") == "function_approval_request" or value_mapping.get("function_call"):
+            return "tool_call"
+    return "input_required"
+
+
+def _canonical_interrupt_metadata(interrupt: Mapping[str, Any], value: Any) -> dict[str, Any] | None:
+    """Move framework-specific legacy interruption details under metadata."""
+    raw_metadata = interrupt.get("metadata")
+    metadata = dict(cast(Mapping[str, Any], raw_metadata)) if isinstance(raw_metadata, Mapping) else {}
+    if "value" in interrupt:
+        metadata["agent_framework"] = {"value": make_json_safe(value)}
+    return metadata or None
+
+
+def _canonical_interrupt(interrupt: Mapping[str, Any]) -> Interrupt | None:
+    """Convert a legacy or protocol-compatible interrupt mapping into an AG-UI Interrupt."""
+    interrupt_id = interrupt.get("id") or interrupt.get("interruptId")
+    if not interrupt_id:
+        return None
+
+    value = interrupt.get("value")
+    interrupt_data: dict[str, Any] = {
+        "id": str(interrupt_id),
+        "reason": _canonical_interrupt_reason(interrupt, value),
+    }
+
+    message = interrupt.get("message") or _canonical_interrupt_message(value)
+    if isinstance(message, str) and message:
+        interrupt_data["message"] = message
+
+    tool_call_id = _canonical_interrupt_tool_call_id(interrupt, value)
+    if tool_call_id:
+        interrupt_data["toolCallId"] = tool_call_id
+
+    response_schema = interrupt.get("responseSchema") or interrupt.get("response_schema")
+    if isinstance(response_schema, Mapping):
+        interrupt_data["responseSchema"] = dict(cast(Mapping[str, Any], response_schema))
+
+    expires_at = interrupt.get("expiresAt") or interrupt.get("expires_at")
+    if isinstance(expires_at, str) and expires_at:
+        interrupt_data["expiresAt"] = expires_at
+
+    metadata = _canonical_interrupt_metadata(interrupt, value)
+    if metadata is not None:
+        interrupt_data["metadata"] = metadata
+
+    return Interrupt.model_validate(interrupt_data)
+
+
 def _build_run_finished_event(
     run_id: str, thread_id: str, interrupts: list[dict[str, Any]] | None = None
 ) -> RunFinishedEvent:
     """Create a RUN_FINISHED event, optionally carrying interrupt metadata."""
     if interrupts:
-        return RunFinishedEvent(run_id=run_id, thread_id=thread_id, interrupt=interrupts)  # type: ignore[call-arg]
+        canonical_interrupts = [
+            canonical for interrupt in interrupts if (canonical := _canonical_interrupt(interrupt)) is not None
+        ]
+        if canonical_interrupts:
+            return RunFinishedEvent(
+                run_id=run_id,
+                thread_id=thread_id,
+                outcome=RunFinishedInterruptOutcome(interrupts=canonical_interrupts),
+            )
     return RunFinishedEvent(run_id=run_id, thread_id=thread_id)
 
 
@@ -781,6 +889,9 @@ def _known_tool_call_ids(
         interrupt_id = interrupt.get("id")
         if interrupt_id:
             known_ids.add(str(interrupt_id))
+        canonical_tool_call_id = interrupt.get("toolCallId") or interrupt.get("tool_call_id")
+        if canonical_tool_call_id:
+            known_ids.add(str(canonical_tool_call_id))
     return known_ids
 
 

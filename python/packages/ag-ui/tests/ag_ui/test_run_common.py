@@ -10,6 +10,7 @@ from agent_framework_ag_ui import state_update
 from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
+    _build_run_finished_event,
     _emit_mcp_tool_result,
     _emit_tool_result,
     _extract_resume_payload,
@@ -75,6 +76,13 @@ class TestNormalizeResumeInterrupts:
         result = _normalize_resume_interrupts([{"toolCallId": "tc1", "value": "done"}])
         assert result == [{"id": "tc1", "value": "done"}]
 
+    def test_canonical_resume_entry_uses_interrupt_id_and_payload(self):
+        """Canonical ResumeEntry dictionaries map interruptId/interrupt_id and payload to legacy runner values."""
+        result = _normalize_resume_interrupts(
+            [{"interrupt_id": "req_1", "status": "resolved", "payload": {"approved": True}}]
+        )
+        assert result == [{"id": "req_1", "value": {"approved": True}}]
+
 
 class TestExtractResumePayload:
     """Tests for _extract_resume_payload edge cases."""
@@ -103,6 +111,29 @@ class TestExtractResumePayload:
         """camelCase forwardedProps is also supported."""
         result = _extract_resume_payload({"forwardedProps": {"resume": "camel"}})
         assert result == "camel"
+
+
+class TestRunFinishedEvent:
+    """Tests for externally visible RUN_FINISHED event shape."""
+
+    def test_build_run_finished_event_with_interrupt_outcome(self) -> None:
+        """Interrupted RUN_FINISHED uses canonical outcome.interrupts without a top-level interrupt field."""
+        event = _build_run_finished_event("run-1", "thread-1", interrupts=[{"id": "req_1", "value": {"x": 1}}])
+        dumped = event.model_dump(by_alias=True, exclude_none=True)
+
+        assert dumped["runId"] == "run-1"
+        assert dumped["threadId"] == "thread-1"
+        assert "interrupt" not in dumped
+        assert dumped["outcome"] == {
+            "type": "interrupt",
+            "interrupts": [
+                {
+                    "id": "req_1",
+                    "reason": "input_required",
+                    "metadata": {"agent_framework": {"value": {"x": 1}}},
+                }
+            ],
+        }
 
 
 class TestEmitToolResult:

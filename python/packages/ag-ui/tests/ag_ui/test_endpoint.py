@@ -30,6 +30,28 @@ def _decode_sse_events(response: Any) -> list[dict[str, Any]]:
     return [json.loads(line[6:]) for line in content.splitlines() if line.startswith("data: ")]
 
 
+def _run_finished_interrupts(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return canonical interrupts from an SSE RUN_FINISHED event."""
+    assert "interrupt" not in event
+    outcome = event.get("outcome")
+    assert isinstance(outcome, dict)
+    assert outcome.get("type") == "interrupt"
+    interrupts = outcome.get("interrupts")
+    assert isinstance(interrupts, list)
+    return cast(list[dict[str, Any]], interrupts)
+
+
+def _interrupt_metadata_value(interrupt: dict[str, Any]) -> dict[str, Any]:
+    """Return Agent Framework details from canonical interrupt metadata."""
+    metadata = interrupt.get("metadata")
+    assert isinstance(metadata, dict)
+    agent_framework_metadata = metadata.get("agent_framework")
+    assert isinstance(agent_framework_metadata, dict)
+    value = agent_framework_metadata.get("value")
+    assert isinstance(value, dict)
+    return cast(dict[str, Any], value)
+
+
 def _latest_messages_snapshot(response: Any) -> list[dict[str, Any]]:
     snapshots = [
         event["messages"] for event in _decode_sse_events(response) if event.get("type") == "MESSAGES_SNAPSHOT"
@@ -922,7 +944,8 @@ async def test_agent_endpoint_hydrates_interrupted_thread_without_invoking_agent
     assert call_count == 1
     first_events = _decode_sse_events(first_response)
     first_finished = [event for event in first_events if event.get("type") == "RUN_FINISHED"]
-    assert first_finished[-1]["interrupt"][0]["value"]["function_call"]["call_id"] == "draft-call"
+    first_interrupts = _run_finished_interrupts(first_finished[-1])
+    assert _interrupt_metadata_value(first_interrupts[0])["function_call"]["call_id"] == "draft-call"
 
     hydrate_response = client.post("/snapshots", json={"thread_id": "agent-thread", "messages": []})
 
@@ -936,7 +959,8 @@ async def test_agent_endpoint_hydrates_interrupted_thread_without_invoking_agent
         "RUN_FINISHED",
     ]
     assert events[1]["snapshot"] == {"steps": [{"description": "Draft outline"}]}
-    assert events[-1]["interrupt"][0]["value"]["function_call"]["name"] == "draft_steps"
+    hydrated_interrupts = _run_finished_interrupts(events[-1])
+    assert _interrupt_metadata_value(hydrated_interrupts[0])["function_call"]["name"] == "draft_steps"
 
 
 async def test_agent_endpoint_run_error_does_not_overwrite_previous_snapshot(streaming_chat_client_stub):
@@ -1145,7 +1169,8 @@ async def test_workflow_endpoint_hydrates_interrupted_thread_without_invoking_wo
     assert first_response.status_code == 200
     assert call_count == 1
     first_finished = [event for event in _decode_sse_events(first_response) if event.get("type") == "RUN_FINISHED"]
-    assert first_finished[-1]["interrupt"][0]["id"] == "workflow-approval"
+    first_interrupts = _run_finished_interrupts(first_finished[-1])
+    assert first_interrupts[0]["id"] == "workflow-approval"
 
     hydrate_response = client.post("/workflow-snapshots", json={"thread_id": "workflow-thread", "messages": []})
 
@@ -1159,8 +1184,9 @@ async def test_workflow_endpoint_hydrates_interrupted_thread_without_invoking_wo
         "RUN_FINISHED",
     ]
     assert events[1]["snapshot"] == {"step": "approval"}
-    assert events[-1]["interrupt"][0]["id"] == "workflow-approval"
-    assert events[-1]["interrupt"][0]["value"]["message"] == "Approve workflow step"
+    hydrated_interrupts = _run_finished_interrupts(events[-1])
+    assert hydrated_interrupts[0]["id"] == "workflow-approval"
+    assert hydrated_interrupts[0]["message"] == "Approve workflow step"
 
 
 async def test_workflow_endpoint_run_error_does_not_overwrite_previous_snapshot():
@@ -1305,15 +1331,21 @@ async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(streami
     assert call_count == 1
     first_events = _decode_sse_events(first_response)
     first_finished = [event for event in first_events if event.get("type") == "RUN_FINISHED"]
-    assert first_finished[-1]["interrupt"]
-    confirm_call_id = first_finished[-1]["interrupt"][0]["id"]
+    first_interrupts = _run_finished_interrupts(first_finished[-1])
+    confirm_call_id = first_interrupts[0]["id"]
 
     confirm_response = client.post(
         "/snapshots",
         json={
             "thread_id": "agent-thread",
             "messages": [],
-            "resume": {"interrupts": [{"id": confirm_call_id, "value": json.dumps({"accepted": True, "steps": []})}]},
+            "resume": [
+                {
+                    "interruptId": confirm_call_id,
+                    "status": "resolved",
+                    "payload": json.dumps({"accepted": True, "steps": []}),
+                }
+            ],
         },
     )
     assert confirm_response.status_code == 200
@@ -1326,7 +1358,7 @@ async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(streami
     assert hydrate_response.status_code == 200
     assert call_count == 1
     events = _decode_sse_events(hydrate_response)
-    assert not events[-1].get("interrupt")
+    assert "outcome" not in events[-1]
     messages = _latest_messages_snapshot(hydrate_response)
     assert any(
         message.get("role") == "assistant" and message.get("content") == "Changes confirmed and applied successfully!"
@@ -1575,14 +1607,20 @@ async def test_agent_endpoint_resume_preserves_persisted_history(streaming_chat_
     assert first_response.status_code == 200
     assert call_count == 1
     first_finished = [event for event in _decode_sse_events(first_response) if event.get("type") == "RUN_FINISHED"]
-    interrupt_id = first_finished[-1]["interrupt"][0]["id"]
+    interrupt_id = _run_finished_interrupts(first_finished[-1])[0]["id"]
 
     resume_response = client.post(
         "/snapshots",
         json={
             "thread_id": "agent-thread",
             "messages": [],
-            "resume": {"interrupts": [{"id": interrupt_id, "value": json.dumps({"accepted": True})}]},
+            "resume": [
+                {
+                    "interruptId": interrupt_id,
+                    "status": "resolved",
+                    "payload": json.dumps({"accepted": True}),
+                }
+            ],
         },
     )
     assert resume_response.status_code == 200
@@ -1593,7 +1631,7 @@ async def test_agent_endpoint_resume_preserves_persisted_history(streaming_chat_
     assert hydrate_response.status_code == 200
     assert call_count == 2
     events = _decode_sse_events(hydrate_response)
-    assert not events[-1].get("interrupt")
+    assert "outcome" not in events[-1]
     contents = [message.get("content") for message in _latest_messages_snapshot(hydrate_response)]
     assert "Draft the plan" in contents
     assert "Resumed reply" in contents

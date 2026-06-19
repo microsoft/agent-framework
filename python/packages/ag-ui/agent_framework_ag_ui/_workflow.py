@@ -79,7 +79,12 @@ class _WorkflowSnapshotBuilder:
             return
 
         if isinstance(event, RunFinishedEvent):
-            interrupt = make_json_safe(getattr(event, "interrupt", None))
+            outcome = getattr(event, "outcome", None)
+            interrupt = (
+                make_json_safe(getattr(outcome, "interrupts", None))
+                if getattr(outcome, "type", None) == "interrupt"
+                else None
+            )
             if isinstance(interrupt, list):
                 self.interrupt = [cast(dict[str, Any], item) for item in interrupt if isinstance(item, dict)]
             return

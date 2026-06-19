@@ -14,6 +14,27 @@ async def _run(agent: Any, payload: dict[str, Any]) -> list[Any]:
     return [event async for event in agent.run(payload)]
 
 
+def _interrupts_from_finished(event: Any) -> list[dict[str, Any]]:
+    dumped = event.model_dump(by_alias=True, exclude_none=True)
+    assert "interrupt" not in dumped
+    outcome = dumped.get("outcome")
+    assert isinstance(outcome, dict)
+    assert outcome.get("type") == "interrupt"
+    interrupts = outcome.get("interrupts")
+    assert isinstance(interrupts, list)
+    return interrupts
+
+
+def _interrupt_value(interrupt: dict[str, Any]) -> dict[str, Any]:
+    metadata = interrupt.get("metadata")
+    assert isinstance(metadata, dict)
+    agent_framework_metadata = metadata.get("agent_framework")
+    assert isinstance(agent_framework_metadata, dict)
+    value = agent_framework_metadata.get("value")
+    assert isinstance(value, dict)
+    return value
+
+
 async def test_subgraphs_example_initial_run_emits_flight_interrupt() -> None:
     """Initial run should publish flight options and pause with an interrupt."""
     agent = subgraphs_agent()
@@ -43,12 +64,12 @@ async def test_subgraphs_example_initial_run_emits_flight_interrupt() -> None:
     assert "flights_agent" in finished_steps
 
     finished = [event for event in events if event.type == "RUN_FINISHED"][0]
-    interrupt_payload = finished.model_dump().get("interrupt")
-    assert isinstance(interrupt_payload, list)
+    interrupt_payload = _interrupts_from_finished(finished)
     assert interrupt_payload
-    assert interrupt_payload[0]["value"]["agent"] == "flights"
-    assert len(interrupt_payload[0]["value"]["options"]) == 2
-    assert interrupt_payload[0]["value"]["options"][0]["airline"] == "KLM"
+    interrupt_value = _interrupt_value(interrupt_payload[0])
+    assert interrupt_value["agent"] == "flights"
+    assert len(interrupt_value["options"]) == 2
+    assert interrupt_value["options"][0]["airline"] == "KLM"
     custom_event_names = [event.name for event in events if event.type == "CUSTOM"]
     assert "WorkflowInterruptEvent" in custom_event_names
 
@@ -66,7 +87,8 @@ async def test_subgraphs_example_resume_flow_reaches_completion() -> None:
             "messages": [{"role": "user", "content": "I want to visit San Francisco from Amsterdam"}],
         },
     )
-    first_interrupt = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()["interrupt"][0]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    first_interrupt = _interrupts_from_finished(first_finished)[0]
 
     second_events = await _run(
         agent,
@@ -91,10 +113,9 @@ async def test_subgraphs_example_resume_flow_reaches_completion() -> None:
             },
         },
     )
-    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0].model_dump()
-    second_interrupt = second_finished.get("interrupt")
-    assert isinstance(second_interrupt, list)
-    assert second_interrupt[0]["value"]["agent"] == "hotels"
+    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0]
+    second_interrupt = _interrupts_from_finished(second_finished)
+    assert _interrupt_value(second_interrupt[0])["agent"] == "hotels"
 
     third_events = await _run(
         agent,
@@ -145,9 +166,9 @@ async def test_subgraphs_example_requires_structured_resume_for_selection() -> N
             "messages": [{"role": "user", "content": "Plan a trip for me"}],
         },
     )
-    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()
-    assert isinstance(first_finished.get("interrupt"), list)
-    assert first_finished["interrupt"][0]["value"]["agent"] == "flights"
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    first_interrupt = _interrupts_from_finished(first_finished)
+    assert _interrupt_value(first_interrupt[0])["agent"] == "flights"
 
     second_events = await _run(
         agent,
@@ -157,9 +178,9 @@ async def test_subgraphs_example_requires_structured_resume_for_selection() -> N
             "messages": [{"role": "user", "content": "Let's do the United flight"}],
         },
     )
-    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0].model_dump()
-    assert isinstance(second_finished.get("interrupt"), list)
-    assert second_finished["interrupt"][0]["value"]["agent"] == "flights"
+    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0]
+    second_interrupt = _interrupts_from_finished(second_finished)
+    assert _interrupt_value(second_interrupt[0])["agent"] == "flights"
     assert "TOOL_CALL_START" in [event.type for event in second_events]
     assert "TEXT_MESSAGE_CONTENT" not in [event.type for event in second_events]
 
@@ -171,7 +192,7 @@ async def test_subgraphs_example_requires_structured_resume_for_selection() -> N
             "resume": {
                 "interrupts": [
                     {
-                        "id": second_finished["interrupt"][0]["id"],
+                        "id": second_interrupt[0]["id"],
                         "value": json.dumps(
                             {
                                 "airline": "United",
@@ -186,9 +207,9 @@ async def test_subgraphs_example_requires_structured_resume_for_selection() -> N
             },
         },
     )
-    third_finished = [event for event in third_events if event.type == "RUN_FINISHED"][0].model_dump()
-    assert isinstance(third_finished.get("interrupt"), list)
-    assert third_finished["interrupt"][0]["value"]["agent"] == "hotels"
+    third_finished = [event for event in third_events if event.type == "RUN_FINISHED"][0]
+    third_interrupt = _interrupts_from_finished(third_finished)
+    assert _interrupt_value(third_interrupt[0])["agent"] == "hotels"
 
     third_snapshots = [event.snapshot for event in third_events if event.type == "STATE_SNAPSHOT"]
     assert third_snapshots[-1]["itinerary"]["flight"]["airline"] == "United"
@@ -207,7 +228,8 @@ async def test_subgraphs_example_forwarded_command_resume_reaches_hotels_interru
             "messages": [{"role": "user", "content": "Plan my trip"}],
         },
     )
-    first_interrupt = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()["interrupt"][0]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    first_interrupt = _interrupts_from_finished(first_finished)[0]
 
     second_events = await _run(
         agent,
@@ -231,8 +253,7 @@ async def test_subgraphs_example_forwarded_command_resume_reaches_hotels_interru
         },
     )
 
-    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0].model_dump()
-    second_interrupt = second_finished.get("interrupt")
-    assert isinstance(second_interrupt, list)
-    assert second_interrupt[0]["value"]["agent"] == "hotels"
+    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0]
+    second_interrupt = _interrupts_from_finished(second_finished)
+    assert _interrupt_value(second_interrupt[0])["agent"] == "hotels"
     assert second_interrupt[0]["id"] != first_interrupt["id"]

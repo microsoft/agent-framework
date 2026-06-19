@@ -2,9 +2,12 @@
 
 """Type definitions for AG-UI integration."""
 
+from __future__ import annotations
+
 import sys
 from typing import Any, Generic
 
+from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import ChatOptions
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -83,14 +86,14 @@ class AGUIRequest(BaseModel):
         validation_alias=AliasChoices("parent_run_id", "parentRunId"),
         description="ID of the run that spawned this run",
     )
-    available_interrupts: list[dict[str, Any]] | None = Field(
+    available_interrupts: list[Interrupt] | None = Field(
         None,
         validation_alias=AliasChoices("availableInterrupts", "available_interrupts"),
-        description="List of interrupts that can be resumed by the server",
+        description="Canonical AG-UI interrupts that can be resumed by the server",
     )
-    resume: dict[str, Any] | None = Field(
+    resume: list[ResumeEntry] | None = Field(
         None,
-        description="Resume payload containing interrupt responses",
+        description="Canonical AG-UI resume entries for continuing interrupted runs",
     )
 
 
@@ -153,11 +156,11 @@ class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], tota
     context: dict[str, Any]
     """Shared context/state to send to the server."""
 
-    available_interrupts: list[dict[str, Any]]
-    """Interrupt descriptors available for resumption."""
+    available_interrupts: list[Interrupt]
+    """Canonical AG-UI interrupt descriptors available for resumption."""
 
-    resume: dict[str, Any]
-    """Interrupt resume payload to continue a paused run."""
+    resume: list[ResumeEntry]
+    """Canonical AG-UI resume entries to continue a paused run."""
 
     # ChatOptions fields not applicable for AG-UI
     store: None  # type: ignore[misc]

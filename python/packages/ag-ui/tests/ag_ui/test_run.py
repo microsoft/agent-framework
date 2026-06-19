@@ -620,13 +620,16 @@ def test_extract_resume_payload_reads_forwarded_command_resume():
 
 
 def test_build_run_finished_event_with_interrupt():
-    """RUN_FINISHED helper should preserve interrupt payloads."""
+    """RUN_FINISHED helper should emit canonical interrupt outcomes."""
     event = _build_run_finished_event("run-1", "thread-1", interrupts=[{"id": "req_1", "value": {"x": 1}}])
-    dumped = event.model_dump()
+    dumped = event.model_dump(by_alias=True, exclude_none=True)
 
-    assert dumped["run_id"] == "run-1"
-    assert dumped["thread_id"] == "thread-1"
-    assert dumped["interrupt"] == [{"id": "req_1", "value": {"x": 1}}]
+    assert dumped["runId"] == "run-1"
+    assert dumped["threadId"] == "thread-1"
+    assert "interrupt" not in dumped
+    assert dumped["outcome"]["type"] == "interrupt"
+    assert dumped["outcome"]["interrupts"][0]["id"] == "req_1"
+    assert dumped["outcome"]["interrupts"][0]["metadata"]["agent_framework"]["value"] == {"x": 1}
 
 
 def test_extract_approved_state_updates_no_handler():
@@ -981,12 +984,17 @@ async def test_run_agent_stream_accumulates_multiple_confirm_interrupts():
     ]
     assert finished_events, f"Expected RUN_FINISHED event. Types: {[getattr(e, 'type', None) for e in events]}"
     finished = finished_events[-1]
-    interrupt = getattr(finished, "interrupt", None)
-    assert interrupt is not None, "Expected interrupt metadata in RUN_FINISHED"
+    dumped = finished.model_dump(by_alias=True, exclude_none=True)
+    assert "interrupt" not in dumped
+    outcome = dumped.get("outcome")
+    assert isinstance(outcome, dict)
+    assert outcome.get("type") == "interrupt"
+    interrupt = outcome.get("interrupts")
+    assert isinstance(interrupt, list), "Expected interrupt metadata in RUN_FINISHED.outcome"
     assert len(interrupt) == 2, f"Expected 2 interrupts (one per tool), got {len(interrupt)}"
 
     # Verify both tool calls are represented in interrupt metadata
-    interrupt_tool_names = {i["value"]["function_call"]["name"] for i in interrupt}
+    interrupt_tool_names = {i["metadata"]["agent_framework"]["value"]["function_call"]["name"] for i in interrupt}
     assert interrupt_tool_names == {"generate_tasks", "generate_notes"}
 
 
