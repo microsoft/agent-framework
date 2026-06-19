@@ -10,7 +10,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using SampleApp;
@@ -20,7 +19,10 @@ string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
 string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // Create AI Project client to be used by chat client agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new global::Azure.Identity.DefaultAzureCredential());
 
 // Demonstrates how to work with structured output via ResponseFormat with the non-generic RunAsync method.
 // This approach is useful when:
