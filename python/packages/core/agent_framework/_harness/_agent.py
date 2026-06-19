@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .._agents import Agent, SupportsAgentRun
@@ -21,9 +22,11 @@ from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider
 from .._skills import SkillsProvider
 from ._background_agents import BackgroundAgentsProvider
-from ._memory import MemoryContextProvider, MemoryStore
+from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
+from ._file_memory import FileMemoryProvider
 from ._mode import AgentModeProvider
 from ._todo import TodoProvider
+from ._tool_approval import ToolApprovalMiddleware
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -34,6 +37,7 @@ if TYPE_CHECKING:
     from .._compaction import CompactionStrategy, TokenizerProtocol
     from .._middleware import MiddlewareTypes
     from .._tools import ToolTypes
+    from ._tool_approval import ToolApprovalRuleCallback
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +128,10 @@ def _assemble_context_providers(
     todo_provider: TodoProvider | None,
     disable_mode: bool,
     mode_provider: AgentModeProvider | None,
-    disable_memory: bool,
-    memory_store: MemoryStore | None,
+    disable_file_memory: bool,
+    file_memory_store: AgentFileStore | None,
+    disable_file_access: bool,
+    file_access_store: AgentFileStore | None,
     skills_provider: SkillsProvider | None,
     skills_paths: Sequence[str] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
@@ -149,8 +155,17 @@ def _assemble_context_providers(
     if not disable_mode:
         providers.append(mode_provider or AgentModeProvider())
 
-    if not disable_memory and memory_store is not None:
-        providers.append(MemoryContextProvider(store=memory_store))
+    # File-based session memory (on by default). Default store is rooted at
+    # ``{cwd}/agent-file-memory``; the provider isolates memories per session
+    # via its default ``scope=session_id``.
+    if not disable_file_memory:
+        memory_store = file_memory_store or FileSystemAgentFileStore(Path.cwd() / "agent-file-memory")
+        providers.append(FileMemoryProvider(memory_store))
+
+    # Shared file access (on by default). Default store is rooted at ``{cwd}/working``.
+    if not disable_file_access:
+        access_store = file_access_store or FileSystemAgentFileStore(Path.cwd() / "working")
+        providers.append(FileAccessProvider(access_store))
 
     # Skills are opt-in: only added when skills_provider or skills_paths is provided.
     if skills_provider:
@@ -241,8 +256,10 @@ def create_harness_agent(
     todo_provider: TodoProvider | None = None,
     disable_mode: bool = False,
     mode_provider: AgentModeProvider | None = None,
-    disable_memory: bool = False,
-    memory_store: MemoryStore | None = None,
+    disable_file_memory: bool = False,
+    file_memory_store: AgentFileStore | None = None,
+    disable_file_access: bool = False,
+    file_access_store: AgentFileStore | None = None,
     skills_provider: SkillsProvider | None = None,
     skills_paths: Sequence[str] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
@@ -250,6 +267,8 @@ def create_harness_agent(
     shell_executor: ShellExecutor | None = None,
     shell_environment_provider_options: ShellEnvironmentProviderOptions | None = None,
     disable_web_search: bool = False,
+    disable_tool_auto_approval: bool = False,
+    auto_approval_rules: Sequence[ToolApprovalRuleCallback] | None = None,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
@@ -264,9 +283,12 @@ def create_harness_agent(
     - **Compaction** — context-window compaction before/after each run
     - **TodoProvider** — todo list management
     - **AgentModeProvider** — plan/execute mode tracking
-    - **MemoryContextProvider** — file-based durable memory (when ``memory_store`` provided)
+    - **FileMemoryProvider** — file-based session memory (on by default)
+    - **FileAccessProvider** — shared file read/write tools (on by default)
     - **SkillsProvider** — skill discovery and progressive loading
     - **BackgroundAgentsProvider** — delegate work to background sub-agents
+    - **Tool approval** — "don't ask again" standing approval rules plus heuristic
+      auto-approval callbacks
     - **OpenTelemetry** — observability via ``AgentTelemetryLayer``
 
     Each feature can be disabled or customized via keyword arguments.
@@ -336,9 +358,16 @@ def create_harness_agent(
         todo_provider: Custom TodoProvider instance. Ignored when disable_todo is True.
         disable_mode: When True, skip the AgentModeProvider.
         mode_provider: Custom AgentModeProvider instance. Ignored when disable_mode is True.
-        disable_memory: When True, skip the MemoryContextProvider.
-        memory_store: Memory store instance. When provided (and disable_memory is False),
-            a MemoryContextProvider is added.
+        disable_file_memory: When True, skip the FileMemoryProvider. When False (default),
+            a FileMemoryProvider is added, giving the agent session-scoped, file-based memory.
+        file_memory_store: Custom AgentFileStore backing the FileMemoryProvider. When None
+            (and disable_file_memory is False), a FileSystemAgentFileStore rooted at
+            ``{cwd}/agent-file-memory`` is created. Ignored when disable_file_memory is True.
+        disable_file_access: When True, skip the FileAccessProvider. When False (default),
+            a FileAccessProvider is added, giving the agent shared read/write file tools.
+        file_access_store: Custom AgentFileStore backing the FileAccessProvider. When None
+            (and disable_file_access is False), a FileSystemAgentFileStore rooted at
+            ``{cwd}/working`` is created. Ignored when disable_file_access is True.
         skills_provider: Custom SkillsProvider instance for code-defined skills.
             Can be combined with ``skills_paths`` to aggregate file and code-based skills.
         skills_paths: Paths for file-based skill discovery (looks for SKILL.md files).
@@ -364,6 +393,16 @@ def create_harness_agent(
             When False (default), the web search tool is automatically added if the
             client implements SupportsWebSearchTool. A warning is logged if the client
             does not support web search.
+        disable_tool_auto_approval: When True, do not wire the tool auto-approval middleware.
+            When False (default), a :class:`~agent_framework.ToolApprovalMiddleware` is added
+            (outermost) to coordinate "don't ask again" standing approval rules and queued
+            approval prompts; callers must pass an :class:`~agent_framework.AgentSession` to
+            :meth:`~agent_framework.Agent.run` when enabled.
+        auto_approval_rules: Optional heuristic callbacks that can auto-approve a function call
+            that would otherwise require approval. Each callback receives the ``function_call``
+            content and returns ``True`` to approve it. Rules are evaluated after standing rules
+            (derived from prior user approvals) but before prompting the user. Only used when
+            ``disable_tool_auto_approval`` is False.
         otel_provider_name: Custom OpenTelemetry provider/source name for telemetry.
         context_providers: Additional context providers to include after the built-in ones.
         middleware: Additional middleware to include.
@@ -417,8 +456,10 @@ def create_harness_agent(
         todo_provider=todo_provider,
         disable_mode=disable_mode,
         mode_provider=mode_provider,
-        disable_memory=disable_memory,
-        memory_store=memory_store,
+        disable_file_memory=disable_file_memory,
+        file_memory_store=file_memory_store,
+        disable_file_access=disable_file_access,
+        file_access_store=file_access_store,
         skills_provider=skills_provider,
         skills_paths=skills_paths,
         background_agents=background_agents,
@@ -455,6 +496,16 @@ def create_harness_agent(
     if max_output_tokens is not None:
         default_opts.setdefault("max_tokens", max_output_tokens)
 
+    # Assemble middleware. Tool approval is enabled by default (like the .NET harness) and is
+    # placed first so it sits outermost: it intercepts inbound "always approve" responses and
+    # outbound approval requests at the caller boundary, and its re-invocation loop re-runs any
+    # user-supplied middleware. ToolApprovalMiddleware requires an AgentSession at run time.
+    assembled_middleware: list[MiddlewareTypes] = []
+    if not disable_tool_auto_approval:
+        assembled_middleware.append(ToolApprovalMiddleware(auto_approval_rules=auto_approval_rules))
+    if middleware:
+        assembled_middleware.extend(middleware)
+
     agent = Agent(
         client,
         instructions,
@@ -464,7 +515,7 @@ def create_harness_agent(
         tools=final_tools,
         default_options=default_opts,  # type: ignore[arg-type]
         context_providers=assembled_providers,
-        middleware=list(middleware) if middleware else None,
+        middleware=assembled_middleware or None,
         require_per_service_call_history_persistence=True,
     )
 

@@ -1063,7 +1063,7 @@ class TestApprovalFlow:
         """When approval response is approved, the tool should be invoked."""
         self._init_state(mock_state)
 
-        call_log = []
+        call_log: list[int] = []
 
         def my_tool(x: int) -> int:
             call_log.append(x)

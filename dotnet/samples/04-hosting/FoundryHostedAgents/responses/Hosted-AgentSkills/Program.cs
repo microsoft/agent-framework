@@ -20,7 +20,6 @@
 #pragma warning disable AAIP001 // ProjectAgentSkills is experimental
 
 using System.ClientModel;
-using System.IO.Compression;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Core;
@@ -121,8 +120,8 @@ app.Run();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Downloads each named skill from Foundry and extracts the ZIP archive into a
-// separate subdirectory under the target directory.
+// Downloads each named skill from Foundry into a separate subdirectory under the target directory.
+// GetSkillContentAsync downloads the skill package and unzips it into the destination directory.
 static async Task DownloadSkillsAsync(ProjectAgentSkills skillsClient, string[] skillNames, string targetDir)
 {
     if (Directory.Exists(targetDir))
@@ -135,56 +134,16 @@ static async Task DownloadSkillsAsync(ProjectAgentSkills skillsClient, string[] 
     foreach (string name in skillNames)
     {
         Console.WriteLine($"Downloading skill '{name}' from Foundry...");
-        BinaryData zipData = await skillsClient.DownloadSkillAsync(name);
 
         string skillDir = Path.Combine(targetDir, name);
         Directory.CreateDirectory(skillDir);
 
-        using var zipStream = zipData.ToStream();
-        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
-        SafeExtractZip(archive, skillDir);
+        await skillsClient.GetSkillContentAsync(name, skillDir);
 
         if (!File.Exists(Path.Combine(skillDir, "SKILL.md")))
         {
             throw new InvalidOperationException(
-                $"Downloaded archive for '{name}' did not contain a SKILL.md at the root.");
-        }
-    }
-}
-
-// Extracts a ZIP archive into a destination directory, rejecting entries that would
-// escape the target path (zip-slip guard).
-static void SafeExtractZip(ZipArchive archive, string destinationDir)
-{
-    string destRoot = Path.GetFullPath(destinationDir);
-    string destRootWithSep = Path.EndsInDirectorySeparator(destRoot)
-        ? destRoot
-        : destRoot + Path.DirectorySeparatorChar;
-
-    // Use ordinal comparison on Unix (case-sensitive FS) and ordinal-ignore-case on Windows.
-    var comparison = OperatingSystem.IsWindows()
-        ? StringComparison.OrdinalIgnoreCase
-        : StringComparison.Ordinal;
-
-    foreach (ZipArchiveEntry entry in archive.Entries)
-    {
-        string entryPath = Path.GetFullPath(Path.Combine(destRoot, entry.FullName));
-        if (!entryPath.StartsWith(destRootWithSep, comparison)
-            && !string.Equals(entryPath, destRoot, comparison))
-        {
-            throw new InvalidOperationException(
-                $"Refusing to extract unsafe path '{entry.FullName}' outside of '{destRoot}'.");
-        }
-
-        if (string.IsNullOrEmpty(entry.Name))
-        {
-            // Directory entry — ensure it exists.
-            Directory.CreateDirectory(entryPath);
-        }
-        else
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(entryPath)!);
-            entry.ExtractToFile(entryPath, overwrite: true);
+                $"Downloaded skill '{name}' did not contain a SKILL.md at the root.");
         }
     }
 }
@@ -211,8 +170,8 @@ static async Task EnsureSkillsProvisionedAsync(ProjectAgentSkills skillsClient, 
         catch (ClientResultException ex) when (ex.Status == 404)
         {
             Console.WriteLine($"Provisioning skill '{name}' from {skillPath}...");
-            AgentsSkill imported = await skillsClient.CreateSkillFromPackageAsync(skillPath);
-            Console.WriteLine($"  Imported skill '{imported.Name}' (id={imported.SkillId}, has_blob={imported.HasBlob}).");
+            AgentsSkill imported = (await skillsClient.CreateSkillVersionFromFilesAsync(name, skillPath)).Value;
+            Console.WriteLine($"  Imported skill '{imported.Name}' (id={imported.Id}, version={imported.LatestVersion}).");
         }
     }
 }

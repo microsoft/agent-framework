@@ -10,13 +10,14 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
-    SupportsChatGetResponse,
     ToolApprovalMiddleware,
     ToolApprovalState,
     create_always_approve_tool_response,
     create_always_approve_tool_with_arguments_response,
     tool,
 )
+
+from .conftest import MockBaseChatClient
 
 
 def _approval_requests(messages: list[Message]) -> list[Content]:
@@ -25,8 +26,13 @@ def _approval_requests(messages: list[Message]) -> list[Content]:
     ]
 
 
+def _function_call(request: Content) -> Content:
+    assert request.function_call is not None
+    return request.function_call
+
+
 async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """Mixed batches should only show real approval requests when a session can store hidden requests."""
     no_approval_calls = 0
@@ -69,7 +75,7 @@ async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
     first_response = await agent.run("update work item", session=session)
 
     requests = _approval_requests(first_response.messages)
-    assert [request.function_call.name for request in requests] == ["add_comment"]
+    assert [_function_call(request).name for request in requests] == ["add_comment"]
     assert no_approval_calls == 0
     assert approval_calls == 0
 
@@ -82,7 +88,7 @@ async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
 
 
 async def test_mixed_batch_accepts_restored_tool_approval_state(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """Mixed-batch bypass should work when session state contains ToolApprovalState."""
     safe_calls = 0
@@ -118,7 +124,7 @@ async def test_mixed_batch_accepts_restored_tool_approval_state(
     first_response = await agent.run("read and write", session=session)
     requests = _approval_requests(first_response.messages)
 
-    assert [request.function_call.name for request in requests] == ["risky_write"]
+    assert [_function_call(request).name for request in requests] == ["risky_write"]
     assert safe_calls == 0
     assert risky_calls == 0
 
@@ -131,7 +137,7 @@ async def test_mixed_batch_accepts_restored_tool_approval_state(
 
 
 async def test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """Stored hidden approvals should only replay when an approval response resumes the flow."""
     safe_calls = 0
@@ -182,7 +188,7 @@ async def test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn(
 
 
 async def test_hidden_mixed_batch_requests_replay_only_for_matching_visible_approval(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """Approving one mixed batch must not replay hidden calls from another abandoned batch."""
     safe_a_calls = 0
@@ -229,7 +235,7 @@ async def test_hidden_mixed_batch_requests_replay_only_for_matching_visible_appr
     ]
 
     first_response = await agent.run("batch a", session=session)
-    assert [request.function_call.name for request in _approval_requests(first_response.messages)] == ["risky_a"]
+    assert [_function_call(request).name for request in _approval_requests(first_response.messages)] == ["risky_a"]
 
     chat_client_base.run_responses = [
         ChatResponse(
@@ -257,7 +263,7 @@ async def test_hidden_mixed_batch_requests_replay_only_for_matching_visible_appr
 
 
 async def test_tool_approval_middleware_queues_multiple_approval_requests(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """The opt-in middleware should present multiple unresolved approvals one at a time."""
     first_calls = 0
@@ -296,14 +302,14 @@ async def test_tool_approval_middleware_queues_multiple_approval_requests(
     first_response = await agent.run("call both", session=session)
 
     first_requests = _approval_requests(first_response.messages)
-    assert [request.function_call.name for request in first_requests] == ["first_tool"]
+    assert [_function_call(request).name for request in first_requests] == ["first_tool"]
     assert first_calls == 0
     assert second_calls == 0
 
     second_response = await agent.run(first_requests[0].to_function_approval_response(approved=True), session=session)
 
     second_requests = _approval_requests(second_response.messages)
-    assert [request.function_call.name for request in second_requests] == ["second_tool"]
+    assert [_function_call(request).name for request in second_requests] == ["second_tool"]
     assert first_calls == 0
     assert second_calls == 0
 
@@ -316,7 +322,7 @@ async def test_tool_approval_middleware_queues_multiple_approval_requests(
 
 
 async def test_tool_approval_middleware_preserves_hidden_mixed_batch_requests(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """Middleware state saves should not discard core hidden already-approved requests."""
     lookup_calls = 0
@@ -364,7 +370,7 @@ async def test_tool_approval_middleware_preserves_hidden_mixed_batch_requests(
 
 
 async def test_tool_approval_middleware_auto_approval_rule_receives_function_call(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """Heuristic auto-approval callbacks should receive function-call content and approve matching calls."""
     auto_calls = 0
@@ -408,7 +414,7 @@ async def test_tool_approval_middleware_auto_approval_rule_receives_function_cal
     first_response = await agent.run("write both", session=session)
 
     requests = _approval_requests(first_response.messages)
-    assert [request.function_call.name for request in requests] == ["manual_write"]
+    assert [_function_call(request).name for request in requests] == ["manual_write"]
     assert seen_calls == [("function_call", "auto_write"), ("function_call", "manual_write")]
     assert auto_calls == 0
     assert manual_calls == 0
@@ -422,7 +428,7 @@ async def test_tool_approval_middleware_auto_approval_rule_receives_function_cal
 
 
 async def test_tool_approval_middleware_auto_approved_loops_share_function_call_budget(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """Auto-approved re-entry should not reset max_function_calls."""
     calls = 0
@@ -436,7 +442,7 @@ async def test_tool_approval_middleware_auto_approved_loops_share_function_call_
     def auto_approve_budgeted_tool(function_call: Content) -> bool:
         return function_call.name == "budgeted_tool"
 
-    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1
     agent = Agent(
         client=chat_client_base,
         tools=[budgeted_tool],
@@ -477,7 +483,7 @@ async def test_tool_approval_middleware_auto_approved_loops_share_function_call_
 
 
 async def test_tool_approval_middleware_queues_streamed_approval_requests(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """Streaming approval requests should also be queued one at a time."""
     calls = 0
@@ -518,7 +524,7 @@ async def test_tool_approval_middleware_queues_streamed_approval_requests(
     first_stream = agent.run("call both", stream=True, session=session)
     first_updates = [update async for update in first_stream]
     first_requests = [content for update in first_updates for content in update.user_input_requests]
-    assert [request.function_call.name for request in first_requests] == ["first_streamed_tool"]
+    assert [_function_call(request).name for request in first_requests] == ["first_streamed_tool"]
     assert calls == 0
 
     second_stream = agent.run(
@@ -528,7 +534,7 @@ async def test_tool_approval_middleware_queues_streamed_approval_requests(
     )
     second_updates = [update async for update in second_stream]
     second_requests = [content for update in second_updates for content in update.user_input_requests]
-    assert [request.function_call.name for request in second_requests] == ["second_streamed_tool"]
+    assert [_function_call(request).name for request in second_requests] == ["second_streamed_tool"]
     assert calls == 0
 
     chat_client_base.streaming_responses = [
@@ -548,7 +554,7 @@ async def test_tool_approval_middleware_queues_streamed_approval_requests(
 
 
 async def test_tool_approval_middleware_always_approve_tool_rule(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """An always-approve response should add a standing tool-level approval rule."""
     calls = 0
@@ -611,7 +617,7 @@ async def test_tool_approval_middleware_always_approve_tool_rule(
 
 
 async def test_tool_approval_middleware_standing_rules_include_hosted_server_boundary(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """A standing hosted-tool rule should only match the same server_label."""
     calls = 0
@@ -666,12 +672,12 @@ async def test_tool_approval_middleware_standing_rules_include_hosted_server_bou
     other_server_response = await agent.run("call hosted b", session=session)
 
     requests = _approval_requests(other_server_response.messages)
-    assert [request.function_call.additional_properties["server_label"] for request in requests] == ["server-b"]
+    assert [_function_call(request).additional_properties["server_label"] for request in requests] == ["server-b"]
     assert calls == 0
 
 
 async def test_tool_approval_middleware_always_approve_tool_with_arguments_rule(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """Argument-scoped always-approve rules should require exact argument matches."""
     calls = 0
@@ -750,12 +756,12 @@ async def test_tool_approval_middleware_always_approve_tool_with_arguments_rule(
     third_response = await agent.run("call with different args", session=session)
 
     requests = _approval_requests(third_response.messages)
-    assert [request.function_call.arguments for request in requests] == ['{"value": "different"}']
+    assert [_function_call(request).arguments for request in requests] == ['{"value": "different"}']
     assert calls == 2
 
 
 async def test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide(
-    chat_client_base: SupportsChatGetResponse,
+    chat_client_base: MockBaseChatClient,
 ) -> None:
     """An argument-scoped no-argument approval should not become a wildcard."""
     calls = 0
@@ -813,5 +819,5 @@ async def test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide(
     second_response = await agent.run("call with args", session=session)
 
     requests = _approval_requests(second_response.messages)
-    assert [request.function_call.arguments for request in requests] == ['{"value": "custom"}']
+    assert [_function_call(request).arguments for request in requests] == ['{"value": "custom"}']
     assert calls == 1

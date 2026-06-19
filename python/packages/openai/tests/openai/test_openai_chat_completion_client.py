@@ -3,7 +3,7 @@
 import inspect
 import json
 import os
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -72,7 +72,7 @@ def test_init_uses_explicit_parameters() -> None:
 
 def test_supports_web_search_only() -> None:
     assert not isinstance(OpenAIChatCompletionClient, SupportsCodeInterpreterTool)
-    assert isinstance(OpenAIChatCompletionClient, SupportsWebSearchTool)
+    assert isinstance(OpenAIChatCompletionClient, SupportsWebSearchTool)  # pyrefly: ignore[unsafe-overlap]
     assert not isinstance(OpenAIChatCompletionClient, SupportsImageGenerationTool)
     assert not isinstance(OpenAIChatCompletionClient, SupportsMCPTool)
     assert not isinstance(OpenAIChatCompletionClient, SupportsFileSearchTool)
@@ -459,7 +459,7 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
             Content.from_function_result(
                 call_id="call-123",
                 result="Error: Function failed.",
-                exception=test_exception,
+                exception=str(test_exception),
             )
         ],
     )
@@ -791,7 +791,7 @@ def test_parse_text_reasoning_content_from_response(
         choices=[
             Choice(
                 index=0,
-                message=ChatCompletionMessage(
+                message=cast(Any, ChatCompletionMessage)(
                     role="assistant",
                     content="The answer is 42.",
                     reasoning_details=mock_reasoning_details,
@@ -843,7 +843,7 @@ def test_parse_text_reasoning_content_from_streaming_chunk(
         choices=[
             ChunkChoice(
                 index=0,
-                delta=ChunkChoiceDelta(
+                delta=cast(Any, ChunkChoiceDelta)(
                     role="assistant",
                     content="Partial answer",
                     reasoning_details=mock_reasoning_details,
@@ -1118,9 +1118,10 @@ def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
 
-    assert details["completion/reasoning_tokens"] == 0
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["completion/reasoning_tokens"] == 0
     assert details["reasoning_output_token_count"] == 0
-    assert details["prompt/cached_tokens"] == 0
+    assert details_dict["prompt/cached_tokens"] == 0
     assert details["cache_read_input_token_count"] == 0
 
 
@@ -1206,7 +1207,7 @@ def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
 def test_prepare_options_without_model(openai_unit_test_env: dict[str, str]) -> None:
     """Test that prepare_options raises error when model is not set."""
     client = OpenAIChatCompletionClient()
-    client.model = None  # Remove model
+    cast(Any, client).model = None  # Remove model
 
     messages = [Message(role="user", contents=["test"])]
 
@@ -1760,11 +1761,15 @@ async def test_integration_options(
         options["tools"] = [get_weather]
 
     # Test streaming mode
-    response = await client.get_response(
-        messages=messages,
-        stream=True,
-        options=options,
-    ).get_final_response()
+    response = (
+        await cast(Any, client)
+        .get_response(
+            messages=messages,
+            stream=True,
+            options=options,
+        )
+        .get_final_response()
+    )
 
     assert response is not None
     assert isinstance(response, ChatResponse)
@@ -1804,7 +1809,7 @@ async def test_integration_web_search() -> None:
     for streaming in [False, True]:
         # Use static method for web search tool
         web_search_tool = OpenAIChatCompletionClient.get_web_search_tool()
-        content = {
+        weather_content: dict[str, Any] = {
             "messages": [
                 Message(
                     role="user",
@@ -1817,9 +1822,9 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await client.get_response(stream=True, **content).get_final_response()
+            response = await client.get_response(stream=True, **weather_content).get_final_response()
         else:
-            response = await client.get_response(**content)
+            response = await client.get_response(**weather_content)
 
         assert response is not None
         assert isinstance(response, ChatResponse)
@@ -1836,7 +1841,7 @@ async def test_integration_web_search() -> None:
                 },
             }
         )
-        content = {
+        content: dict[str, Any] = {
             "messages": [
                 Message(
                     role="user",
@@ -1881,7 +1886,7 @@ def test_streaming_chunk_with_null_delta_is_skipped(
         choices=[
             Choice.model_construct(
                 index=0,
-                delta=None,
+                delta=None,  # type: ignore[arg-type]
                 finish_reason="stop",
             )
         ],
@@ -1914,7 +1919,7 @@ def test_streaming_chunk_with_null_delta_preserves_finish_reason(
         choices=[
             Choice.model_construct(
                 index=0,
-                delta=None,
+                delta=None,  # type: ignore[arg-type]
                 finish_reason="length",
             )
         ],
@@ -1976,7 +1981,7 @@ def test_streaming_chunk_with_null_delta_and_usage(
         choices=[
             Choice.model_construct(
                 index=0,
-                delta=None,
+                delta=None,  # type: ignore[arg-type]
                 finish_reason="stop",
             )
         ],
@@ -2007,7 +2012,7 @@ def test_streaming_chunk_with_null_delta_no_tool_calls_parsed(
         choices=[
             Choice.model_construct(
                 index=0,
-                delta=None,
+                delta=None,  # type: ignore[arg-type]
                 finish_reason="tool_calls",
             )
         ],

@@ -49,10 +49,6 @@ jobs:
           filters: |
             python:
               - 'python/**'
-              - '!python/AGENTS.md'
-              - '!python/**/AGENTS.md'
-              - '!python/.github/skills/*'
-              - '!python/.github/skills/**'
               - '.github/actions/setup-local-mcp-server/**'
               - '.github/workflows/python-merge-tests.yml'
               - '.github/workflows/python-integration-tests.yml'

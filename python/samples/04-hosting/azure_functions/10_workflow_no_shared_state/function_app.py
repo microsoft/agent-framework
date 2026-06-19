@@ -38,6 +38,7 @@ from agent_framework import (
     handler,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -123,7 +124,7 @@ class SpamHandlerExecutor(Executor):
         try:
             spam_result = SpamDetectionResult.model_validate_json(text)
         except ValidationError:
-            spam_result = SpamDetectionResult(is_spam=True, reason="Invalid JSON from agent")
+            spam_result = SpamDetectionResult(is_spam=True, reason="Invalid JSON from agent", confidence=0.0)
 
         message = f"Email marked as spam: {spam_result.reason}"
         await ctx.yield_output(message)
@@ -170,14 +171,14 @@ def _create_workflow() -> Workflow:
         client=chat_client,
         name=SPAM_AGENT_NAME,
         instructions=SPAM_DETECTION_INSTRUCTIONS,
-        default_options={"response_format": SpamDetectionResult},
+        default_options=OpenAIChatOptions[Any](response_format=SpamDetectionResult),
     )
 
     email_agent = Agent(
         client=chat_client,
         name=EMAIL_AGENT_NAME,
         instructions=EMAIL_ASSISTANT_INSTRUCTIONS,
-        default_options={"response_format": EmailResponse},
+        default_options=OpenAIChatOptions[Any](response_format=EmailResponse),
     )
 
     # Executors

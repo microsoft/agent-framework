@@ -35,6 +35,7 @@ from agent_framework import (
     executor,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -199,7 +200,7 @@ def _create_workflow() -> Workflow:
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
         ),
-        default_options={"response_format": DetectionResultAgent},
+        default_options=OpenAIChatOptions[Any](response_format=DetectionResultAgent),
         name="spam_detection_agent",
     )
 
@@ -209,7 +210,7 @@ def _create_workflow() -> Workflow:
             "You are an email assistant that helps users draft responses to emails with professionalism. "
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
-        default_options={"response_format": EmailResponse},
+        default_options=OpenAIChatOptions[Any](response_format=EmailResponse),
         name="email_assistant_agent",
     )
 

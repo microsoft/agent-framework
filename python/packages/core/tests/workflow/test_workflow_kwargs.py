@@ -240,7 +240,7 @@ async def test_kwargs_stored_in_state() -> None:
 
     class _StateInspector(Executor):
         @handler
-        async def inspect(self, msgs: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:
+        async def inspect(self, msgs: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
             nonlocal stored_kwargs
             stored_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             await ctx.yield_output(AgentResponse(messages=msgs))
@@ -266,7 +266,7 @@ async def test_empty_kwargs_stored_as_empty_dict() -> None:
 
     class _StateChecker(Executor):
         @handler
-        async def check(self, msgs: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:
+        async def check(self, msgs: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
             nonlocal stored_kwargs
             stored_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             await ctx.yield_output(AgentResponse(messages=msgs))
@@ -432,8 +432,8 @@ async def test_handoff_kwargs_flow_to_agents() -> None:
 
     workflow = (
         HandoffBuilder(termination_condition=lambda conv: len(conv) >= 4)
-        .participants([agent1, agent2])  # type: ignore[list-item]
-        .with_start_agent(agent1)  # type: ignore[arg-type]
+        .participants([agent1, agent2])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
+        .with_start_agent(agent1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         .with_autonomous_mode()
         .build()
     )
@@ -710,7 +710,7 @@ async def test_subworkflow_kwargs_accessible_via_state() -> None:
         """Executor that reads kwargs from State for verification."""
 
         @handler
-        async def read_kwargs(self, msgs: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:
+        async def read_kwargs(self, msgs: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
             kwargs_from_state = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             captured_kwargs_from_state.append(kwargs_from_state or {})
             await ctx.yield_output(AgentResponse(messages=msgs))

@@ -128,7 +128,7 @@ def test_agent_as_mcp_server_requires_mcp(client, monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(builtins, "__import__", _import_without_mcp)
 
-    agent = Agent(client=client)
+    agent = Agent(client=client)  # type: ignore[arg-type]
 
     with pytest.raises(ModuleNotFoundError, match=r"Please install `mcp`\.$"):
         agent.as_mcp_server()
