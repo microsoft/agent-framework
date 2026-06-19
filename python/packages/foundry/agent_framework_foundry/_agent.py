@@ -770,7 +770,7 @@ class RawFoundryAgent(
         """
         client = cast(RawFoundryAgentChatClient, self.client)
         conversation = await client.project_client.get_openai_client().conversations.create()
-        return self.get_session(conversation.id, session_id=session_id)
+        return self.get_session(service_session_id=conversation.id, session_id=session_id)
 
     @override
     async def _prepare_run_context(
