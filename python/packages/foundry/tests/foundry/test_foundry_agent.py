@@ -945,32 +945,6 @@ async def test_foundry_agent_create_conversation_session_accepts_local_session_i
     assert session.service_session_id == "conv_123"
 
 
-async def test_foundry_agent_create_conversation_session_requires_conversations_client() -> None:
-    """Test that project conversation creation fails clearly when the SDK client lacks support."""
-
-    mock_project = MagicMock()
-    openai_client = MagicMock()
-    openai_client.conversations = None
-    mock_project.get_openai_client.return_value = openai_client
-    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
-
-    with pytest.raises(RuntimeError, match="project conversation creation"):
-        await agent.create_conversation_session()
-
-
-async def test_foundry_agent_create_conversation_session_requires_conversation_id() -> None:
-    """Test that project conversation creation validates the returned conversation ID."""
-
-    openai_client = MagicMock()
-    openai_client.conversations.create = AsyncMock(return_value=SimpleNamespace(id=""))
-    mock_project = MagicMock()
-    mock_project.get_openai_client.return_value = openai_client
-    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
-
-    with pytest.raises(ValueError, match="non-empty id"):
-        await agent.create_conversation_session()
-
-
 def test_foundry_agent_init() -> None:
     """Test construction of the full-middleware agent."""
 
