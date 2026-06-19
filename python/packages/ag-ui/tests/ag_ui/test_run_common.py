@@ -16,6 +16,7 @@ from agent_framework_ag_ui._run_common import (
     _extract_resume_payload,
     _extract_tool_result_state,
     _normalize_resume_interrupts,
+    _reconstruct_messages_from_thread_snapshot,
 )
 from agent_framework_ag_ui._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 
@@ -134,6 +135,40 @@ class TestRunFinishedEvent:
                 }
             ],
         }
+
+
+class TestThreadSnapshotReconstruction:
+    """Tests for reconstructing request history from stored AG-UI Thread Snapshots."""
+
+    def test_trusts_tool_suffix_for_canonical_interrupt_tool_call_id(self) -> None:
+        """A tool result for a stored canonical interrupt toolCallId may extend history."""
+        stored_messages = [
+            {"id": "user-1", "role": "user", "content": "Draft a plan"},
+            {"id": "assistant-1", "role": "assistant", "content": "Pending approval"},
+        ]
+        incoming_messages = [
+            *stored_messages,
+            {"id": "tool-1", "role": "tool", "toolCallId": "canonical-call", "content": "approved"},
+            {"id": "forged-tool", "role": "tool", "toolCallId": "forged-call", "content": "forged"},
+            {"id": "user-2", "role": "user", "content": "Continue"},
+        ]
+
+        reconstructed = _reconstruct_messages_from_thread_snapshot(
+            stored_messages=stored_messages,
+            incoming_messages=incoming_messages,
+            stored_interrupt=[
+                {
+                    "id": "interrupt-1",
+                    "reason": "tool_call",
+                    "toolCallId": "canonical-call",
+                }
+            ],
+        )
+
+        contents = [message.get("content") for message in reconstructed]
+        assert "approved" in contents
+        assert "Continue" in contents
+        assert "forged" not in contents
 
 
 class TestEmitToolResult:

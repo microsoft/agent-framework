@@ -37,6 +37,7 @@ from ._snapshots import (
     _SNAPSHOT_SCOPE_INPUT_KEY,
     AGUIThreadSnapshot,
     AGUIThreadSnapshotStore,
+    _clear_thread_snapshot_interrupt,
 )
 from ._utils import generate_event_id, make_json_safe
 from ._workflow_run import run_workflow_stream
@@ -357,6 +358,16 @@ class AgentFrameworkWorkflow:
                 snapshot_builder.observe(event)
             if isinstance(event, RunErrorEvent):
                 run_error_emitted = True
+                if (
+                    getattr(event, "code", None) == "WORKFLOW_RESUME_CANCELLED"
+                    and snapshot_store is not None
+                    and snapshot_scope is not None
+                ):
+                    await _clear_thread_snapshot_interrupt(
+                        snapshot_store=snapshot_store,
+                        scope=snapshot_scope,
+                        thread_id=thread_id,
+                    )
             yield event
 
         if (
