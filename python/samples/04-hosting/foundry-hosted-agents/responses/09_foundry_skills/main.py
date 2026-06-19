@@ -38,7 +38,8 @@ load_dotenv()
 # Defaults to a system temp location because hosted containers may mount the
 # application directory read-only. Set DOWNLOADED_SKILLS_DIR to override it.
 _DEFAULT_DOWNLOADED_SKILLS_DIR: Final = Path(tempfile.gettempdir()) / "maf_downloaded_skills"
-DOWNLOADED_SKILLS_DIR: Final = Path(os.environ.get("DOWNLOADED_SKILLS_DIR", str(_DEFAULT_DOWNLOADED_SKILLS_DIR)))
+_DOWNLOADED_SKILLS_DIR_ENV = os.environ.get("DOWNLOADED_SKILLS_DIR")
+DOWNLOADED_SKILLS_DIR: Final = Path((_DOWNLOADED_SKILLS_DIR_ENV or "").strip() or _DEFAULT_DOWNLOADED_SKILLS_DIR)
 
 logger = logging.getLogger(__name__)
 

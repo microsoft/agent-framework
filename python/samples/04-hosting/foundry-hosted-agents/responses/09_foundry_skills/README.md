@@ -100,7 +100,7 @@ Downloading skill 'support-style' from Foundry...
 Downloading skill 'escalation-policy' from Foundry...
 ```
 
-The downloaded `SKILL.md` files land under `<downloaded-skills-dir>/<name>/SKILL.md`. The directory is recreated from scratch on every run, so deleting it manually is never necessary.
+The downloaded `SKILL.md` files land under `DOWNLOADED_SKILLS_DIR/<name>/SKILL.md`. The directory is recreated from scratch on every run, so deleting it manually is never necessary.
 
 By default, the sample uses the system temp directory, for example `/tmp/maf_downloaded_skills` on Linux. To choose a different writable location, set `DOWNLOADED_SKILLS_DIR` before startup.
 
