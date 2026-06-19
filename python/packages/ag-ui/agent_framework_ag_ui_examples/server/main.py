@@ -124,7 +124,7 @@ add_agent_framework_fastapi_endpoint(
 # Agentic Generative UI - task steps agent with streaming state updates
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=task_steps_agent_wrapped(client),  # type: ignore[arg-type]
+    agent=task_steps_agent_wrapped(client),
     path="/agentic_generative_ui",
 )
 

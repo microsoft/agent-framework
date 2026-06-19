@@ -20,9 +20,9 @@ from agent_framework.observability import EmbeddingTelemetryLayer
 from mistralai.client import Mistral
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.mistral")

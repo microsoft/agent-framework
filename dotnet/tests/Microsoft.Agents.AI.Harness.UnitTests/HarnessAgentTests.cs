@@ -27,7 +27,7 @@ public class HarnessAgentTests
     {
         MaxContextWindowTokens = TestMaxContextWindowTokens,
         MaxOutputTokens = TestMaxOutputTokens,
-        DisableToolApproval = true,
+        DisableToolAutoApproval = true,
         DisableOpenTelemetry = true,
         DisableFileMemory = true,
         DisableFileAccess = true,
@@ -626,7 +626,7 @@ public class HarnessAgentTests
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
         var options = CreateAllDisabledOptions();
-        options.DisableToolApproval = false;
+        options.DisableToolAutoApproval = false;
 
         // Act
         var agent = new HarnessAgent(chatClient, options);
@@ -679,7 +679,7 @@ public class HarnessAgentTests
             });
 
         var options = CreateAllDisabledOptions();
-        options.DisableToolApproval = false;
+        options.DisableToolAutoApproval = false;
         options.ToolApprovalAgentOptions = new ToolApprovalAgentOptions
         {
             AutoApprovalRules = [fcc => new ValueTask<bool>(fcc.Name == "ReadTool")]
@@ -1695,7 +1695,7 @@ public class HarnessAgentTests
         {
             MaxContextWindowTokens = TestMaxContextWindowTokens,
             MaxOutputTokens = TestMaxOutputTokens,
-            DisableToolApproval = true,
+            DisableToolAutoApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
             DisableFileAccess = true,
@@ -1746,7 +1746,7 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
         var options = new HarnessAgentOptions
         {
-            DisableToolApproval = true,
+            DisableToolAutoApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
             DisableFileAccess = true,
@@ -1778,7 +1778,7 @@ public class HarnessAgentTests
         var options = new HarnessAgentOptions
         {
             MaxContextWindowTokens = TestMaxContextWindowTokens,
-            DisableToolApproval = true,
+            DisableToolAutoApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
             DisableFileAccess = true,
@@ -1887,7 +1887,7 @@ public class HarnessAgentTests
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
         var options = CreateAllDisabledOptions();
-        options.DisableToolApproval = false;
+        options.DisableToolAutoApproval = false;
         options.LoopEvaluators = [new DelegateLoopEvaluator((_, _) => new ValueTask<LoopEvaluation>(LoopEvaluation.Stop()))];
 
         // Act

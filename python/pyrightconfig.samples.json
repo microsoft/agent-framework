@@ -11,7 +11,13 @@
         "**/agent_with_foundry_tracing.py",
         "**/azure_responses_client_with_foundry.py"
     ],
-    "typeCheckingMode": "off",
+    "typeCheckingMode": "basic",
     "reportMissingImports": "error",
+    "reportMissingModuleSource": false,
+    "reportMissingTypeStubs": false,
+    "reportPrivateImportUsage": false,
+    "reportPrivateUsage": false,
+    "reportTypedDictNotRequiredAccess": false,
+    "reportInvalidTypeVarUse": false,
     "reportAttributeAccessIssue": "error"
 }

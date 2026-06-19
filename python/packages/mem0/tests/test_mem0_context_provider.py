@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -97,7 +98,10 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_mem0_client.search.assert_awaited_once()
@@ -115,7 +119,10 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=[""])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_mem0_client.search.assert_not_awaited()
@@ -129,7 +136,10 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "mem0" not in ctx.context_messages
@@ -141,7 +151,12 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         with pytest.raises(ValueError, match="At least one of the filters"):
-            await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+            await provider.before_run(
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state,
+            )  # type: ignore[arg-type]
 
     async def test_v1_1_response_format(self, mock_mem0_client: AsyncMock) -> None:
         """Search response in v1.1 dict format with 'results' key."""
@@ -151,7 +166,10 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         added = ctx.context_messages["mem0"]
@@ -171,7 +189,10 @@ class TestBeforeRun:
         )
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_mem0_client.search.call_args.kwargs
@@ -185,7 +206,10 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_oss_mem0_client.search.call_args.kwargs
@@ -257,7 +281,10 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["answer"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_mem0_client.add.assert_awaited_once()
@@ -283,7 +310,10 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_mem0_client.add.call_args.kwargs
@@ -305,7 +335,10 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_mem0_client.add.assert_not_awaited()
@@ -318,7 +351,10 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hey"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "run_id" not in mock_mem0_client.add.call_args.kwargs
@@ -331,7 +367,12 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hey"])])
 
         with pytest.raises(ValueError, match="At least one of the filters"):
-            await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+            await provider.after_run(
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state,
+            )  # type: ignore[arg-type]
 
     async def test_stores_with_application_id_filters(self, mock_mem0_client: AsyncMock) -> None:
         """application_id is passed in filters."""
@@ -343,7 +384,10 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert mock_mem0_client.add.call_args.kwargs["filters"] == {"app_id": "app1"}

@@ -44,6 +44,65 @@ public class FileAccessProviderTests
         Assert.Equal(6, tools.Count());
     }
 
+    #endregion
+
+    #region Tool Approval
+
+    [Fact]
+    public async Task ProvideAIContextAsync_AllToolsRequireApprovalAsync()
+    {
+        // Arrange
+        var tools = await CreateToolsAsync();
+
+        // Assert — every tool is wrapped so that it always requires approval.
+        Assert.Equal(6, tools.Count());
+        Assert.All(tools, tool => Assert.IsType<ApprovalRequiredAIFunction>(tool));
+    }
+
+    [Theory]
+    [InlineData(FileAccessProvider.ReadFileToolName, true)]
+    [InlineData(FileAccessProvider.ListFilesToolName, true)]
+    [InlineData(FileAccessProvider.ListSubdirectoriesToolName, true)]
+    [InlineData(FileAccessProvider.SearchFilesToolName, true)]
+    [InlineData(FileAccessProvider.SaveFileToolName, false)]
+    [InlineData(FileAccessProvider.DeleteFileToolName, false)]
+    [InlineData("some_other_tool", false)]
+    public async Task ReadOnlyToolsAutoApprovalRule_ApprovesOnlyReadOnlyToolsAsync(string toolName, bool expected)
+    {
+        // Arrange
+        var functionCall = new FunctionCallContent("call1", toolName);
+
+        // Act
+        bool approved = await FileAccessProvider.ReadOnlyToolsAutoApprovalRule(functionCall);
+
+        // Assert
+        Assert.Equal(expected, approved);
+    }
+
+    [Theory]
+    [InlineData(FileAccessProvider.ReadFileToolName, true)]
+    [InlineData(FileAccessProvider.ListFilesToolName, true)]
+    [InlineData(FileAccessProvider.ListSubdirectoriesToolName, true)]
+    [InlineData(FileAccessProvider.SearchFilesToolName, true)]
+    [InlineData(FileAccessProvider.SaveFileToolName, true)]
+    [InlineData(FileAccessProvider.DeleteFileToolName, true)]
+    [InlineData("some_other_tool", false)]
+    public async Task AllToolsAutoApprovalRule_ApprovesAllFileAccessToolsAsync(string toolName, bool expected)
+    {
+        // Arrange
+        var functionCall = new FunctionCallContent("call1", toolName);
+
+        // Act
+        bool approved = await FileAccessProvider.AllToolsAutoApprovalRule(functionCall);
+
+        // Assert
+        Assert.Equal(expected, approved);
+    }
+
+    #endregion
+
+    #region ProvideAIContextAsync Tests (continued)
+
     [Fact]
     public async Task ProvideAIContextAsync_ReturnsInstructionsAsync()
     {

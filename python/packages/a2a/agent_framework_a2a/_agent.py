@@ -344,7 +344,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
-    def run(  # pyright: ignore[reportIncompatibleMethodOverride]
+    def run(
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -464,7 +464,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=session,
                 context=session_context,
                 state=session.state.setdefault(provider.source_id, {}),

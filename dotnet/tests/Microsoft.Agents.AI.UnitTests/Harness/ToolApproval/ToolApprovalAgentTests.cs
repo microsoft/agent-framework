@@ -1678,6 +1678,74 @@ public class ToolApprovalAgentTests
     #region Auto-Approval Rules (Heuristics)
 
     /// <summary>
+    /// Verify that <see cref="ToolApprovalAgent.AllToolsAutoApprovalRule"/> approves any tool call regardless of name.
+    /// </summary>
+    [Theory]
+    [InlineData("ReadTool")]
+    [InlineData("DangerousTool")]
+    [InlineData("file_access_delete_file")]
+    public async Task AllToolsAutoApprovalRule_ApprovesAnyToolAsync(string toolName)
+    {
+        // Arrange
+        var functionCall = new FunctionCallContent("call1", toolName);
+
+        // Act
+        bool approved = await ToolApprovalAgent.AllToolsAutoApprovalRule(functionCall);
+
+        // Assert
+        Assert.True(approved);
+    }
+
+    /// <summary>
+    /// Verify that wiring <see cref="ToolApprovalAgent.AllToolsAutoApprovalRule"/> auto-approves an approval
+    /// request rather than surfacing it to the caller.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AllToolsAutoApprovalRule_ApprovesAnyToolAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var approvalRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "DangerousTool"));
+
+        // Inner agent: first call returns approval request, second returns final response.
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    return new AgentResponse([new ChatMessage(ChatRole.Assistant, [approvalRequest])]);
+                }
+
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant, "Done")]);
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule]
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var response = await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, "Hi")],
+            session);
+
+        // Assert — the approval request was auto-approved, inner agent called twice, nothing surfaced to caller.
+        Assert.Equal(2, callCount);
+        Assert.Equal("Done", response.Text);
+        Assert.Empty(response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+    }
+
+    /// <summary>
     /// Verify that an auto-approval rule can approve a function call that would otherwise need user approval.
     /// </summary>
     [Fact]

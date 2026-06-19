@@ -96,9 +96,11 @@ async def main() -> None:
         # maintained automatically — just send the approval response)
         while result.user_input_requests:
             for request in result.user_input_requests:
+                if request.function_call is None:
+                    continue
                 print("\nApproval needed:")
-                print(f"  Function: {request.function_call.name}")  # type: ignore[union-attr]
-                print(f"  Arguments: {request.function_call.arguments}")  # type: ignore[union-attr]
+                print(f"  Function: {request.function_call.name}")
+                print(f"  Arguments: {request.function_call.arguments}")
 
                 # In a real application, prompt the user here
                 approved = True  # Change to False to see rejection

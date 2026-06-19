@@ -5,7 +5,7 @@
 # pyright: reportGeneralTypeIssues=false
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -141,7 +141,7 @@ class TestDeclarativeWorkflowStateExtended:
 
         # Set via direct state data manipulation to create custom namespace
         state_data = state.get_state_data()
-        state_data["Custom"] = {"myns": {"value": 42}}
+        cast(dict[str, Any], state_data)["Custom"] = {"myns": {"value": 42}}
         state.set_state_data(state_data)
 
         result = state.get("myns.value")
@@ -253,10 +253,10 @@ class TestDeclarativeWorkflowStateExtended:
         state.initialize()
 
         # Cast to Any to test the runtime behavior with non-string inputs
-        result = state.eval(42)  # type: ignore[arg-type]
+        result = state.eval(42)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert result == 42
 
-        result = state.eval([1, 2, 3])  # type: ignore[arg-type]
+        result = state.eval([1, 2, 3])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert result == [1, 2, 3]
 
     @_requires_powerfx
@@ -1127,7 +1127,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state as ForeachInitExecutor would
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "foreach_init": {
                 "items": ["a", "b", "c"],
                 "index": 0,
@@ -1238,7 +1238,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state at last item
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "loop_id": {
                 "items": ["a", "b"],
                 "index": 1,  # Already at last item
@@ -1272,7 +1272,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "loop_id": {
                 "items": ["a", "b", "c"],
                 "index": 0,
@@ -1306,7 +1306,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "loop_id": {
                 "items": ["a", "b", "c"],
                 "index": 0,
@@ -2340,7 +2340,7 @@ class TestBuilderEdgeWiring:
         exec3 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "3"}}, id="e3")
 
         # Simulate a chain by dynamically setting attribute
-        exec1._chain_executors = [exec1, exec2, exec3]  # type: ignore[attr-defined]
+        exec1._chain_executors = [exec1, exec2, exec3]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(exec1)
 
@@ -2378,7 +2378,7 @@ class TestBuilderEdgeWiring:
         )
 
         # Simulate a single-action branch chain
-        goto_executor._chain_executors = [goto_executor]  # type: ignore[attr-defined]
+        goto_executor._chain_executors = [goto_executor]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(goto_executor)
         assert exit_exec is None
@@ -2395,7 +2395,7 @@ class TestBuilderEdgeWiring:
             {"kind": "EndWorkflow", "id": "end"},
             id="end",
         )
-        end_executor._chain_executors = [end_executor]  # type: ignore[attr-defined]
+        end_executor._chain_executors = [end_executor]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(end_executor)
         assert exit_exec is None
@@ -2419,7 +2419,7 @@ class TestBuilderEdgeWiring:
             {"kind": "GotoAction", "id": "goto_target", "actionId": "some_target"},
             id="goto_target",
         )
-        activity._chain_executors = [activity, goto]  # type: ignore[attr-defined]
+        activity._chain_executors = [activity, goto]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(activity)
         assert exit_exec is None
@@ -2434,7 +2434,7 @@ class TestBuilderEdgeWiring:
 
         exec1 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "1"}}, id="e1")
         exec2 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "2"}}, id="e2")
-        exec1._chain_executors = [exec1, exec2]  # type: ignore[attr-defined]
+        exec1._chain_executors = [exec1, exec2]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(exec1)
         assert exit_exec == exec2

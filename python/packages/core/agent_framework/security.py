@@ -536,7 +536,7 @@ class LabeledMessage(Message):
         if isinstance(content, str):
             contents = [content]
         elif isinstance(content, list):
-            contents = cast(list[Any], content)  # type: ignore[redundant-cast]
+            contents = cast(list[Any], content)
         else:
             contents = [str(content)] if content is not None else []
 
@@ -724,7 +724,7 @@ def _parse_github_mcp_labels(labels_data: dict[str, Any]) -> ContentLabel | None
         - ["user_id_1", "user_id_2", ...] means only those users → PRIVATE
         """
         if isinstance(conf_value, list):
-            conf_candidates = cast(list[Any], conf_value)  # type: ignore[redundant-cast]
+            conf_candidates = cast(list[Any], conf_value)
             conf_list: list[str] = [item for item in conf_candidates if isinstance(item, str)]
             if len(conf_list) == 1 and conf_list[0].lower() == "public":
                 return ConfidentialityLabel.PUBLIC
@@ -975,7 +975,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 for v in value_dict.values():
                     _extract_labels_recursive(v)
             elif isinstance(value, (list, tuple)):
-                value_items = cast(list[Any] | tuple[Any, ...], value)  # type: ignore[redundant-cast]
+                value_items = cast(list[Any] | tuple[Any, ...], value)
                 # Recurse into list/tuple items
                 for item in value_items:
                     _extract_labels_recursive(item)
@@ -1034,7 +1034,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         import json as _json
 
         if isinstance(result, list):
-            result_list = cast(list[Any], result)  # type: ignore[redundant-cast]
+            result_list = cast(list[Any], result)
             if all(isinstance(c, Content) for c in result_list):
                 return cast(list[Content], result_list)
         if isinstance(result, Content):
