@@ -556,31 +556,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 conversation_id=context.conversation_id,
             )
 
-            # Multi-turn pattern: when we have a prior checkpoint, restore it
-            # first (drive the workflow back to idle with prior state intact),
-            # then make a separate call that delivers the new user input. This
-            # depends on Workflow.run preserving shared state across calls. The
-            # restore-only call may yield events from any pending in-flight
-            # work in the checkpoint; we consume those internally here so they
-            # don't surface to the response stream as duplicates.
-            #
-            # If the restored checkpoint had pending request_info events, the
-            # restore-only call replays them through
-            # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-            # and populates ``self._agent.pending_requests``. That is the correct
-            # state: those requests are genuinely outstanding, and the next
-            # ``run(input_messages, ...)`` call may contain ``function_call_output``
-            # items (carried as FunctionResult/FunctionApprovalResponse content)
-            # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-            await turn.restore(stream=is_streaming_request)
-
             if not is_streaming_request:
                 # Run the agent in non-streaming mode with the new user input.
-                response = await turn.agent.run(
-                    input_messages,
-                    stream=False,
-                    checkpoint_storage=turn.write_checkpoint_storage,
-                )
+                response = await turn.run_non_streaming(input_messages)
 
                 async for item in _to_outputs_for_messages(
                     response_event_stream,
@@ -596,11 +574,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             tracker = _OutputItemTracker(response_event_stream)
 
             # Run the workflow agent in streaming mode with the new user input.
-            async for update in turn.agent.run(
-                input_messages,
-                stream=True,
-                checkpoint_storage=turn.write_checkpoint_storage,
-            ):
+            async for update in turn.run_streaming(input_messages):
                 for content in update.contents:
                     for event in tracker.handle(content):
                         yield event

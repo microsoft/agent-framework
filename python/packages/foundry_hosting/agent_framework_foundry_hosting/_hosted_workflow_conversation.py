@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import copy
 import os
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_framework import FileCheckpointStorage, WorkflowAgent
+from agent_framework import AgentResponse, AgentResponseUpdate, FileCheckpointStorage, Message, WorkflowAgent
 from azure.ai.agentserver.responses.models import MessageRole
 
 AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
@@ -67,8 +67,33 @@ class HostedWorkflowConversationTurn:
     restore_checkpoint_storage: FileCheckpointStorage | None
     write_checkpoint_storage: FileCheckpointStorage
 
-    async def restore(self, *, stream: bool) -> None:
-        """Restore the previous workflow checkpoint, if this turn has one."""
+    async def run_non_streaming(self, input_messages: Sequence[Message]) -> AgentResponse:
+        """Run this hosted workflow turn in non-streaming mode."""
+        await self._restore_checkpoint(stream=False)
+        return await self.agent.run(
+            input_messages,
+            stream=False,
+            checkpoint_storage=self.write_checkpoint_storage,
+        )
+
+    async def run_streaming(self, input_messages: Sequence[Message]) -> AsyncIterator[AgentResponseUpdate]:
+        """Run this hosted workflow turn in streaming mode."""
+        await self._restore_checkpoint(stream=True)
+        async for update in self.agent.run(
+            input_messages,
+            stream=True,
+            checkpoint_storage=self.write_checkpoint_storage,
+        ):
+            yield update
+
+    async def _restore_checkpoint(self, *, stream: bool) -> None:
+        """Restore the previous workflow checkpoint, if this turn has one.
+
+        Hosted ``previous_response_id`` turns restore from the previous response's
+        checkpoint context but write new checkpoints under the current response.
+        ``WorkflowAgent.run`` accepts one checkpoint storage, so restoration and
+        input execution remain separate core calls inside this adapter.
+        """
         if self.restore_checkpoint_id is None:
             return
         if self.restore_checkpoint_storage is None:  # pragma: no cover - defensive invariant
