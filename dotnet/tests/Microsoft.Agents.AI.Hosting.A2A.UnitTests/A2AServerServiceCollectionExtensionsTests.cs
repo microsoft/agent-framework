@@ -62,10 +62,10 @@ public sealed class A2AServerServiceCollectionExtensionsTests
 
     /// <summary>
     /// Verifies that when no ITaskStore or AgentSessionStore are registered,
-    /// AddA2AServer falls back to noop defaults and resolves successfully.
+    /// AddA2AServer falls back to noop session store default and resolves successfully.
     /// </summary>
     [Fact]
-    public async Task AddA2AServer_WithNoCustomStores_FallsBackToNoopDefaultsAsync()
+    public async Task AddA2AServer_WithNoCustomStores_FallsBackToNoopSessionStoreDefaultAsync()
     {
         // Arrange
         const string AgentName = "default-stores-agent";
