@@ -27,7 +27,7 @@ namespace Microsoft.Agents.AI;
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
+public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 {
     private const string SkillFileName = "SKILL.md";
     private const int DefaultSearchDepth = 2;

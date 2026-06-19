@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -22,19 +21,22 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// <para>
 /// Discovery follows the SEP-2640 recommended approach: the source reads the well-known
-/// <c>skill://index.json</c> resource and constructs one <see cref="AgentSkill"/> per
-/// <c>skill-md</c> entry directly from the entry's <c>name</c>, <c>description</c>, and <c>url</c> fields.
-/// The referenced <c>SKILL.md</c> resource is not read during discovery; hosts fetch its body on
-/// demand via <c>resources/read</c> against the URI exposed on the resulting skill.
+/// <c>skill://index.json</c> resource and constructs one <see cref="AgentSkill"/> per index entry.
 /// </para>
 /// <para>
-/// Only index entries of type <c>skill-md</c> are supported at the moment; entries of any other
-/// type are skipped.
+/// Index entries are dispatched to an <see cref="IMcpSkillEntryLoader"/> by their <c>type</c>:
+/// <list type="bullet">
+///   <item><description><c>skill-md</c> - handled by <see cref="SkillMdEntryLoader"/>; the skill's
+///   <c>SKILL.md</c> and sibling resources are fetched on demand from the MCP server.</description></item>
+///   <item><description><c>archive</c> - handled by <see cref="ArchiveEntryLoader"/>; the entry's
+///   <c>url</c> points to a single archive resource whose content unpacks into the skill's
+///   namespace.</description></item>
+/// </list>
+/// Entries whose type has no registered loader (e.g. <c>mcp-resource-template</c>) are skipped.
 /// </para>
 /// <para>
-/// If <c>skill://index.json</c> is absent, unreadable, empty, or fails to parse, this source
-/// returns an empty list. Discovered skills serve their referenced resources on demand via
-/// <see cref="AgentSkill.GetResourceAsync"/>; they do not enumerate sibling files up front.
+/// If <c>skill://index.json</c> is absent, unreadable, empty, or fails to parse, this source returns an
+/// empty list.
 /// </para>
 /// </remarks>
 internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
@@ -44,40 +46,139 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     /// </summary>
     private const string IndexUri = "skill://index.json";
 
-    private const string SkillMdEntryType = "skill-md";
-
     private readonly McpClient _client;
     private readonly ILogger _logger;
+    private readonly Dictionary<string, IMcpSkillEntryLoader> _loaders;
+    private readonly TimeSpan? _refreshInterval;
+
+    private IList<AgentSkill>? _cachedSkills;
+    private DateTime _lastRefreshedUtc;
+    private Task<IList<AgentSkill>>? _refreshTask;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
     /// <param name="client">An MCP client connected to a server that exposes Agent Skills resources.</param>
+    /// <param name="options">Optional options that control archive-distributed skill handling.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
-    public AgentMcpSkillsSource(McpClient client, ILoggerFactory? loggerFactory = null)
+    public AgentMcpSkillsSource(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
         this._client = Throw.IfNull(client);
-        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AgentMcpSkillsSource>();
+        loggerFactory ??= NullLoggerFactory.Instance;
+        this._logger = loggerFactory.CreateLogger<AgentMcpSkillsSource>();
+
+        IMcpSkillEntryLoader[] loaders =
+        [
+            new SkillMdEntryLoader(this._client, loggerFactory),
+            new ArchiveEntryLoader(this._client, options, loggerFactory),
+        ];
+
+        this._loaders = loaders.ToDictionary(l => l.EntryType, StringComparer.OrdinalIgnoreCase);
+        this._refreshInterval = options?.RefreshInterval;
     }
 
     /// <inheritdoc/>
     public override async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
     {
+        if (this.TryGetCachedSkills() is { } cached)
+        {
+            return cached;
+        }
+
+        // Use CAS to ensure only one concurrent refresh runs; other callers await the same task.
+        var tcs = new TaskCompletionSource<IList<AgentSkill>>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        if (Interlocked.CompareExchange(ref this._refreshTask, tcs.Task, null) is { } existing)
+        {
+            return await existing.ConfigureAwait(false);
+        }
+
+        try
+        {
+            var skills = await this.GetCoreSkillsAsync(cancellationToken).ConfigureAwait(false);
+
+            this.UpdateCache(skills);
+
+            tcs.SetResult(skills);
+
+            return skills;
+        }
+        catch (Exception ex)
+        {
+            tcs.TrySetException(ex);
+            throw;
+        }
+        finally
+        {
+            this._refreshTask = null;
+        }
+    }
+
+    /// <summary>
+    /// Returns the cached skill list if caching is enabled and the cache is still fresh;
+    /// otherwise returns <see langword="null"/>.
+    /// </summary>
+    private IList<AgentSkill>? TryGetCachedSkills()
+    {
+        if (this._refreshInterval is null || this._cachedSkills is null)
+        {
+            return null;
+        }
+
+        TimeSpan cacheAge = DateTime.UtcNow - this._lastRefreshedUtc;
+
+        if (cacheAge >= this._refreshInterval.Value)
+        {
+            return null;
+        }
+
+        return this._cachedSkills;
+    }
+
+    /// <summary>
+    /// Stores the skill list and records the refresh timestamp for cache freshness checks.
+    /// </summary>
+    private void UpdateCache(IList<AgentSkill> skills)
+    {
+        this._cachedSkills = skills;
+        this._lastRefreshedUtc = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Reads the skill index from the MCP server, dispatches entries to registered loaders, and
+    /// returns the aggregated skill list.
+    /// </summary>
+    private async Task<IList<AgentSkill>> GetCoreSkillsAsync(CancellationToken cancellationToken)
+    {
         McpSkillIndex? index = await this.TryReadIndexAsync(cancellationToken).ConfigureAwait(false);
 
-        var skills = new List<AgentSkill>();
+        // Group entries by type and set aside those a registered loader can handle; entries of any
+        // other type are unsupported and logged.
+        var entriesByType = new Dictionary<string, List<McpSkillIndexEntry>>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var entry in index?.Skills ?? [])
+        foreach (var group in (index?.Skills ?? []).GroupBy(e => e.Type ?? string.Empty, StringComparer.OrdinalIgnoreCase))
         {
-            if (this.TryCreateSkill(entry, out AgentMcpSkill? skill, out string skipReason))
+            if (this._loaders.ContainsKey(group.Key))
             {
-                skills.Add(skill);
-                LogSkillLoaded(this._logger, skill.Frontmatter.Name);
+                entriesByType[group.Key] = group.ToList();
             }
             else
             {
-                LogIndexEntrySkipped(this._logger, entry.Name ?? "(unnamed)", skipReason);
+                foreach (var entry in group)
+                {
+                    LogIndexEntrySkipped(this._logger, entry.Name ?? "(unnamed)", $"unsupported type '{entry.Type ?? "(none)"}'");
+                }
             }
+        }
+
+        // Invoke every registered loader, even when the server advertises no entries of its type, so
+        // each type's lifecycle still runs (e.g. the archive loader prunes leftover directories).
+        var skills = new List<AgentSkill>();
+
+        foreach (var loader in this._loaders.Values)
+        {
+            var entries = entriesByType.TryGetValue(loader.EntryType, out List<McpSkillIndexEntry>? matched) ? matched : [];
+            skills.AddRange(await loader.LoadAsync(entries, cancellationToken).ConfigureAwait(false));
         }
 
         LogSkillsLoadedTotal(this._logger, skills.Count);
@@ -123,44 +224,6 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
             return null;
         }
     }
-
-    private bool TryCreateSkill(
-        McpSkillIndexEntry entry,
-        [NotNullWhen(true)] out AgentMcpSkill? skill,
-        out string skipReason)
-    {
-        skill = null;
-
-        if (!string.Equals(entry.Type, SkillMdEntryType, StringComparison.Ordinal))
-        {
-            skipReason = $"unsupported type '{entry.Type ?? "(none)"}'";
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(entry.Url))
-        {
-            skipReason = "missing required 'url' field";
-            return false;
-        }
-
-        AgentSkillFrontmatter frontmatter;
-        try
-        {
-            frontmatter = new AgentSkillFrontmatter(entry.Name!, entry.Description!);
-        }
-        catch (ArgumentException ex)
-        {
-            skipReason = $"invalid metadata: {ex.Message}";
-            return false;
-        }
-
-        skill = new AgentMcpSkill(frontmatter, entry.Url!, this._client);
-        skipReason = string.Empty;
-        return true;
-    }
-
-    [LoggerMessage(LogLevel.Information, "Loaded MCP skill: {SkillName}")]
-    private static partial void LogSkillLoaded(ILogger logger, string skillName);
 
     [LoggerMessage(LogLevel.Information, "Successfully loaded {Count} skills from MCP server")]
     private static partial void LogSkillsLoadedTotal(ILogger logger, int count);
