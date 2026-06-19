@@ -232,7 +232,7 @@ class DurableAIAgentWorker:
         """Register the workflow orchestrator function with the worker."""
         captured_workflow = self._workflow
 
-        def workflow_orchestrator(context: OrchestrationContext, input_data: Any) -> Any:  # type: ignore[type-arg]
+        def workflow_orchestrator(context: OrchestrationContext, input_data: Any) -> Any:
             if captured_workflow is None:
                 raise RuntimeError("Workflow not configured")
 
@@ -248,7 +248,7 @@ class DurableAIAgentWorker:
         workflow_orchestrator.__name__ = WORKFLOW_ORCHESTRATOR_NAME
         workflow_orchestrator.__qualname__ = WORKFLOW_ORCHESTRATOR_NAME
 
-        self._worker.add_orchestrator(workflow_orchestrator)  # type: ignore[arg-type]
+        self._worker.add_orchestrator(workflow_orchestrator)
         logger.debug("[DurableAIAgentWorker] Registered workflow orchestrator")
 
     def __create_agent_entity(

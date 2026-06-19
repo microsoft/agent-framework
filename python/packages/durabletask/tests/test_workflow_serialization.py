@@ -7,11 +7,11 @@
 (function, module member, etc.) would raise ``TypeError`` there, so the
 resolver must only ever return actual classes.
 
-``deserialize_workflow_output`` reverses the per-output ``_serialize_value``
+``deserialize_workflow_output`` reverses the per-output ``serialize_value``
 encoding the shared activity applies, so typed outputs are returned as the
 original objects rather than checkpoint-marker dicts.
 
-``_serialize_value`` / ``_deserialize_value`` are the internal codec; the
+``serialize_value`` / ``deserialize_value`` are the internal codec; the
 round-trip, ``reconstruct_to_type``, and ``strip_pickle_markers`` suites below
 guard the type fidelity and the trust-boundary defense that neutralizes
 attacker-injected pickle/type markers before they can reach ``pickle.loads()``.
@@ -31,12 +31,12 @@ from agent_framework import (
 from pydantic import BaseModel
 
 from agent_framework_durabletask._workflows.serialization import (
-    _deserialize_value,
-    _serialize_value,
+    deserialize_value,
     deserialize_workflow_event,
     deserialize_workflow_output,
     reconstruct_to_type,
     resolve_type,
+    serialize_value,
     serialize_workflow_event,
     strip_pickle_markers,
 )
@@ -44,7 +44,7 @@ from agent_framework_durabletask._workflows.serialization import (
 
 @dataclass
 class _Decision:
-    """Module-level dataclass so it is picklable by _serialize_value."""
+    """Module-level dataclass so it is picklable by serialize_value."""
 
     approved: bool
     note: str
@@ -73,7 +73,7 @@ class TestDeserializeWorkflowOutput:
 
     def test_primitives_pass_through(self) -> None:
         # Mirror the stored shape: a list of yielded outputs, JSON round-tripped.
-        stored = json.loads(json.dumps([_serialize_value("hello"), _serialize_value(42)]))
+        stored = json.loads(json.dumps([serialize_value("hello"), serialize_value(42)]))
 
         assert deserialize_workflow_output(stored) == ["hello", 42]
 
@@ -81,7 +81,7 @@ class TestDeserializeWorkflowOutput:
         # A typed object is stored as a checkpoint-marker dict; it must come back
         # as the original object, not the marker dict.
         decision = _Decision(approved=True, note="ok")
-        stored = json.loads(json.dumps([_serialize_value(decision)]))
+        stored = json.loads(json.dumps([serialize_value(decision)]))
 
         result = deserialize_workflow_output(stored)
 
@@ -94,7 +94,7 @@ class TestDeserializeWorkflowOutput:
 
 @dataclass
 class _Approval:
-    """Module-level dataclass so it is picklable by _serialize_value."""
+    """Module-level dataclass so it is picklable by serialize_value."""
 
     reason: str
 
@@ -175,13 +175,13 @@ class DataclassWithPydanticField:
 
 
 class TestSerializationRoundtrip:
-    """``_serialize_value`` / ``_deserialize_value`` round-trip the typed objects used in workflows."""
+    """``serialize_value`` / ``deserialize_value`` round-trip the typed objects used in workflows."""
 
     def test_roundtrip_chat_message(self) -> None:
         """Test Message survives encode → decode roundtrip."""
         original = Message(role="user", contents=["Hello"])
-        encoded = _serialize_value(original)
-        decoded = _deserialize_value(encoded)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
         assert isinstance(decoded, Message)
         assert decoded.role == "user"
@@ -192,8 +192,8 @@ class TestSerializationRoundtrip:
             messages=[Message(role="user", contents=["Hi"])],
             should_respond=True,
         )
-        encoded = _serialize_value(original)
-        decoded = _deserialize_value(encoded)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
         assert isinstance(decoded, AgentExecutorRequest)
         assert len(decoded.messages) == 1
@@ -207,8 +207,8 @@ class TestSerializationRoundtrip:
             agent_response=AgentResponse(messages=[Message(role="assistant", contents=["Reply"])]),
             full_conversation=[Message(role="assistant", contents=["Reply"])],
         )
-        encoded = _serialize_value(original)
-        decoded = _deserialize_value(encoded)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
         assert isinstance(decoded, AgentExecutorResponse)
         assert decoded.executor_id == "test_exec"
@@ -217,8 +217,8 @@ class TestSerializationRoundtrip:
     def test_roundtrip_dataclass(self) -> None:
         """Test custom dataclass roundtrips."""
         original = SampleData(name="test", value=42)
-        encoded = _serialize_value(original)
-        decoded = _deserialize_value(encoded)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
         assert isinstance(decoded, SampleData)
         assert decoded.name == "test"
@@ -227,8 +227,8 @@ class TestSerializationRoundtrip:
     def test_roundtrip_pydantic_model(self) -> None:
         """Test Pydantic model roundtrips."""
         original = SampleModel(title="Hello", count=5)
-        encoded = _serialize_value(original)
-        decoded = _deserialize_value(encoded)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
         assert isinstance(decoded, SampleModel)
         assert decoded.title == "Hello"
@@ -236,11 +236,11 @@ class TestSerializationRoundtrip:
 
     def test_roundtrip_primitives(self) -> None:
         """Test primitives pass through unchanged."""
-        assert _serialize_value(None) is None
-        assert _serialize_value("hello") == "hello"
-        assert _serialize_value(42) == 42
-        assert _serialize_value(3.14) == 3.14
-        assert _serialize_value(True) is True
+        assert serialize_value(None) is None
+        assert serialize_value("hello") == "hello"
+        assert serialize_value(42) == 42
+        assert serialize_value(3.14) == 3.14
+        assert serialize_value(True) is True
 
     def test_roundtrip_list_of_objects(self) -> None:
         """Test list of typed objects roundtrips."""
@@ -248,8 +248,8 @@ class TestSerializationRoundtrip:
             Message(role="user", contents=["Q"]),
             Message(role="assistant", contents=["A"]),
         ]
-        encoded = _serialize_value(original)
-        decoded = _deserialize_value(encoded)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
         assert isinstance(decoded, list)
         assert len(decoded) == 2
@@ -258,8 +258,8 @@ class TestSerializationRoundtrip:
     def test_roundtrip_dict_of_objects(self) -> None:
         """Test dict with typed values roundtrips (used for shared state)."""
         original = {"count": 42, "msg": Message(role="user", contents=["Hi"])}
-        encoded = _serialize_value(original)
-        decoded = _deserialize_value(encoded)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
         assert decoded["count"] == 42
         assert isinstance(decoded["msg"], Message)
@@ -271,8 +271,8 @@ class TestSerializationRoundtrip:
         contains a ContentAnalysisResult (Pydantic BaseModel) field.
         """
         original = DataclassWithPydanticField(label="test", model=SampleModel(title="Nested", count=99))
-        encoded = _serialize_value(original)
-        decoded = _deserialize_value(encoded)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
         assert isinstance(decoded, DataclassWithPydanticField)
         assert decoded.label == "test"
@@ -328,13 +328,13 @@ class TestReconstructToType:
         assert result.comment == "Great"
 
     def test_reconstruct_from_checkpoint_markers(self) -> None:
-        """Test that data with checkpoint markers is decoded via _deserialize_value.
+        """Test that data with checkpoint markers is decoded via deserialize_value.
 
         reconstruct_to_type is general-purpose and handles trusted checkpoint
         data.  Untrusted HITL callers must call strip_pickle_markers() first.
         """
         original = SampleData(value=99, name="marker-test")
-        encoded = _serialize_value(original)
+        encoded = serialize_value(original)
 
         result = reconstruct_to_type(encoded, SampleData)
         assert isinstance(result, SampleData)

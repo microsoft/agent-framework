@@ -16,12 +16,12 @@ from agent_framework import WorkflowEvent
 
 from agent_framework_durabletask import DurableWorkflowClient
 from agent_framework_durabletask._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME
-from agent_framework_durabletask._workflows.serialization import _serialize_value, serialize_workflow_event
+from agent_framework_durabletask._workflows.serialization import serialize_value, serialize_workflow_event
 
 
 @dataclass
 class _Receipt:
-    """Module-level dataclass so it is picklable by _serialize_value."""
+    """Module-level dataclass so it is picklable by serialize_value."""
 
     order_id: int
     total: float
@@ -107,11 +107,11 @@ class TestAwaitWorkflowOutput:
     def test_reconstructs_typed_outputs(self, workflow_client: DurableWorkflowClient, mock_client: Mock) -> None:
         """Typed outputs encoded by the activity come back as objects, not marker dicts."""
         receipt = _Receipt(order_id=7, total=19.99)
-        # The shared activity stores each yielded output via _serialize_value(), so a
+        # The shared activity stores each yielded output via serialize_value(), so a
         # typed object is persisted as a checkpoint-marker dict.
         metadata = Mock()
         metadata.runtime_status.name = "COMPLETED"
-        metadata.serialized_output = json.dumps([_serialize_value(receipt)])
+        metadata.serialized_output = json.dumps([serialize_value(receipt)])
         mock_client.wait_for_orchestration_completion.return_value = metadata
 
         output = workflow_client.await_workflow_output("instance-1")

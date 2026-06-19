@@ -11,13 +11,22 @@ Exercises the standalone (non-Azure-Functions) workflow path:
 """
 
 import logging
+from typing import Any, Protocol
 
 import pytest
 from durabletask.client import OrchestrationStatus
 
-from agent_framework_durabletask import WORKFLOW_ORCHESTRATOR_NAME
+from agent_framework_durabletask import WORKFLOW_ORCHESTRATOR_NAME, DurableAIAgentClient
 
 logging.basicConfig(level=logging.WARNING)
+
+
+class AgentClientFactoryProtocol(Protocol):
+    """Protocol for the agent client factory fixture."""
+
+    @classmethod
+    def create(cls, max_poll_retries: int = 90) -> tuple[Any, DurableAIAgentClient]: ...
+
 
 # Module-level markers
 pytestmark = [
@@ -33,7 +42,7 @@ class TestStandaloneWorkflow:
     """Standalone (non-Azure-Functions) workflow execution on a durabletask worker."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, agent_client_factory: type, orchestration_helper) -> None:
+    def setup(self, agent_client_factory: type[AgentClientFactoryProtocol], orchestration_helper) -> None:
         """Provide a DTS client and orchestration helper for each test."""
         self.dts_client, self.agent_client = agent_client_factory.create()
         self.orch_helper = orchestration_helper

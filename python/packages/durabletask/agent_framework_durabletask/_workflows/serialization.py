@@ -21,7 +21,7 @@ points already do it at the boundary. See
 :mod:`agent_framework._workflows._checkpoint_encoding` for the full security model.
 
 Contents:
-- ``_serialize_value`` / ``_deserialize_value``: internal codec aliases for encode/decode.
+- ``serialize_value`` / ``deserialize_value``: internal codec aliases for encode/decode.
 - ``reconstruct_to_type``: rebuilds HITL response data (which arrives without type
   markers) to a known type.
 - ``resolve_type``: resolves 'module:class' type keys to Python types.
@@ -90,7 +90,7 @@ def strip_pickle_markers(data: Any) -> Any:
 
     The framework applies this at every external trust boundary -- HTTP request
     bodies and HITL responses raised as external events -- before the value can
-    reach the internal codec (:func:`_deserialize_value` /
+    reach the internal codec (:func:`deserialize_value` /
     ``decode_checkpoint_value``). Application code does not need to call it.
     """
     if isinstance(data, dict):
@@ -101,7 +101,7 @@ def strip_pickle_markers(data: Any) -> Any:
         return {k: strip_pickle_markers(v) for k, v in typed_dict.items()}
 
     if isinstance(data, list):
-        typed_list = cast(list[Any], data)  # type: ignore[redundant-cast]
+        typed_list = cast(list[Any], data)
         return [strip_pickle_markers(item) for item in typed_list]
 
     return data
@@ -112,7 +112,7 @@ def strip_pickle_markers(data: Any) -> Any:
 # ============================================================================
 
 
-def _serialize_value(value: Any) -> Any:
+def serialize_value(value: Any) -> Any:
     """Encode a value for JSON-compatible cross-activity communication (internal).
 
     Framework-internal codec. Delegates to core checkpoint encoding which uses
@@ -128,8 +128,8 @@ def _serialize_value(value: Any) -> Any:
     return encode_checkpoint_value(value)
 
 
-def _deserialize_value(value: Any) -> Any:
-    """Decode a value previously encoded with :func:`_serialize_value` (internal).
+def deserialize_value(value: Any) -> Any:
+    """Decode a value previously encoded with :func:`serialize_value` (internal).
 
     Framework-internal codec. Delegates to core checkpoint decoding which
     unpickles base64-encoded values and verifies type integrity. Not part of the
@@ -149,7 +149,7 @@ def _deserialize_value(value: Any) -> Any:
 def deserialize_workflow_output(output: Any) -> Any:
     """Reconstruct the workflow outputs produced by the shared activity.
 
-    Each value an executor yields is encoded with :func:`_serialize_value` before
+    Each value an executor yields is encoded with :func:`serialize_value` before
     it reaches the orchestrator, so typed objects (dataclasses, Pydantic models,
     ``AgentResponse``, ...) are stored as checkpoint-marker dicts. This reverses
     that encoding so callers receive the original objects.
@@ -170,7 +170,7 @@ def deserialize_workflow_output(output: Any) -> Any:
         The output with every checkpoint-encoded value reconstructed; primitives
         and plain JSON structures pass through unchanged.
     """
-    return _deserialize_value(output)
+    return deserialize_value(output)
 
 
 # ============================================================================
@@ -190,7 +190,7 @@ def serialize_workflow_event(event: WorkflowEvent[Any]) -> dict[str, Any]:
 
     Carries a workflow event from the durable activity, through the orchestration
     custom status, to a streaming client. The data payload is encoded with
-    :func:`_serialize_value` so typed objects survive the round trip;
+    :func:`serialize_value` so typed objects survive the round trip;
     :func:`deserialize_workflow_event` reverses it into a ``WorkflowEvent`` so
     callers never handle checkpoint-marker dicts directly.
 
@@ -205,7 +205,7 @@ def serialize_workflow_event(event: WorkflowEvent[Any]) -> dict[str, Any]:
     if event.executor_id is not None:
         serialized["executor_id"] = event.executor_id
     if event.data is not None:
-        serialized["data"] = _serialize_value(event.data)
+        serialized["data"] = serialize_value(event.data)
     if event.type == "request_info":
         # request_type is omitted: deserialize_workflow_event rebuilds the event via
         # WorkflowEvent.request_info, which derives it from the data payload.
@@ -220,7 +220,7 @@ def deserialize_workflow_event(serialized: dict[str, Any]) -> WorkflowEvent[Any]
 
     ``serialized`` must originate from the workflow's own orchestration custom
     status (trusted durable storage); its encoded payload is decoded with
-    :func:`_deserialize_value`. Never pass untrusted external input here.
+    :func:`deserialize_value`. Never pass untrusted external input here.
 
     Args:
         serialized: A dict previously produced by :func:`serialize_workflow_event`,
@@ -230,7 +230,7 @@ def deserialize_workflow_event(serialized: dict[str, Any]) -> WorkflowEvent[Any]
         The reconstructed workflow event with its data payload restored.
     """
     event_type = cast(WorkflowEventType, serialized["type"])
-    payload = _deserialize_value(serialized["data"]) if "data" in serialized else None
+    payload = deserialize_value(serialized["data"]) if "data" in serialized else None
 
     if event_type == "request_info":
         response_key = serialized.get("response_type")
@@ -263,7 +263,7 @@ def reconstruct_to_type(value: Any, target_type: type) -> Any:
 
     Tries strategies in order:
     1. Return as-is if already the correct type
-    2. _deserialize_value (for data with any type markers)
+    2. deserialize_value (for data with any type markers)
     3. Pydantic model_validate (for Pydantic models)
     4. Dataclass constructor (for dataclasses)
 
@@ -288,7 +288,7 @@ def reconstruct_to_type(value: Any, target_type: type) -> Any:
     # NOTE: This function is general-purpose.  Callers that handle untrusted
     # data (e.g. HITL responses) MUST call strip_pickle_markers() before
     # passing data here.  See _deserialize_hitl_response in orchestrator.py.
-    decoded = _deserialize_value(value)
+    decoded = deserialize_value(value)
     if not isinstance(decoded, dict):
         return decoded
 

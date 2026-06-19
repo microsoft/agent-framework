@@ -31,7 +31,7 @@ from .orchestrator import (
     execute_hitl_response_handler,
 )
 from .runner_context import CapturingRunnerContext
-from .serialization import _deserialize_value, _serialize_value, serialize_workflow_event
+from .serialization import deserialize_value, serialize_value, serialize_workflow_event
 
 
 def execute_workflow_activity(executor: Executor, input_json: str, workflow: Workflow | None = None) -> str:
@@ -68,9 +68,9 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
     shared_state_snapshot: dict[str, Any] = data.get("shared_state_snapshot") or {}
     source_executor_ids = cast(list[str], data.get("source_executor_ids") or [SOURCE_ORCHESTRATOR])
 
-    # Reconstruct the message - _deserialize_value restores the original typed
+    # Reconstruct the message - deserialize_value restores the original typed
     # objects from the encoded data (with type markers).
-    message = _deserialize_value(message_data)
+    message = deserialize_value(message_data)
 
     # A HITL response is identified by a source id starting with the HITL prefix.
     is_hitl_response = any(s.startswith(SOURCE_HITL_RESPONSE) for s in source_executor_ids)
@@ -92,7 +92,7 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
         shared_state = State()
 
         # Deserialize shared state values to reconstruct dataclasses / Pydantic models.
-        deserialized_state: dict[str, Any] = {str(k): _deserialize_value(v) for k, v in shared_state_snapshot.items()}
+        deserialized_state: dict[str, Any] = {str(k): deserialize_value(v) for k, v in shared_state_snapshot.items()}
         # Snapshot the deserialized (in-memory) state for diffing. State.export_state()
         # returns the in-memory committed objects, so the snapshot must hold objects
         # too (deepcopy) - comparing against a serialized snapshot would mark every
@@ -145,7 +145,7 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
                 continue
             serialized_events.append(serialize_workflow_event(event))
             if event.type == "output":
-                outputs.append(_serialize_value(event.data))
+                outputs.append(serialize_value(event.data))
 
         # Serialize pending HITL request info events for the orchestrator.
         pending_request_info_events = await runner_context.get_pending_request_info_events()
@@ -154,7 +154,7 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
             serialized_pending_requests.append({
                 "request_id": event.request_id,
                 "source_executor_id": event.source_executor_id,
-                "data": _serialize_value(event.data),
+                "data": serialize_value(event.data),
                 "request_type": f"{type(event.data).__module__}:{type(event.data).__name__}",
                 "response_type": f"{event.response_type.__module__}:{event.response_type.__name__}"
                 if event.response_type
@@ -166,12 +166,12 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
         for _source_id, msg_list in sent_messages.items():
             for msg in msg_list:
                 serialized_sent_messages.append({
-                    "message": _serialize_value(msg.data),
+                    "message": serialize_value(msg.data),
                     "target_id": msg.target_id,
                     "source_id": msg.source_id,
                 })
 
-        serialized_updates = {k: _serialize_value(v) for k, v in updates.items()}
+        serialized_updates = {k: serialize_value(v) for k, v in updates.items()}
 
         return {
             "sent_messages": serialized_sent_messages,

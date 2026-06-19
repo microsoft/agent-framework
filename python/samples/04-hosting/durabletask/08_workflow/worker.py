@@ -39,7 +39,7 @@ from agent_framework import (
     handler,
 )
 from agent_framework.azure import DurableAIAgentWorker
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
@@ -82,9 +82,7 @@ class SpamHandlerExecutor(Executor):
     """Non-agent executor that finalizes spam emails."""
 
     @handler
-    async def handle_spam_result(
-        self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]
-    ) -> None:
+    async def handle_spam_result(self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
         text = agent_response.agent_response.text
         try:
             result = SpamDetectionResult.model_validate_json(text)
@@ -137,13 +135,13 @@ def create_workflow() -> Workflow:
         client=chat_client,
         name=SPAM_AGENT_NAME,
         instructions=SPAM_DETECTION_INSTRUCTIONS,
-        default_options={"response_format": SpamDetectionResult},
+        default_options=FoundryChatOptions[Any](response_format=SpamDetectionResult),
     )
     email_agent = Agent(
         client=chat_client,
         name=EMAIL_AGENT_NAME,
         instructions=EMAIL_ASSISTANT_INSTRUCTIONS,
-        default_options={"response_format": EmailResponse},
+        default_options=FoundryChatOptions[Any](response_format=EmailResponse),
     )
 
     spam_handler = SpamHandlerExecutor(id="spam_handler")

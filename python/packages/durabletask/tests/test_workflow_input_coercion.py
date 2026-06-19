@@ -126,7 +126,7 @@ class TestCoerceInitialInput:
 
         The initial workflow input is untrusted, so a dict carrying the checkpoint
         ``__pickled__`` marker must be neutralized rather than flowing into
-        ``_deserialize_value`` (which would ``pickle.loads`` it).
+        ``deserialize_value`` (which would ``pickle.loads`` it).
         """
         workflow = _workflow_with(_DataclassStart())
         malicious = {"__pickled__": "<crafted-base64-payload>", "content_id": "x", "title": "T"}

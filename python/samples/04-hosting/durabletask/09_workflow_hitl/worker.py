@@ -34,6 +34,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from agent_framework import (
     Agent,
@@ -48,7 +49,7 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework.azure import DurableAIAgentWorker
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
@@ -252,8 +253,7 @@ class PublishExecutor(Executor):
             )
         else:
             message = (
-                f"Content '{result.content_id}' has been REJECTED. "
-                f"Reviewer notes: {result.reviewer_notes or 'None'}"
+                f"Content '{result.content_id}' has been REJECTED. Reviewer notes: {result.reviewer_notes or 'None'}"
             )
         logger.info(message)
         await ctx.yield_output(message)
@@ -276,7 +276,7 @@ def create_workflow() -> Workflow:
         client=chat_client,
         name=CONTENT_ANALYZER_AGENT_NAME,
         instructions=CONTENT_ANALYZER_INSTRUCTIONS,
-        default_options={"response_format": ContentAnalysisResult},
+        default_options=FoundryChatOptions[Any](response_format=ContentAnalysisResult),
     )
 
     input_router = InputRouterExecutor()

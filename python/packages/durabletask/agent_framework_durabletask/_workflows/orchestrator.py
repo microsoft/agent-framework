@@ -50,10 +50,10 @@ from agent_framework._workflows._state import State
 
 from .context import WorkflowOrchestrationContext
 from .serialization import (
-    _deserialize_value,
-    _serialize_value,
+    deserialize_value,
     reconstruct_to_type,
     resolve_type,
+    serialize_value,
     strip_pickle_markers,
 )
 
@@ -242,7 +242,7 @@ def _prepare_activity_task(
     """Prepare an activity task for execution via the context adapter."""
     activity_input = {
         "executor_id": executor_id,
-        "message": _serialize_value(message),
+        "message": serialize_value(message),
         "shared_state_snapshot": shared_state_snapshot,
         "source_executor_ids": [source_executor_id],
     }
@@ -272,7 +272,7 @@ def _process_agent_response(
             if isinstance(dumped, dict):
                 structured_response = dumped  # type: ignore[assignment]
         elif isinstance(agent_response.value, dict):
-            structured_response = agent_response.value  # type: ignore[assignment]
+            structured_response = agent_response.value
 
     output_message = build_agent_executor_response(
         executor_id=executor_id,
@@ -345,7 +345,7 @@ def _route_result_messages(
             # Use an explicit None check so legitimately falsy payloads
             # (empty string, 0, False) are still routed.
             if sent_msg is not None:
-                sent_msg = _deserialize_value(sent_msg)
+                sent_msg = deserialize_value(sent_msg)
                 messages_to_route.append((sent_msg, target_id))
 
     for msg_to_route, explicit_target in messages_to_route:
@@ -503,7 +503,7 @@ def _coerce_initial_input(workflow: Workflow, raw_value: Any) -> Any:
     A durable workflow runs as a durable orchestration, so its initial payload
     arrives as plain JSON via ``context.get_input()`` -- without the type markers
     that inter-executor messages carry (those are reconstructed by
-    :func:`_deserialize_value`). This single entry hop therefore needs explicit
+    :func:`deserialize_value`). This single entry hop therefore needs explicit
     reconstruction to mirror in-process delivery, where the start executor
     receives its declared type:
 
@@ -528,7 +528,7 @@ def _coerce_initial_input(workflow: Workflow, raw_value: Any) -> Any:
         return raw_value
     # The initial payload is untrusted external input (HTTP body / client input) with no
     # legitimate checkpoint type markers, so neutralize any pickle-marker injection before
-    # it can reach _deserialize_value() inside reconstruct_to_type() (avoids pickle RCE).
+    # it can reach deserialize_value() inside reconstruct_to_type() (avoids pickle RCE).
     return reconstruct_to_type(strip_pickle_markers(raw_value), input_type)
 
 
@@ -557,10 +557,10 @@ async def execute_hitl_response_handler(
     response_data = hitl_message.get("response")
     response_type_str = hitl_message.get("response_type")
 
-    original_request = _deserialize_value(original_request_data)
+    original_request = deserialize_value(original_request_data)
     response = _deserialize_hitl_response(response_data, response_type_str)
 
-    handler = executor._find_response_handler(original_request, response)  # pyright: ignore[reportPrivateUsage]
+    handler = executor._find_response_handler(original_request, response)
 
     if handler is None:
         logger.warning(
