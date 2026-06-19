@@ -3,7 +3,7 @@
 
 import os
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -11,7 +11,7 @@ from agent_framework import Content, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential
-from azure.search.documents.knowledgebases.models import SearchIndexKnowledgeSourceParams
+from azure.search.documents.knowledgebases.models import KnowledgeSourceParams, SearchIndexKnowledgeSourceParams
 
 from agent_framework_azure_ai_search._context_provider import AzureAISearchContextProvider
 
@@ -1348,12 +1348,14 @@ class TestAgenticSearch:
         assert results[0].text == "No results found from Knowledge Base."
 
     @pytest.mark.parametrize("effort", ["minimal", "medium"])
-    async def test_knowledge_source_params_reach_request(self, effort: str) -> None:
+    async def test_knowledge_source_params_reach_request(self, effort: Literal["minimal", "medium"]) -> None:
         provider = _make_provider()
         provider._knowledge_base_initialized = True
         provider.knowledge_base_name = "kb"
         provider.retrieval_reasoning_effort = effort
-        params = [SearchIndexKnowledgeSourceParams(knowledge_source_name="src", filter_add_on="category eq 'public'")]
+        params: list[KnowledgeSourceParams] = [
+            SearchIndexKnowledgeSourceParams(knowledge_source_name="src", filter_add_on="category eq 'public'")
+        ]
         provider._knowledge_source_params = params
 
         mock_result = Mock()
