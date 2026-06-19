@@ -767,13 +767,22 @@ class TestInterruptEntryForRequestEvent:
         """Dict data is used as interrupt value."""
         event = SimpleNamespace(request_id="r1", data={"key": "val"})
         result = _interrupt_entry_for_request_event(event)
-        assert result == {"id": "r1", "value": {"key": "val"}}
+        assert result is not None
+        assert result["id"] == "r1"
+        assert result["reason"] == "input_required"
+        assert result["value"] == {"key": "val"}
+        assert result["metadata"]["agent_framework"]["type"] == "workflow_request_info"
+        assert result["metadata"]["agent_framework"]["request_id"] == "r1"
 
     def test_non_dict_data_wrapped(self):
         """Non-dict data is wrapped in {data: ...}."""
         event = SimpleNamespace(request_id="r1", data="text")
         result = _interrupt_entry_for_request_event(event)
-        assert result == {"id": "r1", "value": {"data": "text"}}
+        assert result is not None
+        assert result["id"] == "r1"
+        assert result["reason"] == "input_required"
+        assert result["value"] == {"data": "text"}
+        assert result["metadata"]["agent_framework"]["value"] == {"data": "text"}
 
 
 class TestRequestPayloadFromRequestEvent:

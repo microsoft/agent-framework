@@ -12,10 +12,13 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatResponseUpdate,
     Content,
+    Executor,
     FunctionTool,
     WorkflowBuilder,
     WorkflowContext,
     executor,
+    handler,
+    response_handler,
 )
 from agent_framework.orchestrations import SequentialBuilder
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
@@ -475,6 +478,116 @@ async def test_endpoint_agent_approval_unknown_resume_entry_emits_run_error():
     assert run_errors[0]["code"] == "APPROVAL_RESUME_NOT_FOUND"
     assert executed_cities == []
     assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+
+
+def _build_workflow_request_info_app() -> FastAPI:
+    class FlightChoiceExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="flight_choice")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            await ctx.request_info(
+                {"message": "Choose a flight", "options": [{"airline": "KLM"}, {"airline": "United"}]},
+                dict,
+                request_id="flight-choice",
+            )
+
+        @response_handler
+        async def handle_choice(self, original_request: dict, response: dict, ctx: WorkflowContext[Any, Any]) -> None:
+            del original_request
+            await ctx.yield_output(f"Booked {response['airline']}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    app = FastAPI()
+    workflow = WorkflowBuilder(start_executor=FlightChoiceExecutor()).build()
+    add_agent_framework_fastapi_endpoint(app, workflow, path="/workflow")
+    return app
+
+
+async def test_endpoint_workflow_request_info_emits_canonical_interrupt_and_resumes():
+    """Workflow request_info pauses and resumes through canonical AG-UI interrupt payloads."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-flights",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+
+        assert pause_response.status_code == 200
+        pause_events = _decode_sse_events(pause_response)
+        pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
+        assert len(pause_finished) == 1
+        interrupts = _run_finished_interrupts(pause_finished[0])
+        assert len(interrupts) == 1
+        interrupt = interrupts[0]
+        assert interrupt["id"] == "flight-choice"
+        assert interrupt["reason"] == "input_required"
+        assert interrupt["message"] == "Choose a flight"
+        assert interrupt["responseSchema"]["type"] == "object"
+        assert interrupt["metadata"]["agent_framework"]["type"] == "workflow_request_info"
+        assert interrupt["metadata"]["agent_framework"]["request_id"] == "flight-choice"
+
+        resume_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-resume",
+                "threadId": "thread-flights",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+            },
+        )
+
+        assert resume_response.status_code == 200
+        resume_events = _decode_sse_events(resume_response)
+        assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Booked KLM" in text_deltas
+        assert "outcome" not in [event for event in resume_events if event.get("type") == "RUN_FINISHED"][-1]
+
+
+async def test_endpoint_workflow_request_info_cancelled_resume_emits_run_error():
+    """Cancelled workflow resumes fail explicitly instead of silently continuing."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-flights",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+        resume_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-cancel",
+                "threadId": "thread-flights",
+                "messages": [],
+                "resume": [{"interruptId": "flight-choice", "status": "cancelled"}],
+            },
+        )
+
+        assert resume_response.status_code == 200
+        events = _decode_sse_events(resume_response)
+        run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+        assert len(run_errors) == 1
+        assert run_errors[0]["code"] == "WORKFLOW_RESUME_CANCELLED"
+        assert not [event for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
 
 
 async def test_endpoint_with_workflow_as_agent_stream_output(build_chat_client):

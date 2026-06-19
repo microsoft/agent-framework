@@ -71,6 +71,9 @@ def _normalize_resume_interrupts(resume_payload: Any) -> list[dict[str, Any]]:
 
     normalized: list[dict[str, Any]] = []
     for item in candidates:
+        model_dump = getattr(item, "model_dump", None)
+        if callable(model_dump):
+            item = model_dump(by_alias=True, exclude_none=True)
         if not isinstance(item, dict):
             continue
         item_dict = cast(dict[str, Any], item)
@@ -83,10 +86,10 @@ def _normalize_resume_interrupts(resume_payload: Any) -> list[dict[str, Any]]:
         if not interrupt_id:
             continue
 
-        if "value" in item_dict:
-            value = item_dict.get("value")
-        elif "payload" in item_dict:
+        if "payload" in item_dict:
             value = item_dict.get("payload")
+        elif "value" in item_dict:
+            value = item_dict.get("value")
         elif "response" in item_dict:
             value = item_dict.get("response")
         else:
@@ -96,7 +99,11 @@ def _normalize_resume_interrupts(resume_payload: Any) -> list[dict[str, Any]]:
                 if k not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
             }
 
-        normalized.append({"id": str(interrupt_id), "value": value})
+        normalized_entry = {"id": str(interrupt_id), "value": value}
+        status = item_dict.get("status")
+        if isinstance(status, str) and status:
+            normalized_entry["status"] = status
+        normalized.append(normalized_entry)
 
     return normalized
 
@@ -169,7 +176,12 @@ def _canonical_interrupt_metadata(interrupt: Mapping[str, Any], value: Any) -> d
     raw_metadata = interrupt.get("metadata")
     metadata = dict(cast(Mapping[str, Any], raw_metadata)) if isinstance(raw_metadata, Mapping) else {}
     if "value" in interrupt:
-        metadata["agent_framework"] = {"value": make_json_safe(value)}
+        raw_agent_framework = metadata.get("agent_framework")
+        agent_framework = (
+            dict(cast(Mapping[str, Any], raw_agent_framework)) if isinstance(raw_agent_framework, Mapping) else {}
+        )
+        agent_framework.setdefault("value", make_json_safe(value))
+        metadata["agent_framework"] = agent_framework
     return metadata or None
 
 

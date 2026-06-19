@@ -77,11 +77,11 @@ class TestNormalizeResumeInterrupts:
         assert result == [{"id": "tc1", "value": "done"}]
 
     def test_canonical_resume_entry_uses_interrupt_id_and_payload(self):
-        """Canonical ResumeEntry dictionaries map interruptId/interrupt_id and payload to legacy runner values."""
+        """Canonical ResumeEntry dictionaries preserve status and map payload to legacy runner values."""
         result = _normalize_resume_interrupts(
             [{"interrupt_id": "req_1", "status": "resolved", "payload": {"approved": True}}]
         )
-        assert result == [{"id": "req_1", "value": {"approved": True}}]
+        assert result == [{"id": "req_1", "value": {"approved": True}, "status": "resolved"}]
 
 
 class TestExtractResumePayload:
