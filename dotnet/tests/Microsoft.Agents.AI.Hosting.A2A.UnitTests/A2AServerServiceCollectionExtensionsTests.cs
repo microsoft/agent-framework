@@ -62,10 +62,10 @@ public sealed class A2AServerServiceCollectionExtensionsTests
 
     /// <summary>
     /// Verifies that when no ITaskStore or AgentSessionStore are registered,
-    /// AddA2AServer falls back to in-memory defaults and resolves successfully.
+    /// AddA2AServer falls back to noop defaults and resolves successfully.
     /// </summary>
     [Fact]
-    public async Task AddA2AServer_WithNoCustomStores_FallsBackToInMemoryDefaultsAsync()
+    public async Task AddA2AServer_WithNoCustomStores_FallsBackToNoopDefaultsAsync()
     {
         // Arrange
         const string AgentName = "default-stores-agent";
@@ -382,7 +382,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
 
     /// <summary>
     /// Verifies that when no custom stores or handlers are registered, the server uses
-    /// the default in-memory stores and processes requests successfully end-to-end.
+    /// the default noop session store and processes requests successfully end-to-end.
     /// </summary>
     [Fact]
     public async Task AddA2AServer_WithNoCustomStores_DefaultStoresProcessRequestSuccessfullyAsync()
@@ -400,7 +400,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
 
-        // Assert - request was processed successfully with default in-memory stores
+        // Assert - request was processed successfully with default noop session store
         Assert.NotNull(response);
         Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);
         Assert.NotNull(response.Message);
