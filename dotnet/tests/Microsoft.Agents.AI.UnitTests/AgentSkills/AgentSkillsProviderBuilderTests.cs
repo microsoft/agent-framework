@@ -55,7 +55,7 @@ public sealed class AgentSkillsProviderBuilderTests
         var builder = new AgentSkillsProviderBuilder();
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => builder.UseSource(null!));
+        Assert.Throws<ArgumentNullException>(() => builder.UseSource((AgentSkillsSource)null!));
     }
 
     [Fact]
