@@ -12,7 +12,7 @@ import time
 import uuid
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import pytest
@@ -28,6 +28,13 @@ load_dotenv(Path(__file__).parent / ".env")
 
 # Configure logging to reduce noise during tests
 logging.basicConfig(level=logging.WARNING)
+
+
+class AgentClientFactoryProtocol(Protocol):
+    """Protocol for the agent client factory fixture."""
+
+    @classmethod
+    def create(cls, max_poll_retries: int = 90) -> tuple[DurableTaskSchedulerClient, DurableAIAgentClient]: ...
 
 
 # =============================================================================
@@ -472,7 +479,7 @@ def orchestration_helper(worker_process: dict[str, Any]) -> OrchestrationHelper:
 
 
 @pytest.fixture(scope="module")
-def agent_client_factory(worker_process: dict[str, Any]) -> type:
+def agent_client_factory(worker_process: dict[str, Any]) -> type[AgentClientFactoryProtocol]:
     """Return a factory class for creating agent clients.
 
     Usage in tests:

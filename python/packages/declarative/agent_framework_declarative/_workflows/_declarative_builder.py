@@ -433,7 +433,7 @@ class DeclarativeWorkflowBuilder:
 
         # Store the chain for later reference
         if first_executor is not None:
-            first_executor._chain_executors = executors_in_chain  # type: ignore[attr-defined]
+            first_executor._chain_executors = executors_in_chain
 
         return first_executor
 

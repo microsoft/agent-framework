@@ -134,7 +134,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
             or module.startswith(_FRAMEWORK_MODULE_PREFIX)
             or module.startswith(_OPENAI_MODULE_PREFIX)
         ):
-            return super().find_class(module, name)  # type: ignore[no-any-return]  # nosec
+            return super().find_class(module, name)
 
         raise pickle.UnpicklingError(
             f"Checkpoint deserialization blocked for type '{type_key}'. "

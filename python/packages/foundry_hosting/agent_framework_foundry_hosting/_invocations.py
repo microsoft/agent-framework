@@ -35,7 +35,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
         self._agent = agent
         self._sessions: dict[str, AgentSession] = {}
-        self.invoke_handler(self._handle_invoke)  # pyright: ignore[reportUnknownMemberType]
+        self.invoke_handler(self._handle_invoke)
 
     async def _handle_invoke(self, request: Request) -> Response:
         """Invoke the agent with the given request."""

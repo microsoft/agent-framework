@@ -92,17 +92,17 @@ from ._shared import (
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
@@ -120,6 +120,9 @@ OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY = "openai.responses.local_shell.call_item_id
 OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY = "openai.local_shell_command_parts"
 OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL = "shell_call_output"
 OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL = "local_shell_call_output"
+_AZURE_AI_SEARCH_CALL_OUTPUT_TYPE = "azure_ai_search_call_output"
+_AZURE_AI_SEARCH_OUTPUT_EVENT_TYPES = {"response.output_item.added", "response.output_item.done"}
+_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
 
 # Internal marker emitted by `_prepare_content_for_openai` for an
 # `mcp_server_tool_result` Content. The Responses API expects an `mcp_call`
@@ -336,7 +339,7 @@ def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> lis
 # region ResponsesClient
 
 
-class RawOpenAIChatClient(  # type: ignore[misc]
+class RawOpenAIChatClient(
     BaseChatClient[OpenAIChatOptionsT],
     Generic[OpenAIChatOptionsT],
 ):
@@ -356,7 +359,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     """
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
-    STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
+    STORES_BY_DEFAULT: ClassVar[bool] = True
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
 
     # Azure OpenAI Responses API may include this header in responses naming the actual model that
@@ -616,7 +619,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        continuation_token: OpenAIContinuationToken | None = options.get("continuation_token")  # type: ignore[assignment]
+        continuation_token: OpenAIContinuationToken | None = options.get("continuation_token")
 
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
@@ -735,9 +738,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
-                    raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)  # type: ignore
+                    raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)
                 else:
-                    raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)  # type: ignore
+                    raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)
                 response = raw_response.parse()
             except Exception as ex:
                 self._handle_request_error(ex)
@@ -749,6 +752,18 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             return chat_response
 
         return _get_response()
+
+    @override
+    def _finalize_response_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse[Any]:
+        """Finalize streamed updates and add post-stream Azure AI Search citation metadata."""
+        self._enrich_streamed_azure_ai_search_citations(updates)
+        self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
+        return super()._finalize_response_updates(updates, response_format=response_format)
 
     @classmethod
     def _extract_served_model(cls, headers: Any) -> str | None:
@@ -898,7 +913,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 response_tools.append(
                     FunctionShellTool(
                         type="shell",
-                        environment=shell_env,  # type: ignore[typeddict-item]
+                        environment=shell_env,
                     )
                 )
                 continue
@@ -1080,7 +1095,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if output_format:
             tool["output_format"] = output_format
         if model:
-            tool["model"] = model  # type: ignore
+            tool["model"] = model
         if quality:
             tool["quality"] = quality
         if partial_images is not None:
@@ -1746,7 +1761,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             case "function_approval_request":
                 return {
                     "type": "mcp_approval_request",
-                    "id": content.id,  # type: ignore[union-attr]
+                    "id": content.id,
                     "arguments": content.function_call.arguments,  # type: ignore[union-attr]
                     "name": content.function_call.name,  # type: ignore[union-attr]
                     "server_label": content.function_call.additional_properties.get("server_label")  # type: ignore[union-attr]
@@ -1882,7 +1897,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
             # cast is for pyright (reportUnknownVariableType); mypy considers
             # it redundant after the isinstance narrowing.
-            entries = cast(Sequence[Any], output)  # type: ignore[redundant-cast]
+            entries = cast(Sequence[Any], output)
             parts: list[str] = []
             for entry in entries:
                 if isinstance(entry, str):
@@ -1947,6 +1962,182 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
             return [RawOpenAIChatClient._serialize_provider_payload(item) for item in value]  # type: ignore[reportUnknownVariableType]
         return value
+
+    @staticmethod
+    def _parse_azure_ai_search_output_payload(output: Any) -> Mapping[str, Any] | None:
+        """Parse an Azure AI Search tool output payload from a streamed Responses event."""
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except json.JSONDecodeError:
+                logger.debug("Unable to parse Azure AI Search call output JSON.", exc_info=True)
+                return None
+
+        output = RawOpenAIChatClient._serialize_provider_payload(output)
+        if isinstance(output, Mapping):
+            return cast("Mapping[str, Any]", output)
+        return None
+
+    @staticmethod
+    def _extract_azure_ai_search_output_payload(event: Any) -> Mapping[str, Any] | None:
+        """Return Azure AI Search output payload from either a top-level event or its nested item."""
+        payload = RawOpenAIChatClient._parse_azure_ai_search_output_payload(getattr(event, "output", None))
+        if payload is not None:
+            return payload
+
+        item = getattr(event, "item", None)
+        if getattr(item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
+            return RawOpenAIChatClient._parse_azure_ai_search_output_payload(getattr(item, "output", None))
+        return None
+
+    @staticmethod
+    def _extract_azure_ai_search_get_urls(event: Any) -> list[str]:
+        """Extract per-document Azure AI Search REST URLs from a streamed Responses event."""
+        event_type = getattr(event, "type", None)
+        if event_type not in _AZURE_AI_SEARCH_OUTPUT_EVENT_TYPES and not (
+            isinstance(event_type, str) and event_type.startswith(_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX)
+        ):
+            return []
+
+        payload = RawOpenAIChatClient._extract_azure_ai_search_output_payload(event)
+        if payload is None:
+            return []
+
+        get_urls = payload.get("get_urls")
+        if not isinstance(get_urls, Sequence) or isinstance(get_urls, (str, bytes, bytearray)):
+            return []
+
+        urls: list[str] = []
+        for url in cast("Sequence[object]", get_urls):
+            if isinstance(url, str) and url:
+                urls.append(url)
+        return urls
+
+    @staticmethod
+    def _azure_ai_search_doc_index(annotation: Annotation) -> int | None:
+        """Return the document index encoded in a Foundry Azure AI Search `doc_N` citation title."""
+        title = annotation.get("title")
+        if not isinstance(title, str) or not title.startswith("doc_"):
+            return None
+        index_text = title.removeprefix("doc_")
+        if not index_text.isdigit():
+            return None
+        return int(index_text)
+
+    @classmethod
+    def _enrich_streamed_azure_ai_search_citations(cls, updates: Sequence[ChatResponseUpdate]) -> None:
+        """Enrich streamed Azure AI Search citation annotations with per-document REST URLs."""
+        # Azure AI Search citations are numbered with global `doc_N` ordinals across the
+        # whole streamed response, so concatenate `get_urls` in event order before resolving them.
+        get_urls: list[str] = []
+        for update in updates:
+            get_urls.extend(cls._extract_azure_ai_search_get_urls(update.raw_representation))
+        if not get_urls:
+            return
+
+        for update in updates:
+            for content in update.contents:
+                if content.type != "text" or not content.annotations:
+                    continue
+                for annotation in content.annotations:
+                    if annotation.get("type") != "citation" or annotation.get("file_id"):
+                        continue
+
+                    doc_index = cls._azure_ai_search_doc_index(annotation)
+                    if doc_index is None or doc_index >= len(get_urls):
+                        continue
+
+                    additional_properties = annotation.get("additional_properties")
+                    if not isinstance(additional_properties, dict):
+                        additional_properties = {}
+                        annotation["additional_properties"] = additional_properties
+                    if "get_url" in additional_properties:
+                        continue
+
+                    additional_properties["get_url"] = get_urls[doc_index]
+
+    @staticmethod
+    def _extract_mcp_search_documents_from_text(text: str) -> dict[str, Mapping[str, Any]]:
+        """Extract MCP search-index document metadata JSON objects from hosted-MCP output text."""
+        documents: dict[str, Mapping[str, Any]] = {}
+        decoder = json.JSONDecoder()
+        start = 0
+        while True:
+            object_start = text.find("{", start)
+            if object_start < 0:
+                return documents
+            try:
+                value, offset = decoder.raw_decode(text[object_start:])
+            except json.JSONDecodeError:
+                start = object_start + 1
+                continue
+            if isinstance(value, Mapping):
+                document = cast("Mapping[str, Any]", value)
+                document_id = document.get("id")
+                if isinstance(document_id, str) and document_id:
+                    documents[document_id] = document
+            start = object_start + offset
+
+    @classmethod
+    def _extract_mcp_search_documents_from_content(cls, content: Content) -> dict[str, Mapping[str, Any]]:
+        """Extract MCP search-index document metadata from an MCP tool-result content item."""
+        documents: dict[str, Mapping[str, Any]] = {}
+        if content.type != "mcp_server_tool_result":
+            return documents
+
+        def _add_from_output(output: Any) -> None:
+            if isinstance(output, str):
+                documents.update(cls._extract_mcp_search_documents_from_text(output))
+                return
+            if isinstance(output, Content):
+                if output.type == "text" and isinstance(output.text, str):
+                    documents.update(cls._extract_mcp_search_documents_from_text(output.text))
+                return
+            if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
+                for item in cast("Sequence[object]", output):
+                    _add_from_output(item)
+
+        _add_from_output(content.output)
+        raw_output = getattr(content.raw_representation, "output", None)
+        _add_from_output(raw_output)
+        return documents
+
+    @staticmethod
+    def _mcp_search_document_id(annotation: Annotation) -> str | None:
+        """Return the document id encoded in an `mcp://searchindex/<id>` citation."""
+        for key in ("url", "title"):
+            value = annotation.get(key)
+            if isinstance(value, str) and value.startswith("mcp://searchindex/"):
+                return value.removeprefix("mcp://searchindex/").split("?", 1)[0].split("#", 1)[0]
+        return None
+
+    @classmethod
+    def _enrich_mcp_search_citations(cls, contents: Sequence[Content]) -> None:
+        """Add MCP search-index document metadata to matching citation annotations."""
+        documents: dict[str, Mapping[str, Any]] = {}
+        for content in contents:
+            documents.update(cls._extract_mcp_search_documents_from_content(content))
+        if not documents:
+            return
+
+        for content in contents:
+            if content.type != "text" or not content.annotations:
+                continue
+            for annotation in content.annotations:
+                document_id = cls._mcp_search_document_id(annotation)
+                if document_id is None:
+                    continue
+                document = documents.get(document_id)
+                if document is None:
+                    continue
+                additional_properties = annotation.setdefault("additional_properties", {})
+                additional_properties.setdefault("mcp_document_id", document_id)
+                document_title = document.get("title")
+                if isinstance(document_title, str) and document_title:
+                    additional_properties.setdefault("document_title", document_title)
+                source = document.get("source")
+                if isinstance(source, str) and source:
+                    additional_properties.setdefault("source", source)
 
     @staticmethod
     def _get_search_tool_name(item_type: str) -> str:
@@ -2027,7 +2218,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             case "output_text":
                                 text_content = Content.from_text(
                                     text=message_content.text,
-                                    raw_representation=message_content,  # type: ignore[reportUnknownArgumentType]
+                                    raw_representation=message_content,
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))
                                 if message_content.annotations:
@@ -2127,7 +2318,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                 Content.from_text_reasoning(
                                     id=item.id,
                                     text=summary.text,
-                                    raw_representation=summary,  # type: ignore[arg-type]
+                                    raw_representation=summary,
                                 )
                             )
                             added_reasoning = True
@@ -2365,7 +2556,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # Set continuation_token when background operation is still in progress
         if response.status and response.status in ("in_progress", "queued"):
             args["continuation_token"] = OpenAIContinuationToken(response_id=response.id)
-        return ChatResponse(**args)
+        chat_response = ChatResponse(**args)
+        if chat_response.messages:
+            self._enrich_mcp_search_citations(chat_response.messages[0].contents)
+        return chat_response
 
     def _parse_chunk_from_openai(
         self,
@@ -2789,7 +2983,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     case "web_search_call" | "file_search_call":
                         contents.append(self._parse_search_tool_call_content(event_item))
                     case _:
-                        logger.debug("Unparsed event of type: %s: %s", event.type, event)
+                        if getattr(event_item, "type", None) != _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
+                            logger.debug("Unparsed event of type: %s: %s", event.type, event)
             case (
                 "response.web_search_call.in_progress"
                 | "response.web_search_call.searching"
@@ -2958,8 +3153,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     )
                 elif getattr(done_item, "type", None) in ("web_search_call", "file_search_call"):
                     contents.append(self._parse_search_tool_result_content(done_item))
+                elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
+                    pass
             case _:
-                logger.debug("Unparsed event of type: %s: %s", event.type, event)
+                if not isinstance(event.type, str) or not event.type.startswith(_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX):
+                    logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
         return ChatResponseUpdate(
             contents=contents,
@@ -2982,12 +3180,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if usage.input_tokens_details:
             cached_tokens = cast("int | None", getattr(usage.input_tokens_details, "cached_tokens", None))
             if cached_tokens is not None:
-                details["openai.cached_input_tokens"] = cached_tokens  # type: ignore[typeddict-unknown-key]
+                details["openai.cached_input_tokens"] = cached_tokens
                 details["cache_read_input_token_count"] = cached_tokens
         if usage.output_tokens_details:
             reasoning_tokens = cast("int | None", getattr(usage.output_tokens_details, "reasoning_tokens", None))
             if reasoning_tokens is not None:
-                details["openai.reasoning_tokens"] = reasoning_tokens  # type: ignore[typeddict-unknown-key]
+                details["openai.reasoning_tokens"] = reasoning_tokens
                 details["reasoning_output_token_count"] = reasoning_tokens
         return details
 
@@ -3000,7 +3198,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         return {}
 
 
-class OpenAIChatClient(  # type: ignore[misc]
+class OpenAIChatClient(
     FunctionInvocationLayer[OpenAIChatOptionsT],
     ChatMiddlewareLayer[OpenAIChatOptionsT],
     ChatTelemetryLayer[OpenAIChatOptionsT],
@@ -3009,7 +3207,7 @@ class OpenAIChatClient(  # type: ignore[misc]
 ):
     """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"
 
     @overload
     def __init__(

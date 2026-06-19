@@ -21,4 +21,4 @@ def test_azure_namespace_no_longer_exposes_foundry_symbols() -> None:
     assert "FoundryLocalClient" not in dir(azure)
 
     with pytest.raises(AttributeError, match="Module `azure` has no attribute FoundryChatClient\\."):
-        _ = azure.FoundryChatClient
+        _ = azure.FoundryChatClient  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]

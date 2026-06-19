@@ -13,10 +13,10 @@ import json
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping, MutableSequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from agent_framework import (
@@ -216,7 +216,7 @@ class _FakeSandbox:
 
         result = callback(**kwargs)
         if inspect.isawaitable(result):
-            return _run_in_thread(lambda: asyncio.run(result))
+            return _run_in_thread(lambda: asyncio.run(cast(Coroutine[Any, Any, Any], result)))
         return result
 
     def run(self, code: str) -> _FakeResult:
@@ -264,10 +264,11 @@ class _FakeSandboxWithDelayedUnlistedOutput(_FakeSandboxWithoutOutputListing):
         if 'Path("/output/report.txt").write_text("artifact", encoding="utf-8")' in code:
             if self.output_dir is None:
                 raise AssertionError("Expected output directory for delayed output test.")
+            output_dir = self.output_dir
 
             def _write_file() -> None:
                 time.sleep(0.15)
-                Path(self.output_dir, "report.txt").write_text("artifact", encoding="utf-8")
+                Path(output_dir, "report.txt").write_text("artifact", encoding="utf-8")
 
             writer_thread = threading.Thread(target=_write_file)
             writer_thread.start()
@@ -317,7 +318,7 @@ class _FakeCodeActChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[Message],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -789,7 +790,7 @@ async def test_provider_injects_run_scoped_execute_code_tool() -> None:
     context = _FakeSessionContext(tools=[dangerous_compute])
     state: dict[str, Any] = {}
 
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     assert context.options["tools"] == [dangerous_compute]
     assert len(context.instructions) == 1
@@ -850,7 +851,7 @@ async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) 
 
     context = _FakeSessionContext()
     state: dict[str, Any] = {}
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
@@ -903,7 +904,7 @@ async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
 
     context = _FakeSessionContext()
     state: dict[str, Any] = {}
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
@@ -1046,7 +1047,7 @@ async def test_output_dir_cleared_between_invocations() -> None:
     provider = HyperlightCodeActProvider(workspace_root=Path(__file__).parent)
     context = _FakeSessionContext()
     state: dict[str, Any] = {}
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
@@ -1080,7 +1081,7 @@ async def test_run_code_does_not_block_event_loop() -> None:
     provider = HyperlightCodeActProvider()
     context = _FakeSessionContext()
     state: dict[str, Any] = {}
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
@@ -1181,8 +1182,9 @@ async def test_sandbox_calls_are_pinned_to_owning_worker_thread(
     sandbox = _ThreadAffinityFakeSandbox.instances[0]
     # All sandbox-touching calls must have stayed on a single owning thread, distinct from the
     # caller thread that asyncio.to_thread used for dispatch.
-    assert sandbox.thread_ids == {sandbox._owner_thread}
-    assert sandbox._owner_thread != threading.get_ident()
+    sandbox_with_thread_data = cast(Any, sandbox)
+    assert sandbox_with_thread_data.thread_ids == {sandbox_with_thread_data._owner_thread}
+    assert sandbox_with_thread_data._owner_thread != threading.get_ident()
 
 
 async def test_sandbox_owner_thread_persists_across_dispatch_threads(

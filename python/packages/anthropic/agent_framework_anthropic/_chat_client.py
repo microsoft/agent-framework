@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, cast
 
 from agent_framework import (
     Annotation,
@@ -31,7 +31,9 @@ from agent_framework._telemetry import get_user_agent
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
-from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
+from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
+from anthropic.lib.bedrock import AsyncAnthropicBedrock
+from anthropic.lib.vertex import AsyncAnthropicVertex
 from anthropic.types.beta import (
     BetaContentBlock,
     BetaMessage,
@@ -52,17 +54,17 @@ from anthropic.types.beta.beta_encrypted_code_execution_result_block import Beta
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 
 __all__ = [
@@ -243,7 +245,7 @@ class RawAnthropicClient(
         Use ``AnthropicClient`` instead for a fully-featured client with all layers applied.
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"
 
     def __init__(
         self,
@@ -539,7 +541,7 @@ class RawAnthropicClient(
         if stream:
             # Streaming mode
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):  # type: ignore[misc]
+                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
                     parsed_chunk = self._process_stream_event(chunk)
                     if parsed_chunk:
                         yield parsed_chunk
@@ -548,7 +550,7 @@ class RawAnthropicClient(
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
-            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)  # type: ignore[misc]
+            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
             return self._process_message(message, options)
 
         return _get_response()
@@ -696,11 +698,42 @@ class RawAnthropicClient(
 
         This skips the first message if it is a system message,
         as Anthropic expects system instructions as a separate parameter.
+
+        Anthropic's API requires that the conversation ends with a user message.
+        If the last message is from the assistant, a synthetic user turn is
+        appended when it will not break Anthropic tool_use/tool_result pairing.
         """
         # first system message is passed as instructions
         if messages and isinstance(messages[0], Message) and messages[0].role == "system":
-            return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
-        return [self._prepare_message_for_anthropic(msg) for msg in messages]
+            msgs = list(messages[1:])
+        else:
+            msgs = list(messages)
+
+        result = [self._prepare_message_for_anthropic(msg) for msg in msgs]
+
+        # Anthropic requires the conversation to end with a user message.
+        # Append a synthetic user turn so chained agent outputs work as
+        # valid context for the next agent without rewriting the assistant message.
+        if result and result[-1].get("role") == "assistant" and not self._message_has_tool_use(result[-1]):
+            result.append({"role": "user", "content": "Continue"})
+
+        return result
+
+    def _message_has_tool_use(self, message: dict[str, Any]) -> bool:
+        """Return whether an Anthropic message contains tool_use blocks."""
+        content: object = message.get("content")
+        if not isinstance(content, list):
+            return False
+
+        content_blocks = cast(list[object], content)
+        for content_block in content_blocks:
+            match content_block:
+                case {"type": "tool_use" | "mcp_tool_use" | "server_tool_use"}:
+                    return True
+                case _:
+                    pass
+
+        return False
 
     def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
@@ -723,7 +756,7 @@ class RawAnthropicClient(
                         a_content.append({
                             "type": "image",
                             "source": {
-                                "data": _get_data_bytes_as_str(content),  # type: ignore[attr-defined]
+                                "data": _get_data_bytes_as_str(content),
                                 "media_type": content.media_type,
                                 "type": "base64",
                             },
@@ -755,7 +788,7 @@ class RawAnthropicClient(
                                 tool_content.append({
                                     "type": "image",
                                     "source": {
-                                        "data": _get_data_bytes_as_str(item),  # type: ignore[attr-defined]
+                                        "data": _get_data_bytes_as_str(item),
                                         "media_type": item.media_type,
                                         "type": "base64",
                                     },
@@ -1023,10 +1056,10 @@ class RawAnthropicClient(
         if usage.input_tokens is not None:
             usage_details["input_token_count"] = usage.input_tokens
         if usage.cache_creation_input_tokens is not None:
-            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens  # type: ignore[typeddict-unknown-key]
+            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
             usage_details["cache_creation_input_token_count"] = usage.cache_creation_input_tokens
         if usage.cache_read_input_tokens is not None:
-            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens  # type: ignore[typeddict-unknown-key]
+            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
             usage_details["cache_read_input_token_count"] = usage.cache_read_input_tokens
         return usage_details
 

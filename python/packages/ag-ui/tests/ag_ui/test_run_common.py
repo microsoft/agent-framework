@@ -2,6 +2,7 @@
 
 """Tests for _run_common.py edge cases."""
 
+import pytest
 from ag_ui.core import EventType
 from agent_framework import Content
 
@@ -109,7 +110,7 @@ class TestEmitToolResult:
 
     def test_tool_result_without_call_id_returns_empty(self):
         """Tool result Content without call_id returns empty event list."""
-        content = Content.from_function_result(call_id=None, result="some result")
+        content = Content.from_function_result(call_id=None, result="some result")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         flow = FlowState()
         events = _emit_tool_result(content, flow)
         assert events == []
@@ -157,10 +158,9 @@ class TestStateUpdateHelper:
 
     def test_non_mapping_state_raises(self):
         """Passing a non-mapping value for state raises TypeError."""
-        import pytest
 
         with pytest.raises(TypeError):
-            state_update(text="t", state=["not", "a", "mapping"])  # type: ignore[arg-type]
+            state_update(text="t", state=["not", "a", "mapping"])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     def test_state_is_copied_defensively(self):
         """Mutating the caller's dict after ``state_update`` must not mutate the content."""
@@ -245,7 +245,7 @@ class TestEmitToolResultWithState:
         assert event_types[1] == EventType.TOOL_CALL_RESULT
         state_idx = event_types.index(EventType.STATE_SNAPSHOT)
         assert state_idx == 2
-        assert events[state_idx].snapshot == {"weather": {"temp": 14, "conditions": "foggy"}}
+        assert events[state_idx].snapshot == {"weather": {"temp": 14, "conditions": "foggy"}}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_updates_flow_current_state(self):
         tool_return = state_update(text="", state={"a": 1})
@@ -283,8 +283,8 @@ class TestEmitToolResultWithState:
         events = _emit_tool_result(content, flow)
         result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
         assert len(result_events) == 1
-        assert result_events[0].content == "Weather: 14°C"
-        assert TOOL_RESULT_STATE_KEY not in result_events[0].content
+        assert result_events[0].content == "Weather: 14°C"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert TOOL_RESULT_STATE_KEY not in result_events[0].content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_display_payload_routes_to_ui_only(self):
         """A display marker overrides only the UI event, not the LLM-bound tool result."""
@@ -299,9 +299,9 @@ class TestEmitToolResultWithState:
         result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
 
         assert len(result_events) == 1
-        assert result_events[0].content == '{"temp": 14, "conditions": "foggy"}'
+        assert result_events[0].content == '{"temp": 14, "conditions": "foggy"}'  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.tool_results[-1]["content"] == "Weather: 14°C"
-        assert TOOL_RESULT_DISPLAY_KEY not in result_events[0].content
+        assert TOOL_RESULT_DISPLAY_KEY not in result_events[0].content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert TOOL_RESULT_DISPLAY_KEY not in flow.tool_results[-1]["content"]
 
     def test_plain_tool_result_uses_existing_content_for_both_channels(self):
@@ -313,7 +313,7 @@ class TestEmitToolResultWithState:
         result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
 
         assert len(result_events) == 1
-        assert result_events[0].content == "plain result"
+        assert result_events[0].content == "plain result"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.tool_results[-1]["content"] == "plain result"
 
     def test_display_only_payload_falls_back_to_llm_content(self):
@@ -325,7 +325,7 @@ class TestEmitToolResultWithState:
         events = _emit_tool_result(content, flow)
         result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
 
-        assert result_events[0].content == '{"temp": 14}'
+        assert result_events[0].content == '{"temp": 14}'  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.tool_results[-1]["content"] == '{"temp": 14}'
 
     def test_pre_serialized_display_string_routes_verbatim(self):
@@ -337,7 +337,7 @@ class TestEmitToolResultWithState:
         events = _emit_tool_result(content, flow)
         result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
 
-        assert result_events[0].content == '{"temp":14}'
+        assert result_events[0].content == '{"temp":14}'  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.tool_results[-1]["content"] == "Weather summary"
 
     def test_coexists_with_active_predictive_state_handler(self):
@@ -362,8 +362,8 @@ class TestEmitToolResultWithState:
         # Exactly one coalesced snapshot must be emitted containing all merged keys.
         snapshots = [e for e in events if e.type == EventType.STATE_SNAPSHOT]
         assert len(snapshots) == 1
-        assert snapshots[0].snapshot["draft_final"] is True
-        assert snapshots[0].snapshot["preexisting"] == "value"
+        assert snapshots[0].snapshot["draft_final"] is True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert snapshots[0].snapshot["preexisting"] == "value"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.current_state["draft_final"] is True
         assert flow.current_state["preexisting"] == "value"
 
@@ -382,7 +382,7 @@ class TestEmitToolResultWithState:
 
         snapshots = [e for e in events if e.type == EventType.STATE_SNAPSHOT]
         assert len(snapshots) == 1, f"Expected 1 coalesced snapshot, got {len(snapshots)}"
-        assert snapshots[0].snapshot == {"existing": "yes", "new_key": 42}
+        assert snapshots[0].snapshot == {"existing": "yes", "new_key": 42}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 class TestEmitMcpToolResultWithState:
@@ -446,6 +446,6 @@ class TestEmitMcpToolResultWithDisplay:
 
         assert len(result_events) == 1
         # UI event carries the structured display payload.
-        assert _json.loads(result_events[0].content) == display_payload
+        assert _json.loads(result_events[0].content) == display_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         # LLM-side accumulator keeps the short text.
         assert flow.tool_results[-1]["content"] == "2 rows returned"
