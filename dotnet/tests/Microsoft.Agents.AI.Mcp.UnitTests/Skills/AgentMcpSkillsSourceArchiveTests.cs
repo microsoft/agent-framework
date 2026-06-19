@@ -303,7 +303,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
     [Fact]
     public void Extract_ArchiveExceedsDefaultFileCount_Throws()
     {
-        // Arrange - more files than the default cap (50).
+        // Arrange - more files than the default cap.
         var entries = Enumerable.Range(0, AgentMcpSkillArchiveExtractor.DefaultMaxFileCount + 1)
             .Select(i => ($"file{i}.txt", "x"))
             .ToArray();
@@ -467,7 +467,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
                 Directory.Delete(this._extractionRoot, recursive: true);
             }
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Best-effort cleanup.
         }
