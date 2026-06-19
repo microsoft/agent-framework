@@ -24,7 +24,8 @@ public sealed class AgentMcpSkillsSourceOptions
     /// another. Set this to a fixed value to get a predictable, reusable extraction location.
     /// When set, each source must use its own unique directory: the source treats the directory as
     /// exclusively its own and, on every discovery, prunes any sub-directory that the MCP server no
-    /// longer advertises. Pointing two sources at the same directory would therefore cause them to
+    /// longer advertises or whose index entry is not actionable (e.g., missing a required field).
+    /// Pointing two sources at the same directory would therefore cause them to
     /// delete each other's extracted skills.
     /// </remarks>
     public string? ArchiveSkillsDirectory { get; set; }
