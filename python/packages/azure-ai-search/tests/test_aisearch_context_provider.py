@@ -11,6 +11,7 @@ from agent_framework import Content, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential
+from azure.search.documents.knowledgebases.models import SearchIndexKnowledgeSourceParams
 
 from agent_framework_azure_ai_search._context_provider import AzureAISearchContextProvider
 
@@ -314,6 +315,17 @@ class TestInitAgenticValidation:
         assert provider.index_name == "idx"
         assert provider.knowledge_base_name == "idx-kb"
         assert provider._use_existing_knowledge_base is False
+
+    def test_knowledge_source_params_in_semantic_mode_raises(self) -> None:
+        with pytest.raises(ValueError, match="agentic mode"):
+            cast(Any, AzureAISearchContextProvider)(
+                source_id="s",
+                endpoint="https://test.search.windows.net",
+                index_name="idx",
+                api_key="key",
+                mode="semantic",
+                knowledge_source_params=[SearchIndexKnowledgeSourceParams(knowledge_source_name="src")],
+            )
 
 
 # -- __aenter__ / __aexit__ ---------------------------------------------------
@@ -1334,6 +1346,45 @@ class TestAgenticSearch:
         results = await provider._agentic_search([Message(role="user", contents=["query"])])
         assert len(results) == 1
         assert results[0].text == "No results found from Knowledge Base."
+
+    @pytest.mark.parametrize("effort", ["minimal", "medium"])
+    async def test_knowledge_source_params_reach_request(self, effort: str) -> None:
+        provider = _make_provider()
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = effort
+        params = [SearchIndexKnowledgeSourceParams(knowledge_source_name="src", filter_add_on="category eq 'public'")]
+        provider._knowledge_source_params = params
+
+        mock_result = Mock()
+        mock_result.response = []
+        mock_result.references = None
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
+        provider._retrieval_client = mock_retrieval
+
+        await provider._agentic_search([Message(role="user", contents=["q"])])
+
+        request = mock_retrieval.retrieve.call_args.kwargs["retrieval_request"]
+        assert request.knowledge_source_params is params
+
+    async def test_default_sends_no_knowledge_source_params(self) -> None:
+        provider = _make_provider()
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = "minimal"
+
+        mock_result = Mock()
+        mock_result.response = []
+        mock_result.references = None
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
+        provider._retrieval_client = mock_retrieval
+
+        await provider._agentic_search([Message(role="user", contents=["q"])])
+
+        request = mock_retrieval.retrieve.call_args.kwargs["retrieval_request"]
+        assert request.knowledge_source_params is None
 
 
 # -- before_run: agentic mode --------------------------------------------------
