@@ -19,6 +19,7 @@ from agent_framework_durabletask import (
     THREAD_ID_HEADER,
     WAIT_FOR_RESPONSE_FIELD,
     WAIT_FOR_RESPONSE_HEADER,
+    WORKFLOW_ORCHESTRATOR_NAME,
     AgentEntity,
     AgentEntityStateProviderMixin,
     DurableAgentState,
@@ -1511,6 +1512,52 @@ class TestWorkflowStatusOutputEncoding:
                 return "opaque-value"
 
         assert _json_default(Opaque()) == "opaque-value"
+
+
+class TestWorkflowOrchestrationScoping:
+    """Scoping of the workflow status/respond endpoints to the workflow orchestrator.
+
+    Both endpoints address durable instances by ID only, but the durable client resolves
+    IDs across every orchestration in the task hub (agent entities, user-registered
+    orchestrations, other apps on the same hub). ``_is_workflow_orchestration`` gates the
+    endpoints so a leaked instance ID for a different orchestration is treated as
+    "not found" instead of leaking its status/HITL details or accepting injected events.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            WORKFLOW_ORCHESTRATOR_NAME,
+            WORKFLOW_ORCHESTRATOR_NAME.upper(),
+            "Workflow_Orchestrator",  # case-insensitive: must match
+        ],
+    )
+    def test_accepts_matching_workflow_orchestration(self, name: str) -> None:
+        status = Mock()
+        status.name = name
+        assert AgentFunctionApp._is_workflow_orchestration(status) is True
+
+    def test_rejects_none_status(self) -> None:
+        # client.get_status returns None when no instance resolves for the ID.
+        assert AgentFunctionApp._is_workflow_orchestration(None) is False
+
+    def test_rejects_status_without_name(self) -> None:
+        status = Mock()
+        status.name = None
+        assert AgentFunctionApp._is_workflow_orchestration(status) is False
+
+    @pytest.mark.parametrize(
+        "other_name",
+        [
+            "SomeUserOrchestration",
+            "dafx-WeatherAgent",
+            "workflow_orchestrator_v2",
+        ],
+    )
+    def test_rejects_other_orchestration_name(self, other_name: str) -> None:
+        status = Mock()
+        status.name = other_name
+        assert AgentFunctionApp._is_workflow_orchestration(status) is False
 
 
 if __name__ == "__main__":

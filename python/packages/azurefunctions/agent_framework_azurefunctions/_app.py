@@ -386,7 +386,11 @@ class AgentFunctionApp(DFAppBase):
 
             status = await client.get_status(instance_id)
 
-            if not status:
+            # Scope the endpoint to this app's workflow orchestrator. The durable client
+            # resolves instance IDs across every orchestration in the task hub, so an ID
+            # belonging to a different orchestration must be treated as "not found" rather
+            # than leaking its status (including pending HITL request details).
+            if not self._is_workflow_orchestration(status):
                 return self._build_error_response("Instance not found", status_code=404)
 
             # The workflow's yielded outputs are checkpoint-encoded by the shared
@@ -448,6 +452,13 @@ class AgentFunctionApp(DFAppBase):
             if not instance_id or not request_id:
                 return self._build_error_response("Instance ID and Request ID are required.")
 
+            # Scope the endpoint to this app's workflow orchestrator before raising an
+            # external event, so a leaked instance ID cannot be used to inject events into
+            # a different orchestration in the task hub.
+            status = await client.get_status(instance_id)
+            if not self._is_workflow_orchestration(status):
+                return self._build_error_response("Instance not found", status_code=404)
+
             try:
                 response_data = req.get_json()
             except ValueError:
@@ -491,6 +502,25 @@ class AgentFunctionApp(DFAppBase):
         if not base_url:
             base_url = request_url.rstrip("/")
         return base_url
+
+    @staticmethod
+    def _is_workflow_orchestration(status: Any) -> bool:
+        """Return whether a durable orchestration status belongs to this app's workflow.
+
+        The ``workflow/status`` and ``workflow/respond`` endpoints address instances by
+        ``instanceId`` alone, but the durable client resolves IDs across *every*
+        orchestration in the task hub -- agent entities, any user-registered
+        orchestrations, and other apps sharing the hub. Without this check a caller
+        holding one instance ID could read another orchestration's status (including
+        pending HITL request payloads) or inject external events into it. Scoping to
+        ``WORKFLOW_ORCHESTRATOR_NAME`` keeps both endpoints bound to the workflow this
+        app hosts; anything else is treated as "not found".
+
+        The orchestration name is compared case-insensitively so the check stays robust
+        as workflow orchestrator naming evolves (e.g. per-workflow names).
+        """
+        name = getattr(status, "name", None)
+        return isinstance(name, str) and name.casefold() == WORKFLOW_ORCHESTRATOR_NAME.casefold()
 
     @property
     def agents(self) -> dict[str, SupportsAgentRun]:
