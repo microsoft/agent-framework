@@ -754,7 +754,7 @@ class RawFoundryAgent(
 
         return agent_session_id
 
-    async def create_conversation_session(self, *, session_id: str | None = None) -> AgentSession:
+    async def create_conversation(self, *, session_id: str | None = None) -> AgentSession:
         """Create a project-level Foundry conversation session.
 
         This creates a server-side conversation through the Foundry project's OpenAI

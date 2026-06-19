@@ -109,7 +109,7 @@ Generally available factories: `get_code_interpreter_tool`,
 
 ## Creating Foundry conversation sessions
 
-`FoundryAgent.create_conversation_session()` creates a server-side Foundry
+`FoundryAgent.create_conversation()` creates a server-side Foundry
 project conversation and returns an `AgentSession` that can be passed to
 `agent.run(...)` without reaching into the raw OpenAI client.
 
@@ -122,7 +122,7 @@ agent = FoundryAgent(
     credential=credential,
 )
 
-session = await agent.create_conversation_session()
+session = await agent.create_conversation()
 response = await agent.run("Help me plan a trip to Seattle.", session=session)
 ```
 
