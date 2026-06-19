@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 from agent_framework import (
     Agent,
     ChatContext,
     ChatMiddleware,
+    ChatMiddlewareTypes,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -40,7 +41,7 @@ class TestChatMiddleware:
                 execution_order.append("chat_middleware_after")
 
         # Add middleware to chat client
-        chat_client_base.chat_middleware = [LoggingChatMiddleware()]
+        chat_client_base.chat_middleware = [LoggingChatMiddleware()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Execute chat client directly
         messages = [Message(role="user", contents=["test message"])]
@@ -65,7 +66,7 @@ class TestChatMiddleware:
             execution_order.append("function_middleware_after")
 
         # Add middleware to chat client
-        chat_client_base.chat_middleware = [logging_chat_middleware]
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, logging_chat_middleware)]
 
         # Execute chat client directly
         messages = [Message(role="user", contents=["test message"])]
@@ -87,11 +88,11 @@ class TestChatMiddleware:
             # Modify the first message by adding a prefix
             if context.messages and len(context.messages) > 0:
                 original_text = context.messages[0].text or ""
-                context.messages[0] = Message(role=context.messages[0].role, contents=[f"MODIFIED: {original_text}"])
+                context.messages[0] = Message(role=context.messages[0].role, contents=[f"MODIFIED: {original_text}"])  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[invalid-assignment]
             await call_next()
 
         # Add middleware to chat client
-        chat_client_base.chat_middleware = [message_modifier_middleware]
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, message_modifier_middleware)]
 
         # Execute chat client
         messages = [Message(role="user", contents=["test message"])]
@@ -113,10 +114,10 @@ class TestChatMiddleware:
                 messages=[Message(role="assistant", contents=["MiddlewareTypes overridden response"])],
                 response_id="middleware-response-123",
             )
-            context.terminate = True
+            context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Add middleware to chat client
-        chat_client_base.chat_middleware = [response_override_middleware]
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, response_override_middleware)]
 
         # Execute chat client
         messages = [Message(role="user", contents=["test message"])]
@@ -145,7 +146,10 @@ class TestChatMiddleware:
             execution_order.append("second_after")
 
         # Add middleware to chat client (order should be preserved)
-        chat_client_base.chat_middleware = [first_middleware, second_middleware]
+        chat_client_base.chat_middleware = [
+            cast(ChatMiddlewareTypes, first_middleware),
+            cast(ChatMiddlewareTypes, second_middleware),
+        ]
 
         # Execute chat client
         messages = [Message(role="user", contents=["test message"])]
@@ -241,7 +245,7 @@ class TestChatMiddleware:
             def upper_case_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
                 for content in update.contents:
                     if content.type == "text":
-                        content.text = content.text.upper()
+                        content.text = content.text.upper()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
                 return update
 
             context.stream_transform_hooks.append(upper_case_update)
@@ -249,7 +253,7 @@ class TestChatMiddleware:
             execution_order.append("streaming_after")
 
         # Add middleware to chat client
-        chat_client_base.chat_middleware = [streaming_middleware]
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, streaming_middleware)]
 
         # Execute streaming response
         messages = [Message(role="user", contents=["test message"])]
@@ -259,7 +263,7 @@ class TestChatMiddleware:
 
         # Verify we got updates
         assert len(updates) > 0
-        assert all(update.text == update.text.upper() for update in updates)
+        assert all(update.text == update.text.upper() for update in updates)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Verify middleware executed
         assert execution_order == ["streaming_before", "streaming_after"]
@@ -338,22 +342,22 @@ class TestChatMiddleware:
             assert isinstance(context.options, dict)
             captured_options.update(context.options)
 
-            context.options["temperature"] = 0.9
-            context.options["max_tokens"] = 500
-            context.options["new_param"] = "added_by_middleware"
+            context.options["temperature"] = 0.9  # ty: ignore[invalid-assignment]
+            context.options["max_tokens"] = 500  # ty: ignore[invalid-assignment]
+            context.options["new_param"] = "added_by_middleware"  # ty: ignore[invalid-assignment]
 
             modified_options.update(context.options)
 
             await call_next()
 
         # Add middleware to chat client
-        chat_client_base.chat_middleware = [kwargs_middleware]
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, kwargs_middleware)]
 
         # Execute chat client with runtime options
         messages = [Message(role="user", contents=["test message"])]
-        response = await chat_client_base.get_response(
+        response = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
             messages,
-            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},
+            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},  # type: ignore[typeddict-unknown-key]
         )
 
         # Verify response
@@ -408,7 +412,7 @@ class TestChatMiddleware:
         pipeline_no_base = chat_client_base._get_chat_middleware_pipeline([runtime_middleware])
 
         # With base middleware
-        chat_client_base.chat_middleware = [base_middleware]
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, base_middleware)]
         pipeline_with_base = chat_client_base._get_chat_middleware_pipeline([runtime_middleware])
 
         assert pipeline_with_base is not pipeline_no_base

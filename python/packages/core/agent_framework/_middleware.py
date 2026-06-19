@@ -25,13 +25,13 @@ from ._types import (
 from .exceptions import MiddlewareException
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -362,16 +362,12 @@ class FunctionInvocationContext:
                 names_to_remove.add(item)
                 continue
             for normalized in normalize_tools(item):
-                if name := _get_tool_name(normalized):  # type: ignore[reportPrivateUsage]
+                if name := _get_tool_name(normalized):
                     names_to_remove.add(name)
 
         if not names_to_remove:
             return
-        self.tools[:] = [
-            tool
-            for tool in self.tools
-            if _get_tool_name(tool) not in names_to_remove  # type: ignore[reportPrivateUsage]
-        ]
+        self.tools[:] = [tool for tool in self.tools if _get_tool_name(tool) not in names_to_remove]
 
 
 class ChatContext:
@@ -1190,7 +1186,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             context_kwargs["compaction_strategy"] = compaction_strategy
         if tokenizer is not None:
             context_kwargs["tokenizer"] = tokenizer
-        pipeline = self._get_chat_middleware_pipeline(call_middleware)  # type: ignore[reportUnknownArgumentType]
+        pipeline = self._get_chat_middleware_pipeline(call_middleware)
         if not pipeline.has_middlewares:
             return super_get_response(  # type: ignore[no-any-return]
                 messages=messages,

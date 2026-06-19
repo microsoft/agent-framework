@@ -184,7 +184,7 @@ async def test_mistral_embedding_get_embeddings_no_model_raises() -> None:
         mock_cls.return_value = mock_client
 
         client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
-        client.model = None  # type: ignore[assignment]
+        client.model = None  # type: ignore[assignment] # ty: ignore[invalid-assignment]
 
         with pytest.raises(ValueError, match="model is required"):
             await client.get_embeddings(["hello"])

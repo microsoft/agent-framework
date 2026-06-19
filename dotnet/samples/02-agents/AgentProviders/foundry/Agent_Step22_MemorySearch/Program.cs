@@ -56,14 +56,13 @@ try
     // Inspect memory search results if available in raw response items.
     foreach (var message in response.Messages)
     {
-        if (message.RawRepresentation is MemorySearchToolCallResponseItem memorySearchResult)
+        if (message.RawRepresentation is MemorySearchToolCall memorySearchResult)
         {
             Console.WriteLine($"Memory Search Status: {memorySearchResult.Status}");
-            Console.WriteLine($"Memory Search Results Count: {memorySearchResult.Results.Count}");
+            Console.WriteLine($"Memory Search Results Count: {memorySearchResult.Memories.Count}");
 
-            foreach (var result in memorySearchResult.Results)
+            foreach (var memoryItem in memorySearchResult.Memories)
             {
-                var memoryItem = result.MemoryItem;
                 Console.WriteLine($"  - Memory ID: {memoryItem.MemoryId}");
                 Console.WriteLine($"    Scope: {memoryItem.Scope}");
                 Console.WriteLine($"    Content: {memoryItem.Content}");

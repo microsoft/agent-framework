@@ -142,12 +142,12 @@ def _extract_responses_from_messages(messages: list[Message]) -> dict[str, Any]:
             elif content.type == "function_approval_response" and getattr(content, "id", None):
                 approval_value: dict[str, Any] = {
                     "approved": getattr(content, "approved", False),
-                    "id": str(content.id),  # type: ignore[union-attr]
+                    "id": str(content.id),
                 }
                 func_call = getattr(content, "function_call", None)
                 if func_call is not None:
                     approval_value["function_call"] = make_json_safe(func_call.to_dict())
-                responses[str(content.id)] = approval_value  # type: ignore[union-attr]
+                responses[str(content.id)] = approval_value
     return responses
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -43,11 +44,12 @@ async def test_analyze_pdf_binary() -> None:
     assert pdf_path.exists(), f"Test fixture not found: {pdf_path}"
     pdf_bytes = pdf_path.read_bytes()
 
-    async with DefaultAzureCredential() as credential, ContentUnderstandingClient(endpoint, credential) as client:
+    async with DefaultAzureCredential() as credential, ContentUnderstandingClient(endpoint, credential) as client:  # pyrefly: ignore[bad-argument-type]
         poller = await client.begin_analyze_binary(
             analyzer_id,
             binary_input=pdf_bytes,
             content_type="application/pdf",
+            string_encoding="utf-8",
         )
         result = await poller.result()
 
@@ -83,7 +85,7 @@ async def test_before_run_e2e() -> None:
     async with DefaultAzureCredential() as credential:
         cu = ContentUnderstandingContextProvider(
             endpoint=endpoint,
-            credential=credential,
+            credential=credential,  # pyrefly: ignore[bad-argument-type]
             max_wait=None,  # wait until analysis completes (no background deferral)
         )
         async with cu:
@@ -106,7 +108,7 @@ async def test_before_run_e2e() -> None:
 
             await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
 
-            docs = state.get("documents", {})
+            docs = cast("dict[str, Any]", state.get("documents", {}))
             assert isinstance(docs, dict)
             assert "invoice.pdf" in docs
             doc_entry = docs["invoice.pdf"]
@@ -145,7 +147,7 @@ async def test_before_run_uri_content() -> None:
     async with DefaultAzureCredential() as credential:
         cu = ContentUnderstandingContextProvider(
             endpoint=endpoint,
-            credential=credential,
+            credential=credential,  # pyrefly: ignore[bad-argument-type]
             max_wait=None,  # wait until analysis completes (no background deferral)
         )
         async with cu:
@@ -168,7 +170,7 @@ async def test_before_run_uri_content() -> None:
 
             await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
 
-            docs = state.get("documents", {})
+            docs = cast("dict[str, Any]", state.get("documents", {}))
             assert isinstance(docs, dict)
             assert "invoice.pdf" in docs
 
@@ -209,7 +211,7 @@ async def test_before_run_data_uri_content() -> None:
     async with DefaultAzureCredential() as credential:
         cu = ContentUnderstandingContextProvider(
             endpoint=endpoint,
-            credential=credential,
+            credential=credential,  # pyrefly: ignore[bad-argument-type]
             max_wait=None,  # wait until analysis completes
         )
         async with cu:
@@ -232,7 +234,7 @@ async def test_before_run_data_uri_content() -> None:
 
             await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
 
-            docs = state.get("documents", {})
+            docs = cast("dict[str, Any]", state.get("documents", {}))
             assert isinstance(docs, dict)
             assert "invoice_b64.pdf" in docs
 
@@ -268,7 +270,7 @@ async def test_before_run_background_analysis() -> None:
     async with DefaultAzureCredential() as credential:
         cu = ContentUnderstandingContextProvider(
             endpoint=endpoint,
-            credential=credential,
+            credential=credential,  # pyrefly: ignore[bad-argument-type]
             max_wait=0.5,  # short timeout to force background deferral
         )
         async with cu:
@@ -292,7 +294,7 @@ async def test_before_run_background_analysis() -> None:
 
             await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
 
-            docs = state.get("documents", {})
+            docs = cast("dict[str, Any]", state.get("documents", {}))
             assert isinstance(docs, dict)
             assert "invoice.pdf" in docs
             assert docs["invoice.pdf"]["status"] == "analyzing", (

@@ -411,6 +411,7 @@
   <Folder Name="/Samples/05-end-to-end/Evaluation/">
     <Project Path="samples/05-end-to-end/Evaluation/Evaluation_ConversationSplits/Evaluation_ConversationSplits.csproj" />
     <Project Path="samples/05-end-to-end/Evaluation/Evaluation_FoundryQuality/Evaluation_FoundryQuality.csproj" />
+    <Project Path="samples/05-end-to-end/Evaluation/Evaluation_FoundryRubric/Evaluation_FoundryRubric.csproj" />
     <Project Path="samples/05-end-to-end/Evaluation/Evaluation_MixedProviders/Evaluation_MixedProviders.csproj" />
   </Folder>
   <Folder Name="/Samples/05-end-to-end/A2AClientServer/">

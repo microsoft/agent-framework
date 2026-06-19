@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import AsyncIterable
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -123,7 +123,7 @@ def mock_streaming_chat_completion_tool_call() -> AsyncStream[OllamaChatResponse
         message=OllamaMessage(
             content="",
             role="assistant",
-            tool_calls=[{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}],
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
         ),
         model="test",
     )
@@ -138,7 +138,7 @@ def mock_chat_completion_tool_call() -> OllamaChatResponse:
         message=OllamaMessage(
             content="",
             role="assistant",
-            tool_calls=[{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}],
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
         ),
         model="test",
         created_at="2024-01-01T00:00:00Z",
@@ -294,7 +294,7 @@ async def test_cmc_reasoning(
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
 
-    reasoning = "".join(c.text for c in result.messages.pop().contents if c.type == "text_reasoning")
+    reasoning = "".join(cast("str", c.text) for c in result.messages.pop().contents if c.type == "text_reasoning")
     assert reasoning == "test"
 
 
@@ -349,7 +349,7 @@ async def test_cmc_streaming_reasoning(
     result = ollama_client.get_response(messages=chat_history, stream=True)
 
     async for chunk in result:
-        reasoning = "".join(c.text for c in chunk.contents if c.type == "text_reasoning")
+        reasoning = "".join(cast("str", c.text) for c in chunk.contents if c.type == "text_reasoning")
         assert reasoning == "test"
 
 
@@ -473,7 +473,7 @@ async def test_cmc_with_invalid_data_content_media_type(
         )
 
         ollama_client = OllamaChatClient()
-        ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)
+        ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)  # type: ignore[method-assign] # ty: ignore[invalid-assignment]
 
         await ollama_client.get_response(messages=chat_history)
 

@@ -289,23 +289,36 @@ uv run poe <command> -A           # aggregate sweep where supported
 ```
 
 #### `pyright`
-Run Pyright type checking:
+Run Pyright type checking. Pyright is the **strict source-code type checker**, and also runs
+in a relaxed `basic` profile over the tests + samples (as one of the `test-typing` checkers):
 ```bash
 uv run poe pyright
 uv run poe pyright -P core
 uv run poe pyright -A
 ```
 
+#### `test-typing`
+Run the **tests + samples** type checkers. Source code is owned by strict Pyright; the tests
+and samples are checked by `pyright` (relaxed), `mypy`, `pyrefly`, `ty`, and `zuban` in a
+deliberately relaxed/basic profile so real public-API type errors surface without forcing
+test/sample authors to fully annotate their code. All five gate CI:
+```bash
+uv run poe test-typing            # all checkers over every package's tests
+uv run poe test-typing -P core    # one package
+uv run poe test-typing -S         # samples (pyright + pyrefly + ty; mypy/zuban skip script-style samples)
+uv run poe test-typing -P core --checker mypy     # narrow to one checker (repeatable)
+uv run poe test-typing -P core --checker pyright  # relaxed pyright over the tests
+```
+
 #### `mypy`
-Run MyPy type checking:
+Convenience alias that runs MyPy over the test suite (MyPy no longer runs on source):
 ```bash
 uv run poe mypy
 uv run poe mypy -P core
-uv run poe mypy -A
 ```
 
 #### `typing`
-Run both Pyright and MyPy:
+Run Pyright over source **and** the tests/samples checkers:
 ```bash
 uv run poe typing
 uv run poe typing -P core

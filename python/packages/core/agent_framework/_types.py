@@ -191,7 +191,7 @@ def _get_data_bytes_as_str(content: Content) -> str | None:
         raise ContentError("Data URI must use base64 encoding")
 
     _, data = uri.split(";base64,", 1)
-    return data  # type: ignore[return-value, no-any-return]
+    return data
 
 
 def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]
@@ -390,7 +390,7 @@ ContentT = TypeVar("ContentT", bound="Content")
 # endregion
 
 
-class UsageDetails(TypedDict, total=False, extra_items=int):  # type: ignore[call-arg]
+class UsageDetails(TypedDict, total=False, extra_items=int):
     """A dictionary representing usage details.
 
     This is a non-closed dictionary, so any specific provider fields can be added as needed.
@@ -451,7 +451,7 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
         ):
             logger.warning("Non `int` value found in usage details, skipping.")
             continue
-        result[key] = (val1 or 0) + (val2 or 0)  # type: ignore[literal-required]
+        result[key] = (val1 or 0) + (val2 or 0)
     return result
 
 
@@ -1448,12 +1448,12 @@ class Content:
         combined_id = self.id or other.id
 
         # Concatenate text, handling None values
-        self_text = self.text or ""  # type: ignore[attr-defined]
-        other_text = other.text or ""  # type: ignore[attr-defined]
+        self_text = self.text or ""
+        other_text = other.text or ""
         combined_text = self_text + other_text if (self_text or other_text) else None
 
         # Handle protected_data replacement
-        protected_data = other.protected_data if other.protected_data is not None else self.protected_data  # type: ignore[attr-defined]
+        protected_data = other.protected_data if other.protected_data is not None else self.protected_data
 
         return Content(
             "text_reasoning",
@@ -1907,14 +1907,14 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
             case "function_call" if message.contents and message.contents[-1].type == "function_call":
                 try:
-                    message.contents[-1] += content  # type: ignore[operator]
+                    message.contents[-1] += content
                 except (AdditionItemMismatch, ContentError):
                     message.contents.append(content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
                 # mypy doesn't narrow type based on match/case, but we know this is UsageContent
-                response.usage_details = add_usage_details(response.usage_details, content.usage_details)  # type: ignore[arg-type]
+                response.usage_details = add_usage_details(response.usage_details, content.usage_details)
             case _:
                 message.contents.append(content)
     # Incorporate the update's properties into the response.
@@ -3136,7 +3136,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             if isawaitable(hooked):
                 hooked = await hooked
             if hooked is not None:
-                update = hooked
+                update = cast(UpdateT, hooked)
         return update
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
@@ -3559,7 +3559,7 @@ async def validate_tools(
             # Expand MCP tools to their constituent functions
             if not tool_.is_connected:
                 await tool_.connect()
-            final_tools.extend(tool_.functions)  # type: ignore
+            final_tools.extend(tool_.functions)
         else:
             final_tools.append(tool_)
 

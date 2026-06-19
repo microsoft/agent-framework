@@ -308,7 +308,7 @@ def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextM
             f"The optional dependency `{missing_name}` is not installed. Please update your dependencies."
         ) from ex
 
-    return _streamable_http_client(*args, **kwargs)  # type: ignore[return-value]
+    return _streamable_http_client(*args, **kwargs)
 
 
 def _should_propagate_cancelled_error(ex: BaseException) -> bool:
@@ -614,7 +614,7 @@ class MCPTool:
 
         mcp_content_types: Sequence[Any] = (
             cast(Sequence[Any], mcp_type) if isinstance(mcp_type, Sequence) else [mcp_type]
-        )  # type: ignore[redundant-cast]
+        )
         return_types: list[Content] = []
         for mcp_type in mcp_content_types:
             match mcp_type:
@@ -653,7 +653,7 @@ class MCPTool:
                             result=self._parse_content_from_mcp(mcp_type.content)
                             if mcp_type.content
                             else mcp_type.structuredContent,
-                            exception=str(Exception()) if mcp_type.isError else None,  # type: ignore[arg-type]
+                            exception=str(Exception()) if mcp_type.isError else None,
                             raw_representation=mcp_type,
                         )
                     )
@@ -696,16 +696,16 @@ class MCPTool:
         if content.type == "text":
             return types.TextContent(type="text", text=content.text)  # type: ignore[attr-defined]
         if content.type == "data":
-            if content.media_type and content.media_type.startswith("image/"):  # type: ignore[attr-defined]
+            if content.media_type and content.media_type.startswith("image/"):
                 return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
-            if content.media_type and content.media_type.startswith("audio/"):  # type: ignore[attr-defined]
+            if content.media_type and content.media_type.startswith("audio/"):
                 return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
-            if content.media_type and content.media_type.startswith("application/"):  # type: ignore[attr-defined]
+            if content.media_type and content.media_type.startswith("application/"):
                 return types.EmbeddedResource(
                     type="resource",
                     resource=types.BlobResourceContents(
                         blob=content.uri,  # type: ignore[attr-defined]
-                        mimeType=content.media_type,  # type: ignore[attr-defined]
+                        mimeType=content.media_type,
                         uri=(
                             content.additional_properties.get("uri", "af://binary")
                             if content.additional_properties
@@ -721,7 +721,7 @@ class MCPTool:
             return types.ResourceLink(
                 type="resource_link",
                 uri=content.uri,  # type: ignore[arg-type,attr-defined]
-                mimeType=content.media_type,  # type: ignore[attr-defined]
+                mimeType=content.media_type,
                 name=resource_name,
             )
         return None
@@ -1669,7 +1669,7 @@ class MCPTool:
             OtelAttr.TOOL_NAME: tool_name,
             OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
         })
-        with create_mcp_client_span("tools/call", target=tool_name, attributes=mcp_span_attrs) as span:  # type: ignore
+        with create_mcp_client_span("tools/call", target=tool_name, attributes=mcp_span_attrs) as span:
             return await self._call_tool_with_retries(tool_name, filtered_kwargs, meta, parser, span)
 
     async def _call_tool_with_retries(
@@ -1919,7 +1919,7 @@ class MCPTool:
             name=tool_name,
             arguments=arguments,
             task=task_metadata,
-            _meta=request_meta,  # type: ignore[call-arg]
+            _meta=request_meta,
         )
         request = types.ClientRequest(types.CallToolRequest(params=params))
 
@@ -2695,8 +2695,8 @@ class MCPStreamableHTTPTool(MCPTool):
                     for key, value in headers.items():
                         request.headers[key] = value
 
-                self._inject_headers_hook = _inject_headers  # type: ignore[attr-defined]
-                http_client.event_hooks["request"].append(self._inject_headers_hook)  # type: ignore[attr-defined]
+                self._inject_headers_hook = _inject_headers
+                http_client.event_hooks["request"].append(self._inject_headers_hook)
 
         return streamable_http_client(
             url=self.url,
