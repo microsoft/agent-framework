@@ -208,6 +208,113 @@ def _canonical_interrupt(interrupt: Mapping[str, Any]) -> Interrupt | None:
     return Interrupt.model_validate(interrupt_data)
 
 
+def _json_schema_for_value(value: Any) -> dict[str, Any]:
+    """Infer a lightweight JSON schema for an already-serialized value."""
+    if isinstance(value, bool):
+        return {"type": "boolean"}
+    if isinstance(value, int):
+        return {"type": "integer"}
+    if isinstance(value, float):
+        return {"type": "number"}
+    if isinstance(value, str):
+        return {"type": "string"}
+    if isinstance(value, list):
+        return {"type": "array"}
+    if isinstance(value, Mapping):
+        return {"type": "object", "additionalProperties": True}
+    return {}
+
+
+def _approval_response_schema(arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Build the response schema generic AG-UI clients use to render approval input."""
+    properties: dict[str, Any] = {
+        "accepted": {
+            "type": "boolean",
+            "description": "Whether the requested tool call is approved.",
+        }
+    }
+    if arguments:
+        for name, value in arguments.items():
+            argument_schema = _json_schema_for_value(value)
+            argument_schema["description"] = f"Optional edited value for the '{name}' tool argument."
+            properties[str(name)] = argument_schema
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": ["accepted"],
+        "additionalProperties": False,
+    }
+
+
+def _approval_steps_response_schema() -> dict[str, Any]:
+    """Build the response schema for step-based confirmation prompts."""
+    return {
+        "type": "object",
+        "properties": {
+            "accepted": {
+                "type": "boolean",
+                "description": "Whether the proposed tool changes are approved.",
+            },
+            "steps": {
+                "type": "array",
+                "description": "The approved and rejected steps.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "status": {"type": "string", "enum": ["enabled", "disabled"]},
+                    },
+                    "required": ["description", "status"],
+                    "additionalProperties": True,
+                },
+            },
+        },
+        "required": ["accepted"],
+        "additionalProperties": False,
+    }
+
+
+def _function_call_interrupt_metadata(function_call: Content) -> dict[str, Any]:
+    """Build Agent Framework metadata for a tool-bound approval interrupt."""
+    parsed_arguments = make_json_safe(function_call.parse_arguments())
+    return {
+        "type": "function_approval_request",
+        "function_call": {
+            "call_id": function_call.call_id,
+            "name": function_call.name,
+            "arguments": parsed_arguments,
+        },
+    }
+
+
+def _approval_interrupt_for_function_call(
+    *,
+    interrupt_id: str,
+    function_call: Content,
+    message: str | None = None,
+    response_schema: Mapping[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    tool_call_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a canonical AG-UI interrupt descriptor for a tool approval pause."""
+    function_metadata = _function_call_interrupt_metadata(function_call)
+    parsed_arguments = function_metadata["function_call"]["arguments"]
+    argument_mapping = cast(Mapping[str, Any], parsed_arguments) if isinstance(parsed_arguments, Mapping) else {}
+    interrupt_message = message or f"Approve running {function_call.name or 'this tool'}?"
+    agent_framework_metadata = {**function_metadata, "value": function_metadata}
+    if metadata:
+        agent_framework_metadata.update(dict(metadata))
+    return {
+        "id": interrupt_id,
+        "reason": "tool_call",
+        "message": interrupt_message,
+        "toolCallId": tool_call_id or function_call.call_id,
+        "responseSchema": dict(response_schema or _approval_response_schema(argument_mapping)),
+        "metadata": {"agent_framework": agent_framework_metadata},
+    }
+
+
 def _build_run_finished_event(
     run_id: str, thread_id: str, interrupts: list[dict[str, Any]] | None = None
 ) -> RunFinishedEvent:
@@ -552,17 +659,10 @@ def _emit_approval_request(
     interrupt_id = func_call_id or content.id
     if interrupt_id:
         flow.interrupts.append(
-            {
-                "id": str(interrupt_id),
-                "value": {
-                    "type": "function_approval_request",
-                    "function_call": {
-                        "call_id": func_call_id,
-                        "name": func_name,
-                        "arguments": make_json_safe(func_call.parse_arguments()),
-                    },
-                },
-            }
+            _approval_interrupt_for_function_call(
+                interrupt_id=str(interrupt_id),
+                function_call=func_call,
+            )
         )
 
     if require_confirmation:

@@ -9,6 +9,7 @@ import pytest
 from ag_ui.core import MessagesSnapshotEvent, RunStartedEvent, StateSnapshotEvent
 from agent_framework import (
     Agent,
+    AgentResponseUpdate,
     ChatResponseUpdate,
     Content,
     WorkflowBuilder,
@@ -16,6 +17,7 @@ from agent_framework import (
     executor,
 )
 from agent_framework.orchestrations import SequentialBuilder
+from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
 from fastapi.testclient import TestClient
@@ -235,6 +237,57 @@ async def test_endpoint_event_streaming(build_chat_client):
     assert found_run_started
     assert found_text_content
     assert found_run_finished
+
+
+async def test_endpoint_agent_approval_pause_emits_canonical_interrupt_outcome():
+    """Approval pauses should finish with canonical AG-UI interrupt outcomes over SSE."""
+    app = FastAPI()
+    function_call = Content.from_function_call(
+        call_id="call_write_doc",
+        name="write_doc",
+        arguments={"content": "Draft"},
+    )
+    approval_request = Content.from_function_approval_request(
+        id="call_write_doc",
+        function_call=function_call,
+    )
+    agent = StubAgent(updates=[AgentResponseUpdate(contents=[approval_request], role="assistant")])
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+
+    client = TestClient(app)
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-approval",
+            "threadId": "thread-approval",
+            "messages": [{"role": "user", "content": "Write a draft"}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    finished = [event for event in events if event.get("type") == "RUN_FINISHED"]
+    assert len(finished) == 1
+    interrupts = _run_finished_interrupts(finished[0])
+    assert len(interrupts) == 1
+
+    interrupt = interrupts[0]
+    assert interrupt["id"] == "call_write_doc"
+    assert interrupt["reason"] == "tool_call"
+    assert interrupt["toolCallId"] == "call_write_doc"
+    assert interrupt["message"] == "Approve running write_doc?"
+    assert interrupt["responseSchema"]["required"] == ["accepted"]
+    assert interrupt["responseSchema"]["properties"]["accepted"]["type"] == "boolean"
+    assert interrupt["responseSchema"]["properties"]["content"]["type"] == "string"
+    metadata_value = interrupt["metadata"]["agent_framework"]
+    assert metadata_value["type"] == "function_approval_request"
+    assert metadata_value["function_call"] == {
+        "call_id": "call_write_doc",
+        "name": "write_doc",
+        "arguments": {"content": "Draft"},
+    }
 
 
 async def test_endpoint_with_workflow_as_agent_stream_output(build_chat_client):

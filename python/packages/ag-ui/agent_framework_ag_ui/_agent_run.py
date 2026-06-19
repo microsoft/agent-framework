@@ -46,6 +46,8 @@ from ._orchestration._predictive_state import PredictiveStateHandler
 from ._orchestration._tooling import collect_server_tools, merge_tools, register_additional_client_tools
 from ._run_common import (
     FlowState,
+    _approval_interrupt_for_function_call,  # type: ignore
+    _approval_steps_response_schema,  # type: ignore
     _build_run_finished_event,  # type: ignore
     _close_reasoning_block,  # type: ignore
     _emit_content,  # type: ignore
@@ -1250,17 +1252,17 @@ async def run_agent_stream(
                         flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
                         flow.waiting_for_approval = True
                         flow.interrupts.append(
-                            {
-                                "id": str(confirm_id),
-                                "value": {
-                                    "type": "function_approval_request",
-                                    "function_call": {
-                                        "call_id": tool_call_id,
-                                        "name": tool_name,
-                                        "arguments": function_arguments,
-                                    },
-                                },
-                            }
+                            _approval_interrupt_for_function_call(
+                                interrupt_id=str(confirm_id),
+                                function_call=Content.from_function_call(
+                                    call_id=tool_call_id,
+                                    name=tool_name,
+                                    arguments=function_arguments,
+                                ),
+                                message=f"Approve the proposed changes from {tool_name}?",
+                                response_schema=_approval_steps_response_schema(),
+                                metadata={"confirmation_tool_call_id": confirm_id},
+                            )
                         )
 
     # Close any open reasoning block

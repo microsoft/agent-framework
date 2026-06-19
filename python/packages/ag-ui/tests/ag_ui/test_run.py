@@ -20,7 +20,9 @@ from ag_ui.core import (
 )
 from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
+from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
+from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
     _build_safe_metadata,
     _create_state_context_message,
@@ -28,6 +30,7 @@ from agent_framework_ag_ui._agent_run import (
     _normalize_response_stream,
     _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
+    run_agent_stream,
 )
 from agent_framework_ag_ui._run_common import (
     FlowState,
@@ -544,7 +547,7 @@ def test_emit_content_usage_emits_custom_usage_event():
 
 
 def test_emit_approval_request_populates_interrupt_metadata():
-    """Approval requests should populate FlowState interrupts for RUN_FINISHED metadata."""
+    """Approval requests should populate canonical interrupt metadata for RUN_FINISHED."""
     flow = FlowState(message_id="msg-1")
     function_call = Content.from_function_call(call_id="call_123", name="write_doc", arguments={"content": "x"})
     approval_content = Content.from_function_approval_request(id="approval_1", function_call=function_call)
@@ -554,7 +557,18 @@ def test_emit_approval_request_populates_interrupt_metadata():
     assert flow.waiting_for_approval is True
     assert len(flow.interrupts) == 1
     assert flow.interrupts[0]["id"] == "call_123"
-    assert flow.interrupts[0]["value"]["type"] == "function_approval_request"
+    assert flow.interrupts[0]["reason"] == "tool_call"
+    assert flow.interrupts[0]["toolCallId"] == "call_123"
+    assert flow.interrupts[0]["message"] == "Approve running write_doc?"
+    assert flow.interrupts[0]["responseSchema"]["required"] == ["accepted"]
+    assert flow.interrupts[0]["responseSchema"]["properties"]["accepted"]["type"] == "boolean"
+    assert flow.interrupts[0]["responseSchema"]["properties"]["content"]["type"] == "string"
+    assert flow.interrupts[0]["metadata"]["agent_framework"]["type"] == "function_approval_request"
+    assert flow.interrupts[0]["metadata"]["agent_framework"]["function_call"] == {
+        "call_id": "call_123",
+        "name": "write_doc",
+        "arguments": {"content": "x"},
+    }
 
 
 def test_emit_approval_request_accumulates_multiple_interrupts():
@@ -576,6 +590,58 @@ def test_emit_approval_request_accumulates_multiple_interrupts():
     assert len(flow.interrupts) == 3
     interrupt_ids = {intr["id"] for intr in flow.interrupts}
     assert interrupt_ids == {"call_1", "call_2", "call_3"}
+
+
+async def test_predictive_confirmation_run_finished_interrupt_links_tool_call():
+    """Tool-bound confirmation pauses should advertise canonical interrupt routing."""
+    agent = StubAgent(
+        updates=[
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_write_doc",
+                        name="write_doc",
+                        arguments={"content": "Draft"},
+                    )
+                ],
+                role="assistant",
+            )
+        ]
+    )
+    config = AgentConfig(
+        predict_state_config={"document": {"tool": "write_doc", "tool_argument": "content"}},
+        require_confirmation=True,
+    )
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "run_id": "run-confirm",
+                "thread_id": "thread-confirm",
+                "messages": [{"role": "user", "content": "Write a draft"}],
+            },
+            agent,
+            config,
+        )
+    ]
+    run_finished = [event for event in events if getattr(event, "type", None) == "RUN_FINISHED"]
+    assert len(run_finished) == 1
+    dumped = run_finished[0].model_dump(by_alias=True, exclude_none=True)
+
+    assert "interrupt" not in dumped
+    interrupt = dumped["outcome"]["interrupts"][0]
+    assert interrupt["reason"] == "tool_call"
+    assert interrupt["toolCallId"] == "call_write_doc"
+    assert interrupt["message"] == "Approve the proposed changes from write_doc?"
+    assert interrupt["responseSchema"]["properties"]["accepted"]["type"] == "boolean"
+    assert interrupt["responseSchema"]["properties"]["steps"]["type"] == "array"
+    assert interrupt["metadata"]["agent_framework"]["confirmation_tool_call_id"] == interrupt["id"]
+    assert interrupt["metadata"]["agent_framework"]["function_call"] == {
+        "call_id": "call_write_doc",
+        "name": "write_doc",
+        "arguments": {"content": "Draft"},
+    }
 
 
 def test_resume_to_tool_messages_from_interrupts_payload():
