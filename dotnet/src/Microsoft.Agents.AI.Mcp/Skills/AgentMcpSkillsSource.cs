@@ -90,16 +90,23 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 
         if (Interlocked.CompareExchange(ref this._refreshTask, tcs.Task, null) is { } existing)
         {
-            return await existing.ConfigureAwait(false);
+            // Wait for the in-flight refresh but let this caller cancel its own wait independently
+            // without aborting the shared refresh work.
+            return await existing.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         try
         {
-            var skills = await this.GetCoreSkillsAsync(cancellationToken).ConfigureAwait(false);
+            // The refresh owner uses CancellationToken.None so that a single caller's cancellation
+            // does not abort the shared refresh for all concurrent waiters.
+            var skills = await this.GetCoreSkillsAsync(CancellationToken.None).ConfigureAwait(false);
 
             this.UpdateCache(skills);
 
             tcs.SetResult(skills);
+
+            // Allow the current caller to observe cancellation without impacting other awaiters.
+            cancellationToken.ThrowIfCancellationRequested();
 
             return skills;
         }
