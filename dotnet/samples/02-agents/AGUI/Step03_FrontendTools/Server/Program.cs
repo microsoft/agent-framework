@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
@@ -8,7 +8,7 @@ using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient().AddLogging();
-builder.Services.AddAGUI();
+builder.Services.AddAGUIServer();
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
 // make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
@@ -36,6 +36,6 @@ AIAgent agent = chatClient.AsAIAgent(
     instructions: "You are a helpful assistant.");
 
 // Map the AG-UI agent endpoint
-app.MapAGUI("/", agent);
+app.MapAGUIServer("/", agent);
 
 await app.RunAsync();
