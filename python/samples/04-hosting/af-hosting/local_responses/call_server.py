@@ -41,6 +41,7 @@ def main() -> None:
     )
     print(f"User: {prompt}")
     print(f"Agent: {response.output_text}")
+    print(f"response.id: {response.id}")
 
 
 if __name__ == "__main__":

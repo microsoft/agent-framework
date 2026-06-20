@@ -142,6 +142,8 @@ class ResponsesChannel:
             body = await request.json()
         except Exception:
             return JSONResponse({"error": "invalid json"}, status_code=400)
+        if not isinstance(body, Mapping):
+            return JSONResponse({"error": "request body must be a JSON object"}, status_code=422)
 
         try:
             messages, options, session = parse_responses_request(body)

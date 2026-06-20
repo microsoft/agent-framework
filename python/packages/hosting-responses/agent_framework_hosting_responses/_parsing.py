@@ -119,7 +119,7 @@ def messages_from_responses_input(value: Any) -> list[Message]:
                         raise ValueError("each message `content` item must be an object")
                     parts.append(_content_from_input_item(cast("Mapping[str, Any]", content_item)))
             else:
-                parts = []
+                raise ValueError("message `content` must be a string or list")
             messages.append(Message(role, parts))
         else:
             pending_user_parts.append(_content_from_input_item(item_map))
