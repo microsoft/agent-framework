@@ -141,3 +141,44 @@ jobs:
           UV_CACHE_DIR: /tmp/.uv-cache
       - name: Run tests/samples type checkers (mypy, pyrefly, ty)
         run: uv run python scripts/workspace_poe_tasks.py ci-test-typing
+
+  dependency-bounds:
+    name: Dependency Bounds Validation
+    if: "!cancelled()"
+    runs-on: ubuntu-latest
+    # Match the Python dependency maintenance workflow so PR results line up with the
+    # nightly/dispatch sweep. Reevaluate if package installability starts differing
+    # across supported Python versions.
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ./python
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # The upper-bound resolver builds the internal workspace graph, so fetch full
+          # history to mirror the dependency maintenance workflow.
+          fetch-depth: 0
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+      # Smoke both ends of every package's allowed dependency range (lowest-direct and
+      # highest) and run each package's pyright pass in an isolated environment. This
+      # catches floor-too-low, missing-optional-dependency, and isolated-env typing
+      # regressions that the full-workspace test and typing jobs do not.
+      - name: Validate dependency bounds (lower + upper)
+        run: uv run poe validate-dependency-bounds-test --package "*"
+      - name: Upload dependency bounds report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dependency-bounds-test-results
+          path: python/scripts/dependencies/dependency-bounds-test-results.json
+          if-no-files-found: warn
