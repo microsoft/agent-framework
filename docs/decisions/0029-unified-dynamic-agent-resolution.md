@@ -129,7 +129,7 @@ public static IServiceCollection AddAgentResolver<TResolver>(this IServiceCollec
     where TResolver : class, IAgentResolver
 {
     services.AddHttpContextAccessor();
-    services.AddSingleton<IAgentResolver, TResolver>();
+    services.AddScoped<IAgentResolver, TResolver>();
     return services;
 }
 ```
