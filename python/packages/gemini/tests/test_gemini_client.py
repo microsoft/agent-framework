@@ -93,6 +93,8 @@ def _make_response(
     prompt_tokens: int | None = 10,
     output_tokens: int | None = 5,
     total_tokens: int | None = 15,
+    cached_tokens: int | None = None,
+    thoughts_tokens: int | None = None,
 ) -> MagicMock:
     """Build a mock types.GenerateContentResponse."""
     response = MagicMock()
@@ -113,6 +115,8 @@ def _make_response(
         usage.prompt_token_count = prompt_tokens
         usage.candidates_token_count = output_tokens
         usage.total_token_count = total_tokens
+        usage.cached_content_token_count = cached_tokens
+        usage.thoughts_token_count = thoughts_tokens
         response.usage_metadata = usage
     else:
         response.usage_metadata = None
@@ -372,6 +376,27 @@ async def test_get_response_usage_details() -> None:
     assert response.usage_details["input_token_count"] == 20
     assert response.usage_details["output_token_count"] == 8
     assert response.usage_details["total_token_count"] == 28
+
+
+async def test_get_response_usage_details_includes_cached_and_reasoning_tokens() -> None:
+    """Surfaces Gemini cached-content and thinking token counts into the canonical usage fields."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=_make_response(
+            [_make_part(text="Hi")],
+            prompt_tokens=20,
+            output_tokens=8,
+            total_tokens=28,
+            cached_tokens=12,
+            thoughts_tokens=6,
+        )
+    )
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert response.usage_details is not None
+    assert response.usage_details["cache_read_input_token_count"] == 12
+    assert response.usage_details["reasoning_output_token_count"] == 6
 
 
 async def test_get_response_no_usage_when_metadata_absent() -> None:
