@@ -3589,6 +3589,157 @@ class MCPSkill(Skill):
         return skill_md_uri + "/"
 
 
+# Matches a single RFC 6570 Level-1 expression: ``{var}``. The skill-discovery
+# binding only uses simple string expansion, so operators (``+#./;?&``) and
+# explode/prefix modifiers are intentionally unsupported; such expressions are
+# treated as unknown and rejected by :meth:`MCPSkillResourceTemplate.materialize`.
+_URI_TEMPLATE_VAR_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
+
+
+@experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
+class MCPSkillResourceTemplate:
+    """A parameterized skill namespace discovered from an MCP ``skill://index.json`` index.
+
+    Represents an index entry of type ``mcp-resource-template``: instead of a
+    single concrete skill, the entry's ``url`` is an
+    `RFC 6570 <https://www.rfc-editor.org/rfc/rfc6570>`_ URI template (e.g.
+    ``skill://docs/{product}/SKILL.md``) that resolves to a ``SKILL.md``
+    resource once its variables are bound. One template therefore stands in for
+    a *family* of skills — one per binding of its variables.
+
+    Per the SEP-2640 MCP binding, ``mcp-resource-template`` entries omit the
+    ``name`` field (a single template has no one name) and only the
+    ``description`` and ``url`` (template) fields are present.
+
+    Concrete skills are **not** materialized during discovery, because the
+    template variables require values that the index does not provide (they are
+    supplied by the host, the user, or the server's
+    ``resources/templates/list`` capability). Call :meth:`materialize` with an
+    explicit variable binding to obtain a ready-to-use :class:`MCPSkill`.
+
+    Attributes:
+        description: Human-readable description shared by every skill in the family.
+        url_template: The raw RFC 6570 URI template string.
+
+    Examples:
+        .. code-block:: python
+
+            # template.url_template == "skill://docs/{product}/SKILL.md"
+            skill = template.materialize(name="widget-docs", variables={"product": "widget"})
+            content = await skill.get_content()  # reads skill://docs/widget/SKILL.md
+    """
+
+    def __init__(
+        self,
+        *,
+        description: str,
+        url_template: str,
+        client: ClientSession,
+    ) -> None:
+        """Initialize an MCPSkillResourceTemplate.
+
+        Args:
+            description: Human-readable description for the skill family.
+            url_template: An RFC 6570 URI template resolving to a ``SKILL.md``
+                resource once its variables are bound
+                (e.g. ``skill://docs/{product}/SKILL.md``).
+            client: The MCP client session used to fetch resources on demand
+                for materialized skills.
+
+        Raises:
+            ValueError: If ``url_template`` is empty or whitespace.
+        """
+        if not url_template or not url_template.strip():
+            raise ValueError("url_template cannot be empty.")
+
+        self.description = description
+        self.url_template = url_template
+        self._client = client
+
+    @property
+    def variables(self) -> list[str]:
+        """The template variable names, in first-appearance order, without duplicates.
+
+        For ``skill://docs/{product}/{section}/SKILL.md`` this returns
+        ``["product", "section"]``.
+        """
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for match in _URI_TEMPLATE_VAR_RE.finditer(self.url_template):
+            var = match.group(1)
+            if var not in seen:
+                seen.add(var)
+                ordered.append(var)
+        return ordered
+
+    def expand(self, variables: dict[str, str]) -> str:
+        """Expand the URI template into a concrete resource URI.
+
+        Performs RFC 6570 Level-1 simple string expansion: every ``{var}``
+        expression is replaced with the percent-encoded value supplied for
+        ``var``. Reserved URI characters in values are percent-encoded so that
+        a value cannot smuggle in extra path segments or a scheme; the path
+        separator ``/`` is also encoded, matching RFC 6570 simple expansion.
+
+        Args:
+            variables: A mapping from each template variable name to its value.
+
+        Returns:
+            The expanded URI with all variables substituted.
+
+        Raises:
+            ValueError: If a value is missing for any variable referenced by
+                the template.
+        """
+        from urllib.parse import quote
+
+        missing = [var for var in self.variables if var not in variables]
+        if missing:
+            raise ValueError(
+                f"Missing value(s) for URI template variable(s): {', '.join(missing)}. "
+                f"Template '{self.url_template}' requires: {', '.join(self.variables)}."
+            )
+
+        def _replace(match: re.Match[str]) -> str:
+            return quote(str(variables[match.group(1)]), safe="")
+
+        return _URI_TEMPLATE_VAR_RE.sub(_replace, self.url_template)
+
+    def materialize(
+        self,
+        *,
+        name: str,
+        variables: dict[str, str],
+        description: str | None = None,
+    ) -> MCPSkill:
+        """Materialize a concrete :class:`MCPSkill` by binding the template variables.
+
+        Expands :attr:`url_template` against *variables* to obtain the concrete
+        ``SKILL.md`` URI, then constructs an :class:`MCPSkill` that fetches its
+        content and sibling resources from the same MCP server on demand.
+
+        Args:
+            name: The name to assign to the materialized skill. Required because
+                ``mcp-resource-template`` entries carry no name of their own;
+                callers choose a name appropriate to the chosen variable binding
+                (e.g. ``"widget-docs"`` for ``product=widget``). Must satisfy the
+                Agent Skills name rules.
+            variables: A mapping from each template variable name to its value.
+            description: Optional description override for the materialized
+                skill. Defaults to the template's :attr:`description`.
+
+        Returns:
+            A ready-to-use :class:`MCPSkill` pointing at the resolved ``SKILL.md``.
+
+        Raises:
+            ValueError: If a value is missing for any template variable, or if
+                *name* / *description* are invalid per the Agent Skills spec.
+        """
+        uri = self.expand(variables)
+        frontmatter = SkillFrontmatter(name=name, description=description or self.description)
+        return MCPSkill(frontmatter=frontmatter, skill_md_uri=uri, client=self._client)
+
+
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkillsSource(SkillsSource):
     """A :class:`SkillsSource` that discovers Agent Skills served over MCP.
@@ -3602,11 +3753,15 @@ class MCPSkillsSource(SkillsSource):
     the host fetches its body on demand via ``resources/read`` when the
     skill content is needed.
 
-    Only index entries of type ``skill-md`` are supported; entries of any
-    other type are silently skipped.
+    :meth:`get_skills` returns concrete skills, which are sourced from
+    ``skill-md`` entries; entries of any other type are skipped there.
+    Index entries of type ``mcp-resource-template`` describe *parameterized*
+    skill namespaces (an RFC 6570 URI template in place of a concrete URL) and
+    are surfaced separately via :meth:`get_resource_templates`, since they
+    require variable values to materialize into usable skills.
 
     If ``skill://index.json`` is absent, unreadable, empty, or fails to
-    parse, this source returns an empty list.
+    parse, both methods return an empty list.
 
     Examples:
         .. code-block:: python
@@ -3615,10 +3770,16 @@ class MCPSkillsSource(SkillsSource):
 
             source = MCPSkillsSource(client=session)
             skills = await source.get_skills()
+
+            # Parameterized (mcp-resource-template) skill namespaces:
+            templates = await source.get_resource_templates()
+            for template in templates:
+                skill = template.materialize(name="widget-docs", variables={"product": "widget"})
     """
 
     _INDEX_URI: Final[str] = "skill://index.json"
     _SKILL_MD_TYPE: Final[str] = "skill-md"
+    _RESOURCE_TEMPLATE_TYPE: Final[str] = "mcp-resource-template"
 
     def __init__(self, client: ClientSession) -> None:
         """Initialize an MCPSkillsSource.
@@ -3656,6 +3817,39 @@ class MCPSkillsSource(SkillsSource):
 
         logger.info("Successfully loaded %d skills from MCP server", len(skills))
         return skills
+
+    async def get_resource_templates(self) -> list[MCPSkillResourceTemplate]:
+        """Discover ``mcp-resource-template`` entries from the MCP server.
+
+        Reads ``skill://index.json``, parses it, and returns one
+        :class:`MCPSkillResourceTemplate` per ``mcp-resource-template`` entry.
+        Each template describes a *parameterized* skill namespace: its ``url``
+        is an RFC 6570 URI template that resolves to a concrete ``SKILL.md`` once
+        its variables are bound.
+
+        Templates are returned **separately** from :meth:`get_skills` rather than
+        as concrete skills, because materializing a skill requires values for the
+        template variables that the index does not provide. Bind the variables
+        with :meth:`MCPSkillResourceTemplate.materialize` to obtain a usable
+        :class:`MCPSkill`.
+
+        Returns:
+            A list of discovered :class:`MCPSkillResourceTemplate` instances.
+            Empty when the server advertises no template entries (or no index).
+        """
+        index = await self._try_read_index()
+        if index is None:
+            return []
+
+        templates: list[MCPSkillResourceTemplate] = []
+        for entry in index.skills:
+            template = self._try_create_template(entry)
+            if template is not None:
+                templates.append(template)
+                logger.info("Loaded MCP skill resource template: %s", template.url_template)
+
+        logger.info("Successfully loaded %d skill resource templates from MCP server", len(templates))
+        return templates
 
     async def _try_read_index(self) -> _McpSkillIndex | None:
         """Attempt to read and parse ``skill://index.json`` from the MCP server.
@@ -3721,6 +3915,41 @@ class MCPSkillsSource(SkillsSource):
             return None
 
         return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, client=self._client)
+
+    def _try_create_template(self, entry: _McpSkillIndexEntry) -> MCPSkillResourceTemplate | None:
+        """Attempt to create an :class:`MCPSkillResourceTemplate` from an index entry.
+
+        Only entries of type ``mcp-resource-template`` are considered. Such
+        entries omit the ``name`` field per the SEP-2640 binding, so only
+        ``description`` and ``url`` (the URI template) are validated here.
+
+        Args:
+            entry: A single entry from the skill index.
+
+        Returns:
+            An :class:`MCPSkillResourceTemplate` if the entry is a valid
+            ``mcp-resource-template``, or ``None`` if it should be skipped.
+        """
+        if entry.type != self._RESOURCE_TEMPLATE_TYPE:
+            return None
+
+        if not entry.description or not entry.description.strip():
+            logger.debug("Skipping resource-template entry: missing required 'description' field")
+            return None
+
+        if not entry.url or not entry.url.strip():
+            logger.debug("Skipping resource-template entry: missing required 'url' field")
+            return None
+
+        try:
+            return MCPSkillResourceTemplate(
+                description=entry.description,
+                url_template=entry.url,
+                client=self._client,
+            )
+        except ValueError as ex:
+            logger.debug("Skipping resource-template entry: invalid template: %s", ex)
+            return None
 
 
 # endregion

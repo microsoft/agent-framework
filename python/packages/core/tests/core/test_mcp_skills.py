@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for MCP-based skills (MCPSkillsSource, MCPSkill, MCPSkillResource)."""
+"""Tests for MCP-based skills (MCPSkillsSource, MCPSkill, MCPSkillResource, MCPSkillResourceTemplate)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from mcp.types import (
 )
 from pydantic import AnyUrl
 
-from agent_framework import MCPSkill, MCPSkillResource, MCPSkillsSource
+from agent_framework import MCPSkill, MCPSkillResource, MCPSkillResourceTemplate, MCPSkillsSource
 from agent_framework._skills import _parse_mcp_skill_index
 
 # ---------------------------------------------------------------------------
@@ -44,6 +44,26 @@ SAMPLE_SKILL_INDEX = json.dumps({
             "description": "Convert between common units.",
             "url": "skill://unit-converter/SKILL.md",
         }
+    ],
+})
+
+# Index that mixes a concrete skill-md entry with an mcp-resource-template entry.
+# Per the SEP-2640 binding, template entries omit "name" and carry an RFC 6570
+# URI template in "url".
+SAMPLE_TEMPLATE_INDEX = json.dumps({
+    "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+    "skills": [
+        {
+            "name": "unit-converter",
+            "type": "skill-md",
+            "description": "Convert between common units.",
+            "url": "skill://unit-converter/SKILL.md",
+        },
+        {
+            "type": "mcp-resource-template",
+            "description": "Per-product documentation skill",
+            "url": "skill://docs/{product}/SKILL.md",
+        },
     ],
 })
 
@@ -425,6 +445,9 @@ class TestMCPSkillsSource:
 
     @pytest.mark.asyncio
     async def test_template_type_is_skipped(self) -> None:
+        # mcp-resource-template entries are parameterized namespaces; they are not
+        # returned as concrete skills by get_skills() (they are surfaced separately
+        # via get_resource_templates()).
         index_json = json.dumps({
             "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
             "skills": [
@@ -635,3 +658,177 @@ class TestMCPSkillsSourceErrorCodeBranching:
         source = MCPSkillsSource(client=client)
         with pytest.raises(TimeoutError):
             await source.get_skills()
+
+
+# ---------------------------------------------------------------------------
+# MCPSkillResourceTemplate tests
+# ---------------------------------------------------------------------------
+
+
+class TestMCPSkillResourceTemplate:
+    """Tests for MCPSkillResourceTemplate (the mcp-resource-template skill kind)."""
+
+    def test_variables_extracted_in_order_without_duplicates(self) -> None:
+        client = AsyncMock()
+        template = MCPSkillResourceTemplate(
+            description="docs",
+            url_template="skill://docs/{product}/{section}/{product}/SKILL.md",
+            client=client,
+        )
+        assert template.variables == ["product", "section"]
+
+    def test_variables_empty_for_static_url(self) -> None:
+        client = AsyncMock()
+        template = MCPSkillResourceTemplate(description="docs", url_template="skill://docs/SKILL.md", client=client)
+        assert template.variables == []
+
+    def test_expand_substitutes_variables(self) -> None:
+        client = AsyncMock()
+        template = MCPSkillResourceTemplate(
+            description="docs", url_template="skill://docs/{product}/SKILL.md", client=client
+        )
+        assert template.expand({"product": "widget"}) == "skill://docs/widget/SKILL.md"
+
+    def test_expand_percent_encodes_reserved_characters(self) -> None:
+        # RFC 6570 simple expansion percent-encodes reserved characters (including "/")
+        # so a value cannot inject extra path segments.
+        client = AsyncMock()
+        template = MCPSkillResourceTemplate(
+            description="docs", url_template="skill://docs/{product}/SKILL.md", client=client
+        )
+        assert template.expand({"product": "a/b c"}) == "skill://docs/a%2Fb%20c/SKILL.md"
+
+    def test_expand_missing_variable_raises(self) -> None:
+        client = AsyncMock()
+        template = MCPSkillResourceTemplate(
+            description="docs", url_template="skill://docs/{product}/{section}/SKILL.md", client=client
+        )
+        with pytest.raises(ValueError, match="Missing value"):
+            template.expand({"product": "widget"})
+
+    def test_empty_url_template_raises(self) -> None:
+        client = AsyncMock()
+        with pytest.raises(ValueError, match="url_template cannot be empty"):
+            MCPSkillResourceTemplate(description="docs", url_template="   ", client=client)
+
+    @pytest.mark.asyncio
+    async def test_materialize_produces_working_skill(self) -> None:
+        client = _make_client(**{"skill://docs/widget/SKILL.md": _make_text_result(SAMPLE_SKILL_MD)})
+        template = MCPSkillResourceTemplate(
+            description="Per-product documentation skill",
+            url_template="skill://docs/{product}/SKILL.md",
+            client=client,
+        )
+
+        skill = template.materialize(name="widget-docs", variables={"product": "widget"})
+        assert isinstance(skill, MCPSkill)
+        assert skill.frontmatter.name == "widget-docs"
+        # Description defaults to the template's description.
+        assert skill.frontmatter.description == "Per-product documentation skill"
+
+        content = await skill.get_content()
+        assert "Body content here." in content
+        client.read_resource.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_materialize_description_override(self) -> None:
+        client = _make_client()
+        template = MCPSkillResourceTemplate(
+            description="default", url_template="skill://docs/{product}/SKILL.md", client=client
+        )
+        skill = template.materialize(name="widget-docs", variables={"product": "widget"}, description="custom desc")
+        assert skill.frontmatter.description == "custom desc"
+
+    def test_materialize_invalid_name_raises(self) -> None:
+        client = AsyncMock()
+        template = MCPSkillResourceTemplate(
+            description="docs", url_template="skill://docs/{product}/SKILL.md", client=client
+        )
+        with pytest.raises(ValueError):
+            template.materialize(name="Invalid Name", variables={"product": "widget"})
+
+    def test_materialize_missing_variable_raises(self) -> None:
+        client = AsyncMock()
+        template = MCPSkillResourceTemplate(
+            description="docs", url_template="skill://docs/{product}/SKILL.md", client=client
+        )
+        with pytest.raises(ValueError, match="Missing value"):
+            template.materialize(name="widget-docs", variables={})
+
+
+class TestMCPSkillsSourceResourceTemplates:
+    """Tests for MCPSkillsSource.get_resource_templates discovery."""
+
+    @pytest.mark.asyncio
+    async def test_discovers_template_entries(self) -> None:
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_TEMPLATE_INDEX, uri="skill://index.json"),
+        })
+        source = MCPSkillsSource(client=client)
+        templates = await source.get_resource_templates()
+
+        assert len(templates) == 1
+        assert templates[0].url_template == "skill://docs/{product}/SKILL.md"
+        assert templates[0].description == "Per-product documentation skill"
+        assert templates[0].variables == ["product"]
+
+    @pytest.mark.asyncio
+    async def test_get_skills_and_templates_are_complementary(self) -> None:
+        # The same index yields one concrete skill (skill-md) and one template;
+        # each method returns only its own kind.
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_TEMPLATE_INDEX, uri="skill://index.json"),
+        })
+        source = MCPSkillsSource(client=client)
+
+        skills = await source.get_skills()
+        templates = await source.get_resource_templates()
+
+        assert [s.frontmatter.name for s in skills] == ["unit-converter"]
+        assert len(templates) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_index_returns_empty_templates(self) -> None:
+        client = _make_client()
+        source = MCPSkillsSource(client=client)
+        assert await source.get_resource_templates() == []
+
+    @pytest.mark.asyncio
+    async def test_template_missing_url_is_skipped(self) -> None:
+        index_json = json.dumps({
+            "skills": [{"type": "mcp-resource-template", "description": "no url"}],
+        })
+        client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
+        source = MCPSkillsSource(client=client)
+        assert await source.get_resource_templates() == []
+
+    @pytest.mark.asyncio
+    async def test_template_missing_description_is_skipped(self) -> None:
+        index_json = json.dumps({
+            "skills": [{"type": "mcp-resource-template", "url": "skill://docs/{product}/SKILL.md"}],
+        })
+        client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
+        source = MCPSkillsSource(client=client)
+        assert await source.get_resource_templates() == []
+
+    @pytest.mark.asyncio
+    async def test_skill_md_entries_are_not_returned_as_templates(self) -> None:
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+        })
+        source = MCPSkillsSource(client=client)
+        assert await source.get_resource_templates() == []
+
+    @pytest.mark.asyncio
+    async def test_materialized_skill_resolves_via_template_source(self) -> None:
+        # End-to-end: discover the template, materialize it, and fetch the
+        # resolved SKILL.md content from the same MCP server.
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_TEMPLATE_INDEX, uri="skill://index.json"),
+            "skill://docs/widget/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+        })
+        source = MCPSkillsSource(client=client)
+        template = (await source.get_resource_templates())[0]
+        skill = template.materialize(name="widget-docs", variables={"product": "widget"})
+        content = await skill.get_content()
+        assert "Body content here." in content
