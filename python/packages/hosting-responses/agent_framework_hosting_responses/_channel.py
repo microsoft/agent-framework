@@ -190,7 +190,17 @@ class ResponsesChannel:
         # No-arg factories continue to work via ``Callable[..., str]``.
         response_id = self._response_id_factory(previous_response_id)
         if session is None:
-            session = ChannelSession(isolation_key=response_id)
+            # When continuing a multi-turn chain, anchor the isolation
+            # key to the *previous* response id so that checkpoint
+            # storage, FileHistoryProvider, and other session-scoped
+            # stores locate data written during the preceding turn.
+            # Without this, each turn mints a fresh isolation key (its
+            # own response_id) and the host's
+            # ``_resolve_checkpoint_storage`` / history provider sees
+            # an empty store — silently dropping conversation state.
+            session = ChannelSession(
+                isolation_key=previous_response_id or response_id,
+            )
 
         attributes: dict[str, Any] = {"response_id": response_id}
         if previous_response_id is not None:
@@ -364,13 +374,36 @@ class ResponsesChannel:
 
 
 def _result_to_text(result: Any) -> str:
-    """Render an agent or workflow result to plain text for Responses JSON."""
+    """Render an agent or workflow result to plain text for Responses JSON.
+
+    Handles three shapes:
+
+    1. **Agent results** — carry a ``.text`` attribute with the final
+       assistant message.
+    2. **Workflow results** — expose ``.get_outputs()`` yielding
+       per-executor output objects (which may themselves have ``.text``).
+       When ``get_outputs()`` is empty or returns non-text objects the
+       fallback to ``str()`` keeps the envelope valid.
+    3. **Unknown / primitive** — ``str()`` cast.
+    """
+    # Fast path for agent results.
     text = getattr(result, "text", None)
     if isinstance(text, str):
         return text
+    # Workflow path: iterate per-executor outputs.
     get_outputs = getattr(result, "get_outputs", None)
     if callable(get_outputs):
-        return "".join(_output_to_text(output) for output in cast("Sequence[Any]", get_outputs()))
+        outputs = list(cast("Sequence[Any]", get_outputs()))
+        if outputs:
+            return "".join(_output_to_text(output) for output in outputs)
+        # Workflow completed but no output executors emitted content.
+        # Fall through to the ``get_final_state`` / ``str`` path so
+        # the caller still gets something renderable.
+        get_final_state = getattr(result, "get_final_state", None)
+        if callable(get_final_state):
+            state = get_final_state()
+            if state is not None:
+                return str(state)
     return str(result)
 
 

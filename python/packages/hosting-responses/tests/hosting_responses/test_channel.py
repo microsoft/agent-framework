@@ -247,6 +247,33 @@ class TestResultTextRendering:
 
         assert _result_to_text(_WorkflowResult()) == "one two"
 
+    def test_result_text_empty_outputs_falls_back_to_final_state(self) -> None:
+        """When get_outputs() returns an empty list, fall back to get_final_state()."""
+
+        class _EmptyOutputsResult:
+            def get_outputs(self) -> list[Any]:
+                return []
+
+            def get_final_state(self) -> str:
+                return "final state content"
+
+        assert _result_to_text(_EmptyOutputsResult()) == "final state content"
+
+    def test_result_text_empty_outputs_no_final_state_falls_back_to_str(self) -> None:
+        """When get_outputs() is empty and no get_final_state(), use str()."""
+
+        class _EmptyResult:
+            def get_outputs(self) -> list[Any]:
+                return []
+
+            def __str__(self) -> str:
+                return "stringified result"
+
+        assert _result_to_text(_EmptyResult()) == "stringified result"
+
+    def test_result_text_plain_string_uses_str(self) -> None:
+        assert _result_to_text("just a string") == "just a string"
+
 
 class TestResponsesChannelStreaming:
     def test_sse_emits_created_delta_completed(self) -> None:
