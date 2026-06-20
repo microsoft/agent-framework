@@ -24,7 +24,15 @@ from ag_ui.core import (
     ToolCallEndEvent,
     ToolCallStartEvent,
 )
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, Workflow, WorkflowRunState
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    CheckpointStorage,
+    Content,
+    Message,
+    Workflow,
+    WorkflowRunState,
+)
 
 from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
@@ -558,8 +566,24 @@ def _details_code(details: Any) -> str | None:
 async def run_workflow_stream(
     input_data: dict[str, Any],
     workflow: Workflow,
+    *,
+    checkpoint_storage: CheckpointStorage | None = None,
+    checkpoint_id: str | None = None,
 ) -> AsyncGenerator[BaseEvent]:
-    """Run a Workflow and emit AG-UI protocol events."""
+    """Run a Workflow and emit AG-UI protocol events.
+
+    Args:
+        input_data: Normalized AG-UI request payload (a ``RunAgentInput`` dump).
+        workflow: The core ``Workflow`` instance to execute.
+        checkpoint_storage: Optional checkpoint storage forwarded to the core
+            workflow. When provided, the workflow creates a checkpoint at the end
+            of each superstep, mirroring ``Workflow.run(checkpoint_storage=...)``.
+        checkpoint_id: Optional checkpoint id to resume from. When provided the run
+            restores the persisted workflow state instead of starting a fresh turn,
+            mirroring ``Workflow.run(checkpoint_id=...)``. Any incoming messages are
+            treated as request-info responses (or ignored) rather than a new
+            start-executor message, so resume stays consistent with the core API.
+    """
     thread_id = input_data.get("thread_id") or input_data.get("threadId") or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
@@ -587,7 +611,11 @@ async def run_workflow_stream(
     if not responses and pending_before_run:
         responses.update(_single_pending_response_from_value(pending_before_run, _latest_user_text(messages)))
 
-    if not responses and pending_before_run:
+    # A checkpoint resume must always reach ``workflow.run(checkpoint_id=...)`` so the
+    # core restores persisted state and re-emits any pending requests from the
+    # checkpoint. ``pending_before_run`` reflects the live (pre-restore) instance, so
+    # short-circuiting on it here would skip the restore entirely.
+    if checkpoint_id is None and not responses and pending_before_run:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for request_event in pending_before_run.values():
             request_payload = _request_payload_from_request_event(request_event)
@@ -604,7 +632,7 @@ async def run_workflow_stream(
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
         return
 
-    if not responses and not messages:
+    if checkpoint_id is None and not responses and not messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
         return
@@ -640,11 +668,27 @@ async def run_workflow_stream(
             logger.debug("workflow.run() does not accept function_invocation_kwargs; dropping forwarded_props")
             fwd_kwargs = {}
 
+    # Forward checkpoint storage so the core workflow creates a checkpoint at the end
+    # of each superstep (parity with ``Workflow.run(checkpoint_storage=...)``).
+    checkpoint_kwargs: dict[str, Any] = {}
+    if checkpoint_storage is not None:
+        checkpoint_kwargs["checkpoint_storage"] = checkpoint_storage
+
     try:
-        if responses:
-            event_stream = workflow.run(responses=responses, stream=True, **fwd_kwargs)
+        if checkpoint_id is not None:
+            # Resume from a checkpoint. ``message`` is mutually exclusive with
+            # ``checkpoint_id`` in the core API, so incoming messages are only
+            # forwarded as request-info responses (``responses``), never as a new
+            # start-executor message. ``responses`` + ``checkpoint_id`` performs a
+            # restore-then-send in a single call.
+            run_kwargs: dict[str, Any] = {"checkpoint_id": checkpoint_id, **checkpoint_kwargs}
+            if responses:
+                run_kwargs["responses"] = responses
+            event_stream = workflow.run(stream=True, **run_kwargs, **fwd_kwargs)
+        elif responses:
+            event_stream = workflow.run(responses=responses, stream=True, **checkpoint_kwargs, **fwd_kwargs)
         else:
-            event_stream = workflow.run(message=messages, stream=True, **fwd_kwargs)
+            event_stream = workflow.run(message=messages, stream=True, **checkpoint_kwargs, **fwd_kwargs)
 
         async for event in event_stream:
             event_type = getattr(event, "type", None)
