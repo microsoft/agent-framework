@@ -689,6 +689,11 @@ class BedrockChatClient(
             details["output_token_count"] = output_tokens
         if (total_tokens := usage.get("totalTokens")) is not None:
             details["total_token_count"] = total_tokens
+        # Bedrock Converse reports these when prompt caching is active.
+        if (cache_read := usage.get("cacheReadInputTokens")) is not None:
+            details["cache_read_input_token_count"] = cache_read
+        if (cache_write := usage.get("cacheWriteInputTokens")) is not None:
+            details["cache_creation_input_token_count"] = cache_write
         return details
 
     def _parse_message_contents(self, content_blocks: Sequence[dict[str, Any]]) -> list[Any]:
