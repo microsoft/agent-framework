@@ -2,7 +2,8 @@
 status: proposed
 contact: Ashutosh0x
 date: 2026-06-20
-consulted: "@javiercn, @TheEagleByte, @halllo, @Davidlmkh"
+consulted: "@javiercn, @DeagleGross, @ReubenBond, @rogerbarreto, @westey-m, @TheEagleByte, @halllo, @Davidlmkh"
+revised: 2026-06-20T16:40:00+05:30
 ---
 
 # Unified Dynamic Agent Resolution Across AG-UI, OpenAI Responses, and A2A Endpoints
@@ -66,6 +67,47 @@ app.MapAGUI("/agents/{agentId}", async (context, ct) =>
 **Pros**: Familiar minimal API pattern, maximum flexibility
 **Cons**: Channel-specific implementation needed for each `MapXxx`
 
+### Option 4: Middleware pipeline with `Use(...)` + HttpContext on additional properties (@javiercn's suggestion)
+
+Surface `HttpContext` on the agent options' additional properties, and use the existing ASP.NET Core middleware pipeline (`Use(...)`) for resolution logic:
+
+```csharp
+app.MapAGUI("/agents/{agentId}", defaultAgent)
+    .Use(async (context, next) =>
+    {
+        var httpContext = context.HttpContext;
+        var agentId = httpContext.GetRouteValue("agentId")?.ToString();
+
+        // Resolve the actual agent from DI or a repository
+        var resolver = httpContext.RequestServices.GetRequiredService<IAgentRepository>();
+        var resolvedAgent = await resolver.GetAgentAsync(agentId);
+
+        // Place the resolved agent on HttpContext.Items for downstream use
+        httpContext.Items["ResolvedAgent"] = resolvedAgent;
+
+        // Also resolve session store per-request (fixes singleton-capture)
+        var sessionStore = httpContext.RequestServices
+            .GetKeyedService<AgentSessionStore>(resolvedAgent?.Name);
+        httpContext.Items["AgentSessionStore"] = sessionStore;
+
+        await next(context);
+    });
+```
+
+Alternatively, the framework could expose `HttpContext` on the options/additional properties directly, allowing resolution within a custom `DelegatingHandler` via `Use(...)`:
+
+```csharp
+// Framework-level change: expose HttpContext in agent options
+public class AgentRequestOptions
+{
+    public HttpContext? HttpContext { get; set; }
+    public IDictionary<string, object> AdditionalProperties { get; } = new Dictionary<string, object>();
+}
+```
+
+**Pros**: No new abstractions needed, uses existing ASP.NET Core middleware pipeline, developers already know this pattern, `IHttpContextAccessor` is well-established
+**Cons**: Initial `agent` parameter still required at registration (even if overridden at runtime), resolution logic duplicated unless wrapped in shared middleware
+
 ### Option 3: `IAgentResolver` interface with DI registration (recommended)
 
 Define a shared `IAgentResolver` interface in the hosting core:
@@ -94,9 +136,32 @@ Each `MapXxx` overload resolves the agent per-request via `IAgentResolver` from 
 **Pros**: Single interface for all channels, DI-native, testable, session stores resolved per-request
 **Cons**: New abstraction to learn
 
+## Maintainer Feedback
+
+> **@javiercn** (June 20, 2026): "I don't feel strongly about what we do in this regard, provided we are consistent and that other folks like @DeagleGross and @ReubenBond @rogerbarreto or @westey-m are happy with the approach. That said, the IHttpContextAccessor pattern is not the end of the world, especially if the framework provided it. You can just wrap the agent, or the frameworks could simply put the HttpContext instance on the additional properties of the options, and you get to run your resolution logic within a delegating handler which you can already create with `Use(...)`"
+
+Key takeaways from maintainer feedback:
+1. **Consistency across channels** is the hard requirement — the specific mechanism is flexible
+2. **`IHttpContextAccessor` + `Use(...)`** is an acceptable lightweight approach
+3. **Exposing `HttpContext` on options/additional properties** would be a minimal framework change that unblocks dynamic resolution
+4. Additional maintainer input requested from @DeagleGross (A2A hosting), @ReubenBond (Orleans/distributed), @rogerbarreto (.NET core), @westey-m (VectorData/Agent Framework)
+
 ## Decision Outcome
 
-Chosen option: **Option 3 (IAgentResolver) combined with Option 2 (factory delegate)** as the dual-API approach.
+Revised recommendation: **Phased approach** incorporating @javiercn's feedback.
+
+### Phase 1 (minimal, non-breaking) — Recommended immediate action
+
+- Expose `HttpContext` on the options/additional properties for all three channels
+- Document the `Use(...)` middleware pattern for per-request agent resolution
+- Fix per-request `AgentSessionStore` resolution from `HttpContext.RequestServices`
+
+This requires minimal framework changes and uses patterns ASP.NET Core developers already know.
+
+### Phase 2 (convenience, if community demand warrants)
+
+- Add factory delegate overloads for `MapXxx` (Option 2)
+- Consider `IAgentResolver` as an optional DI-registered convenience layer (Option 3)
 
 ### Implementation plan
 
@@ -219,5 +284,7 @@ app.MapAGUI("/agents/{agentId}", async (context, ct) =>
 - #3162 — .NET: Support dynamic agent resolution in AG-UI endpoints (@TheEagleByte)
 - #2343 — Earlier dynamic resolution PR (@halllo)
 - #2988 — Original issue requesting dynamic agent selection
-- @javiercn's comment: "this needs to be applied not only to AG-UI but to Open AI responses and A2A"
+- @javiercn's [feedback on PR #6643](https://github.com/microsoft/agent-framework/pull/6643#issuecomment-4757378039): recommending `Use(...)` middleware + HttpContext on additional properties
+- @javiercn's comment on #3162: "this needs to be applied not only to AG-UI but to Open AI responses and A2A"
 - @halllo's `AgentSessionStore` scoping analysis (Feb 2026)
+- @DeagleGross's A2A hosting task support (#3732) — relevant for A2A channel consistency
