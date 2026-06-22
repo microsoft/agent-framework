@@ -394,8 +394,8 @@ internal static class OutputConverter
             {
                 yield return new UrlCitationBody(
                     citation.Url,
-                    (long)region.StartIndex!.Value,
-                    (long)region.EndIndex!.Value,
+                    region.StartIndex!.Value,
+                    region.EndIndex!.Value,
                     citation.Title ?? string.Empty);
             }
         }
