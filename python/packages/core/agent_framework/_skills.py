@@ -3590,10 +3590,69 @@ class MCPSkill(Skill):
 
 
 # Matches a single RFC 6570 Level-1 expression: ``{var}``. The skill-discovery
-# binding only uses simple string expansion, so operators (``+#./;?&``) and
-# explode/prefix modifiers are intentionally unsupported; such expressions are
-# treated as unknown and rejected by :meth:`MCPSkillResourceTemplate.materialize`.
+# binding only uses simple string expansion, so operators (``+#./;?&=,!@|``) and
+# explode/prefix modifiers are intentionally unsupported. Such expressions are
+# rejected up front by :func:`_validate_uri_template` (called from
+# :class:`MCPSkillResourceTemplate.__init__`), so a template that reaches
+# :meth:`~MCPSkillResourceTemplate.expand` only ever contains ``{var}`` forms.
 _URI_TEMPLATE_VAR_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
+
+# A valid Level-1 variable name: one or more unreserved word characters. Anything
+# inside braces that does not match this exactly (operators, modifiers, commas,
+# empty content) is an unsupported expression.
+_URI_TEMPLATE_VARNAME_RE = re.compile(r"\A[a-zA-Z0-9_]+\Z")
+
+
+def _validate_uri_template(url_template: str) -> None:
+    """Validate that *url_template* uses only supported RFC 6570 syntax.
+
+    The skill binding implements only RFC 6570 Level-1 simple string expansion,
+    so the only expression form supported is a bare ``{var}`` where ``var`` is
+    one or more unreserved word characters (``[A-Za-z0-9_]``).
+
+    This rejects, with a clear :class:`ValueError`:
+
+    * Unbalanced or nested braces (e.g. ``{a``, ``a}``, ``{{a}}``).
+    * Empty expressions (``{}``).
+    * Operators / expression types (``{+var}``, ``{#var}``, ``{/var}``,
+      ``{.var}``, ``{;var}``, ``{?var}``, ``{&var}``, ``{=var}``, ``{,var}`` ...).
+    * Multi-variable / list expressions (``{a,b}``).
+    * Modifiers: explode (``{var*}``) and prefix / max-length (``{var:3}``).
+
+    Args:
+        url_template: The raw URI template string to validate.
+
+    Raises:
+        ValueError: If *url_template* contains unbalanced braces or any
+            expression that is not a supported Level-1 ``{var}``.
+    """
+    depth = 0
+    start = 0
+    for index, char in enumerate(url_template):
+        if char == "{":
+            if depth:  # already inside an expression -> nested/unbalanced
+                raise ValueError(
+                    f"Unbalanced '{{' in URI template '{url_template}': "
+                    "nested or unclosed '{' braces are not supported."
+                )
+            depth = 1
+            start = index + 1
+        elif char == "}":
+            if not depth:  # closing brace with no matching opener
+                raise ValueError(f"Unbalanced '}}' in URI template '{url_template}': a '}}' has no matching '{{'.")
+            expression = url_template[start:index]
+            if not _URI_TEMPLATE_VARNAME_RE.match(expression):
+                raise ValueError(
+                    f"Unsupported URI template expression '{{{expression}}}' in "
+                    f"'{url_template}'. Only RFC 6570 Level-1 '{{var}}' expressions "
+                    "(unreserved word characters, no operators or modifiers) are "
+                    "supported; operators (e.g. '{+var}', '{#var}', '{?var}'), "
+                    "list expressions (e.g. '{a,b}'), and modifiers "
+                    "(e.g. explode '{var*}' or prefix '{var:3}') are not."
+                )
+            depth = 0
+    if depth:  # reached end of string still inside an expression
+        raise ValueError(f"Unbalanced '{{' in URI template '{url_template}': a '{{' has no matching '}}'.")
 
 
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
@@ -3647,10 +3706,15 @@ class MCPSkillResourceTemplate:
                 for materialized skills.
 
         Raises:
-            ValueError: If ``url_template`` is empty or whitespace.
+            ValueError: If ``url_template`` is empty or whitespace, or contains
+                an unsupported RFC 6570 expression. Only Level-1 ``{var}``
+                expressions are supported; operators/modifiers (e.g. ``{+var}``,
+                ``{#var}``, ``{var*}``, ``{var:3}``), list expressions
+                (e.g. ``{a,b}``), and unbalanced/empty braces are rejected.
         """
         if not url_template or not url_template.strip():
             raise ValueError("url_template cannot be empty.")
+        _validate_uri_template(url_template)
 
         self.description = description
         self.url_template = url_template

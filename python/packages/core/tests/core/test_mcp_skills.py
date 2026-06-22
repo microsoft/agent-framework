@@ -711,6 +711,61 @@ class TestMCPSkillResourceTemplate:
         with pytest.raises(ValueError, match="url_template cannot be empty"):
             MCPSkillResourceTemplate(description="docs", url_template="   ", client=client)
 
+    def test_supported_level1_variable_template_accepted(self) -> None:
+        # The supported Level-1 ``{var}`` form must keep working exactly as before.
+        client = AsyncMock()
+        template = MCPSkillResourceTemplate(
+            description="docs", url_template="skill://docs/{product}/SKILL.md", client=client
+        )
+        assert template.variables == ["product"]
+        assert template.expand({"product": "widget"}) == "skill://docs/widget/SKILL.md"
+
+    def test_operator_expression_template_rejected(self) -> None:
+        # RFC 6570 reserved-expansion operator ``{+var}`` is not a Level-1 expression.
+        client = AsyncMock()
+        with pytest.raises(ValueError, match="Unsupported URI template expression"):
+            MCPSkillResourceTemplate(description="docs", url_template="skill://docs/{+product}/SKILL.md", client=client)
+
+    def test_prefix_modifier_expression_template_rejected(self) -> None:
+        # RFC 6570 prefix / max-length modifier ``{var:3}`` is unsupported.
+        client = AsyncMock()
+        with pytest.raises(ValueError, match="Unsupported URI template expression"):
+            MCPSkillResourceTemplate(
+                description="docs", url_template="skill://docs/{product:3}/SKILL.md", client=client
+            )
+
+    def test_explode_modifier_expression_template_rejected(self) -> None:
+        # RFC 6570 explode modifier ``{var*}`` is unsupported.
+        client = AsyncMock()
+        with pytest.raises(ValueError, match="Unsupported URI template expression"):
+            MCPSkillResourceTemplate(description="docs", url_template="skill://docs/{product*}/SKILL.md", client=client)
+
+    def test_list_expression_template_rejected(self) -> None:
+        # Multi-variable / list expressions ``{a,b}`` are above Level-1.
+        client = AsyncMock()
+        with pytest.raises(ValueError, match="Unsupported URI template expression"):
+            MCPSkillResourceTemplate(
+                description="docs", url_template="skill://docs/{product,section}/SKILL.md", client=client
+            )
+
+    def test_unbalanced_open_brace_template_rejected(self) -> None:
+        # A '{' with no matching '}' must be rejected, not silently left in place.
+        client = AsyncMock()
+        with pytest.raises(ValueError, match="Unbalanced"):
+            MCPSkillResourceTemplate(description="docs", url_template="skill://docs/{product/SKILL.md", client=client)
+
+    def test_unbalanced_close_brace_template_rejected(self) -> None:
+        # A '}' with no matching '{' must be rejected too.
+        client = AsyncMock()
+        with pytest.raises(ValueError, match="Unbalanced"):
+            MCPSkillResourceTemplate(description="docs", url_template="skill://docs/product}/SKILL.md", client=client)
+
+    def test_empty_braces_template_rejected(self) -> None:
+        # An empty expression ``{}`` has no variable name and is unsupported.
+        client = AsyncMock()
+        with pytest.raises(ValueError, match="Unsupported URI template expression"):
+            MCPSkillResourceTemplate(description="docs", url_template="skill://docs/{}/SKILL.md", client=client)
+
     @pytest.mark.asyncio
     async def test_materialize_produces_working_skill(self) -> None:
         client = _make_client(**{"skill://docs/widget/SKILL.md": _make_text_result(SAMPLE_SKILL_MD)})
