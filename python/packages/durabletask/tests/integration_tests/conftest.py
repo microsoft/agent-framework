@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.client import OrchestrationStatus
 
-from agent_framework_durabletask import DurableAIAgentClient
+from agent_framework_durabletask import DurableAIAgentClient, DurableWorkflowClient
 
 # Load environment variables from .env file
 load_dotenv(Path(__file__).parent / ".env")
@@ -499,3 +499,10 @@ def agent_client_factory(worker_process: dict[str, Any]) -> type[AgentClientFact
             return create_agent_client(cls.endpoint, cls.taskhub, max_poll_retries)
 
     return AgentClientFactory
+
+
+@pytest.fixture(scope="module")
+def workflow_client(worker_process: dict[str, Any]) -> DurableWorkflowClient:
+    """Create a DurableWorkflowClient bound to the current sample worker's task hub."""
+    dts_client = create_dts_client(worker_process["endpoint"], worker_process["taskhub"])
+    return DurableWorkflowClient(dts_client)

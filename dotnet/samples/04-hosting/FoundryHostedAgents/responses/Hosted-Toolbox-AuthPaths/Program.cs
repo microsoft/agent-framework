@@ -11,7 +11,7 @@
 //
 // Required environment variables:
 //   AZURE_AI_PROJECT_ENDPOINT (local-dev) OR FOUNDRY_PROJECT_ENDPOINT (hosted runtime)
-//                                     - Azure AI Foundry project endpoint. The Foundry hosted
+//                                     - Foundry project endpoint. The Foundry hosted
 //                                       runtime auto-injects FOUNDRY_PROJECT_ENDPOINT; locally
 //                                       set AZURE_AI_PROJECT_ENDPOINT (the AF-repo convention).
 //   TOOLBOX_NAME                      - Name of the Foundry Toolbox to load

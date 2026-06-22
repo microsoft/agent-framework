@@ -19,6 +19,7 @@ from agent_framework_durabletask import (
     THREAD_ID_HEADER,
     WAIT_FOR_RESPONSE_FIELD,
     WAIT_FOR_RESPONSE_HEADER,
+    WORKFLOW_ORCHESTRATOR_NAME,
     AgentEntity,
     AgentEntityStateProviderMixin,
     DurableAgentState,
@@ -26,7 +27,6 @@ from agent_framework_durabletask import (
 
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._entities import create_agent_entity
-from agent_framework_azurefunctions._workflow import SOURCE_ORCHESTRATOR
 
 FuncT = TypeVar("FuncT", bound=Callable[..., Any])
 
@@ -1342,8 +1342,8 @@ class TestAgentFunctionAppWorkflow:
 
         assert app.workflow is mock_workflow
 
-    def test_init_with_workflow_extracts_agents(self) -> None:
-        """Test that agents are extracted from workflow executors."""
+    def test_init_with_workflow_registers_agent_entity_by_executor_id(self) -> None:
+        """Workflow agent executors are registered as entities keyed by executor id."""
         from agent_framework import AgentExecutor
 
         mock_agent = Mock()
@@ -1351,18 +1351,31 @@ class TestAgentFunctionAppWorkflow:
 
         mock_executor = Mock(spec=AgentExecutor)
         mock_executor.agent = mock_agent
+        # Executor id intentionally differs from the agent name to exercise the
+        # identity fix: dispatch uses the executor id, so registration must too.
+        mock_executor.id = "custom-executor-id"
 
         mock_workflow = Mock()
-        mock_workflow.executors = {"WorkflowAgent": mock_executor}
+        mock_workflow.executors = {"custom-executor-id": mock_executor}
 
         with (
             patch.object(AgentFunctionApp, "_setup_executor_activity"),
             patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
-            patch.object(AgentFunctionApp, "_setup_agent_functions"),
+            patch.object(AgentFunctionApp, "_setup_agent_entity") as setup_entity,
         ):
             app = AgentFunctionApp(workflow=mock_workflow)
 
-        assert "WorkflowAgent" in app.agents
+        # The entity is registered under the executor id (the dispatch identity).
+        setup_entity.assert_called_once()
+        call_args = setup_entity.call_args.args
+        assert call_args[0] is mock_agent
+        assert call_args[1] == "custom-executor-id"
+
+        # Regression guard: the workflow agent must also be tracked on the app's
+        # normal registration surface, keyed by the executor id, so it appears in
+        # ``agents`` and is retrievable via ``get_agent`` (as the constructor documents).
+        assert "custom-executor-id" in app.agents
+        assert app.agents["custom-executor-id"] is mock_agent
 
     def test_init_with_workflow_calls_setup_methods(self) -> None:
         """Test that workflow setup methods are called."""
@@ -1396,8 +1409,8 @@ class TestAgentFunctionAppWorkflow:
         setup_exec.assert_not_called()
         setup_orch.assert_not_called()
 
-    def test_init_with_workflow_deduplicates_agents(self) -> None:
-        """Test that agents in both 'agents' and workflow are not double-registered."""
+    def test_init_with_workflow_and_explicit_agent_does_not_raise(self) -> None:
+        """An agent passed explicitly and present in the workflow registers without error."""
         from agent_framework import AgentExecutor
 
         mock_agent = Mock()
@@ -1405,6 +1418,7 @@ class TestAgentFunctionAppWorkflow:
 
         mock_executor = Mock(spec=AgentExecutor)
         mock_executor.agent = mock_agent
+        mock_executor.id = "SharedAgent"
 
         mock_workflow = Mock()
         mock_workflow.executors = {"SharedAgent": mock_executor}
@@ -1413,6 +1427,7 @@ class TestAgentFunctionAppWorkflow:
             patch.object(AgentFunctionApp, "_setup_executor_activity"),
             patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
             patch.object(AgentFunctionApp, "_setup_agent_functions"),
+            patch.object(AgentFunctionApp, "_setup_agent_entity"),
         ):
             # Same agent passed explicitly AND present in workflow — should not raise
             app = AgentFunctionApp(agents=[mock_agent], workflow=mock_workflow)
@@ -1450,285 +1465,99 @@ class TestAgentFunctionAppWorkflow:
         assert "instance-456" in url
 
 
-def _compute_state_updates(original_snapshot: dict[str, Any], current_state: dict[str, Any]) -> dict[str, Any]:
-    """Compute state updates by comparing current state against the original snapshot.
-
-    This mirrors the inlined logic in ``_app.py``'s ``executor_activity.run()``.
-    """
-    original_keys = set(original_snapshot.keys())
-    current_keys = set(current_state.keys())
-    updates: dict[str, Any] = {}
-    for key in current_keys:
-        if key not in original_keys or current_state[key] != original_snapshot.get(key):
-            updates[key] = current_state[key]
-    return updates
+# NOTE: State snapshot/diff tests were moved to durabletask once the activity
+# execution body was extracted into the host-agnostic execute_workflow_activity.
+# See packages/durabletask/tests/test_workflow_activity.py.
 
 
-class TestStateSnapshotDiff:
-    """Test suite for state snapshot diffing in activity execution.
+class TestWorkflowStatusOutputEncoding:
+    """The workflow status endpoint emits clean domain JSON for reconstructed outputs.
 
-    The activity executor snapshots state before execution and diffs against the
-    post-execution state to determine which keys were updated. These tests exercise
-    the production snapshot helper and the state-update diffing logic to ensure that
-    in-place mutations to nested objects (dicts, lists) are correctly detected as changes.
+    Reconstructed outputs (see ``deserialize_workflow_output``) may be framework
+    models or dataclasses; ``_json_default`` converts them via their own
+    serialization so the HTTP body is clean domain JSON rather than opaque
+    checkpoint-marker dicts or repr strings.
     """
 
-    def test_nested_dict_mutation_detected_in_diff(self) -> None:
-        """Test that mutating values inside a nested dict appears in the diff."""
-        from agent_framework._workflows._state import State
-
-        from agent_framework_azurefunctions._app import _create_state_snapshot
-
-        deserialized_state: dict[str, Any] = {
-            "Local.config": {"code": "", "enabled": False},
-            "simple_key": "simple_value",
-        }
-
-        original_snapshot = _create_state_snapshot(deserialized_state)
-
-        shared_state = State()
-        shared_state.import_state(deserialized_state)
-
-        config = shared_state.get("Local.config")
-        config["code"] = "SOMECODEXXX"
-        config["enabled"] = True
-
-        shared_state.commit()
-        current_state = shared_state.export_state()
-
-        updates = _compute_state_updates(original_snapshot, current_state)
-
-        assert "Local.config" in updates
-        assert updates["Local.config"]["code"] == "SOMECODEXXX"
-        assert updates["Local.config"]["enabled"] is True
-
-    def test_new_key_in_nested_dict_detected_in_diff(self) -> None:
-        """Test that adding a key to a nested dict appears in the diff."""
-        from agent_framework._workflows._state import State
-
-        from agent_framework_azurefunctions._app import _create_state_snapshot
-
-        deserialized_state: dict[str, Any] = {
-            "Local.data": {"existing": "value"},
-        }
-
-        original_snapshot = _create_state_snapshot(deserialized_state)
-
-        shared_state = State()
-        shared_state.import_state(deserialized_state)
-
-        data = shared_state.get("Local.data")
-        data["code"] = "NEW_CODE"
-
-        shared_state.commit()
-        current_state = shared_state.export_state()
-
-        updates = _compute_state_updates(original_snapshot, current_state)
-
-        assert "Local.data" in updates
-        assert updates["Local.data"]["code"] == "NEW_CODE"
-
-    def test_nested_list_mutation_detected_in_diff(self) -> None:
-        """Test that appending to a nested list appears in the diff."""
-        from agent_framework._workflows._state import State
-
-        from agent_framework_azurefunctions._app import _create_state_snapshot
-
-        deserialized_state: dict[str, Any] = {
-            "Local.items": [1, 2, 3],
-        }
-
-        original_snapshot = _create_state_snapshot(deserialized_state)
-
-        shared_state = State()
-        shared_state.import_state(deserialized_state)
-
-        items = shared_state.get("Local.items")
-        items.append(4)
-
-        shared_state.commit()
-        current_state = shared_state.export_state()
-
-        updates = _compute_state_updates(original_snapshot, current_state)
-
-        assert "Local.items" in updates
-        assert updates["Local.items"] == [1, 2, 3, 4]
-
-    def test_new_top_level_key_detected_in_diff(self) -> None:
-        """Test that setting a new top-level key appears in the diff."""
-        from agent_framework._workflows._state import State
-
-        from agent_framework_azurefunctions._app import _create_state_snapshot
-
-        deserialized_state: dict[str, Any] = {
-            "existing": "value",
-        }
-
-        original_snapshot = _create_state_snapshot(deserialized_state)
-
-        shared_state = State()
-        shared_state.import_state(deserialized_state)
-
-        shared_state.set("Local.code", "SOMECODEXXX")
-
-        shared_state.commit()
-        current_state = shared_state.export_state()
-
-        updates = _compute_state_updates(original_snapshot, current_state)
-
-        assert "Local.code" in updates
-        assert updates["Local.code"] == "SOMECODEXXX"
-
-    def test_unchanged_nested_state_produces_empty_diff(self) -> None:
-        """Test that unmodified nested state produces no updates."""
-        from agent_framework._workflows._state import State
-
-        from agent_framework_azurefunctions._app import _create_state_snapshot
-
-        deserialized_state: dict[str, Any] = {
-            "Local.config": {"code": "existing", "enabled": True},
-            "simple_key": "simple_value",
-        }
-
-        original_snapshot = _create_state_snapshot(deserialized_state)
-
-        shared_state = State()
-        shared_state.import_state(deserialized_state)
-
-        # No mutations performed
-        shared_state.commit()
-        current_state = shared_state.export_state()
-
-        updates = _compute_state_updates(original_snapshot, current_state)
-
-        assert updates == {}
-
-    def test_shallow_copy_would_miss_nested_mutations(self) -> None:
-        """Regression test: a shallow copy (dict()) shares nested refs, hiding mutations.
-
-        This reproduces the original bug from #4500 where ``dict(deserialized_state)``
-        was used instead of ``copy.deepcopy()``. With a shallow copy the snapshot and
-        the live state share nested objects, so in-place mutations appear in both and
-        the diff produces an empty update set.
-        """
-        from agent_framework._workflows._state import State
-
-        deserialized_state: dict[str, Any] = {
-            "Local.config": {"code": "", "enabled": False},
-        }
-
-        # Shallow copy (the OLD, buggy behaviour)
-        shallow_snapshot = dict(deserialized_state)
-
-        shared_state = State()
-        shared_state.import_state(deserialized_state)
-
-        config = shared_state.get("Local.config")
-        config["code"] = "SOMECODEXXX"
-        config["enabled"] = True
-
-        shared_state.commit()
-        current_state = shared_state.export_state()
-
-        # With a shallow copy the mutation leaks into the snapshot → empty diff
-        updates_shallow = _compute_state_updates(shallow_snapshot, current_state)
-        assert updates_shallow == {}, "shallow copy should miss nested mutations (demonstrating the bug)"
-
-    def test_create_state_snapshot_isolates_nested_objects(self) -> None:
-        """Verify _create_state_snapshot produces a deep copy that is mutation-proof.
-
-        This ensures the production snapshot helper is not equivalent to ``dict()``
-        and will correctly isolate nested objects so that later mutations are detected.
-        """
-        from agent_framework_azurefunctions._app import _create_state_snapshot
-
-        original: dict[str, Any] = {
-            "nested_dict": {"a": 1},
-            "nested_list": [1, 2, 3],
-        }
-
-        snapshot = _create_state_snapshot(original)
-
-        # Mutate the originals in place
-        original["nested_dict"]["a"] = 999
-        original["nested_list"].append(4)
-
-        # Snapshot must be unaffected
-        assert snapshot["nested_dict"]["a"] == 1
-        assert snapshot["nested_list"] == [1, 2, 3]
-
-    def test_executor_activity_detects_nested_state_mutations(self) -> None:
-        """Integration test: the full activity wrapper detects nested mutations.
-
-        This exercises the actual executor_activity function registered by
-        _setup_executor_activity to verify the production code path uses
-        _create_state_snapshot (deep copy) rather than dict() (shallow copy).
-        If the implementation regressed to using a shallow copy such as
-        ``dict(deserialized_state)``, this test would fail because in-place
-        mutations would leak into the snapshot and produce an empty diff.
-        """
-        mock_executor = Mock()
-        mock_executor.id = "test-exec"
-
-        async def mutate_nested_state(
-            message: Any,
-            source_executor_ids: Any,
-            state: Any,
-            runner_context: Any,
-        ) -> None:
-            config = state.get("Local.config")
-            config["code"] = "MUTATED"
-            config["enabled"] = True
-            state.commit()
-
-        mock_executor.execute = AsyncMock(side_effect=mutate_nested_state)
-
-        mock_workflow = Mock()
-        mock_workflow.executors = {"test-exec": mock_executor}
-
-        # Capture the activity function by making decorators pass-through
-        captured_activity: dict[str, Any] = {}
-
-        def passthrough_function_name(name: str) -> Callable[[FuncT], FuncT]:
-            def decorator(fn: FuncT) -> FuncT:
-                captured_activity["fn"] = fn
-                return fn
-
-            return decorator
-
-        def passthrough_activity_trigger(input_name: str) -> Callable[[FuncT], FuncT]:
-            def decorator(fn: FuncT) -> FuncT:
-                return fn
-
-            return decorator
-
-        with (
-            patch.object(AgentFunctionApp, "function_name", side_effect=passthrough_function_name),
-            patch.object(AgentFunctionApp, "activity_trigger", side_effect=passthrough_activity_trigger),
-            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
-        ):
-            AgentFunctionApp(workflow=mock_workflow)
-
-        assert "fn" in captured_activity, "activity function was not captured"
-
-        # Call the activity with nested state that the executor will mutate
-        input_data = json.dumps({
-            "message": "test",
-            "shared_state_snapshot": {
-                "Local.config": {"code": "", "enabled": False},
-            },
-            "source_executor_ids": [SOURCE_ORCHESTRATOR],
-        })
-
-        result = json.loads(captured_activity["fn"](input_data))
-
-        # The deep copy snapshot must detect the in-place nested mutations
-        assert "Local.config" in result["shared_state_updates"], (
-            "nested mutation not detected — snapshot may be using shallow copy"
-        )
-        updated_config = result["shared_state_updates"]["Local.config"]
-        assert updated_config["code"] == "MUTATED"
-        assert updated_config["enabled"] is True
+    def test_encodes_framework_model_via_to_dict(self) -> None:
+        from agent_framework_azurefunctions._app import _json_default
+
+        response = AgentResponse(messages=[Message(role="assistant", contents=["hello"])])
+
+        encoded = _json_default(response)
+
+        assert encoded == response.to_dict()
+        # The result must be JSON-serializable (no marker dicts, no objects).
+        assert "hello" in json.dumps(encoded)
+
+    def test_encodes_dataclass_via_asdict(self) -> None:
+        from dataclasses import dataclass
+
+        from agent_framework_azurefunctions._app import _json_default
+
+        @dataclass
+        class Decision:
+            approved: bool
+            note: str
+
+        encoded = _json_default(Decision(approved=True, note="ok"))
+
+        assert encoded == {"approved": True, "note": "ok"}
+
+    def test_falls_back_to_str_for_plain_objects(self) -> None:
+        from agent_framework_azurefunctions._app import _json_default
+
+        class Opaque:
+            def __str__(self) -> str:
+                return "opaque-value"
+
+        assert _json_default(Opaque()) == "opaque-value"
+
+
+class TestWorkflowOrchestrationScoping:
+    """Scoping of the workflow status/respond endpoints to the workflow orchestrator.
+
+    Both endpoints address durable instances by ID only, but the durable client resolves
+    IDs across every orchestration in the task hub (agent entities, user-registered
+    orchestrations, other apps on the same hub). ``_is_workflow_orchestration`` gates the
+    endpoints so a leaked instance ID for a different orchestration is treated as
+    "not found" instead of leaking its status/HITL details or accepting injected events.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            WORKFLOW_ORCHESTRATOR_NAME,
+            WORKFLOW_ORCHESTRATOR_NAME.upper(),
+            "Workflow_Orchestrator",  # case-insensitive: must match
+        ],
+    )
+    def test_accepts_matching_workflow_orchestration(self, name: str) -> None:
+        status = Mock()
+        status.name = name
+        assert AgentFunctionApp._is_workflow_orchestration(status) is True
+
+    def test_rejects_none_status(self) -> None:
+        # client.get_status returns None when no instance resolves for the ID.
+        assert AgentFunctionApp._is_workflow_orchestration(None) is False
+
+    def test_rejects_status_without_name(self) -> None:
+        status = Mock()
+        status.name = None
+        assert AgentFunctionApp._is_workflow_orchestration(status) is False
+
+    @pytest.mark.parametrize(
+        "other_name",
+        [
+            "SomeUserOrchestration",
+            "dafx-WeatherAgent",
+            "workflow_orchestrator_v2",
+        ],
+    )
+    def test_rejects_other_orchestration_name(self, other_name: str) -> None:
+        status = Mock()
+        status.name = other_name
+        assert AgentFunctionApp._is_workflow_orchestration(status) is False
 
 
 if __name__ == "__main__":

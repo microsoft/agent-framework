@@ -24,6 +24,7 @@ from .._skills import SkillsProvider
 from ._background_agents import BackgroundAgentsProvider
 from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
 from ._file_memory import FileMemoryProvider
+from ._loop import DEFAULT_MAX_ITERATIONS, AgentLoopMiddleware
 from ._mode import AgentModeProvider
 from ._todo import TodoProvider
 from ._tool_approval import ToolApprovalMiddleware
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from .._compaction import CompactionStrategy, TokenizerProtocol
     from .._middleware import MiddlewareTypes
     from .._tools import ToolTypes
+    from ._loop import NextMessageCallable, ShouldContinueCallable
     from ._tool_approval import ToolApprovalRuleCallback
 
 logger = logging.getLogger(__name__)
@@ -269,6 +271,9 @@ def create_harness_agent(
     disable_web_search: bool = False,
     disable_tool_auto_approval: bool = False,
     auto_approval_rules: Sequence[ToolApprovalRuleCallback] | None = None,
+    loop_should_continue: ShouldContinueCallable | None = None,
+    loop_next_message: NextMessageCallable | None = None,
+    loop_max_iterations: int | None = DEFAULT_MAX_ITERATIONS,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
@@ -289,6 +294,7 @@ def create_harness_agent(
     - **BackgroundAgentsProvider** — delegate work to background sub-agents
     - **Tool approval** — "don't ask again" standing approval rules plus heuristic
       auto-approval callbacks
+    - **Looping** — re-run the agent until a ``should_continue`` predicate is satisfied
     - **OpenTelemetry** — observability via ``AgentTelemetryLayer``
 
     Each feature can be disabled or customized via keyword arguments.
@@ -403,6 +409,19 @@ def create_harness_agent(
             content and returns ``True`` to approve it. Rules are evaluated after standing rules
             (derived from prior user approvals) but before prompting the user. Only used when
             ``disable_tool_auto_approval`` is False.
+        loop_should_continue: Optional predicate that enables the looping middleware. When provided, the
+            agent is re-run in a loop (via :class:`~agent_framework.AgentLoopMiddleware`, wired as
+            the outermost middleware so each iteration is a full agent run including tool approval)
+            for as long as the predicate returns ``True``, up to ``loop_max_iterations``. If an
+            iteration returns a pending tool-approval request, the loop stops and returns it so the
+            caller can approve before continuing. When None (default), no loop is added.
+        loop_next_message: Optional callable controlling the input for the next loop iteration.
+            Only takes effect when ``loop_should_continue`` is set (otherwise no loop is added and
+            this is ignored).
+        loop_max_iterations: Safety cap on the number of loop iterations. ``None`` means unbounded;
+            a positive integer caps the loop (defaults to the loop middleware's default cap). Only
+            takes effect when ``loop_should_continue`` is set (otherwise no loop is added and this
+            is ignored).
         otel_provider_name: Custom OpenTelemetry provider/source name for telemetry.
         context_providers: Additional context providers to include after the built-in ones.
         middleware: Additional middleware to include.
@@ -500,9 +519,21 @@ def create_harness_agent(
     # placed first so it sits outermost: it intercepts inbound "always approve" responses and
     # outbound approval requests at the caller boundary, and its re-invocation loop re-runs any
     # user-supplied middleware. ToolApprovalMiddleware requires an AgentSession at run time.
+    # When should_continue is supplied, the loop is prepended ahead of tool approval so it sits
+    # outermost of all: each loop iteration is a full agent run (including tool approval), and the
+    # loop's approval escape hatch returns any pending approval request to the caller.
     assembled_middleware: list[MiddlewareTypes] = []
     if not disable_tool_auto_approval:
         assembled_middleware.append(ToolApprovalMiddleware(auto_approval_rules=auto_approval_rules))
+    if loop_should_continue is not None:
+        assembled_middleware.insert(
+            0,
+            AgentLoopMiddleware(
+                loop_should_continue,
+                max_iterations=loop_max_iterations,
+                next_message=loop_next_message,
+            ),
+        )
     if middleware:
         assembled_middleware.extend(middleware)
 

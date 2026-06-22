@@ -41,7 +41,7 @@ async def todo_loop(client: FoundryChatClient) -> None:
     # 2. ``todos_remaining`` builds a ``should_continue`` predicate that returns True while any todo
     #    item is still open. ``max_iterations`` guarantees the loop stops even if the agent stalls.
     loop = AgentLoopMiddleware(
-        should_continue=todos_remaining(todo_provider),
+        should_continue=todos_remaining(),
         max_iterations=6,
     )
 

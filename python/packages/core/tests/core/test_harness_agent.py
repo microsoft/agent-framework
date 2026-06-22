@@ -835,3 +835,153 @@ def test_create_harness_agent_no_middleware_when_tool_approval_disabled_and_none
         disable_tool_auto_approval=True,
     )
     assert agent.middleware is None
+
+
+# --- Loop Wiring Tests ---
+
+
+def _find_loop_middleware(agent: Any) -> Any:
+    from agent_framework import AgentLoopMiddleware
+
+    for mw in agent.middleware or []:
+        if isinstance(mw, AgentLoopMiddleware):
+            return mw
+    return None
+
+
+def test_create_harness_agent_no_loop_by_default() -> None:
+    """No loop middleware should be wired when loop_should_continue is not provided."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+    )
+    assert _find_loop_middleware(agent) is None
+
+
+def test_create_harness_agent_wires_loop_when_should_continue_given() -> None:
+    """Passing loop_should_continue should add an AgentLoopMiddleware as the outermost middleware."""
+    from agent_framework import AgentLoopMiddleware
+
+    def _should_continue(**kwargs: Any) -> bool:
+        return False
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        loop_should_continue=_should_continue,
+    )
+    assert agent.middleware is not None
+    assert isinstance(agent.middleware[0], AgentLoopMiddleware)
+    assert agent.middleware[0].should_continue is _should_continue
+
+
+def test_create_harness_agent_loop_outermost_of_tool_approval_and_user_middleware() -> None:
+    """The loop should sit outermost: loop, then tool approval, then user middleware."""
+    from agent_framework import AgentLoopMiddleware, AgentMiddleware, ToolApprovalMiddleware
+
+    class _CustomMiddleware(AgentMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            await call_next()
+
+    custom = _CustomMiddleware()
+
+    def _should_continue(**kwargs: Any) -> bool:
+        return False
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        loop_should_continue=_should_continue,
+        middleware=[custom],
+    )
+    assert agent.middleware is not None
+    assert isinstance(agent.middleware[0], AgentLoopMiddleware)
+    assert isinstance(agent.middleware[1], ToolApprovalMiddleware)
+    assert agent.middleware.index(custom) > agent.middleware.index(agent.middleware[1])
+
+
+def test_create_harness_agent_forwards_next_message_to_loop() -> None:
+    """loop_next_message should be forwarded to the loop middleware."""
+
+    def _should_continue(**kwargs: Any) -> bool:
+        return False
+
+    def _next_message(**kwargs: Any) -> Any:
+        return "keep going"
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        loop_should_continue=_should_continue,
+        loop_next_message=_next_message,
+    )
+    loop = _find_loop_middleware(agent)
+    assert loop is not None
+    assert loop.next_message is _next_message
+
+
+def test_create_harness_agent_uses_default_max_iterations_when_omitted() -> None:
+    """When loop_max_iterations is omitted, the loop keeps the middleware's default cap."""
+    from agent_framework._harness._loop import DEFAULT_MAX_ITERATIONS
+
+    def _should_continue(**kwargs: Any) -> bool:
+        return False
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        loop_should_continue=_should_continue,
+    )
+    loop = _find_loop_middleware(agent)
+    assert loop is not None
+    assert loop.max_iterations == DEFAULT_MAX_ITERATIONS
+
+
+def test_create_harness_agent_forwards_max_iterations_to_loop() -> None:
+    """loop_max_iterations should be forwarded to the loop middleware, including None (unbounded)."""
+
+    def _should_continue(**kwargs: Any) -> bool:
+        return False
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        loop_should_continue=_should_continue,
+        loop_max_iterations=3,
+    )
+    loop = _find_loop_middleware(agent)
+    assert loop is not None
+    assert loop.max_iterations == 3
+
+    unbounded = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        loop_should_continue=_should_continue,
+        loop_max_iterations=None,
+    )
+    unbounded_loop = _find_loop_middleware(unbounded)
+    assert unbounded_loop is not None
+    assert unbounded_loop.max_iterations is None
+
+
+def test_create_harness_agent_next_message_and_max_iterations_ignored_without_should_continue() -> None:
+    """Without loop_should_continue no loop is added, so loop params are simply ignored."""
+
+    def _next_message(**kwargs: Any) -> Any:
+        return "keep going"
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        loop_next_message=_next_message,
+        loop_max_iterations=5,
+    )
+    assert _find_loop_middleware(agent) is None
