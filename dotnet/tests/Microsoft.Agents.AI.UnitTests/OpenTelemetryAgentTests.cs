@@ -1054,6 +1054,61 @@ public class OpenTelemetryAgentTests
         Assert.Contains(activities, a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task AutoWireChatClient_EnableSensitiveData_PropagatedToInnerChatClient_Async(bool enableSensitiveData, bool streaming)
+    {
+        // Regression test for: when EnableSensitiveData is set on OpenTelemetryAgent, the auto-wired
+        // inner OpenTelemetryChatClient must also have EnableSensitiveData propagated to it. Previously,
+        // GetRunOptionsWithChatClientWiring created the inner client without passing EnableSensitiveData,
+        // so the inner chat span would never emit gen_ai.input.messages / gen_ai.output.messages even
+        // when the caller explicitly set EnableSensitiveData = true.
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var fakeChatClient = new AutoWireTestChatClient();
+        var inner = new ChatClientAgent(fakeChatClient);
+        using var agent = new OpenTelemetryAgent(inner, sourceName) { EnableSensitiveData = enableSensitiveData };
+
+        if (streaming)
+        {
+            await foreach (var _ in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "hello")]))
+            {
+            }
+        }
+        else
+        {
+            _ = await agent.RunAsync([new ChatMessage(ChatRole.User, "hello")]);
+        }
+
+        // There should be 2 activities: the invoke_agent span and the inner chat span.
+        Assert.Equal(2, activities.Count);
+
+        var chatSpan = activities.Single(a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
+        var chatTags = chatSpan.Tags.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+        if (enableSensitiveData)
+        {
+            // When EnableSensitiveData=true on the outer agent, the auto-wired inner client must also
+            // capture message content in the chat span.
+            Assert.True(chatTags.ContainsKey("gen_ai.input.messages"), "gen_ai.input.messages must be present in the inner chat span when EnableSensitiveData=true");
+            Assert.True(chatTags.ContainsKey("gen_ai.output.messages"), "gen_ai.output.messages must be present in the inner chat span when EnableSensitiveData=true");
+        }
+        else
+        {
+            // By default (EnableSensitiveData=false) message content must NOT be captured.
+            Assert.False(chatTags.ContainsKey("gen_ai.input.messages"), "gen_ai.input.messages must NOT be present in the inner chat span when EnableSensitiveData=false");
+            Assert.False(chatTags.ContainsKey("gen_ai.output.messages"), "gen_ai.output.messages must NOT be present in the inner chat span when EnableSensitiveData=false");
+        }
+    }
+
     private sealed class AutoWireTestChatClient : IChatClient
     {
         public Action<IEnumerable<ChatMessage>, ChatOptions?>? OnGetResponseAsync { get; set; }
