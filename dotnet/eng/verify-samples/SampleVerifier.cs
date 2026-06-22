@@ -3,7 +3,6 @@
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 
 namespace VerifySamples;
 
