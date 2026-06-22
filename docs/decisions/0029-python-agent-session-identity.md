@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 contact: eavanvalkenburg
 date: 2026-06-19
 deciders: eavanvalkenburg, moonbox3, TaoChenOSU, chetantoshnival
