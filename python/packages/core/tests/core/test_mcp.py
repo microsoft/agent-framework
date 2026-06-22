@@ -122,6 +122,113 @@ async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration
     assert tool.functions[0].approval_mode == "always_require"
 
 
+async def test_allowed_tools_does_not_authorize_normalized_remote_name_collision() -> None:
+    """A normalized/local allowlist match must not authorize a different raw remote tool."""
+    tool = MCPTool(name="test_server", allowed_tools=["delete-file"])  # type: ignore[abstract]
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="delete/file",
+            description="Delete a file",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert [function.name for function in tool._functions] == ["delete-file"]
+    assert tool.functions == []
+
+
+async def test_load_tools_rejects_colliding_normalized_tool_names() -> None:
+    """A remote MCP server must not choose which raw tool backs a colliding local name."""
+    tool = MCPTool(name="test_server", allowed_tools=["delete-file"])  # type: ignore[abstract]
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="delete/file",
+            description="Unauthorized tool",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        types.Tool(
+            name="delete-file",
+            description="Authorized tool",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    with pytest.raises(ToolExecutionException, match="map to the same local function name"):
+        await tool.load_tools()
+
+
+async def test_allowed_tools_exact_raw_name_allows_normalized_function_name() -> None:
+    """An exact raw remote allowlist entry still exposes that raw tool, regardless of local normalization."""
+    tool = MCPTool(name="test_server", allowed_tools=["delete/file"])  # type: ignore[abstract]
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="delete/file",
+            description="Delete a file",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert [function.name for function in tool.functions] == ["delete-file"]
+    assert tool.functions[0].additional_properties is not None
+    assert tool.functions[0].additional_properties["_mcp_remote_name"] == "delete/file"
+
+
+async def test_approval_mode_does_not_match_normalized_colliding_name() -> None:
+    """Approval rules should not apply to a different raw remote tool through normalization."""
+    tool = MCPTool(  # type: ignore[abstract]
+        name="test_server",
+        approval_mode={"always_require_approval": ["delete-file"]},
+    )
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="delete/file",
+            description="Delete a file",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert tool._functions[0].name == "delete-file"
+    assert tool._functions[0].approval_mode == "never_require"
+
+
 async def test_load_prompts_with_tool_name_prefix() -> None:
     """Prefixed MCP prompt names should be exposed with the configured prefix."""
     tool = MCPTool(name="docs", tool_name_prefix="docs")  # type: ignore[abstract]
@@ -3339,6 +3446,7 @@ async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
     none_schema_tool.name = "none_schema_tool"
     none_schema_tool.description = "A tool with None inputSchema"
     none_schema_tool.inputSchema = None
+    none_schema_tool.meta = None
     page.tools.append(none_schema_tool)
     page.nextCursor = None
 
@@ -4777,7 +4885,7 @@ async def test_mcp_tool_call_tool_forwards_tool_list_meta():
 
 
 async def test_mcp_tool_call_tool_user_meta_merges_with_tool_list_meta():
-    """User-provided _meta should be sent as MCP request metadata, not tool arguments."""
+    """Tools/list _meta should win over caller-provided _meta on conflicts."""
     from opentelemetry import trace
 
     tool_meta = {"from_tool": "tool-value", "shared": "tool-value"}
@@ -4817,9 +4925,151 @@ async def test_mcp_tool_call_tool_user_meta_merges_with_tool_list_meta():
         assert call_kwargs["meta"] == {
             "from_tool": "tool-value",
             "from_user": "user-value",
-            "shared": "user-value",
+            "shared": "tool-value",
         }
         assert user_meta == {"from_user": "user-value", "shared": "user-value"}
+
+
+async def test_mcp_tool_function_invocation_strips_model_supplied_meta() -> None:
+    """Model-supplied _meta should not become MCP request metadata."""
+    from opentelemetry import trace
+
+    class TestServer(MCPTool):
+        async def connect(self) -> None:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+
+        with (
+            trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)),
+            patch("agent_framework._mcp.propagate.inject", side_effect=lambda carrier: None),
+        ):
+            await server.functions[0].invoke(
+                arguments={"param": "test_value", "_meta": {"attacker.example/route": "evil"}}
+            )
+
+        call_kwargs = server.session.call_tool.call_args.kwargs  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert call_kwargs["arguments"] == {"param": "test_value"}
+        assert call_kwargs["meta"] is None
+
+
+async def test_mcp_tool_function_invocation_preserves_trusted_meta_over_model_meta() -> None:
+    """Trusted function-invocation _meta should be restored after model arguments are merged."""
+    from opentelemetry import trace
+
+    trusted_meta = {"trusted.example/route": "trusted"}
+
+    class TestServer(MCPTool):
+        async def connect(self) -> None:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+
+        context = FunctionInvocationContext(
+            function=server.functions[0],
+            arguments={},
+            kwargs={"_meta": trusted_meta},
+        )
+        with (
+            trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)),
+            patch("agent_framework._mcp.propagate.inject", side_effect=lambda carrier: None),
+        ):
+            await server.functions[0].invoke(
+                arguments={"param": "test_value", "_meta": {"attacker.example/route": "evil"}},
+                context=context,
+            )
+
+        call_kwargs = server.session.call_tool.call_args.kwargs  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert call_kwargs["arguments"] == {"param": "test_value"}
+        assert call_kwargs["meta"] == trusted_meta
+
+
+async def test_mcp_tool_call_tool_otel_meta_overrides_user_meta_but_not_tool_list_meta() -> None:
+    """OpenTelemetry should override caller metadata while tools/list metadata remains most trusted."""
+    from opentelemetry import trace
+
+    tool_meta = {"traceparent": "tool-traceparent", "from_tool": "tool-value"}
+    user_meta = {"traceparent": "user-traceparent", "from_user": "user-value"}
+
+    class TestServer(MCPTool):
+        async def connect(self) -> None:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+                            _meta=tool_meta,
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+
+        with (
+            trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)),
+            patch(
+                "agent_framework._mcp.propagate.inject",
+                side_effect=lambda carrier: carrier.update({"traceparent": "otel-traceparent"}),
+            ),
+        ):
+            await server.call_tool("test_tool", param="test_value", _meta=user_meta)
+
+        call_kwargs = server.session.call_tool.call_args.kwargs  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert call_kwargs["meta"] == {
+            "traceparent": "tool-traceparent",
+            "from_tool": "tool-value",
+            "from_user": "user-value",
+        }
 
 
 async def test_mcp_streamable_http_tool_hook_not_duplicated_on_repeated_get_mcp_client():
@@ -6473,6 +6723,28 @@ def test_prepare_call_kwargs_extracts_meta() -> None:
     assert filtered == {"param": "v"}
     assert meta is not None
     assert meta.get("trace") == "abc"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "_leading-underscore",
+        "trailing-underscore_",
+        "1bad.example/name",
+        "bad..example/name",
+        "bad.example/_name",
+        "bad.example/name_",
+    ],
+)
+def test_prepare_call_kwargs_rejects_invalid_meta_key_names(key: str) -> None:
+    server = MCPTool(name="test_server")  # type: ignore[abstract]
+    server._tool_param_names_by_name = {"test_tool": {"param"}}
+
+    with pytest.raises(ToolExecutionException, match="Invalid MCP _meta key name"):
+        server._prepare_call_kwargs(
+            "test_tool",
+            {"param": "v", "_meta": {key: "value"}},
+        )
 
 
 async def test_call_tool_forwards_only_declared_arguments() -> None:
