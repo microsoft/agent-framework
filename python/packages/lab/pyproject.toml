@@ -57,14 +57,14 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv==0.11.17",
+    "uv==0.11.21",
     "ruff==0.15.15",
     "pytest==9.1.0",
     "mypy==1.20.0",
     "pyright==1.1.410",
     #tasks
     "poethepoet==0.46.0",
-    "rich>=13.7.1,<15.0.0",
+    "rich==13.9.4",
     "tomli==2.4.1",
     "tomli-w==1.2.0",
     # tau2 from source (not available on PyPI)
