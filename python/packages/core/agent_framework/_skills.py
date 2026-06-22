@@ -1583,8 +1583,6 @@ class FileSkillFilterContext:
             )
     """
 
-    __slots__ = ("relative_file_path", "skill_name")
-
     def __init__(self, skill_name: str, relative_file_path: str) -> None:
         """Initialize a FileSkillFilterContext.
 

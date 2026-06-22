@@ -1731,14 +1731,14 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         # depth=1: only root
         source1 = FileSkillsSource(str(tmp_path), search_depth=1)
         skills1 = await source1.get_skills()
-        names1 = [r.name for r in skills1[0]._resources]
+        names1 = [r.name for r in skills1[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "root.md" in names1
         assert "a/level1.md" not in names1
 
         # depth=2 (default): root + one level
         source2 = FileSkillsSource(str(tmp_path))
         skills2 = await source2.get_skills()
-        names2 = [r.name for r in skills2[0]._resources]
+        names2 = [r.name for r in skills2[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "root.md" in names2
         assert "a/level1.md" in names2
         assert "a/b/level2.md" not in names2
@@ -1746,7 +1746,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         # depth=3: finds all
         source3 = FileSkillsSource(str(tmp_path), search_depth=3)
         skills3 = await source3.get_skills()
-        names3 = [r.name for r in skills3[0]._resources]
+        names3 = [r.name for r in skills3[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "a/b/level2.md" in names3
 
     async def test_resource_filter_excludes_files(self, tmp_path: Path) -> None:
@@ -1857,15 +1857,15 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         assert "child-skill" in skills_dict
 
         # Parent does NOT pick up child's files
-        parent_resources = [r.name for r in skills_dict["parent-skill"]._resources]
-        parent_scripts = [s.name for s in skills_dict["parent-skill"]._scripts]
+        parent_resources = [r.name for r in skills_dict["parent-skill"]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        parent_scripts = [s.name for s in skills_dict["parent-skill"]._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "parent-resource.md" in parent_resources
         assert "child-skill/child-resource.md" not in parent_resources
         assert "child-skill/child-script.py" not in parent_scripts
 
         # Child has its own files
-        child_resources = [r.name for r in skills_dict["child-skill"]._resources]
-        child_scripts = [s.name for s in skills_dict["child-skill"]._scripts]
+        child_resources = [r.name for r in skills_dict["child-skill"]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        child_scripts = [s.name for s in skills_dict["child-skill"]._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "child-resource.md" in child_resources
         assert "child-script.py" in child_scripts
 
