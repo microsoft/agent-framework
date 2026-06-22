@@ -46,8 +46,6 @@ public sealed class AgentModeProvider : AIContextProvider
         ## Agent Mode
 
         - You can operate in different modes. Depending on the mode you are in, you will be required to follow different processes.
-        - You must check the current mode after any user input, since the user may have changed the mode themselves,
-          e.g. the user may have switched to 'plan' mode after a previous research task finished in 'execute' mode, meaning they want to review a plan first before execution.
 
         Use the mode_get tool to check your current operating mode.
         Use the mode_set tool to switch between modes as your work progresses. Only use mode_set if the user explicitly instructs/allows you to change modes.
@@ -84,9 +82,12 @@ public sealed class AgentModeProvider : AIContextProvider
         new(
             "execute",
             """
-            Use this mode when carrying out approved plans. Work autonomously using your best judgment — do not ask the user questions or wait for feedback.
-            
-            Process to follow when in execute mode:
+            Determine the type of ask:
+            1. Simple question that doesn't require any further work to answer.
+            2. Any other work, including complex user request that requires a multi-step process to satisfy.
+
+            If 1. just answer the question directly.
+            If 2. Work autonomously using your best judgment — do not ask the user questions or wait for feedback and follow the following process:
             1. If you don't have a plan or tasks yet, analyze the user request and create tasks and a plan. (**Skip this step if you came from plan mode**)
             2. Work autonomously — use your best judgment to make decisions and keep progressing without asking the user questions. The goal is to have a complete, useful result ready when the user returns.
             3. If you encounter ambiguity or an unexpected situation during execution, choose the most reasonable option, note your choice, and keep going.
