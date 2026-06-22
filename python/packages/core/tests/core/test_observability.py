@@ -335,6 +335,85 @@ async def test_chat_client_streaming_observability_with_instructions(
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_chat_client_streaming_sync_setup_span_is_parented_to_chat_span(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Regression guard for the streaming sync-setup parenting gap.
+
+    When a chat client subclass creates spans inside ``_inner_get_response`` during
+    the synchronous setup phase (before returning the ``ResponseStream``), those
+    spans must be nested under the chat-completion span produced by
+    ``ChatTelemetryLayer``. The chat span is created via ``_start_streaming_span``
+    (which does not attach the span as current) and ``with_pull_context_manager``
+    only activates the span around each pull, so the synchronous setup window
+    would otherwise see the chat span existing-but-not-current. ``ChatTelemetryLayer``
+    therefore wraps the synchronous ``super_get_response(...)`` call in
+    ``_activate_span(span)`` so subclass spans opened during setup parent correctly.
+    """
+    from agent_framework.observability import get_tracer
+
+    class SyncSetupChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: Sequence[Message], stream: bool, options: Mapping[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            assert stream is True, "this fixture only exercises the streaming path"
+
+            # Synchronous setup the subclass performs before the stream object is
+            # constructed. Real clients do payload building, auth resolution, etc.
+            # here. We model that as a child span the subclass wants to nest under
+            # the chat-completion span.
+            with get_tracer().start_as_current_span("subclass_sync_setup") as setup_span:
+                setup_span.set_attribute("subclass.work", "payload_build")
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("hi")], role="assistant", finish_reason="stop")
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                return ChatResponse.from_updates(updates)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+    client = SyncSetupChatClient()
+    span_exporter.clear()
+
+    stream = client.get_response(stream=True, messages=[Message("user", ["go"])], options={"model": "Test"})
+    async for _update in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    chat_spans = [s for s in spans if s.name == "chat Test"]
+    setup_spans = [s for s in spans if s.name == "subclass_sync_setup"]
+
+    assert len(chat_spans) == 1, f"expected exactly one chat span, got {[s.name for s in spans]}"
+    assert len(setup_spans) == 1, f"expected exactly one setup span, got {[s.name for s in spans]}"
+
+    chat_span = chat_spans[0]
+    setup_span = setup_spans[0]
+
+    # Both spans must be part of the same trace.
+    assert setup_span.context is not None
+    assert chat_span.context is not None
+    assert setup_span.context.trace_id == chat_span.context.trace_id, (
+        "setup span ended up in a different trace from the chat span; "
+        "they should share the trace produced by ChatTelemetryLayer"
+    )
+
+    # And the chat span must be the parent of the setup span.
+    assert setup_span.parent is not None, (
+        "subclass setup span has no parent; expected it to be a child of the chat span"
+    )
+    assert setup_span.parent.span_id == chat_span.context.span_id, (
+        "subclass setup span is not parented to the chat span "
+        f"(parent={setup_span.parent.span_id:x}, chat={chat_span.context.span_id:x}); "
+        "this is the streaming sync-setup parenting gap"
+    )
+
+
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_chat_client_observability_with_system_message_and_instructions(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
@@ -580,6 +659,96 @@ async def test_agent_streaming_response_with_diagnostics_enabled(
     assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     if enable_sensitive_data:
         assert span.attributes.get(OtelAttr.OUTPUT_MESSAGES) is not None  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]  # Streaming, so no usage yet
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_agent_streaming_sync_setup_span_is_parented_to_agent_span(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Regression guard for the streaming sync-setup parenting gap in ``AgentTelemetryLayer``.
+
+    Mirrors :func:`test_chat_client_streaming_sync_setup_span_is_parented_to_chat_span`
+    but at the agent layer. When an agent's ``run(stream=True)`` synchronously
+    constructs the ``ResponseStream`` (rather than returning a coroutine that
+    the framework wraps via ``ResponseStream.from_awaitable``), any spans the
+    subclass opens during that synchronous setup must still be nested under
+    the agent invoke span produced by ``AgentTelemetryLayer``.
+
+    The agent invoke span is created via ``_start_streaming_span`` (which does
+    not attach the span as current) and ``with_pull_context_manager`` only
+    activates the span around each pull, so the synchronous setup window would
+    otherwise see the agent span existing-but-not-current. ``BaseAgent.run``
+    happens to side-step this by always wrapping its streaming path in
+    ``from_awaitable``, but subclasses that return a stream synchronously do not
+    get the same protection. ``AgentTelemetryLayer`` therefore wraps the
+    synchronous ``execute()`` call in ``_activate_span(span)`` so subclass spans
+    opened during setup parent correctly regardless of the return shape.
+    """
+    from agent_framework import AgentResponse, AgentResponseUpdate
+    from agent_framework.observability import get_tracer
+
+    class _SyncSetupAgent:
+        AGENT_PROVIDER_NAME = "test_agent_system"
+
+        def __init__(self) -> None:
+            self.id = "sync_setup_agent_id"
+            self.name = "sync_setup_agent"
+            self.description = "Agent that performs synchronous setup before streaming."
+            self.default_options: dict[str, Any] = {"model": "TestModel"}
+
+        def run(self, messages=None, *, session=None, stream=False, **kwargs):  # type: ignore[no-untyped-def]
+            assert stream is True, "this fixture only exercises the streaming path"
+
+            # Synchronous setup the agent subclass performs before constructing
+            # the ResponseStream (e.g. resolving credentials, building payload,
+            # opening transport). Real subclasses may want spans here to nest
+            # under the agent invoke span.
+            with get_tracer().start_as_current_span("agent_subclass_sync_setup") as setup_span:
+                setup_span.set_attribute("agent.subclass.work", "payload_build")
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+    class SyncSetupAgent(AgentTelemetryLayer, _SyncSetupAgent):  # type: ignore
+        pass
+
+    agent = SyncSetupAgent()
+    span_exporter.clear()
+
+    stream = agent.run("go", stream=True)
+    async for _update in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.name == "invoke_agent sync_setup_agent"]
+    setup_spans = [s for s in spans if s.name == "agent_subclass_sync_setup"]
+
+    assert len(agent_spans) == 1, f"expected exactly one agent span, got {[s.name for s in spans]}"
+    assert len(setup_spans) == 1, f"expected exactly one setup span, got {[s.name for s in spans]}"
+
+    agent_span = agent_spans[0]
+    setup_span = setup_spans[0]
+
+    # Both spans must be part of the same trace.
+    assert setup_span.context is not None
+    assert agent_span.context is not None
+    assert setup_span.context.trace_id == agent_span.context.trace_id, (
+        "setup span ended up in a different trace from the agent span; "
+        "they should share the trace produced by AgentTelemetryLayer"
+    )
+
+    # And the agent span must be the parent of the setup span.
+    assert setup_span.parent is not None, (
+        "agent subclass setup span has no parent; expected it to be a child of the agent span"
+    )
+    assert setup_span.parent.span_id == agent_span.context.span_id, (
+        "agent subclass setup span is not parented to the agent span "
+        f"(parent={setup_span.parent.span_id:x}, agent={agent_span.context.span_id:x}); "
+        "this is the streaming sync-setup parenting gap at the agent layer"
+    )
 
 
 async def test_function_call_with_error_handling(span_exporter: InMemorySpanExporter):
@@ -4723,6 +4892,40 @@ async def test_with_pull_context_manager_wraps_stream_resolution_via_await():
 
     await stream  # Triggers _resolve_stream_with_pull_contexts via __await__
 
+    assert "resolving" in events
+    resolve_index = events.index("resolving")
+    assert events[resolve_index - 1] == "enter"  # Pull context active during resolution
+
+
+async def test_with_pull_context_manager_wraps_stream_resolution_via_get_final_response():
+    """``get_final_response`` resolves the inner stream under the pull contexts (no prior iteration)."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def cm():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    async def inner() -> AsyncIterable[int]:
+        yield 1
+
+    async def make_stream() -> ResponseStream[int, list[int]]:
+        # Record that we resolve while a pull context is active.
+        events.append("resolving")
+        return ResponseStream(inner(), finalizer=lambda updates: list(updates))
+
+    stream: ResponseStream[int, list[int]] = ResponseStream.from_awaitable(make_stream())
+    stream.with_pull_context_manager(cm)
+
+    # Drive get_final_response() directly, without any prior `async for` or `await stream`.
+    final = await stream.get_final_response()
+
+    assert final == [1]
     assert "resolving" in events
     resolve_index = events.index("resolving")
     assert events[resolve_index - 1] == "enter"  # Pull context active during resolution

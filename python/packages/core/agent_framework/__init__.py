@@ -112,6 +112,7 @@ from ._harness._loop import (
     JudgeVerdict,
     background_tasks_running,
     todos_remaining,
+    todos_remaining_message,
 )
 from ._harness._memory import (
     DEFAULT_MEMORY_SOURCE_ID,
@@ -606,6 +607,7 @@ __all__ = [
     "set_agent_mode",
     "step",
     "todos_remaining",
+    "todos_remaining_message",
     "tool",
     "tool_call_args_match",
     "tool_called_check",

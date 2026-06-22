@@ -30,11 +30,11 @@ template:
   environment_variables:
     - name: FOUNDRY_MODEL
       value: "{{FOUNDRY_MODEL}}"
-    - name: FOUNDRY_TOOLBOX_NAME
-      value: "{{FOUNDRY_TOOLBOX_NAME}}"
+    - name: TOOLBOX_NAME
+      value: "{{TOOLBOX_NAME}}"
 parameters:
   properties:
-    - name: FOUNDRY_TOOLBOX_NAME
+    - name: TOOLBOX_NAME
       secret: false
       description: Name of the Foundry Toolbox to connect to for MCP skill discovery
 resources:
