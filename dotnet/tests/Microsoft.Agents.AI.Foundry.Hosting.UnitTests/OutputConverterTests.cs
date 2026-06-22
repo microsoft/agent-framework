@@ -1373,9 +1373,9 @@ public class OutputConverterTests
         Assert.Contains(events, e => e is ResponseFailedEvent);
     }
 
-    // === url_citation annotation coverage (N series) ===
+    #region url_citation annotation coverage
 
-    // N-01: A TextContent with a url_citation annotation emits ResponseOutputTextAnnotationAddedEvent.
+    /// <summary>A <see cref="MeaiTextContent"/> with a url_citation annotation emits a <see cref="ResponseOutputTextAnnotationAddedEvent"/>.</summary>
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_TextWithUrlCitationAnnotation_EmitsAnnotationEventAsync()
     {
@@ -1404,7 +1404,7 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
-    // N-02: Annotation event must appear after the last text delta and before output_item.done.
+    /// <summary>The annotation event must appear after the last text delta and before output_item.done.</summary>
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_TextWithAnnotation_AnnotationOrderedAfterDeltaBeforeMessageDoneAsync()
     {
@@ -1437,7 +1437,7 @@ public class OutputConverterTests
         Assert.True(annotationIdx < messageDoneIdx, "Annotation must come before output_item.done");
     }
 
-    // N-03: Multiple annotations on one TextContent all emit events, in order.
+    /// <summary>Multiple annotations on one <see cref="MeaiTextContent"/> all emit events, in order.</summary>
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_TextWithMultipleAnnotations_EmitsAllAnnotationsAsync()
     {
@@ -1475,7 +1475,7 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
-    // N-04: Annotations on a TextContent across multiple streaming updates are all accumulated.
+    /// <summary>Annotations on a <see cref="MeaiTextContent"/> across multiple streaming updates are all accumulated.</summary>
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_AnnotationsAcrossMultipleUpdates_AccumulatesAllAsync()
     {
@@ -1509,7 +1509,7 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
-    // N-05: A CitationAnnotation without a URL is skipped (no annotation event emitted).
+    /// <summary>A <see cref="CitationAnnotation"/> without a URL is skipped (no annotation event emitted).</summary>
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_CitationAnnotationWithoutUrl_IsSkippedAsync()
     {
@@ -1536,7 +1536,7 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
-    // N-06: A CitationAnnotation without TextSpanAnnotatedRegion is skipped.
+    /// <summary>A <see cref="CitationAnnotation"/> without a <see cref="TextSpanAnnotatedRegion"/> is skipped.</summary>
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_CitationAnnotationWithoutRegions_IsSkippedAsync()
     {
@@ -1563,7 +1563,7 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
-    // N-07: A non-CitationAnnotation in Annotations is silently skipped.
+    /// <summary>A non-<see cref="CitationAnnotation"/> in Annotations is silently skipped.</summary>
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_NonCitationAnnotation_IsSkippedAsync()
     {
@@ -1584,6 +1584,8 @@ public class OutputConverterTests
         Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
+
+    #endregion
 
     private sealed class RawToolCallContent : ToolCallContent
     {
