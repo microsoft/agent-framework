@@ -136,9 +136,9 @@ next_response = await a2a_agent.run(
 
 ### Option B: Extend `service_session_id` with richer service-owned values
 
-Some services may need `service_session_id` to carry richer service-owned continuation values. That can be addressed with
-a structured value or service-owned formatted string while keeping the common case as a plain string. This option remains
-about service-owned continuation only; it is not the mechanism for generic run/task correlation.
+Keep the common `service_session_id` case as a plain string. When an agent/service needs more than one service-owned
+continuation value, allow `service_session_id` to be a typed structured value, such as a `TypedDict`. The main session ID
+used for `gen_ai.conversation.id` should still be extracted by the owning agent, not inferred by generic telemetry code.
 
 Examples:
 
@@ -148,9 +148,8 @@ simple_session = AgentSession(
 )
 
 structured_session = AgentSession(
-    # Hypothetical structured value for illustration (not an existing API)
-    service_session_id=ServiceSessionIdentity(
-        continuation_id="ctx_123",
+    service_session_id=A2AServiceSessionId(
+        context_id="ctx_123",
         task_id="task_789",
         task_state=TaskState.TASK_STATE_WORKING,
     ),
@@ -160,13 +159,15 @@ structured_session = AgentSession(
 - Good, because the common case remains a plain string and stays simple.
 - Good, because richer service-owned continuation state stays under the existing continuation property.
 - Good, because a structured value can make framework-side validation possible before a value is sent back to a service.
-- Neutral, because service-specific formats or structured values could be hidden behind helpers.
-- Neutral, because Python A2A would likely need a pre-release adjustment to reshape or wrap `A2AAgentSession`.
-- Bad, because changing the field type is a broad compatibility risk for users, providers, serialization, and tests.
-- Bad, because existing chat-client code treats `service_session_id` as the opaque value to pass through the
-  `conversation_id` option, so every such path must consistently extract/adapt the service-owned continuation component.
-- Bad, because this does not solve generic run/task correlation unless the structured fields become framework-owned,
-  which is not the purpose of `service_session_id`.
+- Good, because A2A can keep `context_id`, `task_id`, and `task_state` together as the service/protocol-owned continuation
+  value without adding A2A fields to base `AgentSession`.
+- Neutral, because telemetry needs an agent-owned extractor to pick the `gen_ai.conversation.id` value from either a
+  string or structured `service_session_id`.
+- Neutral, because Python A2A would need a pre-release adjustment to stop relying on `A2AAgentSession` for these fields.
+- Bad, because changing the `service_session_id` type is a compatibility risk for users, providers, serialization, and
+  tests.
+- Bad, because every path that sends `service_session_id` back to a service must consistently extract/adapt the
+  service-owned continuation component.
 
 ### Option C: Add a dedicated dict for additional session details
 
@@ -224,7 +225,12 @@ Values that are needed by future calls must be durable session state. Values tha
 response/message. Values that resume unfinished work stay in `ContinuationToken`. Values that only correlate a protocol
 run should stay in the protocol wrapper or run/telemetry context, not in `AgentSession`.
 
-Durable-state option decision: **TBD**.
+Durable-state option decision: **Option B: Extend `service_session_id` with richer service-owned values**.
+
+To support telemetry, `BaseAgent` should expose a method that accepts an `AgentSession | None` and returns the value to
+use for `gen_ai.conversation.id`. The default implementation should return `session.service_session_id` when it is a
+string. Agents that use a structured `service_session_id`, such as `A2AAgent`, should override that method and return the
+appropriate primary session/context value.
 
 ## Appendix: A2A `task_id` and `reference_task_ids` implementation check
 
@@ -250,6 +256,57 @@ The Python implementation should check and likely adjust the current behavior:
   distinction rather than treating one as a replacement for the other.
 - If no `reference_task_ids` are supplied, the wrapper should not automatically infer them from the last session task
   unless we deliberately keep that convenience for compatibility.
+
+## Appendix: implementation notes for Option B
+
+The exact names are implementation details, but the shape should be:
+
+```python
+class A2AServiceSessionId(TypedDict):
+    context_id: str
+    task_id: str | None
+    task_state: TaskState | None
+
+
+class AgentSession:
+    def __init__(
+        self,
+        *,
+        session_id: str | None = None,
+        service_session_id: str | ServiceSessionId | None = None,
+    ) -> None:
+        ...
+
+
+class BaseAgent:
+    def _get_otel_conversation_id(self, session: AgentSession | None) -> str | None:
+        service_session_id = session.service_session_id if session else None
+        return service_session_id if isinstance(service_session_id, str) else None
+
+
+class A2AAgent(BaseAgent):
+    def _get_otel_conversation_id(self, session: AgentSession | None) -> str | None:
+        service_session_id = session.service_session_id if session else None
+        if isinstance(service_session_id, Mapping):
+            return service_session_id.get("context_id")
+        return service_session_id if isinstance(service_session_id, str) else None
+
+
+class AgentTelemetryLayer:
+    def _trace_agent_invocation(...):
+        attributes = _get_span_attributes(
+            ...,
+            thread_id=self._get_otel_conversation_id(session),
+            ...,
+        )
+```
+
+This keeps the OpenTelemetry extraction decision with the agent that owns the service continuation shape. Generic OTel
+code should not parse structured `service_session_id` values directly.
+
+`AgentSession` must also be updated so `service_session_id` can store either the current string value or a structured
+service-owned value. Serialization must preserve both shapes, and existing serialized sessions with string
+`service_session_id` must continue to round-trip unchanged.
 
 ## More Information
 
