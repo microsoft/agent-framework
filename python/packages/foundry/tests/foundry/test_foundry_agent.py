@@ -913,6 +913,38 @@ async def test_raw_foundry_agent_prepare_run_context_requires_preview_for_hosted
         )
 
 
+async def test_foundry_agent_create_conversation_returns_agent_session() -> None:
+    """Test that FoundryAgent creates a project conversation and returns a session."""
+
+    openai_client = MagicMock()
+    openai_client.conversations.create = AsyncMock(return_value=SimpleNamespace(id="conv_123"))
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = openai_client
+    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+
+    session = await agent.create_conversation()
+
+    assert isinstance(session, AgentSession)
+    assert session.service_session_id == "conv_123"
+    mock_project.get_openai_client.assert_called()
+    openai_client.conversations.create.assert_awaited_once_with()
+
+
+async def test_foundry_agent_create_conversation_accepts_local_session_id() -> None:
+    """Test that project conversation sessions can use a caller-provided local session ID."""
+
+    openai_client = MagicMock()
+    openai_client.conversations.create = AsyncMock(return_value=SimpleNamespace(id="conv_123"))
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = openai_client
+    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+
+    session = await agent.create_conversation(session_id="local-session")
+
+    assert session.session_id == "local-session"
+    assert session.service_session_id == "conv_123"
+
+
 def test_foundry_agent_init() -> None:
     """Test construction of the full-middleware agent."""
 
