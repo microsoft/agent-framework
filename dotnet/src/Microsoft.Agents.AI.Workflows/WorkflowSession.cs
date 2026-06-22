@@ -302,7 +302,7 @@ internal sealed class WorkflowSession : AgentSession
         envelope = null;
 
         TypeId requestType = request.PortInfo.RequestType;
-        Type? concreteType = Type.GetType($"{requestType.TypeName}, {requestType.AssemblyName}", throwOnError: false);
+        Type? concreteType = Type.GetType($"{requestType.TypeName}, {requestType.AssemblySimpleName}", throwOnError: false);
         if (concreteType is null || !typeof(IExternalRequestEnvelope).IsAssignableFrom(concreteType))
         {
             return false;
