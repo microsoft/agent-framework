@@ -158,7 +158,7 @@ class _CaptureFullConversation(Executor):
     """Captures AgentExecutorResponse.full_conversation and completes the workflow."""
 
     @handler
-    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict[str, Any]]) -> None:
+    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict[str, Any]]) -> None:  # type: ignore[valid-type]
         full = response.full_conversation
         # The AgentExecutor contract guarantees full_conversation is populated.
         assert full is not None
@@ -232,7 +232,7 @@ class _CaptureAgent(BaseAgent):
         # Normalize and record messages for verification
         norm: list[Message] = []
         if messages:
-            for m in messages:  # type: ignore[iteration-over-optional]
+            for m in messages:  # type: ignore[iteration-over-optional, union-attr]  # ty: ignore[not-iterable]
                 if isinstance(m, Message):
                     norm.append(m)
                 elif isinstance(m, str):

@@ -31,7 +31,7 @@ from random import randrange
 from typing import Annotated
 
 from agent_framework import Content, tool
-from agent_framework.github import GitHubCopilotAgent
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.session import PermissionHandler
 from dotenv import load_dotenv
 
@@ -78,13 +78,13 @@ def auto_approve(call: Content) -> bool:
 async def run_with_interactive_callback() -> None:
     """Demonstrates an interactive approval prompt before tool execution."""
     print("\n=== GitHub Copilot Agent: interactive approval callback ===")
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather assistant.",
         tools=[get_weather_detail],
-        default_options={
-            "on_function_approval": prompt_for_approval,
-            "on_permission_request": PermissionHandler.approve_all,
-        },
+        default_options=GitHubCopilotOptions(
+            on_function_approval=prompt_for_approval,
+            on_permission_request=PermissionHandler.approve_all,
+        ),
     )
     async with agent:
         query = "Give me the detailed weather for Seattle."
@@ -96,13 +96,13 @@ async def run_with_interactive_callback() -> None:
 async def run_with_auto_approve_callback() -> None:
     """Demonstrates a synchronous callback that always approves."""
     print("\n=== GitHub Copilot Agent: synchronous auto-approve callback ===")
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather assistant.",
         tools=[get_weather_detail],
-        default_options={
-            "on_function_approval": auto_approve,
-            "on_permission_request": PermissionHandler.approve_all,
-        },
+        default_options=GitHubCopilotOptions(
+            on_function_approval=auto_approve,
+            on_permission_request=PermissionHandler.approve_all,
+        ),
     )
     async with agent:
         query = "Give me the detailed weather for Tokyo."
@@ -119,10 +119,10 @@ async def run_without_callback() -> None:
     or try a different approach instead of silently failing.
     """
     print("\n=== GitHub Copilot Agent: no callback configured (deny by default) ===")
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather assistant.",
         tools=[get_weather_detail],
-        default_options={"on_permission_request": PermissionHandler.approve_all},
+        default_options=GitHubCopilotOptions(on_permission_request=PermissionHandler.approve_all),
     )
     async with agent:
         query = "Give me the detailed weather for Paris."

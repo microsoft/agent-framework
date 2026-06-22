@@ -81,7 +81,7 @@ class TestChatAgentClassBasedMiddleware:
                 await call_next()
 
         middleware = TrackingFunctionMiddleware()
-        Agent(client=client, middleware=[middleware])
+        Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     async def test_class_based_function_middleware_with_chat_agent_supported_client(
         self, chat_client_base: "MockBaseChatClient"
@@ -131,7 +131,7 @@ class TestChatAgentFunctionBasedMiddleware:
 
         # Create Agent with terminating middleware
         middleware = PreTerminationMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Execute the agent with multiple messages
         messages = [
@@ -155,11 +155,11 @@ class TestChatAgentFunctionBasedMiddleware:
                 execution_order.append("middleware_before")
                 await call_next()
                 execution_order.append("middleware_after")
-                context.terminate = True
+                context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Create Agent with terminating middleware
         middleware = PostTerminationMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Execute the agent with multiple messages
         messages = [
@@ -192,12 +192,12 @@ class TestChatAgentFunctionBasedMiddleware:
                 call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append("middleware_before")
-                context.terminate = True
+                context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
                 # We call next() but since terminate=True, subsequent middleware and handler should not execute
                 await call_next()
                 execution_order.append("middleware_after")
 
-        Agent(client=client, middleware=[PreTerminationFunctionMiddleware()], tools=[])
+        Agent(client=client, middleware=[PreTerminationFunctionMiddleware()], tools=[])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     async def test_function_middleware_with_post_termination(self, client: "MockChatClient") -> None:
         """Test that function middleware can terminate execution after calling next()."""
@@ -212,9 +212,9 @@ class TestChatAgentFunctionBasedMiddleware:
                 execution_order.append("middleware_before")
                 await call_next()
                 execution_order.append("middleware_after")
-                context.terminate = True
+                context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
-        Agent(client=client, middleware=[PostTerminationFunctionMiddleware()], tools=[])
+        Agent(client=client, middleware=[PostTerminationFunctionMiddleware()], tools=[])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     async def test_function_based_agent_middleware_with_chat_agent(self, client: "MockChatClient") -> None:
         """Test function-based agent middleware with Agent."""
@@ -226,7 +226,7 @@ class TestChatAgentFunctionBasedMiddleware:
             execution_order.append("agent_function_after")
 
         # Create Agent with function middleware
-        agent = Agent(client=client, middleware=[tracking_agent_middleware])
+        agent = Agent(client=client, middleware=[tracking_agent_middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Execute the agent
         messages = [Message(role="user", contents=["test message"])]
@@ -250,7 +250,7 @@ class TestChatAgentFunctionBasedMiddleware:
         ) -> None:
             await call_next()
 
-        Agent(client=client, middleware=[tracking_function_middleware])
+        Agent(client=client, middleware=[tracking_function_middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     async def test_function_based_function_middleware_with_supported_client(
         self, chat_client_base: "MockBaseChatClient"
@@ -292,7 +292,7 @@ class TestChatAgentStreamingMiddleware:
 
         # Create Agent with middleware
         middleware = StreamingTrackingMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Set up mock streaming responses
         client.streaming_responses = [
@@ -332,7 +332,7 @@ class TestChatAgentStreamingMiddleware:
 
         # Create Agent with middleware
         middleware = FlagTrackingMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         messages = [Message(role="user", contents=["test message"])]
 
         # Test non-streaming execution
@@ -369,7 +369,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
         middleware3 = OrderedMiddleware("third")
 
         # Create Agent with multiple middleware
-        agent = Agent(client=client, middleware=[middleware1, middleware2, middleware3])
+        agent = Agent(client=client, middleware=[middleware1, middleware2, middleware3])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Execute the agent
         messages = [Message(role="user", contents=["test message"])]
@@ -796,7 +796,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Execute the agent with custom parameters passed as kwargs
         messages = [Message(role="user", contents=["test message"])]
-        response = await agent.run(messages, options={"additional_function_arguments": {"custom_param": "test_value"}})
+        response = await agent.run(messages, options={"additional_function_arguments": {"custom_param": "test_value"}})  # type: ignore[call-overload, typeddict-unknown-key, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
 
         # Verify response
         assert response is not None
@@ -890,13 +890,13 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         agent = Agent(client=chat_client_base, middleware=[capture_middleware], tools=[sample_tool_function])
 
-        await agent.run(
+        await agent.run(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
             [Message(role="user", contents=["Get weather"])],
             function_invocation_kwargs={
                 "user_id": "from-kwargs",
                 "tenant_id": "from-kwargs",
             },
-            options={
+            options={  # type: ignore[typeddict-unknown-key]
                 "additional_function_arguments": {
                     "user_id": "from-options",
                     "extra_key": "only-in-options",
@@ -1016,7 +1016,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Create agent with initial middleware
         middleware1 = self.TrackingAgentMiddleware("middleware1", execution_log)
-        agent = Agent(client=client, middleware=[middleware1])
+        agent = Agent(client=client, middleware=[middleware1])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # First execution - should use middleware1
         await agent.run("Test message 1")
@@ -1066,7 +1066,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Create agent with initial middleware
         middleware1 = self.TrackingAgentMiddleware("stream_middleware1", execution_log)
-        agent = Agent(client=client, middleware=[middleware1])
+        agent = Agent(client=client, middleware=[middleware1])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # First streaming execution
         updates: list[AgentResponseUpdate] = []
@@ -1101,7 +1101,7 @@ class TestMiddlewareDynamicRebuild:
         middleware2 = self.TrackingAgentMiddleware("second", execution_log)
 
         # Create agent with middleware in order [first, second]
-        agent = Agent(client=client, middleware=[middleware1, middleware2])
+        agent = Agent(client=client, middleware=[middleware1, middleware2])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # First execution
         await agent.run("Test message 1")
@@ -1138,7 +1138,7 @@ class TestRunLevelMiddleware:
         execution_log: list[str] = []
 
         # Create agent without any agent-level middleware
-        agent = Agent(client=client)
+        agent = Agent(client=client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Create run-level middleware
         run_middleware1 = self.TrackingAgentMiddleware("run1", execution_log)
@@ -1203,7 +1203,7 @@ class TestRunLevelMiddleware:
 
         # Create agent with agent-level middleware
         agent_middleware = MetadataAgentMiddleware("agent")
-        agent = Agent(client=client, middleware=[agent_middleware])
+        agent = Agent(client=client, middleware=[agent_middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Create run-level middleware
         run_middleware = MetadataRunMiddleware("run")
@@ -1223,7 +1223,7 @@ class TestRunLevelMiddleware:
         execution_log: list[str] = []
 
         # Create agent without agent-level middleware
-        agent = Agent(client=client)
+        agent = Agent(client=client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Create run-level middleware
         run_middleware = self.TrackingAgentMiddleware("run_nonstream", execution_log)
@@ -1256,7 +1256,7 @@ class TestRunLevelMiddleware:
                 execution_log.append(f"{self.name}_end")
 
         # Create agent without agent-level middleware
-        agent = Agent(client=client)
+        agent = Agent(client=client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Set up mock streaming responses
         client.streaming_responses = [
@@ -1447,7 +1447,7 @@ class TestMiddlewareDecoratorLogic:
             ]
         )
         final_response = ChatResponse(messages=[Message(role="assistant", contents=["Final response"])])
-        chat_client_base.responses = [function_call_response, final_response]
+        chat_client_base.responses = [function_call_response, final_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Should work without errors
         agent = Agent(
@@ -1469,14 +1469,14 @@ class TestMiddlewareDecoratorLogic:
         # Should raise MiddlewareException due to mismatch during agent creation
         with pytest.raises(MiddlewareException, match="MiddlewareTypes type mismatch"):
 
-            @agent_middleware  # type: ignore[arg-type]
+            @agent_middleware  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             async def mismatched_middleware(
                 context: FunctionInvocationContext,  # Wrong type for @agent_middleware
                 call_next: Any,
             ) -> None:
                 await call_next()
 
-            agent = Agent(client=client, middleware=[mismatched_middleware])
+            agent = Agent(client=client, middleware=[mismatched_middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             await agent.run([Message(role="user", contents=["test"])])
 
     async def test_only_decorator_specified(self, chat_client_base: "MockBaseChatClient") -> None:
@@ -1518,7 +1518,7 @@ class TestMiddlewareDecoratorLogic:
             ]
         )
         final_response = ChatResponse(messages=[Message(role="assistant", contents=["Final response"])])
-        chat_client_base.responses = [function_call_response, final_response]
+        chat_client_base.responses = [function_call_response, final_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Should work - relies on decorator
         agent = Agent(
@@ -1574,7 +1574,7 @@ class TestMiddlewareDecoratorLogic:
             ]
         )
         final_response = ChatResponse(messages=[Message(role="assistant", contents=["Final response"])])
-        chat_client_base.responses = [function_call_response, final_response]
+        chat_client_base.responses = [function_call_response, final_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Should work - relies on type annotations
         agent = Agent(
@@ -1605,7 +1605,7 @@ class TestMiddlewareDecoratorLogic:
         # Should raise MiddlewareException about insufficient parameters
         with pytest.raises(MiddlewareException, match="must have at least 2 parameters"):
 
-            @agent_middleware  # type: ignore[arg-type]
+            @agent_middleware  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             async def insufficient_params_middleware(context: Any) -> None:  # Missing 'next' parameter
                 pass
 
@@ -1676,7 +1676,7 @@ class TestChatAgentSessionBehavior:
 
         # Create Agent with session tracking middleware
         middleware = SessionTrackingMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Create a session that will persist messages between runs
         session = agent.create_session()
@@ -1813,7 +1813,7 @@ class TestChatAgentChatMiddleware:
                     if msg.role == "system":
                         continue
                     original_text = msg.text or ""
-                    context.messages[idx] = Message(role=msg.role, contents=[f"MODIFIED: {original_text}"])
+                    context.messages[idx] = Message(role=msg.role, contents=[f"MODIFIED: {original_text}"])  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[invalid-assignment]
                     break
             await call_next()
 
@@ -1839,7 +1839,7 @@ class TestChatAgentChatMiddleware:
                 messages=[Message(role="assistant", contents=["MiddlewareTypes overridden response"])],
                 response_id="middleware-response-123",
             )
-            context.terminate = True
+            context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Create Agent with response-overriding middleware
         client = MockBaseChatClient()
@@ -1968,7 +1968,7 @@ class TestChatAgentChatMiddleware:
                 execution_order.append("middleware_before")
                 await call_next()
                 execution_order.append("middleware_after")
-                context.terminate = True
+                context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Create Agent with terminating middleware
         client = MockBaseChatClient()
@@ -2219,9 +2219,9 @@ class TestChatAgentChatMiddleware:
             assert isinstance(context.options, dict)
             captured_options.update(context.options)
 
-            context.options["temperature"] = 0.9
-            context.options["max_tokens"] = 500
-            context.options["new_param"] = "added_by_middleware"
+            context.options["temperature"] = 0.9  # ty: ignore[invalid-assignment]
+            context.options["max_tokens"] = 500  # ty: ignore[invalid-assignment]
+            context.options["new_param"] = "added_by_middleware"  # ty: ignore[invalid-assignment]
 
             modified_options.update(context.options)
 
@@ -2233,9 +2233,9 @@ class TestChatAgentChatMiddleware:
 
         # Execute the agent with runtime options
         messages = [Message(role="user", contents=["test message"])]
-        response = await agent.run(
+        response = await agent.run(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
             messages,
-            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},
+            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},  # type: ignore[typeddict-unknown-key]
         )
 
         # Verify response

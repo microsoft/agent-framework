@@ -8,7 +8,7 @@ import sys
 import warnings
 from functools import wraps
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -75,7 +75,7 @@ def _with_foundry_debug() -> Any:
                     f"model={os.getenv('FOUNDRY_MODEL', '<unset>')}"
                 )
                 if hasattr(exc, "add_note"):
-                    exc.add_note(debug_message)
+                    cast(Any, exc).add_note(debug_message)
                 elif exc.args:
                     exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
                 else:
@@ -155,8 +155,8 @@ def test_init() -> None:
     client = FoundryChatClient(project_client=mock_project_client, model=_TEST_FOUNDRY_MODEL)
 
     assert client.model == _TEST_FOUNDRY_MODEL
-    assert isinstance(client, SupportsChatGetResponse)
     assert client.project_client is mock_project_client
+    assert isinstance(client, SupportsChatGetResponse)
 
 
 def test_raw_foundry_chat_client_init_uses_explicit_parameters() -> None:
@@ -375,6 +375,7 @@ async def test_web_search_tool_with_location() -> None:
         }
     )
 
+    assert web_search_tool.user_location is not None
     assert web_search_tool.user_location.city == "Seattle"
     assert web_search_tool.user_location.country == "US"
     _, run_options, _ = await client._prepare_request(
@@ -393,7 +394,7 @@ async def test_code_interpreter_tool_variations() -> None:
     client = FoundryChatClient(project_client=project_client, model="test-model")
 
     code_tool = FoundryChatClient.get_code_interpreter_tool()
-    assert code_tool.container["type"] == "auto"
+    assert cast(dict[str, Any], code_tool.container)["type"] == "auto"
 
     _, run_options, _ = await client._prepare_request(
         messages=[Message("user", ["Run some code"])],
@@ -403,7 +404,7 @@ async def test_code_interpreter_tool_variations() -> None:
     assert run_options["tools"] == [code_tool]
 
     code_tool_with_files = FoundryChatClient.get_code_interpreter_tool(file_ids=["file1", "file2"])
-    assert code_tool_with_files.container.file_ids == ["file1", "file2"]
+    assert cast(Any, code_tool_with_files.container).file_ids == ["file1", "file2"]
 
     _, run_options, _ = await client._prepare_request(
         messages=[Message(role="user", contents=["Process these files"])],
@@ -487,7 +488,7 @@ async def test_content_filter_exception() -> None:
         body={"error": {"code": "content_filter", "message": "Content filter error"}},
     )
     mock_error.code = "content_filter"
-    client.client.responses.with_raw_response.create.side_effect = mock_error
+    cast(Any, client.client.responses.with_raw_response.create).side_effect = mock_error
 
     with pytest.raises(OpenAIContentFilterException) as exc_info:
         await client.get_response(messages=[Message(role="user", contents=["Test message"])])
@@ -852,7 +853,7 @@ async def test_integration_options(
     option_value: Any,
     needs_validation: bool,
 ) -> None:
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
     client.function_invocation_configuration["max_iterations"] = 2
 
     if option_name.startswith("tools") or option_name.startswith("tool_choice"):
@@ -867,7 +868,9 @@ async def test_integration_options(
     if option_name.startswith("tool_choice"):
         options["tools"] = [get_weather]
 
-    response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()
+    response = await client.get_response(
+        messages=messages, options=cast(Any, options), stream=True
+    ).get_final_response()
 
     assert isinstance(response, ChatResponse)
     assert response.text is not None
@@ -893,19 +896,19 @@ async def test_integration_options(
 @skip_if_foundry_integration_tests_disabled
 @_with_foundry_debug()
 async def test_integration_web_search() -> None:
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
 
     web_search_tool = FoundryChatClient.get_web_search_tool()
-    content = {
-        "messages": [
-            Message(
-                role="user",
-                contents=["Where is Microsoft's headquarters? Do a web search to find the answer."],
-            )
-        ],
-        "options": {"tool_choice": "auto", "tools": [web_search_tool]},
-    }
-    response = await client.get_response(stream=True, **content).get_final_response()
+    messages = [
+        Message(
+            role="user",
+            contents=["Where is Microsoft's headquarters? Do a web search to find the answer."],
+        )
+    ]
+    options: dict[str, Any] = {"tool_choice": "auto", "tools": [web_search_tool]}
+    response = await client.get_response(
+        messages=messages, options=cast(Any, options), stream=True
+    ).get_final_response()
 
     assert isinstance(response, ChatResponse)
     assert "redmond" in response.text.lower()
@@ -924,13 +927,15 @@ async def test_integration_tool_rich_content_image() -> None:
     def get_test_image() -> Content:
         return Content.from_data(data=image_bytes, media_type="image/jpeg")
 
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
     client.function_invocation_configuration["max_iterations"] = 2
 
     messages = [Message(role="user", contents=["Call the get_test_image tool and describe what you see."])]
     options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
 
-    response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()
+    response = await client.get_response(
+        messages=messages, options=cast(Any, options), stream=True
+    ).get_final_response()
 
     assert isinstance(response, ChatResponse)
     assert response.text is not None

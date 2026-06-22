@@ -36,7 +36,7 @@ def _make_client() -> BedrockChatClient:
     return BedrockChatClient(
         model="amazon.titan-text",
         region="us-west-2",
-        client=_StubBedrockRuntime(),
+        client=_StubBedrockRuntime(),  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
 
 
@@ -45,7 +45,7 @@ async def test_get_response_invokes_bedrock_runtime() -> None:
     client = BedrockChatClient(
         model="amazon.titan-text",
         region="us-west-2",
-        client=stub,
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
 
     messages = [
@@ -67,7 +67,7 @@ def test_build_request_requires_non_system_messages() -> None:
     client = BedrockChatClient(
         model="amazon.titan-text",
         region="us-west-2",
-        client=_StubBedrockRuntime(),
+        client=_StubBedrockRuntime(),  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
 
     messages = [Message(role="system", contents=[Content.from_text(text="Only system text")])]

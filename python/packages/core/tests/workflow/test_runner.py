@@ -171,7 +171,7 @@ async def test_runner_run_iteration_preserves_message_order_per_edge_runner() ->
     runner = Runner([], {}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     edge_runner = RecordingEdgeRunner()
-    runner._edge_runner_map = {"source": [edge_runner]}  # type: ignore[assignment]
+    runner._edge_runner_map = {"source": [edge_runner]}  # type: ignore[assignment, list-item]  # ty: ignore[invalid-assignment]
 
     for index in range(5):
         await ctx.send_message(WorkflowMessage(data=MockMessage(data=index), source_id="source"))
@@ -216,7 +216,7 @@ async def test_runner_run_iteration_delivers_different_edge_runners_concurrently
 
     blocking_edge_runner = BlockingEdgeRunner()
     probe_edge_runner = ProbeEdgeRunner()
-    runner._edge_runner_map = {"source": [blocking_edge_runner, probe_edge_runner]}  # type: ignore[assignment]
+    runner._edge_runner_map = {"source": [blocking_edge_runner, probe_edge_runner]}  # type: ignore[assignment, list-item]  # ty: ignore[invalid-assignment]
 
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source"))
 
@@ -520,7 +520,7 @@ class CheckpointingContext(InProcRunnerContext):
         )
         return await self._storage.save(checkpoint)
 
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]  # pyright: ignore[reportIncompatibleMethodOverride]
         try:
             return await self._storage.load(checkpoint_id)
         except WorkflowCheckpointException:

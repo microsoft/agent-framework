@@ -111,12 +111,8 @@ class BackgroundTaskInfo(SerializationMixin):
 class _RuntimeState:
     """Non-serializable per-session runtime state for background tasks."""
 
-    in_flight_tasks: dict[int, asyncio.Task[AgentResponse[Any]]] = field(
-        default_factory=lambda: {}  # pyright: ignore[reportUnknownLambdaType]
-    )
-    background_sessions: dict[int, AgentSession] = field(
-        default_factory=lambda: {}  # pyright: ignore[reportUnknownLambdaType]
-    )
+    in_flight_tasks: dict[int, asyncio.Task[AgentResponse[Any]]] = field(default_factory=lambda: {})
+    background_sessions: dict[int, AgentSession] = field(default_factory=lambda: {})
 
 
 # ---------------------------------------------------------------------------

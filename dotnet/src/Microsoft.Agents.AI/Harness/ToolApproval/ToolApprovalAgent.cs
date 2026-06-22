@@ -73,6 +73,28 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
             this._jsonSerializerOptions);
     }
 
+    /// <summary>
+    /// Gets an auto-approval rule that approves every tool call, regardless of tool name or arguments.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Add this rule to <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve all
+    /// tool calls without prompting the user. This effectively disables approval prompts for every tool, so use
+    /// it only when running in a fully trusted context.
+    /// </para>
+    /// <para>
+    /// For example, to auto-approve every tool call:
+    /// <code>
+    /// builder.UseToolApproval(new ToolApprovalAgentOptions
+    /// {
+    ///     AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+    /// });
+    /// </code>
+    /// </para>
+    /// </remarks>
+    public static Func<FunctionCallContent, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
+        _ => new ValueTask<bool>(true);
+
     /// <inheritdoc />
     protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
