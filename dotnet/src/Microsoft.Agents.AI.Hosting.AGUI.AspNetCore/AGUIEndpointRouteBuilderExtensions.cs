@@ -121,51 +121,7 @@ public static class AGUIEndpointRouteBuilderExtensions
                 return Results.BadRequest();
             }
 
-            var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
-            var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
-
-            var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
-            var clientTools = input.Tools?.AsAITools().ToList();
-
-            // Create run options with AG-UI context in AdditionalProperties
-            var runOptions = new ChatClientAgentRunOptions
-            {
-                ChatOptions = new ChatOptions
-                {
-                    Tools = clientTools,
-                    AdditionalProperties = new AdditionalPropertiesDictionary
-                    {
-                        ["ag_ui_state"] = input.State,
-                        ["ag_ui_context"] = input.Context?.Select(c => new KeyValuePair<string, string>(c.Description, c.Value)).ToArray(),
-                        ["ag_ui_forwarded_properties"] = input.ForwardedProperties,
-                        ["ag_ui_thread_id"] = input.ThreadId,
-                        ["ag_ui_run_id"] = input.RunId
-                    }
-                }
-            };
-
-            var threadId = string.IsNullOrWhiteSpace(input.ThreadId) ? Guid.NewGuid().ToString("N") : input.ThreadId;
-            var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
-
-            // Run the agent and convert to AG-UI events
-            var events = hostAgent.RunStreamingAsync(
-                messages,
-                session: session,
-                options: runOptions,
-                cancellationToken: cancellationToken)
-                .AsChatResponseUpdatesAsync()
-                .FilterServerToolsFromMixedToolInvocationsAsync(clientTools, cancellationToken)
-                .AsAGUIEventStreamAsync(
-                    threadId,
-                    input.RunId,
-                    jsonSerializerOptions,
-                    cancellationToken);
-
-            // Wrap the event stream to save the session after streaming completes
-            var eventsWithSessionSave = SaveSessionAfterStreamingAsync(events, hostAgent, threadId, session, cancellationToken);
-
-            var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
-            return new AGUIServerSentEventsResult(eventsWithSessionSave, sseLogger);
+            return await ExecuteAgentRequestAsync(hostAgent, input, context, cancellationToken).ConfigureAwait(false);
         });
     }
 
@@ -230,52 +186,65 @@ public static class AGUIEndpointRouteBuilderExtensions
 
             var hostAgent = new AIHostAgent(aiAgent, agentSessionStore);
 
-            var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
-            var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
-
-            var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
-            var clientTools = input.Tools?.AsAITools().ToList();
-
-            // Create run options with AG-UI context in AdditionalProperties
-            var runOptions = new ChatClientAgentRunOptions
-            {
-                ChatOptions = new ChatOptions
-                {
-                    Tools = clientTools,
-                    AdditionalProperties = new AdditionalPropertiesDictionary
-                    {
-                        ["ag_ui_state"] = input.State,
-                        ["ag_ui_context"] = input.Context?.Select(c => new KeyValuePair<string, string>(c.Description, c.Value)).ToArray(),
-                        ["ag_ui_forwarded_properties"] = input.ForwardedProperties,
-                        ["ag_ui_thread_id"] = input.ThreadId,
-                        ["ag_ui_run_id"] = input.RunId
-                    }
-                }
-            };
-
-            var threadId = string.IsNullOrWhiteSpace(input.ThreadId) ? Guid.NewGuid().ToString("N") : input.ThreadId;
-            var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
-
-            // Run the agent and convert to AG-UI events
-            var events = hostAgent.RunStreamingAsync(
-                messages,
-                session: session,
-                options: runOptions,
-                cancellationToken: cancellationToken)
-                .AsChatResponseUpdatesAsync()
-                .FilterServerToolsFromMixedToolInvocationsAsync(clientTools, cancellationToken)
-                .AsAGUIEventStreamAsync(
-                    threadId,
-                    input.RunId,
-                    jsonSerializerOptions,
-                    cancellationToken);
-
-            // Wrap the event stream to save the session after streaming completes
-            var eventsWithSessionSave = SaveSessionAfterStreamingAsync(events, hostAgent, threadId, session, cancellationToken);
-
-            var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
-            return new AGUIServerSentEventsResult(eventsWithSessionSave, sseLogger);
+            return await ExecuteAgentRequestAsync(hostAgent, input, context, cancellationToken).ConfigureAwait(false);
         });
+    }
+
+    /// <summary>
+    /// Shared execution pipeline for AG-UI agent requests. Converts the input to chat messages,
+    /// runs the agent, and returns an SSE result with session persistence.
+    /// </summary>
+    private static async Task<IResult> ExecuteAgentRequestAsync(
+        AIHostAgent hostAgent,
+        RunAgentInput input,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
+        var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
+
+        var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
+        var clientTools = input.Tools?.AsAITools().ToList();
+
+        // Create run options with AG-UI context in AdditionalProperties
+        var runOptions = new ChatClientAgentRunOptions
+        {
+            ChatOptions = new ChatOptions
+            {
+                Tools = clientTools,
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["ag_ui_state"] = input.State,
+                    ["ag_ui_context"] = input.Context?.Select(c => new KeyValuePair<string, string>(c.Description, c.Value)).ToArray(),
+                    ["ag_ui_forwarded_properties"] = input.ForwardedProperties,
+                    ["ag_ui_thread_id"] = input.ThreadId,
+                    ["ag_ui_run_id"] = input.RunId
+                }
+            }
+        };
+
+        var threadId = string.IsNullOrWhiteSpace(input.ThreadId) ? Guid.NewGuid().ToString("N") : input.ThreadId;
+        var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
+
+        // Run the agent and convert to AG-UI events
+        var events = hostAgent.RunStreamingAsync(
+            messages,
+            session: session,
+            options: runOptions,
+            cancellationToken: cancellationToken)
+            .AsChatResponseUpdatesAsync()
+            .FilterServerToolsFromMixedToolInvocationsAsync(clientTools, cancellationToken)
+            .AsAGUIEventStreamAsync(
+                threadId,
+                input.RunId,
+                jsonSerializerOptions,
+                cancellationToken);
+
+        // Wrap the event stream to save the session after streaming completes
+        var eventsWithSessionSave = SaveSessionAfterStreamingAsync(events, hostAgent, threadId, session, cancellationToken);
+
+        var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
+        return new AGUIServerSentEventsResult(eventsWithSessionSave, sseLogger);
     }
 
     private static async IAsyncEnumerable<BaseEvent> SaveSessionAfterStreamingAsync(
