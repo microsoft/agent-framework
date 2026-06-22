@@ -133,7 +133,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
         winner = yield context.task_any([approval_task, timeout_task])
 
         if winner == approval_task:
-            timeout_task.cancel()  # type: ignore[attr-defined]
+            timeout_task.cancel()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             approval_payload = _parse_human_approval(approval_task.result)
 
             if approval_payload.approved:

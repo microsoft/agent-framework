@@ -23,7 +23,7 @@ class StartExecutor(Executor):
 
 class FinishExecutor(Executor):
     @handler
-    async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output(message)
 
 
@@ -95,7 +95,7 @@ class SubStartExecutor(Executor):
 
 class SubFinishExecutor(Executor):
     @handler
-    async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output(message)
 
 

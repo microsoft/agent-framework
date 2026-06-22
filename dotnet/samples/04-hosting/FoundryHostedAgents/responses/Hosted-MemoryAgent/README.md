@@ -17,7 +17,7 @@ This sample exists to demonstrate two things together:
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with at least one chat model deployment and one embedding model deployment
+- A Foundry project with at least one chat model deployment and one embedding model deployment
 - Azure CLI logged in (`az login`)
 
 ## Configuration

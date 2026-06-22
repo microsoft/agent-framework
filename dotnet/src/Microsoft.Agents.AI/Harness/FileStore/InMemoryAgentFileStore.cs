@@ -67,6 +67,43 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
+    public override Task<IReadOnlyList<string>> ListDirectoriesAsync(string directory, CancellationToken cancellationToken = default)
+    {
+        string prefix = StorePaths.NormalizeRelativePath(directory, isDirectory: true);
+        if (prefix.Length > 0 && !prefix.EndsWith("/", StringComparison.Ordinal))
+        {
+            prefix += "/";
+        }
+
+        // A subdirectory is the first path segment of any key whose remainder (after the prefix)
+        // still contains a separator. Collect distinct first segments, preserving original casing.
+        var directories = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string key in this._files.Keys)
+        {
+            if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string remainder = key.Substring(prefix.Length);
+            int separatorIndex = remainder.IndexOf("/", StringComparison.Ordinal);
+            if (separatorIndex <= 0)
+            {
+                continue;
+            }
+
+            string segment = remainder.Substring(0, separatorIndex);
+            if (seen.Add(segment))
+            {
+                directories.Add(segment);
+            }
+        }
+
+        return Task.FromResult<IReadOnlyList<string>>(directories);
+    }
+
+    /// <inheritdoc />
     public override Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default)
     {
         path = StorePaths.NormalizeRelativePath(path);
@@ -74,7 +111,7 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    public override Task<IReadOnlyList<FileSearchResult>> SearchFilesAsync(string directory, string regexPattern, string? filePattern = null, CancellationToken cancellationToken = default)
+    public override Task<IReadOnlyList<FileSearchResult>> SearchFilesAsync(string directory, string regexPattern, string? filePattern = null, bool recursive = false, CancellationToken cancellationToken = default)
     {
         // Normalize the directory prefix for path matching.
         string prefix = StorePaths.NormalizeRelativePath(directory, isDirectory: true);
@@ -96,14 +133,16 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
                 continue;
             }
 
-            // Exclude files in subdirectories (direct children only).
+            // The file path relative to the search directory.
             string relativeName = kvp.Key.Substring(prefix.Length);
-            if (relativeName.IndexOf("/", StringComparison.Ordinal) >= 0)
+
+            // When not recursive, exclude files in subdirectories (direct children only).
+            if (!recursive && relativeName.IndexOf("/", StringComparison.Ordinal) >= 0)
             {
                 continue;
             }
 
-            // Apply the optional glob filter on the file name.
+            // Apply the optional glob filter on the relative path.
             if (!StorePaths.MatchesGlob(relativeName, matcher))
             {
                 continue;

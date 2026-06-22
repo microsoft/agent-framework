@@ -123,7 +123,7 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
         try:
             handlers = executor._handlers
             if isinstance(handlers, dict):
-                message_types = list(handlers.keys())  # type: ignore[arg-type]  # pyright: ignore[reportUnknownArgumentType]
+                message_types = list(handlers.keys())  # type: ignore[arg-type]
         except Exception as exc:  # pragma: no cover - defensive logging path
             logger.debug(f"Failed to read executor handlers: {exc}")
 
@@ -558,7 +558,7 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
             common_fields = ["text", "message", "content", "input", "data"]
             for field in common_fields:
                 try:
-                    return target_type(**{field: input_str})  # type: ignore
+                    return target_type(**{field: input_str})
                 except Exception as e:
                     logger.debug(f"Failed to parse string input with field '{field}': {e}")
                     continue
@@ -581,7 +581,7 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
                 data = json.loads(input_str)
                 if hasattr(target_type, "from_dict"):
                     return target_type.from_dict(data)  # type: ignore
-                return target_type(**data)  # type: ignore
+                return target_type(**data)
 
             # Try other common fields
             common_fields = ["text", "message", "content"]
@@ -590,7 +590,7 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
             for field in common_fields:
                 if field in params:
                     try:
-                        return target_type(**{field: input_str})  # type: ignore
+                        return target_type(**{field: input_str})
                     except Exception as e:
                         logger.debug(f"Failed to create SerializationMixin with field '{field}': {e}")
                         continue
@@ -603,13 +603,13 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
             # Try parsing as JSON
             if input_str.strip().startswith("{"):
                 data = json.loads(input_str)
-                return target_type(**data)  # type: ignore
+                return target_type(**data)
 
             # Try common field names
             common_fields = ["text", "message", "content", "input", "data"]
             for field in common_fields:
                 try:
-                    return target_type(**{field: input_str})  # type: ignore
+                    return target_type(**{field: input_str})
                 except Exception as e:
                     logger.debug(f"Failed to create dataclass with field '{field}': {e}")
                     continue
@@ -639,12 +639,12 @@ def _parse_dict_input(input_dict: dict[str, Any], target_type: type) -> Any:
 
             # Try "input" field first (common for workflow inputs)
             if "input" in input_dict:
-                return target_type(input_dict["input"])  # type: ignore
+                return target_type(input_dict["input"])
 
             # If single-key dict, extract the value
             if len(input_dict) == 1:
                 value = next(iter(input_dict.values()))
-                return target_type(value)  # type: ignore
+                return target_type(value)
 
             # Otherwise, return as-is
             return input_dict
@@ -670,14 +670,14 @@ def _parse_dict_input(input_dict: dict[str, Any], target_type: type) -> Any:
                 return _build_message_from_legacy_payload(input_dict)
             if hasattr(target_type, "from_dict"):
                 return target_type.from_dict(input_dict)  # type: ignore
-            return target_type(**input_dict)  # type: ignore
+            return target_type(**input_dict)
         except Exception as e:
             logger.debug(f"Failed to parse dict as SerializationMixin: {e}")
 
     # Dataclasses
     if is_dataclass(target_type):
         try:
-            return target_type(**input_dict)  # type: ignore
+            return target_type(**input_dict)
         except Exception as e:
             logger.debug(f"Failed to parse dict as dataclass: {e}")
 

@@ -198,6 +198,71 @@ The `dependencies` parameter accepts any FastAPI dependency, enabling integratio
 
 For a complete authentication example, see [getting_started/server.py](getting_started/server.py).
 
+## AG-UI Thread Snapshots
+
+AG-UI Thread Snapshot persistence is opt-in and disabled by default. Existing endpoints keep their current behavior
+unless you provide a `snapshot_store`.
+
+Thread snapshots let an AG-UI frontend recover replayable UI state after a refresh. When snapshot persistence is
+enabled, the endpoint stores the latest replayable snapshot for an AG-UI Thread within an application-defined
+Snapshot Scope. A Hydrate Request is an AG-UI request with a known `threadId`, `messages: []`, and no `resume`
+payload. Hydration replays the stored Shared State, message snapshot, and interruption metadata when available,
+then finishes without invoking the wrapped agent or workflow.
+
+Use the built-in in-memory store for local development, demos, and tests:
+
+```python
+from fastapi import FastAPI
+
+from agent_framework.ag_ui import InMemoryAGUIThreadSnapshotStore, add_agent_framework_fastapi_endpoint
+
+app = FastAPI()
+agent = ...
+snapshot_store = InMemoryAGUIThreadSnapshotStore(max_snapshots=500)
+
+
+def resolve_snapshot_scope(request):
+    # Local demo scope. Production apps should derive the scope from authenticated user or tenant context.
+    del request
+    return "local-demo"
+
+
+add_agent_framework_fastapi_endpoint(
+    app,
+    agent,
+    "/",
+    snapshot_store=snapshot_store,
+    snapshot_scope_resolver=resolve_snapshot_scope,
+)
+```
+
+A frontend can then hydrate the latest stored snapshot for the scoped thread:
+
+```json
+{
+  "threadId": "thread-1",
+  "messages": []
+}
+```
+
+Endpoint configuration requires `snapshot_scope_resolver` whenever a snapshot store is configured, including when
+the store is already set on a pre-wrapped `AgentFrameworkAgent` or `AgentFrameworkWorkflow`. The resolver returns
+the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key.
+
+AG-UI Thread ids identify AG-UI Threads; they do not authorize snapshot access. Do not treat a thread id as a bearer
+credential or tenant boundary. Production applications must authenticate and authorize every AG-UI endpoint request
+and choose a Snapshot Scope that represents the app's real access boundary, such as an authenticated user, tenant,
+or workspace. Do not rely on untrusted client-provided fields by themselves to choose that boundary.
+
+Stored snapshots are untrusted application data with confidentiality impact. They may contain sensitive user text,
+model output, tool results, function arguments, UI payloads, Shared State, and interruption data. The built-in
+`InMemoryAGUIThreadSnapshotStore` is in-memory only, process-local, bounded, latest-only, and not durable production
+storage. It is cleared on process restart and is not shared across workers.
+
+No file-backed AG-UI snapshot store is provided by the package. Applications that need durable persistence should
+provide an app-owned implementation of the `AGUIThreadSnapshotStore` protocol and own storage hardening, including
+encryption, access control, retention, audit, data residency, and deletion behavior.
+
 ## Architecture
 
 The package uses a clean, orchestrator-based architecture:

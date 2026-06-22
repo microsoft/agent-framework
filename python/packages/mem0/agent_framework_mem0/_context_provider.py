@@ -162,11 +162,7 @@ class Mem0ContextProvider(ContextProvider):
             elif isinstance(search_response, dict):
                 results_field = search_response.get("results")
                 if isinstance(results_field, list):
-                    current_memories = [
-                        item
-                        for item in results_field
-                        if isinstance(item, dict)  # pyright: ignore[reportUnknownVariableType]
-                    ]
+                    current_memories = [item for item in results_field if isinstance(item, dict)]
                 else:
                     logger.warning(
                         "Unexpected Mem0 search response format: %s",

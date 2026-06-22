@@ -42,9 +42,9 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import StreamEvent, TextBlock
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
@@ -392,7 +392,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         non_builtin_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] = []
         if not isinstance(tools, list):
-            tools = [tools]  # type: ignore[assignment, reportUnknownVariableType]
+            tools = [tools]
         for tool in tools:  # type: ignore[reportUnknownVariableType]
             if isinstance(tool, str):
                 self._builtin_tools.append(tool)
@@ -400,7 +400,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 non_builtin_tools.append(tool)  # type: ignore[union-attr, reportUnknownArgumentType]
         if not non_builtin_tools:
             return
-        self._custom_tools.extend(normalize_tools(non_builtin_tools))  # type: ignore[reportUnknownVariableType]
+        self._custom_tools.extend(normalize_tools(non_builtin_tools))
 
     async def __aenter__(self) -> RawClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""
@@ -689,7 +689,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         return AgentResponse.from_updates(updates, value=structured_output)
 
     @overload
-    def run(  # type: ignore[override]
+    def run(
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -700,7 +700,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
-    def run(  # type: ignore[override]
+    def run(
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -717,7 +717,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         stream: bool = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,  # type: ignore
+        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages.
 
@@ -853,7 +853,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
                 print(response.text)
     """
 
-    @overload  # type: ignore[override]
+    @overload
     def run(
         self,
         messages: AgentRunInputs | None = None,
@@ -870,7 +870,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
-    @overload  # type: ignore[override]
+    @overload
     def run(
         self,
         messages: AgentRunInputs | None = None,
@@ -887,7 +887,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
-    def run(  # pyright: ignore[reportIncompatibleMethodOverride]  # type: ignore[override]
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         messages: AgentRunInputs | None = None,
         *,

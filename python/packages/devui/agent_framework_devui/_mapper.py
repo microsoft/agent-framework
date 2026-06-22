@@ -543,7 +543,7 @@ class MessageMapper:
         # Handle SerializationMixin (like Message) - call to_dict()
         if hasattr(value, "to_dict") and callable(getattr(value, "to_dict", None)):
             try:
-                return value.to_dict()  # type: ignore[attr-defined, no-any-return]
+                return value.to_dict()
             except Exception as e:
                 logger.debug(f"Failed to serialize with to_dict(): {e}")
                 return str(value)
@@ -551,7 +551,7 @@ class MessageMapper:
         # Handle Pydantic models - call model_dump()
         if hasattr(value, "model_dump") and callable(getattr(value, "model_dump", None)):
             try:
-                return value.model_dump()  # type: ignore[attr-defined, no-any-return]
+                return value.model_dump()
             except Exception as e:
                 logger.debug(f"Failed to serialize Pydantic model: {e}")
                 return str(value)
@@ -606,7 +606,7 @@ class MessageMapper:
                 logger.debug(f"Failed to serialize dataclass fields: {e}")
                 # Fallback to asdict() if our custom serialization fails
                 try:
-                    return asdict(request_data)  # type: ignore[arg-type]
+                    return asdict(request_data)
                 except Exception as e2:
                     logger.debug(f"Failed to serialize dataclass with asdict(): {e2}")
 

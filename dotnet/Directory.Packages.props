@@ -12,7 +12,7 @@
   <ItemGroup>
     <!-- Aspire.* -->
     <PackageVersion Include="Anthropic" Version="12.20.0" />
-    <PackageVersion Include="Anthropic.Foundry" Version="0.5.0" />
+    <PackageVersion Include="Anthropic.Foundry" Version="0.6.0" />
     <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
     <PackageVersion Include="Aspire.Azure.AI.Inference" Version="13.1.0-preview.1.25616.3" />
@@ -21,15 +21,16 @@
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
+    <PackageVersion Include="MessagePack" Version="3.1.7" /> <!-- Transitive dependency of Aspire pinned to newer version due to vulnerability in 2.5.192 -->
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.25" />
     <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.4" />
     <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-beta.5" />
     <PackageVersion Include="Azure.Search.Documents" Version="12.0.0" />
-    <PackageVersion Include="Azure.AI.Projects" Version="2.1.0-beta.2" />
+    <PackageVersion Include="Azure.AI.Projects" Version="2.1.0-beta.3" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
-    <PackageVersion Include="Azure.Core" Version="1.56.0" />
+    <PackageVersion Include="Azure.Core" Version="1.57.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="DotNetEnv" Version="3.1.1" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.5.0" />
@@ -44,7 +45,7 @@
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.8" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
     <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.5" />
-    <PackageVersion Include="System.ClientModel" Version="1.12.0" />
+    <PackageVersion Include="System.ClientModel" Version="1.13.0" />
     <PackageVersion Include="System.CodeDom" Version="10.0.0" />
     <PackageVersion Include="System.Collections.Immutable" Version="10.0.1" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />

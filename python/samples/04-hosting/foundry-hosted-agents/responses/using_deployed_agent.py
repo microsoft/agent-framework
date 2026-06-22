@@ -11,7 +11,7 @@ from agent_framework import AgentSession
 from agent_framework.foundry import FoundryAgent
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import VersionRefIndicator
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()

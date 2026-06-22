@@ -1004,9 +1004,9 @@ class TestSkillsExperimentalStage:
         assert len(set(feature_ids)) == 1
         assert getattr(SkillScriptRunner, "__feature_stage__", None) is None
         assert getattr(SkillScriptRunner, "__feature_id__", None) is None
-        assert SkillScript.parameters_schema.fget is not None
-        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_stage__")
-        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_id__")
+        assert SkillScript.parameters_schema.fget is not None  # type: ignore[attr-defined]
+        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_stage__")  # type: ignore[attr-defined]
+        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_id__")  # type: ignore[attr-defined]
 
 
 class TestSkillResource:
@@ -1501,7 +1501,7 @@ class TestSkillsProviderCodeSkill:
         provider = SkillsProvider.from_paths(str(tmp_path), resource_extensions=(".json",))
         await _init_provider(provider)
         skill = _ctx(provider)[0]["my-skill"]
-        resource_names = [r.name for r in skill._resources]
+        resource_names = [r.name for r in skill._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "references/data.json" in resource_names
         assert "references/notes.txt" not in resource_names
 
@@ -1766,7 +1766,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
             resource_filter=lambda ctx: "secret" not in ctx.relative_file_path,
         )
         skills = await source.get_skills()
-        resource_names = [r.name for r in skills[0]._resources]
+        resource_names = [r.name for r in skills[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "references/keep.md" in resource_names
         assert "references/secret.md" not in resource_names
 
@@ -1786,7 +1786,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
             script_filter=lambda ctx: not ctx.relative_file_path.startswith("test_"),
         )
         skills = await source.get_skills()
-        script_names = [s.name for s in skills[0]._scripts]
+        script_names = [s.name for s in skills[0]._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "run.py" in script_names
         assert "test_run.py" not in script_names
 
@@ -1806,7 +1806,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         provider = SkillsProvider.from_paths(str(tmp_path), search_depth=1)
         await _init_provider(provider)
         skill = _ctx(provider)[0]["my-skill"]
-        resource_names = [r.name for r in skill._resources]
+        resource_names = [r.name for r in skill._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "root.md" in resource_names
         assert "sub/nested.md" not in resource_names
 
@@ -1827,7 +1827,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         )
         await _init_provider(provider)
         skill = _ctx(provider)[0]["my-skill"]
-        resource_names = [r.name for r in skill._resources]
+        resource_names = [r.name for r in skill._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "keep.md" in resource_names
         assert "drop.md" not in resource_names
 
@@ -3132,7 +3132,7 @@ class TestSkillScriptRun:
             captured["args"] = args
             return "runner_result"
 
-        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py", runner=runner)
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py", runner=runner)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         skill = FileSkill(
             frontmatter=SkillFrontmatter(name="my-skill", description="d"), content="c", path=f"{_ABS}/test"
         )
@@ -3146,7 +3146,7 @@ class TestSkillScriptRun:
         async def runner(skill: Skill, script: SkillScript, args: dict[str, Any] | None = None) -> str:
             return "async_runner"
 
-        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py", runner=runner)
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py", runner=runner)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="c", path=f"{_ABS}/test")
         result = await script.run(skill, args=None)
         assert result == "async_runner"
@@ -3292,7 +3292,7 @@ class TestSkillScriptRunnerProtocol:
         script = FileSkillScript(name="my-script", full_path=f"{_ABS}/test/scripts/run.py")
         skill._scripts.append(script)
 
-        result = await my_runner(skill, script, args={"key": "val"})
+        result = await my_runner(skill, script, args={"key": "val"})  # pyrefly: ignore[bad-argument-type]
 
         assert result == "executed"
         assert len(results) == 1
@@ -3310,7 +3310,7 @@ class TestSkillScriptRunnerProtocol:
         script = InlineSkillScript(name="my-script", function=lambda: None)
         skill._scripts.append(script)
 
-        result = await runner(skill, script, args={"key": "val"})
+        result = await runner(skill, script, args={"key": "val"})  # type: ignore[arg-type]
         assert result == "custom result"
 
     async def test_runner_returns_none(self) -> None:
@@ -3346,7 +3346,7 @@ class TestSkillScriptRunnerProtocol:
         script = FileSkillScript(name="my-script", full_path=f"{_ABS}/test/scripts/run.py")
         skill._scripts.append(script)
 
-        result = my_runner(skill, script, args={"key": "val"})
+        result = my_runner(skill, script, args={"key": "val"})  # pyrefly: ignore[bad-argument-type]
 
         assert result == "executed"
         assert len(results) == 1
@@ -3364,7 +3364,7 @@ class TestSkillScriptRunnerProtocol:
         script = InlineSkillScript(name="my-script", function=lambda: None)
         skill._scripts.append(script)
 
-        result = runner(skill, script, args={"key": "val"})
+        result = runner(skill, script, args={"key": "val"})  # type: ignore[arg-type]
         assert result == "sync result"
 
     def test_sync_runner_returns_none(self) -> None:
@@ -3779,8 +3779,8 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        assert "run_skill_script" in _ctx(provider)[1]
-        assert "not as top-level tool parameters" in _ctx(provider)[1]
+        assert "run_skill_script" in _ctx(provider)[1]  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+        assert "not as top-level tool parameters" in _ctx(provider)[1]  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
     async def test_no_scripts_no_runner_no_script_instructions(self) -> None:
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
@@ -3914,10 +3914,10 @@ class TestFileScriptDiscovery:
 
         skills = await _discover_file_skills_for_test(str(tmp_path))
         script = skills["my-skill"]._scripts[0]
-        assert script.full_path is not None
-        assert os.path.isabs(script.full_path)
+        assert script.full_path is not None  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert os.path.isabs(script.full_path)  # type: ignore[attr-defined]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[unresolved-attribute]
         expected = str(Path(str(skill_dir), "scripts", "generate.py"))
-        assert script.full_path == expected
+        assert script.full_path == expected  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def test_scripts_not_discovered_recursively(self, tmp_path: Path) -> None:
         """Scripts inside subdirectories of scripts/ are NOT discovered (non-recursive)."""
@@ -3999,7 +3999,7 @@ class TestCustomScriptExtensions:
         )
         await _init_provider(provider)
         skill = _ctx(provider)[0]["my-skill"]
-        script_names = [s.name for s in skill._scripts]
+        script_names = [s.name for s in skill._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "scripts/run.sh" in script_names
         assert "scripts/analyze.py" not in script_names
 
@@ -4023,7 +4023,7 @@ class TestCustomScriptExtensions:
         )
         await _init_provider(provider)
         skill = _ctx(provider)[0]["my-skill"]
-        script_names = [s.name for s in skill._scripts]
+        script_names = [s.name for s in skill._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "scripts/analyze.py" in script_names
         assert "scripts/run.sh" in script_names
         assert "scripts/notes.txt" not in script_names
@@ -4602,7 +4602,7 @@ class TestClassSkillDecoratorDiscovery:
                 def instructions(self) -> str:
                     return "x"
 
-                @ClassSkill.resource(name="oops")  # wrong: should be below @property
+                @ClassSkill.resource(name="oops")  # type: ignore[prop-decorator]  # wrong: should be below @property
                 @property
                 def bad_prop(self) -> str:
                     return "x"
@@ -4619,7 +4619,7 @@ class TestClassSkillDecoratorDiscovery:
                 def instructions(self) -> str:
                     return "x"
 
-                @ClassSkill.script(name="oops")
+                @ClassSkill.script(name="oops")  # type: ignore[prop-decorator]
                 @property
                 def bad_prop(self) -> str:
                     return "x"
@@ -5162,7 +5162,7 @@ class TestLoadSkillsMerging:
         result = await source.get_skills()
         skills_by_name = {s.frontmatter.name: s for s in result}
         assert "my-skill" in skills_by_name
-        assert skills_by_name["my-skill"].path is not None  # file-based skill has path set
+        assert skills_by_name["my-skill"].path is not None  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]  # file-based skill has path set
 
 
 # ---------------------------------------------------------------------------
@@ -5186,7 +5186,7 @@ class TestSkillsSource:
         skills = await source.get_skills()
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "my-skill"
-        assert skills[0].path is not None
+        assert skills[0].path is not None  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def test_file_skills_source_with_extensions(self, tmp_path: Path) -> None:
         """FileSkillsSource resource_extensions controls extension filtering."""
@@ -5204,7 +5204,7 @@ class TestSkillsSource:
         source = FileSkillsSource(str(tmp_path), resource_extensions=(".json",))
         skills = await source.get_skills()
         assert len(skills) == 1
-        resource_names = [r.name for r in skills[0]._resources]
+        resource_names = [r.name for r in skills[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "references/data.json" in resource_names
         assert "references/data.csv" not in resource_names
 
@@ -5672,12 +5672,12 @@ class TestSkillsProviderConstructorEdgeCases:
     def test_string_source_rejected_with_helpful_error(self) -> None:
         """Passing a string (path) to SkillsProvider raises TypeError."""
         with pytest.raises(TypeError, match="from_paths"):
-            SkillsProvider("./skills")  # type: ignore[arg-type]
+            SkillsProvider("./skills")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     def test_path_source_rejected_with_helpful_error(self) -> None:
         """Passing a Path to SkillsProvider raises TypeError."""
         with pytest.raises(TypeError, match="from_paths"):
-            SkillsProvider(Path("./skills"))  # type: ignore[arg-type]
+            SkillsProvider(Path("./skills"))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 # ---------------------------------------------------------------------------

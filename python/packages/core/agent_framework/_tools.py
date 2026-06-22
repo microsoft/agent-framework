@@ -50,13 +50,13 @@ from .observability import (
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 
 if TYPE_CHECKING:
@@ -206,7 +206,7 @@ def _default_histogram() -> Histogram:
     """
     from .observability import OBSERVABILITY_SETTINGS  # local import to avoid circulars
 
-    if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
+    if not OBSERVABILITY_SETTINGS.ENABLED:
         return NoOpHistogram(
             name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
             unit=OtelAttr.DURATION_UNIT,
@@ -691,7 +691,7 @@ class FunctionTool(SerializationMixin):
         if self._context_parameter_name is not None and effective_context is not None:
             call_kwargs[self._context_parameter_name] = effective_context
 
-        if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
+        if not OBSERVABILITY_SETTINGS.ENABLED:
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {observable_kwargs}")
             result = await self._invoke_function(call_kwargs)
@@ -730,7 +730,7 @@ class FunctionTool(SerializationMixin):
                 "response_format",
             }
         }
-        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: (
                     json.dumps(serializable_kwargs, default=str, ensure_ascii=False) if serializable_kwargs else "None"
@@ -739,7 +739,7 @@ class FunctionTool(SerializationMixin):
         with get_function_span(attributes=attributes) as span:
             attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
-            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                 logger.debug(f"Function arguments: {serializable_kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
@@ -755,7 +755,7 @@ class FunctionTool(SerializationMixin):
             else:
                 if skip_parsing:
                     logger.info(f"Function {self.name} succeeded.")
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                         result_str = str(result)
                         span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                         logger.debug(f"Function result: {result_str}")
@@ -768,7 +768,7 @@ class FunctionTool(SerializationMixin):
                 if isinstance(parsed, str):
                     parsed = [Content.from_text(parsed)]
                 logger.info(f"Function {self.name} succeeded.")
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                     result_str = "\n".join(c.text or "" for c in parsed if c.type == "text") or str(parsed)
                     span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                     logger.debug(f"Function result: {result_str}")
@@ -857,8 +857,8 @@ class FunctionTool(SerializationMixin):
                 if isinstance(item, Content):
                     parsed_items.append(item)
                 else:
-                    dumpable = FunctionTool._make_dumpable(item)  # type: ignore[reportUnknownArgumentType]
-                    text = dumpable if isinstance(dumpable, str) else json.dumps(dumpable, default=str)  # type: ignore[reportUnknownArgumentType]
+                    dumpable = FunctionTool._make_dumpable(item)
+                    text = dumpable if isinstance(dumpable, str) else json.dumps(dumpable, default=str)
                     parsed_items.append(Content.from_text(text))
             return parsed_items
         dumpable = FunctionTool._make_dumpable(result)
@@ -1118,13 +1118,13 @@ def _validate_arguments_against_schema(
         if not isinstance(properties.get(field_name), dict):
             continue
 
-        enum_values = properties.get(field_name, {}).get("enum")  # type: ignore
+        enum_values = properties.get(field_name, {}).get("enum")
         if isinstance(enum_values, list) and enum_values and field_value not in enum_values:
             raise TypeError(
                 f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}"
             )
 
-        schema_type = properties.get(field_name, {}).get("type")  # type: ignore
+        schema_type = properties.get(field_name, {}).get("type")
         if isinstance(schema_type, str):
             if not _matches_json_schema_type(field_value, schema_type):
                 raise TypeError(
@@ -1318,7 +1318,7 @@ def tool(
     def decorator(func: Callable[..., Any]) -> FunctionTool:
         @wraps(func)
         def wrapper(f: Callable[..., Any]) -> FunctionTool:
-            tool_name: str = name or getattr(f, "__name__", "unknown_function")  # type: ignore[assignment]
+            tool_name: str = name or getattr(f, "__name__", "unknown_function")
             tool_desc: str = description or (f.__doc__ or "")
             return FunctionTool(
                 name=tool_name,
@@ -1474,13 +1474,13 @@ async def _auto_invoke_function(
             return Content.from_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
                 result=f'Error: Requested function "{function_call_content.name}" not found.',
-                exception=str(exc),  # type: ignore[arg-type]
+                exception=str(exc),
                 additional_properties=function_call_content.additional_properties,
             )
     else:
         # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
         # and never reach this function, so we only handle approved=True cases here.
-        approved_function_call = function_call_content.function_call  # type: ignore[attr-defined]
+        approved_function_call = function_call_content.function_call
         if (
             approved_function_call is None
             or approved_function_call.type != "function_call"
@@ -1523,7 +1523,7 @@ async def _auto_invoke_function(
         return Content.from_function_result(
             call_id=function_call_content.call_id,  # type: ignore[arg-type]
             result=message,
-            exception=str(exc),  # type: ignore[arg-type]
+            exception=str(exc),
             additional_properties=function_call_content.additional_properties,
         )
 
@@ -1640,7 +1640,7 @@ async def _auto_invoke_function(
         return Content.from_function_result(
             call_id=function_call_content.call_id,  # type: ignore[arg-type]
             result=message,
-            exception=str(exc),  # type: ignore[arg-type]
+            exception=str(exc),
             additional_properties=function_call_content.additional_properties,
         )
 
@@ -1709,17 +1709,15 @@ async def _try_execute_function_calls(
             fcc_name,
             fcc_name in approval_tools,
         )
-        if fcc.type == "function_call" and fcc.name in approval_tools:  # type: ignore[attr-defined]
+        if fcc.type == "function_call" and fcc.name in approval_tools:
             logger.debug("Approval needed for function: %s", fcc.name)
             approval_needed = True
             break
-        if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):  # type: ignore[attr-defined]
+        if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):
             declaration_only_flag = True
             break
-        if (
-            config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map  # type: ignore[attr-defined]
-        ):
-            raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
+        if config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map:
+            raise KeyError(f'Error: Requested function "{fcc.name}" not found.')
     if approval_needed:
         # approval can only be needed for Function Call Content, not Approval Responses.
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
@@ -1732,7 +1730,7 @@ async def _try_execute_function_calls(
                 id=fcc.call_id,  # type: ignore[arg-type]
                 function_call=fcc,
             )
-            tool_name = fcc.name  # type: ignore[attr-defined]
+            tool_name = fcc.name
             if tool_name is None:
                 visible_requests.append(approval_request)
                 continue
@@ -1778,7 +1776,7 @@ async def _try_execute_function_calls(
         """Invoke function and catch MiddlewareTermination, returning (result, should_terminate)."""
         try:
             result = await _auto_invoke_function(
-                function_call_content=function_call,  # type: ignore[arg-type]
+                function_call_content=function_call,
                 custom_args=custom_args,
                 tool_map=tool_map,
                 invocation_session=invocation_session,
@@ -1804,9 +1802,9 @@ async def _try_execute_function_calls(
                 propagated: list[Content] = []
                 for item in exc.contents:
                     if isinstance(item, Content):
-                        item.call_id = function_call.call_id  # type: ignore[attr-defined]
-                        if not item.id:  # type: ignore[attr-defined]
-                            item.id = function_call.call_id  # type: ignore[attr-defined]
+                        item.call_id = function_call.call_id
+                        if not item.id:
+                            item.id = function_call.call_id
                         propagated.append(item)
                 if propagated:
                     extra_user_input_contents.extend(propagated[1:])
@@ -1849,7 +1847,7 @@ async def _execute_function_calls(
         custom_args=custom_args,
         attempt_idx=attempt_idx,
         function_calls=function_calls,
-        tools=tools,  # type: ignore
+        tools=tools,
         invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
         config=config,
@@ -2084,9 +2082,7 @@ def _replace_approval_contents_with_results(
     for msg in messages:
         # First pass - collect existing function call IDs to avoid duplicates
         existing_call_ids = {
-            content.call_id  # type: ignore[union-attr, operator]
-            for content in msg.contents
-            if content.type == "function_call" and content.call_id  # type: ignore[attr-defined]
+            content.call_id for content in msg.contents if content.type == "function_call" and content.call_id
         }
 
         # Track approval requests that should be removed (duplicates)
@@ -2127,7 +2123,7 @@ def _replace_approval_contents_with_results(
                     # Create a "not approved" result for rejected calls
                     # Use function_call.call_id (the function's ID), not content.id (approval's ID)
                     msg.contents[content_idx] = Content.from_function_result(
-                        call_id=content.function_call.call_id,  # type: ignore[union-attr, arg-type]
+                        call_id=content.function_call.call_id,
                         result="Error: Tool call invocation was rejected by user.",
                     )
                     msg.role = "tool"
@@ -2515,7 +2511,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         additional_function_arguments = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
-        if options and (additional_opts := options.get("additional_function_arguments")):  # type: ignore[attr-defined]
+        if options and (additional_opts := options.get("additional_function_arguments")):
             additional_function_arguments.update(cast(Mapping[str, Any], additional_opts))
         from ._sessions import AgentSession as _AgentSession
 
@@ -2573,7 +2569,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     approval_result = await _process_function_requests(
                         response=None,
                         prepped_messages=prepped_messages,
-                        tool_options=mutable_options,  # type: ignore[arg-type]
+                        tool_options=mutable_options,
                         attempt_idx=attempt_idx,
                         fcc_messages=None,
                         errors_in_a_row=errors_in_a_row,
@@ -2620,7 +2616,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     result = await _process_function_requests(
                         response=response,
                         prepped_messages=None,
-                        tool_options=mutable_options,  # type: ignore[arg-type]
+                        tool_options=mutable_options,
                         attempt_idx=attempt_idx,
                         fcc_messages=fcc_messages,
                         errors_in_a_row=errors_in_a_row,
@@ -2723,7 +2719,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 approval_result = await _process_function_requests(
                     response=None,
                     prepped_messages=prepped_messages,
-                    tool_options=mutable_options,  # type: ignore[arg-type]
+                    tool_options=mutable_options,
                     attempt_idx=attempt_idx,
                     fcc_messages=None,
                     errors_in_a_row=errors_in_a_row,
@@ -2787,7 +2783,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 result = await _process_function_requests(
                     response=response,
                     prepped_messages=None,
-                    tool_options=mutable_options,  # type: ignore[arg-type]
+                    tool_options=mutable_options,
                     attempt_idx=attempt_idx,
                     fcc_messages=fcc_messages,
                     errors_in_a_row=errors_in_a_row,

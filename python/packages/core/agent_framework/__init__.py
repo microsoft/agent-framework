@@ -27,6 +27,7 @@ from ._clients import (
     SupportsGetEmbeddings,
     SupportsImageGenerationTool,
     SupportsMCPTool,
+    SupportsShellTool,
     SupportsWebSearchTool,
 )
 from ._compaction import (
@@ -100,6 +101,18 @@ from ._harness._file_access import (
     FileSearchResult,
     FileSystemAgentFileStore,
     InMemoryAgentFileStore,
+)
+from ._harness._file_memory import (
+    DEFAULT_FILE_MEMORY_INSTRUCTIONS,
+    DEFAULT_FILE_MEMORY_SOURCE_ID,
+    FileMemoryProvider,
+)
+from ._harness._loop import (
+    AgentLoopMiddleware,
+    JudgeVerdict,
+    background_tasks_running,
+    todos_remaining,
+    todos_remaining_message,
 )
 from ._harness._memory import (
     DEFAULT_MEMORY_SOURCE_ID,
@@ -335,6 +348,8 @@ __all__ = [
     "DEFAULT_BACKGROUND_AGENTS_SOURCE_ID",
     "DEFAULT_FILE_ACCESS_INSTRUCTIONS",
     "DEFAULT_FILE_ACCESS_SOURCE_ID",
+    "DEFAULT_FILE_MEMORY_INSTRUCTIONS",
+    "DEFAULT_FILE_MEMORY_SOURCE_ID",
     "DEFAULT_HARNESS_INSTRUCTIONS",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_MEMORY_SOURCE_ID",
@@ -363,6 +378,7 @@ __all__ = [
     "AgentExecutorResponse",
     "AgentFileStore",
     "AgentFrameworkException",
+    "AgentLoopMiddleware",
     "AgentMiddleware",
     "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
@@ -424,6 +440,7 @@ __all__ = [
     "FileAccessProvider",
     "FileCheckpointStorage",
     "FileHistoryProvider",
+    "FileMemoryProvider",
     "FileSearchMatch",
     "FileSearchResult",
     "FileSkill",
@@ -455,6 +472,7 @@ __all__ = [
     "InlineSkill",
     "InlineSkillResource",
     "InlineSkillScript",
+    "JudgeVerdict",
     "LocalEvaluator",
     "MCPSkill",
     "MCPSkillResource",
@@ -508,6 +526,7 @@ __all__ = [
     "SupportsGetEmbeddings",
     "SupportsImageGenerationTool",
     "SupportsMCPTool",
+    "SupportsShellTool",
     "SupportsWebSearchTool",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
@@ -558,6 +577,7 @@ __all__ = [
     "agent_middleware",
     "annotate_message_groups",
     "apply_compaction",
+    "background_tasks_running",
     "chat_middleware",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
@@ -588,6 +608,8 @@ __all__ = [
     "response_handler",
     "set_agent_mode",
     "step",
+    "todos_remaining",
+    "todos_remaining_message",
     "tool",
     "tool_call_args_match",
     "tool_called_check",

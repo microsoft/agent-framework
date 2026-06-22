@@ -41,7 +41,7 @@ Status is grouped into these buckets:
 | `agent-framework-monty` | `python/packages/monty` | `alpha` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |
-| `agent-framework-orchestrations` | `python/packages/orchestrations` | `beta` |
+| `agent-framework-orchestrations` | `python/packages/orchestrations` | `released` |
 | `agent-framework-purview` | `python/packages/purview` | `beta` |
 | `agent-framework-redis` | `python/packages/redis` | `beta` |
 

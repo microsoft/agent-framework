@@ -14,7 +14,7 @@ of MCP-related actions.
 
 import asyncio
 
-from agent_framework.github import GitHubCopilotAgent
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.session import MCPServerConfig, PermissionHandler
 from dotenv import load_dotenv
 
@@ -42,12 +42,12 @@ async def main() -> None:
         },
     }
 
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful assistant with access to the local filesystem and Microsoft Learn.",
-        default_options={
-            "on_permission_request": PermissionHandler.approve_all,
-            "mcp_servers": mcp_servers,
-        },
+        default_options=GitHubCopilotOptions(
+            on_permission_request=PermissionHandler.approve_all,
+            mcp_servers=mcp_servers,
+        ),
     )
 
     async with agent:
@@ -61,7 +61,10 @@ async def main() -> None:
         # Remote MCP calls may take longer, so increase the timeout
         query2 = "Search Microsoft Learn for 'Azure Functions Python' and summarize the top result"
         print(f"User: {query2}")
-        result2 = await agent.run(query2, options={"timeout": 120})
+        result2 = await agent.run(  # pyright: ignore[reportCallIssue]
+            query2,
+            options=GitHubCopilotOptions(timeout=120),  # pyright: ignore[reportArgumentType]
+        )
         print(f"Agent: {result2}\n")
 
 

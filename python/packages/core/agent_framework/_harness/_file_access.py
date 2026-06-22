@@ -5,9 +5,10 @@
 Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
 session-scoped memory that may be isolated per session, :class:`FileAccessProvider`
 operates on a shared, persistent storage area whose contents are visible across
-sessions and agents. The provider exposes five tools — ``file_access_save_file``,
+sessions and agents. The provider exposes six tools — ``file_access_save_file``,
 ``file_access_read_file``, ``file_access_delete_file``, ``file_access_list_files``,
-and ``file_access_search_files`` — by registering them on the per-invocation
+``file_access_list_subdirectories``, and ``file_access_search_files`` — by
+registering them on the per-invocation
 :class:`~agent_framework.SessionContext` in :meth:`FileAccessProvider.before_run`.
 
 The store abstraction is generic so callers can plug in in-memory, local-disk, or
@@ -29,7 +30,9 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, MutableMapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
+
+from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
@@ -48,7 +51,11 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
     "Use these tools to read input data provided by the user, write output "
     "artifacts, and manage any files the user has asked you to work with.\n\n"
     "- Never delete or overwrite existing files unless the user has explicitly "
-    "asked you to do so."
+    "asked you to do so.\n"
+    "- Files may be organized into subdirectories. Use `file_access_list_files` "
+    "and `file_access_list_subdirectories` to explore the tree level by level, "
+    "or `file_access_search_files` to search file contents recursively across "
+    "the whole store."
 )
 
 # Maximum number of characters of context to include on either side of the first
@@ -76,8 +83,13 @@ _ELOOP = errno.ELOOP
 def _compile_search_regex(pattern: str) -> re.Pattern[str]:
     """Compile a case-insensitive search regex, enforcing the length cap.
 
+    An invalid ``pattern`` raises :class:`re.error` unchanged so the search
+    tools surface it to the calling model, which can correct the pattern and
+    retry.
+
     Raises:
-        ValueError: When ``pattern`` exceeds ``_MAX_SEARCH_PATTERN_LENGTH`` characters.
+        ValueError: When ``pattern`` exceeds ``_MAX_SEARCH_PATTERN_LENGTH``
+            characters.
         re.error: When ``pattern`` is not a valid regular expression.
     """
     if len(pattern) > _MAX_SEARCH_PATTERN_LENGTH:
@@ -178,10 +190,16 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
 def _matches_glob(file_name: str, pattern: str | None) -> bool:
     """Return whether ``file_name`` matches the optional glob pattern (case-insensitive).
 
-    When ``pattern`` is ``None`` or blank this returns True so callers can skip
-    filtering by passing nothing. Matching uses :func:`fnmatch.fnmatchcase` over a
-    lowercased pattern/name pair to give consistent results across operating
-    systems (``fnmatch.fnmatch`` is case-sensitive on POSIX but not on Windows).
+    ``file_name`` is the forward-slash path of a file relative to the search
+    directory (for a direct child this is just its basename; for a recursive
+    search it may contain ``/`` separators). When ``pattern`` is ``None`` or blank
+    this returns True so callers can skip filtering by passing nothing. Matching
+    uses :func:`fnmatch.fnmatchcase` over a lowercased pattern/name pair to give
+    consistent results across operating systems (``fnmatch.fnmatch`` is
+    case-sensitive on POSIX but not on Windows). Note that with ``fnmatch`` a
+    ``*`` matches any characters **including** ``/``, so ``"*.md"`` matches
+    markdown files at any depth and ``"reports/*"`` matches everything under
+    ``reports``.
     """
     if pattern is None or not pattern.strip():
         return True
@@ -419,6 +437,18 @@ class AgentFileStore(ABC):
         """
 
     @abstractmethod
+    async def list_directories(self, directory: str = "") -> list[str]:
+        """List the direct child subdirectory names of ``directory``.
+
+        Args:
+            directory: The relative directory path to list. Use ``""`` for the root.
+
+        Returns:
+            The list of subdirectory names (not full paths) directly contained in
+            the specified directory.
+        """
+
+    @abstractmethod
     async def file_exists(self, path: str) -> bool:
         """Return whether a file exists at ``path``.
 
@@ -432,6 +462,8 @@ class AgentFileStore(ABC):
         directory: str,
         regex_pattern: str,
         file_pattern: str | None = None,
+        *,
+        recursive: bool = False,
     ) -> list[FileSearchResult]:
         """Search files in ``directory`` for content matching ``regex_pattern``.
 
@@ -441,12 +473,19 @@ class AgentFileStore(ABC):
                 (case-insensitive). For example, ``"error|warning"`` matches lines
                 containing ``"error"`` or ``"warning"``.
             file_pattern: An optional glob pattern (case-insensitive) used to
-                filter which files are searched. When ``None`` or blank, every
-                file in the directory is searched.
+                filter which files are searched. The pattern is matched against
+                each file's path **relative to** ``directory`` (forward slashes).
+                When ``None`` or blank, every file in scope is searched.
+
+        Keyword Args:
+            recursive: When ``False`` (default) only the direct children of
+                ``directory`` are searched. When ``True`` every descendant file is
+                searched.
 
         Returns:
             The list of files whose content matched, with snippet and matching
-            line metadata.
+            line metadata. Each result's ``file_name`` is the path relative to
+            ``directory`` (forward slashes).
         """
 
     @abstractmethod
@@ -530,6 +569,38 @@ class InMemoryAgentFileStore(AgentFileStore):
             results.append(display[len(prefix) :])
         return results
 
+    async def list_directories(self, directory: str = "") -> list[str]:
+        """Return the direct child subdirectory names of ``directory``.
+
+        A subdirectory is the first path segment of any stored key whose
+        remainder (after the directory prefix) still contains a ``/`` separator.
+        Distinct first segments are collected, preserving the *original-case*
+        display name and de-duplicating case-insensitively, mirroring the
+        case-preserving behaviour of :class:`FileSystemAgentFileStore`.
+        """
+        prefix = _normalize_relative_path(directory, is_directory=True).lower()
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+        async with self._lock:
+            entries = [(key, display) for key, (display, _) in self._files.items()]
+        results: list[str] = []
+        seen: set[str] = set()
+        for key, display in entries:
+            if not key.startswith(prefix):
+                continue
+            remainder = key[len(prefix) :]
+            separator_index = remainder.find("/")
+            if separator_index <= 0:
+                continue
+            segment_key = remainder[:separator_index]
+            if segment_key in seen:
+                continue
+            seen.add(segment_key)
+            # ``display`` is the original-case normalized path; take the matching
+            # first segment after the (case-insensitive) prefix.
+            results.append(display[len(prefix) : len(prefix) + separator_index])
+        return results
+
     async def file_exists(self, path: str) -> bool:
         """Return whether the file exists."""
         key = self._key(path)
@@ -541,6 +612,8 @@ class InMemoryAgentFileStore(AgentFileStore):
         directory: str,
         regex_pattern: str,
         file_pattern: str | None = None,
+        *,
+        recursive: bool = False,
     ) -> list[FileSearchResult]:
         """Search file contents for ``regex_pattern`` matches.
 
@@ -548,7 +621,10 @@ class InMemoryAgentFileStore(AgentFileStore):
         to a worker thread with a bounded timeout so a pathological pattern
         cannot stall the event loop. Returned :class:`FileSearchResult`
         instances use the *original-case* file names so the result mirrors
-        what :class:`FileSystemAgentFileStore` would produce.
+        what :class:`FileSystemAgentFileStore` would produce. The glob and each
+        result's ``file_name`` are relative to ``directory``; when ``recursive``
+        is ``True`` all descendants are searched and the relative path may
+        contain ``/`` separators.
         """
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
@@ -564,7 +640,7 @@ class InMemoryAgentFileStore(AgentFileStore):
                 if not key.startswith(prefix):
                     continue
                 relative_key = key[len(prefix) :]
-                if "/" in relative_key:
+                if not recursive and "/" in relative_key:
                     continue
                 relative_display = display[len(prefix) :]
                 if not _matches_glob(relative_display, file_pattern):
@@ -588,7 +664,9 @@ class FileSystemAgentFileStore(AgentFileStore):
     All paths are resolved relative to the root directory provided at
     construction time. Lexical path traversal attempts (for example, via ``..``
     segments or absolute paths) are rejected with :class:`ValueError`. The root
-    directory is created automatically if it does not already exist.
+    directory is created lazily on the first write (or ``create_directory``)
+    rather than at construction, so constructing a store never touches the
+    filesystem and is safe in read-only working directories.
 
     Symbolic links and reparse points anywhere along the resolved path are
     rejected on read, write, delete, list, and existence checks. The check is
@@ -605,15 +683,20 @@ class FileSystemAgentFileStore(AgentFileStore):
     def __init__(self, root_directory: str | os.PathLike[str]) -> None:
         """Initialize the file-system store.
 
+        The root directory is **not** created here; construction performs no
+        filesystem writes. The directory is created lazily on the first
+        ``write_file`` (or ``create_directory``) call, so a store can be
+        constructed in a read-only working directory and only fails if a write
+        is actually attempted.
+
         Args:
             root_directory: The directory under which all files are stored.
-                Created if it does not exist.
+                Created lazily on first write if it does not exist.
         """
         raw_root = os.fspath(root_directory)
         if not raw_root or not raw_root.strip():
             raise ValueError("root_directory must not be empty or whitespace-only.")
         root_path = Path(raw_root).resolve()
-        root_path.mkdir(parents=True, exist_ok=True)
         self._root_path = root_path
 
     @property
@@ -795,6 +878,28 @@ class FileSystemAgentFileStore(AgentFileStore):
                 names.append(entry.name)
         return names
 
+    async def list_directories(self, directory: str = "") -> list[str]:
+        """Return the direct child subdirectory names of ``directory``.
+
+        Symlinked directories (and reparse points on Windows) are excluded so a
+        listing cannot surface a path that escapes the root. An empty list is
+        returned for a non-existent directory.
+        """
+        full_dir = self._resolve_safe_directory_path(directory)
+        return await asyncio.to_thread(self._list_directories_sync, full_dir)
+
+    @staticmethod
+    def _list_directories_sync(full_dir: Path) -> list[str]:
+        if not full_dir.is_dir():
+            return []
+        names: list[str] = []
+        for entry in full_dir.iterdir():
+            if entry.is_symlink():
+                continue
+            if entry.is_dir():
+                names.append(entry.name)
+        return names
+
     async def file_exists(self, path: str) -> bool:
         """Return whether the file exists."""
         full_path = self._resolve_safe_path(path)
@@ -809,6 +914,8 @@ class FileSystemAgentFileStore(AgentFileStore):
         directory: str,
         regex_pattern: str,
         file_pattern: str | None = None,
+        *,
+        recursive: bool = False,
     ) -> list[FileSearchResult]:
         """Search file contents for ``regex_pattern`` matches.
 
@@ -816,23 +923,50 @@ class FileSystemAgentFileStore(AgentFileStore):
         file does not abort the whole directory search). Each skip is logged at
         ``WARNING`` level and a summary is logged at ``INFO`` so operators can
         tell the difference between "no matches" and "the corpus was largely
-        not searchable".
+        not searchable". The glob and each result's ``file_name`` are the file's
+        path relative to ``directory`` (forward slashes); when ``recursive`` is
+        ``True`` all descendant files are searched, otherwise only the direct
+        children.
         """
         full_dir = self._resolve_safe_directory_path(directory)
         regex = _compile_search_regex(regex_pattern)
-        return await _run_search_with_timeout(lambda: self._search_files_sync(full_dir, regex, file_pattern))
+        return await _run_search_with_timeout(lambda: self._search_files_sync(full_dir, regex, file_pattern, recursive))
 
     @staticmethod
-    def _search_files_sync(full_dir: Path, regex: re.Pattern[str], file_pattern: str | None) -> list[FileSearchResult]:
+    def _enumerate_search_files(full_dir: Path, recursive: bool) -> list[tuple[str, Path]]:
+        """Enumerate ``(relative_name, path)`` for files to search under ``full_dir``.
+
+        Symlinked files and symlinked directories (reparse points on Windows)
+        are skipped so the search cannot read or descend outside the root.
+        ``relative_name`` is the file's path relative to ``full_dir`` using
+        forward slashes.
+        """
+        found: list[tuple[str, Path]] = []
+        directories: list[Path] = [full_dir]
+        while directories:
+            current = directories.pop()
+            for entry in current.iterdir():
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    if recursive:
+                        directories.append(entry)
+                    continue
+                if entry.is_file():
+                    relative_name = entry.relative_to(full_dir).as_posix()
+                    found.append((relative_name, entry))
+        return found
+
+    @staticmethod
+    def _search_files_sync(
+        full_dir: Path, regex: re.Pattern[str], file_pattern: str | None, recursive: bool
+    ) -> list[FileSearchResult]:
         if not full_dir.is_dir():
             return []
         results: list[FileSearchResult] = []
         skipped: list[str] = []
-        for entry in full_dir.iterdir():
-            if entry.is_symlink() or not entry.is_file():
-                continue
-            file_name = entry.name
-            if not _matches_glob(file_name, file_pattern):
+        for relative_name, entry in FileSystemAgentFileStore._enumerate_search_files(full_dir, recursive):
+            if not _matches_glob(relative_name, file_pattern):
                 continue
             try:
                 file_content = entry.read_text(encoding="utf-8")
@@ -841,9 +975,9 @@ class FileSystemAgentFileStore(AgentFileStore):
                 # un-decodable entry doesn't abort the whole directory search.
                 # Log per file so operators can audit which files were skipped.
                 logger.warning("Skipping non-UTF-8 file during search: %s", entry)
-                skipped.append(file_name)
+                skipped.append(relative_name)
                 continue
-            result = _search_file_content(file_name, file_content, regex)
+            result = _search_file_content(relative_name, file_content, regex)
             if result is not None:
                 results.append(result)
         if skipped:
@@ -861,19 +995,79 @@ class FileSystemAgentFileStore(AgentFileStore):
         await asyncio.to_thread(lambda: full_path.mkdir(parents=True, exist_ok=True))
 
 
+class _SaveFileInput(BaseModel):
+    """Input schema for ``file_access_save_file``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to save.")]
+    content: Annotated[str, Field(description="Full text content to write to the file.")]
+    overwrite: Annotated[
+        bool,
+        Field(default=False, description="When true, replace an existing file; otherwise saving fails if it exists."),
+    ] = False
+
+
+class _ReadFileInput(BaseModel):
+    """Input schema for ``file_access_read_file``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to read.")]
+
+
+class _DeleteFileInput(BaseModel):
+    """Input schema for ``file_access_delete_file``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to delete.")]
+
+
+class _ListFilesInput(BaseModel):
+    """Input schema for ``file_access_list_files``."""
+
+    directory: Annotated[
+        str | None,
+        Field(default=None, description="Relative directory to list; omit or pass empty to list the root."),
+    ] = None
+
+
+class _ListSubdirectoriesInput(BaseModel):
+    """Input schema for ``file_access_list_subdirectories``."""
+
+    directory: Annotated[
+        str | None,
+        Field(default=None, description="Relative directory to list; omit or pass empty to list the root."),
+    ] = None
+
+
+class _SearchFilesInput(BaseModel):
+    """Input schema for ``file_access_search_files``."""
+
+    regex_pattern: Annotated[
+        str,
+        Field(description="Case-insensitive regex matched against file contents; 256 characters or fewer."),
+    ]
+    file_pattern: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description='Optional glob to filter which files are searched (e.g. "*.md", "reports/*").',
+        ),
+    ] = None
+
+
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class FileAccessProvider(ContextProvider):
     """Context provider that gives an agent CRUD/search access to a shared file store.
 
-    The provider exposes five tools to the agent via the per-invocation
+    The provider exposes six tools to the agent via the per-invocation
     :class:`~agent_framework.SessionContext`:
 
     - ``file_access_save_file`` — Save a file (refuses to overwrite by default).
     - ``file_access_read_file`` — Read the content of a file by name.
     - ``file_access_delete_file`` — Delete a file by name.
-    - ``file_access_list_files`` — List all file names at the store root.
-    - ``file_access_search_files`` — Search file contents using a case-insensitive
-      regex, optionally filtered by a glob pattern over file names.
+    - ``file_access_list_files`` — List the direct child file names of a directory.
+    - ``file_access_list_subdirectories`` — List the direct child subdirectory
+      names of a directory.
+    - ``file_access_search_files`` — Recursively search file contents from the
+      store root using a case-insensitive regex, optionally filtered by a glob
+      pattern over the store-root-relative file paths.
 
     Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
     session-scoped memory that may be isolated per session,
@@ -923,9 +1117,8 @@ class FileAccessProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject file-access tools and instructions before the model runs."""
-        del agent, session, state
 
-        @tool(name="file_access_save_file", approval_mode="never_require")
+        @tool(name="file_access_save_file", schema=_SaveFileInput, approval_mode="never_require")
         async def file_access_save_file(file_name: str, content: str, overwrite: bool = False) -> str:
             """Save a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # noqa: E501
             try:
@@ -939,7 +1132,7 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not save file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' saved."
 
-        @tool(name="file_access_read_file", approval_mode="never_require")
+        @tool(name="file_access_read_file", schema=_ReadFileInput, approval_mode="never_require")
         async def file_access_read_file(file_name: str) -> str:
             """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # noqa: E501
             try:
@@ -953,7 +1146,7 @@ class FileAccessProvider(ContextProvider):
 
         delete_approval_mode: ApprovalMode = "always_require" if self.require_delete_approval else "never_require"
 
-        @tool(name="file_access_delete_file", approval_mode=delete_approval_mode)
+        @tool(name="file_access_delete_file", schema=_DeleteFileInput, approval_mode=delete_approval_mode)
         async def file_access_delete_file(file_name: str) -> str:
             """Delete a file by name."""
             try:
@@ -965,7 +1158,7 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not delete file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
-        @tool(name="file_access_list_files", approval_mode="never_require")
+        @tool(name="file_access_list_files", schema=_ListFilesInput, approval_mode="never_require")
         async def file_access_list_files(directory: str | None = None) -> list[str] | str:
             """List the direct child file names of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate files in a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``."""  # noqa: E501
             target = directory if directory and directory.strip() else ""
@@ -976,17 +1169,45 @@ class FileAccessProvider(ContextProvider):
             except OSError as exc:
                 return f"Could not list directory '{directory or ''}': {exc.strerror or exc}"
 
-        @tool(name="file_access_search_files", approval_mode="never_require")
+        @tool(name="file_access_list_subdirectories", schema=_ListSubdirectoriesInput, approval_mode="never_require")
+        async def file_access_list_subdirectories(directory: str | None = None) -> list[str] | str:
+            """List the direct child subdirectory names of a directory.
+
+            Omit ``directory`` (or pass an empty string) to list the root.
+            To enumerate subdirectories of a subdirectory, pass its relative path, for example
+            ``"reports"`` or ``"reports/2024"``.
+            Use this together with file_access_list_files to explore the directory tree level by level.
+            """
+            target = directory if directory and directory.strip() else ""
+            try:
+                return await self.store.list_directories(target)
+            except ValueError as exc:
+                return f"Could not list directory '{directory or ''}': {exc}"
+            except OSError as exc:
+                return f"Could not list directory '{directory or ''}': {exc.strerror or exc}"
+
+        @tool(name="file_access_search_files", schema=_SearchFilesInput, approval_mode="never_require")
         async def file_access_search_files(
             regex_pattern: str,
             file_pattern: str | None = None,
-            directory: str | None = None,
         ) -> list[dict[str, Any]] | str:
-            """Search file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Optionally scope the search to a subdirectory by passing its relative path; omit ``directory`` (or pass an empty string) to search the root. Returns matching file names, snippets, and matching lines with line numbers. The regex_pattern must be 256 characters or fewer."""  # noqa: E501
+            """Search the contents of all files in the store using a case-insensitive regular expression.
+
+            The search runs recursively across all subdirectories.
+            Optionally filter which files to search using a glob pattern matched against each file's
+            path relative to the store root.
+            The glob uses fnmatch semantics where ``*`` matches any characters including ``/``: use
+            ``"*.md"`` to match markdown files at any depth,
+            or ``"reports/*"`` to restrict the search to the ``reports`` subtree.
+            Leave empty or omit to search all files.
+            Returns matching results whose file_name values are paths relative to the store root
+            (usable with file_access_read_file),
+            along with snippets and matching lines with line numbers. The regex_pattern must be
+            256 characters or fewer.
+            """
             pattern = file_pattern if file_pattern and file_pattern.strip() else None
-            target = directory if directory and directory.strip() else ""
             try:
-                results = await self.store.search_files(target, regex_pattern, pattern)
+                results = await self.store.search_files("", regex_pattern, pattern, recursive=True)
             except ValueError as exc:
                 return f"Could not search files: {exc}"
             except OSError as exc:
@@ -1001,6 +1222,7 @@ class FileAccessProvider(ContextProvider):
                 file_access_read_file,
                 file_access_delete_file,
                 file_access_list_files,
+                file_access_list_subdirectories,
                 file_access_search_files,
             ],
         )

@@ -61,7 +61,7 @@ def test_embedding_dimensions_explicit_with_unknown_type() -> None:
 
 
 def test_embedding_empty_vector() -> None:
-    embedding = Embedding(vector=[])
+    embedding = Embedding(vector=[])  # type: ignore[var-annotated]
     assert embedding.dimensions == 0
 
 
@@ -99,10 +99,10 @@ def test_generated_construction_with_usage() -> None:
                 model="test-model",
             )
         ],
-        usage=usage,
+        usage=usage,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     )
     assert embeddings.usage == usage
-    assert embeddings.usage["prompt_tokens"] == 10
+    assert embeddings.usage["prompt_tokens"] == 10  # type: ignore[index, typeddict-item]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[invalid-key, not-subscriptable]
 
 
 def test_generated_construction_with_additional_properties() -> None:

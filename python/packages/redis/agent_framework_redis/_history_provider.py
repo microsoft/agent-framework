@@ -176,7 +176,7 @@ class RedisHistoryProvider(HistoryProvider):
         """Deserialize a JSON string from Redis to a dict."""
         import json
 
-        return json.loads(data)  # type: ignore[no-any-return]
+        return json.loads(data)
 
     async def clear(self, session_id: str | None) -> None:
         """Clear all messages for a session.
@@ -188,7 +188,7 @@ class RedisHistoryProvider(HistoryProvider):
 
     async def aclose(self) -> None:
         """Close the Redis connection."""
-        await self._redis_client.aclose()  # type: ignore[misc]
+        await self._redis_client.aclose()
 
 
 __all__ = ["RedisHistoryProvider"]
