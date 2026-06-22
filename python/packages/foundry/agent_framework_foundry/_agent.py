@@ -765,6 +765,24 @@ class RawFoundryAgent(
 
         return agent_session_id
 
+    async def create_conversation(self, *, session_id: str | None = None) -> AgentSession:
+        """Create a project-level Foundry conversation session.
+
+        This creates a server-side conversation through the Foundry project's OpenAI
+        client and returns an ``AgentSession`` configured to continue that
+        conversation.
+
+        Keyword Args:
+            session_id: Optional local session ID (generated if not provided).
+
+        Returns:
+            A new ``AgentSession`` whose ``service_session_id`` is the created
+            Foundry conversation ID.
+        """
+        client = cast(RawFoundryAgentChatClient, self.client)
+        conversation = await client.project_client.get_openai_client().conversations.create()
+        return self.get_session(service_session_id=conversation.id, session_id=session_id)
+
     @override
     async def _prepare_run_context(
         self,
