@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -187,7 +187,7 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
         response_id: str,
         previous_response_id: str | None = None,
         **_kwargs: Any,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Bind response-chain anchors for one agent run.
 
         Args:

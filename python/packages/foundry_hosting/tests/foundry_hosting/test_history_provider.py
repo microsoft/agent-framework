@@ -13,8 +13,8 @@ _ENTROPY_LENGTH = 32
 
 
 def test_history_provider_public_api_is_marked_experimental() -> None:
-    assert FoundryHostedAgentHistoryProvider.__feature_id__ == ExperimentalFeature.HOSTING.value
-    assert foundry_response_id.__feature_id__ == ExperimentalFeature.HOSTING.value
+    assert getattr(FoundryHostedAgentHistoryProvider, "__feature_id__", None) == ExperimentalFeature.HOSTING.value
+    assert getattr(foundry_response_id, "__feature_id__", None) == ExperimentalFeature.HOSTING.value
 
 
 def test_foundry_response_id_uses_foundry_shape() -> None:
