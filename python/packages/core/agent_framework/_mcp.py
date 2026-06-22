@@ -2898,7 +2898,7 @@ class MCPWebsocketTool(MCPTool):
             An async context manager for the WebSocket client transport.
         """
         try:
-            from mcp.client.websocket import websocket_client
+            from mcp.client.websocket import websocket_client  # pyright: ignore[reportDeprecated]
         except ModuleNotFoundError as ex:
             missing_name = ex.name or "mcp/websocket dependencies"
             if missing_name == "mcp" or missing_name.startswith("mcp."):
@@ -2917,4 +2917,4 @@ class MCPWebsocketTool(MCPTool):
         }
         if self._client_kwargs:
             args.update(self._client_kwargs)
-        return websocket_client(**args)
+        return websocket_client(**args)  # pyright: ignore[reportDeprecated]

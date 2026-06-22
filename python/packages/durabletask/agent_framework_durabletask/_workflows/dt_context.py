@@ -16,7 +16,7 @@ from durabletask.task import (
     OrchestrationContext,
     Task,
     when_all,
-    when_any,  # pyright: ignore[reportUnknownVariableType]
+    when_any,
 )
 
 from .._executors import OrchestrationAgentExecutor
