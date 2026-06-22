@@ -93,8 +93,8 @@ class TestSecurityFeatureStage:
         ]
 
         for security_class in security_classes:
-            assert security_class.__feature_stage__ == "experimental"
-            assert security_class.__feature_id__ == ExperimentalFeature.FIDES.value
+            assert security_class.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            assert security_class.__feature_id__ == ExperimentalFeature.FIDES.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 class TestCombineLabels:
@@ -327,7 +327,7 @@ class TestLabelTrackingMiddleware:
             additional_properties={"source_integrity": "trusted"},
         )
 
-        args = trusted_function.args_schema(arg="test")
+        args = trusted_function.args_schema(arg="test")  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=trusted_function, arguments=args)
 
         async def next_fn():
@@ -379,7 +379,7 @@ class TestLabelTrackingMiddleware:
         )
 
         # Create argument that contains untrusted label
-        args = trusted_function.args_schema(
+        args = trusted_function.args_schema(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             data={"content": "test", "security_label": {"integrity": "untrusted", "confidentiality": "public"}}
         )
 
@@ -422,7 +422,7 @@ class TestLabelTrackingMiddleware:
         # Pass the VariableReferenceContent as an argument
         context = FunctionInvocationContext(
             function=trusted_function,
-            arguments=trusted_function.args_schema(var_ref={"test": "value"}),  # Regular dict
+            arguments=trusted_function.args_schema(var_ref={"test": "value"}),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]  # Regular dict
         )
         # But also pass the actual VariableReferenceContent in kwargs
         context.kwargs = {"var_ref_obj": var_ref}
@@ -510,7 +510,7 @@ class TestPolicyEnforcementMiddleware:
             fn=mock_fn, name="allowed_function", description="Allowed function", args_schema=MockArgs
         )
 
-        args = allowed_function.args_schema(arg="test")
+        args = allowed_function.args_schema(arg="test")  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=allowed_function, arguments=args)
 
         # Set untrusted context label (policy enforcement uses context_label)
@@ -549,7 +549,7 @@ class TestPolicyEnforcementMiddleware:
         assert context.result.type == "function_approval_request"
         assert context.result.additional_properties["policy_violation"] is True
         assert context.result.additional_properties["violation_type"] == "untrusted_context"
-        assert context.result.function_call.call_id == "call-untrusted"
+        assert context.result.function_call.call_id == "call-untrusted"  # type: ignore[union-attr]
 
     async def test_confidentiality_violation_requests_policy_approval(self, mock_function):
         """Test confidentiality violations reuse the policy approval path."""
@@ -653,7 +653,7 @@ class TestPolicyEnforcementMiddleware:
         label_tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
         # Taint the context label so the policy enforcer sees UNTRUSTED
         label_tracker._context_label = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
-        label_tracker._initialized = True
+        label_tracker._initialized = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
         pipeline = FunctionMiddlewarePipeline(label_tracker, policy)
@@ -728,7 +728,7 @@ class TestAutomaticHiding:
         item = context.result[0]
         assert isinstance(item, Content)
         assert item.additional_properties.get("_variable_reference") is True
-        parsed = json.loads(item.text)
+        parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert parsed.get("type") == "variable_reference"
         assert parsed["variable_id"].startswith("var_")
 
@@ -756,7 +756,7 @@ class TestAutomaticHiding:
             additional_properties={"source_integrity": "trusted"},
         )
 
-        args = trusted_function.args_schema()
+        args = trusted_function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=trusted_function, arguments=args)
 
         async def next_fn():
@@ -917,9 +917,9 @@ class TestSecureAgentConfig:
         label_tracker = middleware[0]
         policy_enforcer = middleware[1]
 
-        assert label_tracker.auto_hide_untrusted is True
-        assert "fetch_data" in policy_enforcer.allow_untrusted_tools
-        assert "search" in policy_enforcer.allow_untrusted_tools
+        assert label_tracker.auto_hide_untrusted is True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert "fetch_data" in policy_enforcer.allow_untrusted_tools  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert "search" in policy_enforcer.allow_untrusted_tools  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_get_tools_returns_security_tools(self):
         """Test that get_tools returns quarantined_llm and inspect_variable."""
@@ -952,7 +952,7 @@ class TestSecureAgentConfig:
 
         inspect_variable = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
         assert inspect_variable.approval_mode == "never_require"
-        assert "requires_approval" not in inspect_variable.additional_properties
+        assert "requires_approval" not in inspect_variable.additional_properties  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 class TestGetSecurityTools:
@@ -1253,10 +1253,10 @@ class TestContextLabelTracking:
         current_context = None
 
         async def next_fn():
-            current_context.result = [Content.from_text("result")]
+            current_context.result = [Content.from_text("result")]  # type: ignore[attr-defined, union-attr]  # ty: ignore[invalid-assignment]
 
         # First call: trusted function (TRUSTED)
-        context1 = FunctionInvocationContext(function=trusted_function, arguments=trusted_function.args_schema())
+        context1 = FunctionInvocationContext(function=trusted_function, arguments=trusted_function.args_schema())  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         current_context = context1
 
         await middleware.process(context1, next_fn)
@@ -1265,7 +1265,7 @@ class TestContextLabelTracking:
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
 
         # Second call: untrusted function (UNTRUSTED)
-        context2 = FunctionInvocationContext(function=untrusted_function, arguments=untrusted_function.args_schema())
+        context2 = FunctionInvocationContext(function=untrusted_function, arguments=untrusted_function.args_schema())  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         current_context = context2
 
         await middleware.process(context2, next_fn)
@@ -1274,7 +1274,7 @@ class TestContextLabelTracking:
         assert middleware.get_context_label().integrity == IntegrityLabel.UNTRUSTED
 
         # Third call: trusted function again
-        context3 = FunctionInvocationContext(function=trusted_function, arguments=trusted_function.args_schema())
+        context3 = FunctionInvocationContext(function=trusted_function, arguments=trusted_function.args_schema())  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         current_context = context3
 
         await middleware.process(context3, next_fn)
@@ -1351,7 +1351,7 @@ class TestPolicyEnforcementWithContextLabel:
             args_schema=MockArgs,
         )
 
-        args = allowed_function.args_schema()
+        args = allowed_function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=allowed_function, arguments=args)
 
         context.metadata["context_label"] = label_middleware.get_context_label()
@@ -1551,8 +1551,8 @@ class TestQuarantinedLLM:
         from agent_framework.security import get_security_tools
 
         q_llm = next(tool for tool in get_security_tools() if tool.name == "quarantined_llm")
-        assert q_llm.additional_properties.get("source_integrity") == "untrusted"
-        assert q_llm.additional_properties.get("accepts_untrusted") is True
+        assert q_llm.additional_properties.get("source_integrity") == "untrusted"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert q_llm.additional_properties.get("accepts_untrusted") is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 class TestQuarantineClient:
@@ -1573,7 +1573,7 @@ class TestQuarantineClient:
                 pass
 
         mock_client = MockClient()
-        set_quarantine_client(mock_client)
+        set_quarantine_client(mock_client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         assert get_quarantine_client() is mock_client
 
@@ -1596,7 +1596,7 @@ class TestQuarantineClient:
         mock_client = MockClient()
 
         # Create config with quarantine client
-        config = SecureAgentConfig(quarantine_chat_client=mock_client)
+        config = SecureAgentConfig(quarantine_chat_client=mock_client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Should have set the global client
         assert get_quarantine_client() is mock_client
@@ -1864,7 +1864,7 @@ class TestPerItemEmbeddedLabels:
         # First item should be visible (trusted)
         item0 = context.result[0]
         assert isinstance(item0, Content)
-        data0 = json.loads(item0.text)
+        data0 = json.loads(item0.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert data0["id"] == 1
         assert data0["content"] == "trusted content"
 
@@ -1872,7 +1872,7 @@ class TestPerItemEmbeddedLabels:
         item1 = context.result[1]
         assert isinstance(item1, Content)
         assert item1.additional_properties.get("_variable_reference") is True
-        parsed1 = json.loads(item1.text)
+        parsed1 = json.loads(item1.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert parsed1.get("type") == "variable_reference"
         assert parsed1["security_label"]["integrity"] == "untrusted"
 
@@ -1935,7 +1935,7 @@ class TestPerItemEmbeddedLabels:
         for item in context.result:
             assert isinstance(item, Content)
             assert item.additional_properties.get("_variable_reference") is True
-            parsed = json.loads(item.text)
+            parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
             assert parsed.get("type") == "variable_reference"
 
     @pytest.mark.asyncio
@@ -1957,7 +1957,7 @@ class TestPerItemEmbeddedLabels:
             # No source_integrity = defaults to UNTRUSTED
         )
 
-        args = untrusted_function.args_schema()
+        args = untrusted_function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=untrusted_function, arguments=args)
 
         async def next_fn():
@@ -1976,13 +1976,13 @@ class TestPerItemEmbeddedLabels:
         for item in context.result:
             assert isinstance(item, Content)
             assert item.additional_properties.get("_variable_reference") is True
-            parsed = json.loads(item.text)
+            parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
             assert parsed.get("type") == "variable_reference"
             assert parsed["security_label"]["integrity"] == "untrusted"
 
         # The call/result label should be UNTRUSTED
         label = context.metadata.get("result_label")
-        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.integrity == IntegrityLabel.UNTRUSTED  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     @pytest.mark.asyncio
     async def test_nested_json_in_content_item(self, middleware, mock_function):
@@ -2014,7 +2014,7 @@ class TestPerItemEmbeddedLabels:
         item = context.result[0]
         assert isinstance(item, Content)
         assert item.additional_properties.get("_variable_reference") is True
-        parsed = json.loads(item.text)
+        parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert parsed.get("type") == "variable_reference"
 
     @pytest.mark.asyncio
@@ -2040,8 +2040,8 @@ class TestPerItemEmbeddedLabels:
         # Combined label should be UNTRUSTED (most restrictive integrity)
         # and PRIVATE (most restrictive confidentiality)
         label = context.metadata.get("result_label")
-        assert label.integrity == IntegrityLabel.UNTRUSTED
-        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+        assert label.integrity == IntegrityLabel.UNTRUSTED  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     @pytest.mark.asyncio
     async def test_hidden_items_stored_in_variable_store(self, middleware, mock_function):
@@ -2064,7 +2064,7 @@ class TestPerItemEmbeddedLabels:
         item = context.result[0]
         assert isinstance(item, Content)
         assert item.additional_properties.get("_variable_reference") is True
-        var_ref = json.loads(item.text)
+        var_ref = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert var_ref.get("type") == "variable_reference"
 
         # Retrieve from store
@@ -2100,7 +2100,7 @@ class TestPerItemEmbeddedLabels:
         assert len(context.result) == 1
         item = context.result[0]
         assert isinstance(item, Content)
-        data = json.loads(item.text)
+        data = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert data["data"] == "untrusted but visible"
 
 
@@ -2143,7 +2143,7 @@ class TestTieredLabelPropagation:
         )
 
         # Input has an untrusted label embedded in the argument
-        args = function.args_schema(
+        args = function.args_schema(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             data={"content": "test", "security_label": {"integrity": "untrusted", "confidentiality": "public"}}
         )
         context = FunctionInvocationContext(function=function, arguments=args)
@@ -2179,7 +2179,7 @@ class TestTieredLabelPropagation:
             additional_properties={"source_integrity": "trusted"},
         )
 
-        args = function.args_schema()
+        args = function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=function, arguments=args)
 
         async def next_fn():
@@ -2219,7 +2219,7 @@ class TestTieredLabelPropagation:
         )
 
         # Input has an untrusted label
-        args = function.args_schema(
+        args = function.args_schema(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             data={"content": "test", "security_label": {"integrity": "untrusted", "confidentiality": "public"}}
         )
         context = FunctionInvocationContext(function=function, arguments=args)
@@ -2236,7 +2236,7 @@ class TestTieredLabelPropagation:
         item = context.result[0]
         assert isinstance(item, Content)
         assert item.additional_properties.get("_variable_reference") is True
-        parsed = json.loads(item.text)
+        parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert parsed.get("type") == "variable_reference"
 
     @pytest.mark.asyncio
@@ -2260,7 +2260,7 @@ class TestTieredLabelPropagation:
             args_schema=Args,
         )
 
-        args = function.args_schema()
+        args = function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=function, arguments=args)
 
         async def next_fn():
@@ -2437,7 +2437,7 @@ class TestMaxAllowedConfidentiality:
             },
         )
 
-        args = function.args_schema()
+        args = function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=function, arguments=args)
 
         context.metadata["context_label"] = label_middleware.get_context_label()

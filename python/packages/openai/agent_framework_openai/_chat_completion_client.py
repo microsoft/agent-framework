@@ -65,17 +65,17 @@ from ._shared import (
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
@@ -141,7 +141,7 @@ class OpenAIChatCompletionOptions(ChatOptions[ResponseModelT], Generic[ResponseM
     """
 
     # OpenAI-specific generation parameters (supported by all models)
-    logit_bias: dict[str | int, float]  # type: ignore[misc]
+    logit_bias: dict[str | int, float]
     logprobs: bool
     top_logprobs: int
     prediction: Prediction
@@ -164,7 +164,7 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 
 
 # region Base Client
-class RawOpenAIChatCompletionClient(  # type: ignore[misc]
+class RawOpenAIChatCompletionClient(
     BaseChatClient[OpenAIChatCompletionOptionsT],
     Generic[OpenAIChatCompletionOptionsT],
 ):
@@ -488,9 +488,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         """Get a response from the raw OpenAI chat client."""
         super_get_response = cast(
             "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
-            super().get_response,  # type: ignore[misc]
+            super().get_response,
         )
-        return super_get_response(  # type: ignore[no-any-return]
+        return super_get_response(
             messages=messages,
             stream=stream,
             options=options,
@@ -762,18 +762,20 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         )
         if usage.completion_tokens_details:
             if tokens := usage.completion_tokens_details.accepted_prediction_tokens:
-                details["completion/accepted_prediction_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
+                details["completion/accepted_prediction_tokens"] = tokens
             if tokens := usage.completion_tokens_details.audio_tokens:
-                details["completion/audio_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
-            if tokens := usage.completion_tokens_details.reasoning_tokens:
-                details["completion/reasoning_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
+                details["completion/audio_tokens"] = tokens
+            if (tokens := usage.completion_tokens_details.reasoning_tokens) is not None:
+                details["completion/reasoning_tokens"] = tokens
+                details["reasoning_output_token_count"] = tokens
             if tokens := usage.completion_tokens_details.rejected_prediction_tokens:
-                details["completion/rejected_prediction_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
+                details["completion/rejected_prediction_tokens"] = tokens
         if usage.prompt_tokens_details:
             if tokens := usage.prompt_tokens_details.audio_tokens:
-                details["prompt/audio_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
-            if tokens := usage.prompt_tokens_details.cached_tokens:
-                details["prompt/cached_tokens"] = tokens  # type: ignore[typeddict-unknown-key]
+                details["prompt/audio_tokens"] = tokens
+            if (tokens := usage.prompt_tokens_details.cached_tokens) is not None:
+                details["prompt/cached_tokens"] = tokens
+                details["cache_read_input_token_count"] = tokens
         return details
 
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
@@ -887,7 +889,7 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                         # If the last message already has tool calls, append to it
                         all_messages[-1]["tool_calls"].append(self._prepare_content_for_openai(content))
                     else:
-                        args["tool_calls"] = [self._prepare_content_for_openai(content)]  # type: ignore
+                        args["tool_calls"] = [self._prepare_content_for_openai(content)]
                 case "function_result":
                     args["tool_call_id"] = content.call_id
                     if content.items:
@@ -1032,7 +1034,7 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 # region Public client
 
 
-class OpenAIChatCompletionClient(  # type: ignore[misc]
+class OpenAIChatCompletionClient(
     FunctionInvocationLayer[OpenAIChatCompletionOptionsT],
     ChatMiddlewareLayer[OpenAIChatCompletionOptionsT],
     ChatTelemetryLayer[OpenAIChatCompletionOptionsT],
@@ -1041,7 +1043,7 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
 ):
     """OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"
 
     @overload
     def __init__(
@@ -1297,12 +1299,12 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         """Get a response from the OpenAI chat client with all standard layers enabled."""
         super_get_response = cast(
             "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
-            super().get_response,  # type: ignore[misc]
+            super().get_response,
         )
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
             effective_client_kwargs["middleware"] = middleware
-        return super_get_response(  # type: ignore[no-any-return]
+        return super_get_response(
             messages=messages,
             stream=stream,
             options=options,

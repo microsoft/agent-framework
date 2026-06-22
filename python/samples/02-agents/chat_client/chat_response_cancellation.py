@@ -29,10 +29,11 @@ async def main() -> None:
     """
     client = FoundryChatClient(credential=AzureCliCredential())
 
+    async def get_story_response() -> None:
+        await client.get_response(messages=[Message(role="user", contents=["Tell me a fantasy story."])])
+
     try:
-        task = asyncio.create_task(
-            client.get_response(messages=[Message(role="user", contents=["Tell me a fantasy story."])])
-        )
+        task = asyncio.create_task(get_story_response())
         await asyncio.sleep(1)
         task.cancel()
         await task

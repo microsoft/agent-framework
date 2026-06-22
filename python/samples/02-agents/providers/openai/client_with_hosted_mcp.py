@@ -8,7 +8,7 @@ from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 if TYPE_CHECKING:
-    from agent_framework import AgentSession, SupportsAgentRun
+    from agent_framework import AgentSession
 
 # Load environment variables from .env file
 load_dotenv()
@@ -21,7 +21,7 @@ OpenAI Chat Client, including user approval workflows for function call security
 """
 
 
-async def handle_approvals_without_session(query: str, agent: "SupportsAgentRun"):
+async def handle_approvals_without_session(query: str, agent: Agent[Any]):
     """When we don't have a session, we need to ensure we return with the input, approval request and approval."""
     from agent_framework import Message
 
@@ -29,6 +29,8 @@ async def handle_approvals_without_session(query: str, agent: "SupportsAgentRun"
     while len(result.user_input_requests) > 0:
         new_inputs: list[Any] = [query]
         for user_input_needed in result.user_input_requests:
+            if user_input_needed.function_call is None:
+                continue
             print(
                 f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                 f" with arguments: {user_input_needed.function_call.arguments}"
@@ -46,14 +48,16 @@ async def handle_approvals_without_session(query: str, agent: "SupportsAgentRun"
     return result
 
 
-async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", session: "AgentSession"):
+async def handle_approvals_with_session(query: str, agent: Agent[Any], session: "AgentSession"):
     """Here we let the session deal with the previous responses, and we just rerun with the approval."""
-    from agent_framework import Message
+    from agent_framework import ChatOptions, Message
 
-    result = await agent.run(query, session=session, options={"store": True})
+    result = await agent.run(query, session=session, options=ChatOptions(store=True))
     while len(result.user_input_requests) > 0:
         new_input: list[Any] = []
         for user_input_needed in result.user_input_requests:
+            if user_input_needed.function_call is None:
+                continue
             print(
                 f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                 f" with arguments: {user_input_needed.function_call.arguments}"
@@ -65,23 +69,25 @@ async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", s
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
-        result = await agent.run(new_input, session=session, options={"store": True})
+        result = await agent.run(new_input, session=session, options=ChatOptions(store=True))
     return result
 
 
-async def handle_approvals_with_session_streaming(query: str, agent: "SupportsAgentRun", session: "AgentSession"):
+async def handle_approvals_with_session_streaming(query: str, agent: Agent[Any], session: "AgentSession"):
     """Here we let the session deal with the previous responses, and we just rerun with the approval."""
-    from agent_framework import Message
+    from agent_framework import ChatOptions, Message
 
     new_input: list[Message | str] = [query]
     new_input_added = True
     while new_input_added:
         new_input_added = False
-        async for update in agent.run(new_input, session=session, stream=True, options={"store": True}):
+        async for update in agent.run(new_input, session=session, stream=True, options=ChatOptions(store=True)):
             if update.user_input_requests:
                 # Reset input to only contain new approval responses for the next iteration
                 new_input = []
                 for user_input_needed in update.user_input_requests:
+                    if user_input_needed.function_call is None:
+                        continue
                     print(
                         f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                         f" with arguments: {user_input_needed.function_call.arguments}"

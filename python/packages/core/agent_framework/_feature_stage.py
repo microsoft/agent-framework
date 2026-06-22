@@ -279,7 +279,7 @@ def _add_runtime_warning(
                 raise TypeError(f"{cls.__name__}() takes no arguments")
             return original_new(cls)
 
-        experimental_class.__new__ = staticmethod(__new__)  # type: ignore[assignment]
+        experimental_class.__new__ = staticmethod(__new__)
 
         original_init_subclass: Any = experimental_class.__init_subclass__
         if isinstance(original_init_subclass, MethodType):
@@ -308,7 +308,7 @@ def _add_runtime_warning(
                 )
                 return original_init_subclass(*args, **kwargs)
 
-            experimental_class.__init_subclass__ = init_subclass_wrapper  # type: ignore[assignment]
+            experimental_class.__init_subclass__ = init_subclass_wrapper
 
         return cast(FeatureStageT, experimental_class)
 

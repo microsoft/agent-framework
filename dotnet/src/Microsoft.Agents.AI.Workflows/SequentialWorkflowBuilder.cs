@@ -23,6 +23,7 @@ namespace Microsoft.Agents.AI.Workflows;
 public sealed class SequentialWorkflowBuilder : OrchestrationBuilderBase<SequentialWorkflowBuilder>
 {
     private readonly List<AIAgent> _agents = [];
+    private bool _chainOnlyAgentResponses;
 
     /// <summary>
     /// Initializes a new <see cref="SequentialWorkflowBuilder"/> with the given pipeline
@@ -38,6 +39,24 @@ public sealed class SequentialWorkflowBuilder : OrchestrationBuilderBase<Sequent
         }
     }
 
+    /// <summary>
+    /// Configures whether each downstream agent should receive only the previous agent's output,
+    /// instead of the full accumulated conversation.
+    /// </summary>
+    /// <param name="enabled">
+    /// <see langword="true"/> to pass only the previous agent's output messages to the next agent;
+    /// <see langword="false"/> to pass the full conversation context.
+    /// When enabled, the workflow's terminal output also contains only the final agent's
+    /// messages, because incoming messages are no longer forwarded to the terminal
+    /// <see cref="OutputMessagesExecutor"/>.
+    /// </param>
+    /// <returns>The builder instance.</returns>
+    public SequentialWorkflowBuilder WithChainOnlyAgentResponses(bool enabled = true)
+    {
+        this._chainOnlyAgentResponses = enabled;
+        return this;
+    }
+
     /// <summary>Builds the configured sequential workflow.</summary>
     public Workflow Build()
     {
@@ -49,7 +68,7 @@ public sealed class SequentialWorkflowBuilder : OrchestrationBuilderBase<Sequent
         AIAgentHostOptions options = new()
         {
             ReassignOtherAgentsAsUsers = true,
-            ForwardIncomingMessages = true,
+            ForwardIncomingMessages = !this._chainOnlyAgentResponses,
         };
 
         Dictionary<AIAgent, ExecutorBinding> agentMap = new(AIAgentIDEqualityComparer.Instance);

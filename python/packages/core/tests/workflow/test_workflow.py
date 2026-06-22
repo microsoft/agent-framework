@@ -967,7 +967,7 @@ async def test_workflow_run_inflight_messages_guard(simple_executor: Executor) -
     test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
 
     # Simulate an aborted prior run by leaving a message in the runner context.
-    workflow._runner.context._messages["test"] = [test_message]
+    workflow._runner.context._messages["test"] = [test_message]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert await workflow._runner.context.has_messages()
 
     with pytest.raises(RuntimeError, match="in-flight executor messages"):
@@ -1158,7 +1158,7 @@ async def test_output_executors_with_nonexistent_executor_id() -> None:
 
     # Designate a nonexistent executor so the workflow-level filter drops every yield.
     workflow._output_designation = OutputDesignation(outputs=frozenset({"nonexistent_executor"}))  # type: ignore[attr-defined]
-    workflow._runner.context.set_yield_output_classifier(workflow._output_designation.classify)  # type: ignore[attr-defined,reportPrivateUsage]
+    workflow._runner.context.set_yield_output_classifier(workflow._output_designation.classify)  # type: ignore[attr-defined, reportPrivateUsage]
 
     result = await workflow.run(NumberMessage(data=0))
     outputs = result.get_outputs()
@@ -1255,7 +1255,7 @@ async def test_output_executors_filtering_with_run_responses_streaming() -> None
     from agent_framework._workflows._workflow import OutputDesignation
 
     workflow._output_designation = OutputDesignation(outputs=frozenset({"other_executor"}))  # type: ignore[attr-defined]
-    workflow._runner.context.set_yield_output_classifier(workflow._output_designation.classify)  # type: ignore[attr-defined,reportPrivateUsage]
+    workflow._runner.context.set_yield_output_classifier(workflow._output_designation.classify)  # type: ignore[attr-defined, reportPrivateUsage]
 
     # Send approval response via streaming
     responses = {request_events[0].request_id: ApprovalMessage(approved=True)}

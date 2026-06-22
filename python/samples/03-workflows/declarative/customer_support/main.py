@@ -26,6 +26,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
+from typing import Any
 
 from agent_framework import Agent
 from agent_framework.declarative import (
@@ -34,10 +35,11 @@ from agent_framework.declarative import (
     WorkflowFactory,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from ticketing_plugin import TicketingPlugin
+from ticketing_plugin import TicketingPlugin  # ty: ignore[unresolved-import]  # pyrefly: ignore[missing-import]
 
 logging.basicConfig(level=logging.ERROR)
 
@@ -182,7 +184,7 @@ async def main() -> None:
         client=client,
         name="SelfServiceAgent",
         instructions=SELF_SERVICE_INSTRUCTIONS,
-        default_options={"response_format": SelfServiceResponse},
+        default_options=OpenAIChatOptions[Any](response_format=SelfServiceResponse),
     )
 
     ticketing_agent = Agent(
@@ -190,7 +192,7 @@ async def main() -> None:
         name="TicketingAgent",
         instructions=TICKETING_INSTRUCTIONS,
         tools=plugin.get_functions(),
-        default_options={"response_format": TicketingResponse},
+        default_options=OpenAIChatOptions[Any](response_format=TicketingResponse),
     )
 
     routing_agent = Agent(
@@ -198,7 +200,7 @@ async def main() -> None:
         name="TicketRoutingAgent",
         instructions=TICKET_ROUTING_INSTRUCTIONS,
         tools=[plugin.get_ticket],
-        default_options={"response_format": RoutingResponse},
+        default_options=OpenAIChatOptions[Any](response_format=RoutingResponse),
     )
 
     windows_support_agent = Agent(
@@ -206,7 +208,7 @@ async def main() -> None:
         name="WindowsSupportAgent",
         instructions=WINDOWS_SUPPORT_INSTRUCTIONS,
         tools=[plugin.get_ticket],
-        default_options={"response_format": SupportResponse},
+        default_options=OpenAIChatOptions[Any](response_format=SupportResponse),
     )
 
     resolution_agent = Agent(
@@ -221,7 +223,7 @@ async def main() -> None:
         name="TicketEscalationAgent",
         instructions=ESCALATION_INSTRUCTIONS,
         tools=[plugin.get_ticket, plugin.send_notification],
-        default_options={"response_format": EscalationResponse},
+        default_options=OpenAIChatOptions[Any](response_format=EscalationResponse),
     )
 
     # Agent registry for lookup
