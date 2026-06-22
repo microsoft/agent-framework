@@ -26,7 +26,7 @@ _KNOWN_COMPONENTS: tuple[str, ...] = ("sessions", "checkpoints")
 def load_diskcache() -> Any:
     """Lazy-import :mod:`diskcache` with a helpful error when missing."""
     try:
-        import diskcache  # type: ignore[import-untyped]
+        import diskcache
     except ImportError as exc:  # pragma: no cover - exercised via tests by monkeypatching
         raise ImportError(
             "agent-framework-hosting was asked to persist session aliases to disk "
