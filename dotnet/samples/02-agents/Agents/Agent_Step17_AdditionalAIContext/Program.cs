@@ -12,6 +12,7 @@
 
 using System.Text;
 using System.Text.Json;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -33,10 +34,14 @@ Func<Task<string[]>> loadNextThreeCalendarEvents = async () =>
     ];
 };
 
-// Create an agent with an AI context provider attached that aggregates two other providers:
+// Create an agent with an AI context provider attached that aggregates two other providers.
+// You must dissable client side conversation storage for clients that support it:
 AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
+    .GetProjectOpenAIClient()
+    .GetProjectResponsesClient()
+    .AsIChatClientWithStoredOutputDisabled(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions()
     {
         ChatOptions = new() { ModelId = deploymentName, Instructions = """

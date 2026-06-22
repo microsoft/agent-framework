@@ -9,6 +9,7 @@
 // (e.g. OpenAI Chat Completion). For server-side history (e.g. Foundry Agents),
 // the service manages chat history size.
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -18,9 +19,13 @@ var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ??
 var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // Construct the agent, and provide a factory to create an in-memory chat message store with a reducer that keeps only the last 2 non-system messages.
+// You must dissable client side conversation storage for clients that support it.
 AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
+    .GetProjectOpenAIClient()
+    .GetProjectResponsesClient()
+    .AsIChatClientWithStoredOutputDisabled(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { ModelId = deploymentName, Instructions = "You are good at telling jokes." },

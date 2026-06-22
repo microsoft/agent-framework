@@ -9,6 +9,7 @@
 // is stored in AgentSession.StateBag so conversations can be resumed later.
 
 using System.Text.Json;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -29,12 +30,15 @@ VectorStore vectorStore = new InMemoryVectorStore();
 AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
+    .GetProjectOpenAIClient()
+    .GetProjectResponsesClient()
+    .AsIChatClientWithStoredOutputDisabled(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { ModelId = deploymentName, Instructions = "You are good at telling jokes." },
         Name = "Joker",
         // Create a new ChatHistoryProvider for this agent that stores chat history in a vector store.
-        ChatHistoryProvider = new VectorChatHistoryProvider(vectorStore)
+        ChatHistoryProvider = new VectorChatHistoryProvider(vectorStore),
     });
 
 // Start a new session for the agent conversation.

@@ -30,8 +30,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_StartHere_02_AgentsInWorkflows",
             ProjectPath = "samples/03-workflows/_StartHere/02_AgentsInWorkflows",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should show agent responses from a translation workflow.",
@@ -43,8 +43,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_StartHere_03_AgentWorkflowPatterns",
             ProjectPath = "samples/03-workflows/_StartHere/03_AgentWorkflowPatterns",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["sequential"],
             InputDelayMs = 3000,
             ExpectedOutputDescription =
@@ -81,8 +81,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_StartHere_06_MixedWorkflowAgentsAndExecutors",
             ProjectPath = "samples/03-workflows/_StartHere/06_MixedWorkflowAgentsAndExecutors",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["What is 2 plus 2?"],
             InputDelayMs = 3000,
             ExpectedOutputDescription =
@@ -96,8 +96,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_StartHere_07_WriterCriticWorkflow",
             ProjectPath = "samples/03-workflows/_StartHere/07_WriterCriticWorkflow",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain = ["=== Writer-Critic Iteration Workflow ==="],
             ExpectedOutputDescription =
             [
@@ -115,8 +115,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Agents_CustomAgentExecutors",
             ProjectPath = "samples/03-workflows/Agents/CustomAgentExecutors",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should show custom workflow events including slogan generation and feedback.",
@@ -137,8 +137,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Agents_GroupChatToolApproval",
             ProjectPath = "samples/03-workflows/Agents/GroupChatToolApproval",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain = ["Starting group chat workflow for software deployment..."],
             ExpectedOutputDescription =
             [
@@ -153,8 +153,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Agents_WorkflowAsAnAgent",
             ProjectPath = "samples/03-workflows/Agents/WorkflowAsAnAgent",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["hello", "exit"],
             InputDelayMs = 5000,
             ExpectedOutputDescription =
@@ -219,8 +219,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Concurrent_Concurrent",
             ProjectPath = "samples/03-workflows/Concurrent/Concurrent",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should show results from concurrent agent processing.",
@@ -247,8 +247,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_ConditionalEdges_01_EdgeCondition",
             ProjectPath = "samples/03-workflows/ConditionalEdges/01_EdgeCondition",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should show an email being classified as spam or not spam and processed accordingly.",
@@ -260,8 +260,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_ConditionalEdges_02_SwitchCase",
             ProjectPath = "samples/03-workflows/ConditionalEdges/02_SwitchCase",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should show an ambiguous email being classified as spam, not spam, or uncertain.",
@@ -273,8 +273,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_ConditionalEdges_03_MultiSelection",
             ProjectPath = "samples/03-workflows/ConditionalEdges/03_MultiSelection",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should show an email being classified and potentially routed to multiple handlers.",
@@ -371,8 +371,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Observability_WorkflowAsAnAgent",
             ProjectPath = "samples/03-workflows/Observability/WorkflowAsAnAgent",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             SkipReason = "Interactive console with ReadLine loop; requires OTLP endpoint.",
         },
 

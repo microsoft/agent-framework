@@ -4,7 +4,6 @@ using System.ComponentModel;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
 namespace VerifySamples;
 
@@ -17,33 +16,12 @@ internal sealed class SampleVerifier
     private readonly AIAgent? _verifierAgent;
 
     /// <summary>
-    /// Creates a verifier. If <paramref name="chatClient"/> is provided,
+    /// Creates a verifier. If <paramref name="verifierAgent"/> is provided,
     /// AI-based verification is available for non-deterministic samples.
     /// </summary>
-    public SampleVerifier(ChatClient? chatClient = null)
+    public SampleVerifier(AIAgent? verifierAgent = null)
     {
-        if (chatClient is not null)
-        {
-            this._verifierAgent = chatClient.AsAIAgent(
-                instructions: """
-                    You are a test output verifier. You will be given:
-                    1. The actual stdout output of a program
-                    2. The stderr output (if any)
-                    3. A list of expectations about what the output should contain or demonstrate
-
-                    Your job is to determine whether the actual output satisfies each expectation.
-                    Be reasonable — the output comes from an LLM so exact wording won't match, but the
-                    semantic intent should be clearly satisfied.
-
-                    In your response, you MUST:
-                    - Always provide ai_reasoning with a brief overall assessment.
-                    - Always provide exactly one entry in expectation_results for each expectation,
-                      in the same order as the input list.
-                    - For each expectation_results entry, echo the expectation text in the expectation
-                      field and explain your assessment in the detail field, citing evidence from the output.
-                    """,
-                name: "OutputVerifier");
-        }
+        this._verifierAgent = verifierAgent;
     }
 
     /// <summary>

@@ -61,7 +61,7 @@ public static class Program
 
         ChatClientAgent devopsEngineer = aiProjectClient.AsAIAgent(
             model: deploymentName,
-            instructions: "You are a DevOps engineer responsible for deployments. First check staging status and create a rollback plan, then proceed with production deployment. Always ensure safety measures are in place before deploying.",
+            instructions: "You are a DevOps engineer responsible for deployments. Call CheckStagingStatus, then CreateRollbackPlan, then DeployToProduction — in that order. Do not ask for confirmation before deploying; deployment approval is handled automatically by the system.",
             name: "DevOpsEngineer",
             description: "DevOps engineer who handles deployments",
             tools:
@@ -74,7 +74,7 @@ public static class Program
         // 3. Create custom GroupChatManager with speaker selection logic
         DeploymentGroupChatManager manager = new([qaEngineer, devopsEngineer])
         {
-            MaximumIterationCount = 4  // Limit to 4 rounds
+            MaximumIterationCount = 4
         };
 
         // 4. Build a group chat workflow with the custom manager

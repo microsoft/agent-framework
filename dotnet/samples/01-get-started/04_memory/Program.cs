@@ -25,7 +25,7 @@ var projectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCrede
 // Get the underlying IChatClient to use for the memory component.
 // The memory provider needs direct IChatClient access for structured extraction.
 IChatClient chatClient = projectClient
-    .AsAIAgent(new ChatClientAgentOptions { ChatOptions = new() { ModelId = model } })
+    .AsAIAgent(model: model, instructions: "You are a friendly assistant.Always address the user by their name.")
     .GetService<IChatClient>()
     ?? throw new InvalidOperationException("Could not retrieve IChatClient from AIProjectClient agent.");
 
@@ -38,7 +38,6 @@ IChatClient chatClient = projectClient
 // and its storage to that user id.
 AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
 {
-    ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
     AIContextProviders = [new UserInfoMemory(chatClient)]
 });
 
