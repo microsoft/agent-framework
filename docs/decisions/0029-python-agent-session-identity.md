@@ -91,8 +91,9 @@ later, that should be handled as a run-context/telemetry design, not as session 
 ## Remaining question: durable shape for additional continuation state
 
 - Option A: Use protocol-specific `AgentSession` subclasses.
-- Option B: Store additional durable state inside `AgentSession.state`.
-- Option C: Extend `service_session_id` with richer service-owned values.
+- Option B: Extend `service_session_id` with richer service-owned values.
+- Option C: Add a dedicated dict for additional session details.
+- Option D: Store additional durable state inside `AgentSession.state`.
 
 ### Option A: Use protocol-specific `AgentSession` subclasses
 
@@ -133,30 +134,7 @@ next_response = await a2a_agent.run(
 - Bad, because it depends on each subclass consistently setting shared session fields such as `service_session_id` where
   those are part of the shared abstraction.
 
-### Option B: Store additional durable state inside `AgentSession.state`
-
-Keep base `AgentSession` unchanged and store additional durable continuation/protocol state under namespaced keys in
-`session.state`.
-
-Example:
-
-```python
-session = AgentSession(session_id="ctx_123")
-
-session.state["a2a"] = {
-    "task_id": "task_456",
-    "task_state": TaskState.TASK_STATE_WORKING,
-}
-```
-
-- Good, because it avoids new public fields and avoids a subclass requirement.
-- Good, because `AgentSession.state` already exists for provider/session state.
-- Neutral, because helper APIs can hide the raw dictionary access.
-- Bad, because stringly typed state is easier to corrupt and harder to validate.
-- Bad, because generic consumers need helper APIs anyway; directly reading nested dictionaries is not a good abstraction.
-- Bad, because users may accidentally overwrite or persist invalid protocol state.
-
-### Option C: Extend `service_session_id` with richer service-owned values
+### Option B: Extend `service_session_id` with richer service-owned values
 
 Some services may need `service_session_id` to carry richer service-owned continuation values. That can be addressed with
 a structured value or service-owned formatted string while keeping the common case as a plain string. This option remains
@@ -189,6 +167,54 @@ structured_session = AgentSession(
   `conversation_id` option, so every such path must consistently extract/adapt the service-owned continuation component.
 - Bad, because this does not solve generic run/task correlation unless the structured fields become framework-owned,
   which is not the purpose of `service_session_id`.
+
+### Option C: Add a dedicated dict for additional session details
+
+Keep `service_session_id` as the primary opaque service-owned continuation handle, and add a separate dictionary for
+additional durable protocol/service values that need to travel with the session.
+
+Example:
+
+```python
+session = AgentSession(
+    service_session_id="ctx_123",
+    session_details={
+        "task_id": "task_456",
+        "task_state": TaskState.TASK_STATE_WORKING,
+    },
+)
+```
+
+- Good, because the main service continuation handle stays a plain `service_session_id` string.
+- Good, because extra state has an explicit home and does not overload `service_session_id`.
+- Good, because generic consumers can look in one documented place for additional session-scoped values.
+- Neutral, because helper APIs can hide the raw dictionary access.
+- Bad, because this still introduces string-keyed state unless the dict values are wrapped by typed helpers.
+- Bad, because it adds another public session field that needs serialization, naming, and compatibility rules.
+- Bad, because generic consumers still need to understand the shape or use helpers for the selected agent/session type.
+
+### Option D: Store additional durable state inside `AgentSession.state`
+
+Keep base `AgentSession` unchanged and store additional durable continuation/protocol state under namespaced keys in
+`session.state`.
+
+Example:
+
+```python
+session = AgentSession(session_id="ctx_123")
+
+session.state["a2a"] = {
+    "task_id": "task_456",
+    "task_state": TaskState.TASK_STATE_WORKING,
+}
+```
+
+- Good, because it avoids new public fields and avoids a subclass requirement.
+- Good, because `AgentSession.state` already exists for provider/session state.
+- Neutral, because helper APIs can hide the raw dictionary access.
+- Bad, because stringly typed state is easier to corrupt and harder to validate.
+- Bad, because generic consumers need helper APIs anyway; directly reading nested dictionaries is not a good abstraction.
+- Bad, because users may accidentally overwrite or persist invalid protocol state.
 
 ## Decision
 
