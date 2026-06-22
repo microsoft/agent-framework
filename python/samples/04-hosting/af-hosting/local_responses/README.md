@@ -1,9 +1,10 @@
 # local_responses — Responses-only with a settings-altering hook
 
-The smallest end-to-end `agent-framework-hosting` shape: one Foundry
-agent with a `@tool`, one `ResponsesChannel`, one `run_hook`. Useful as
-the entry-point sample for understanding the **channel run-hook** seam
-without any multi-channel or identity-link concerns.
+The smallest end-to-end `agent-framework-hosting` shape: one agent backed
+by `FoundryChatClient` for model calls, one `ResponsesChannel`, one
+`run_hook`. Useful as the entry-point sample for understanding the
+**channel run-hook** seam without any multi-channel or identity-link
+concerns.
 
 What the run hook demonstrates:
 
@@ -44,4 +45,5 @@ uv run python call_server.py "What is the weather in Tokyo?"
 uv run python call_server.py --previous-response-id <response-id> "And in Seattle?"
 ```
 
-> This sample is **local-only** — no Dockerfile, no Foundry packaging.
+> This sample is **local-only** — it uses a Foundry project as the model
+> provider, but it is not a Foundry Hosted Agents packaging sample.

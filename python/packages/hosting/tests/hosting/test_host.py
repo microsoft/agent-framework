@@ -928,10 +928,10 @@ class TestBindRequestContext:
     """The host walks ``target.context_providers``, descends one level
     when a provider exposes a ``providers`` attribute, and calls
     ``bind_request_context(response_id=..., previous_response_id=...)``
-    on every provider that supports it. Foundry response-id chaining
-    plugs into this exact seam — a regression that mistypes the kwarg
-    name, drops the descent, or fails to keep the binding open across
-    the agent run silently breaks chained writes."""
+    on every provider that supports it. Response-id chaining plugs into
+    this exact seam — a regression that mistypes the kwarg name, drops
+    the descent, or fails to keep the binding open across the agent run
+    silently breaks chained writes."""
 
     async def test_bind_called_with_request_attributes(self) -> None:
         prov = _RecordingContextProvider()
