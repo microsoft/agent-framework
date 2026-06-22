@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 from agent_framework import (
+    Executor,
     InMemoryCheckpointStorage,
     Workflow,
     WorkflowBuilder,
@@ -15,8 +16,6 @@ from agent_framework import (
     executor,
     handler,
 )
-from agent_framework._workflows._executor import Executor
-
 from agent_framework_ag_ui import AgentFrameworkWorkflow
 
 
