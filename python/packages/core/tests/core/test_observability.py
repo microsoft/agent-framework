@@ -358,7 +358,7 @@ async def test_chat_client_streaming_sync_setup_span_is_parented_to_chat_span(
             return "https://test.example.com"
 
         def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+            self, *, messages: Sequence[Message], stream: bool, options: Mapping[str, Any], **kwargs: Any
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             assert stream is True, "this fixture only exercises the streaming path"
 
@@ -711,7 +711,7 @@ async def test_agent_streaming_sync_setup_span_is_parented_to_agent_span(
 
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
-    class SyncSetupAgent(AgentTelemetryLayer, _SyncSetupAgent):
+    class SyncSetupAgent(AgentTelemetryLayer, _SyncSetupAgent):  # type: ignore
         pass
 
     agent = SyncSetupAgent()
