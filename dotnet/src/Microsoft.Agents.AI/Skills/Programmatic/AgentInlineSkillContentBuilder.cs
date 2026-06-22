@@ -39,32 +39,43 @@ internal static class AgentInlineSkillContentBuilder
         .Append(EscapeXmlString(instructions))
         .Append("\n</instructions>");
 
-        if (resources is { Count: > 0 })
-        {
-            sb.Append("\n\n<available_resources>\n");
-            foreach (var resource in resources)
-            {
-                sb.Append($"  <resource name=\"{EscapeXmlString(resource.Name)}\"/>\n");
-            }
+        sb.Append('\n');
+        sb.Append(BuildAvailableResourcesBlock(resources ?? []));
+        sb.Append('\n');
+        sb.Append(BuildAvailableScriptsBlock(scripts ?? []));
 
-            sb.Append("</available_resources>");
-        }
-        else
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds an <c>&lt;available_resources&gt;...&lt;/available_resources&gt;</c> XML block for the given resources.
+    /// Each resource is emitted as a self-closing <c>&lt;resource name="..."/&gt;</c> element. When the list is empty,
+    /// a self-closing <c>&lt;available_resources /&gt;</c> element is returned. This block lets the model know which
+    /// resources can be read (or that there are none) so it does not hallucinate resource names.
+    /// </summary>
+    /// <param name="resources">The resources to include in the block.</param>
+    /// <returns>
+    /// An XML string starting with <c>\n&lt;available_resources&gt;</c>, or <c>\n&lt;available_resources /&gt;</c> if the list is empty.
+    /// </returns>
+    public static string BuildAvailableResourcesBlock(IReadOnlyList<AgentSkillResource> resources)
+    {
+        _ = Throw.IfNull(resources);
+
+        if (resources.Count == 0)
         {
             // Emit an empty element so the model knows no resources are available and does not hallucinate resource names.
-            sb.Append("\n\n<available_resources />");
+            return "\n<available_resources />";
         }
 
-        if (scripts is { Count: > 0 })
+        var sb = new StringBuilder();
+        sb.Append("\n<available_resources>\n");
+
+        foreach (var resource in resources)
         {
-            sb.Append('\n');
-            sb.Append(BuildAvailableScriptsBlock(scripts));
+            sb.Append($"  <resource name=\"{EscapeXmlString(resource.Name)}\"/>\n");
         }
-        else
-        {
-            // Emit an empty element so the model knows no scripts are available and does not hallucinate script names.
-            sb.Append("\n\n<available_scripts />");
-        }
+
+        sb.Append("</available_resources>");
 
         return sb.ToString();
     }
@@ -73,18 +84,22 @@ internal static class AgentInlineSkillContentBuilder
     /// Builds an <c>&lt;available_scripts&gt;...&lt;/available_scripts&gt;</c> XML block for the given scripts.
     /// Each script is emitted as a <c>&lt;script name="..."&gt;</c> element; when the script has a
     /// parameter schema it is wrapped in a nested <c>&lt;parameters_schema&gt;</c> element, otherwise a
-    /// self-closing <c>&lt;script&gt;</c> element is used. This block lets the model know which scripts
-    /// can be called and how to format their arguments.
+    /// self-closing <c>&lt;script&gt;</c> element is used. When the list is empty, a self-closing
+    /// <c>&lt;available_scripts /&gt;</c> element is returned. This block lets the model know which scripts
+    /// can be called and how to format their arguments (or that there are none) so it does not hallucinate script names.
     /// </summary>
     /// <param name="scripts">The scripts to include in the block.</param>
-    /// <returns>An XML string starting with <c>\n&lt;available_scripts&gt;</c>, or an empty string if the list is empty.</returns>
+    /// <returns>
+    /// An XML string starting with <c>\n&lt;available_scripts&gt;</c>, or <c>\n&lt;available_scripts /&gt;</c> if the list is empty.
+    /// </returns>
     public static string BuildAvailableScriptsBlock(IReadOnlyList<AgentSkillScript> scripts)
     {
         _ = Throw.IfNull(scripts);
 
         if (scripts.Count == 0)
         {
-            return string.Empty;
+            // Emit an empty element so the model knows no scripts are available and does not hallucinate script names.
+            return "\n<available_scripts />";
         }
 
         var sb = new StringBuilder();

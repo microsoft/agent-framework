@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -116,13 +115,61 @@ public sealed class AgentInlineSkillContentBuilderTests
     }
 
     [Fact]
-    public void BuildAvailableScriptsBlock_EmptyList_ReturnsEmptyString()
+    public void BuildAvailableResourcesBlock_EmptyList_ReturnsSelfClosingElement()
+    {
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(Array.Empty<AgentSkillResource>());
+
+        // Assert — empty list yields a self-closing element so the model knows none are available
+        Assert.Equal("\n<available_resources />", block);
+    }
+
+    [Fact]
+    public void BuildAvailableResourcesBlock_WithResources_EmitsSelfClosingResourceEntries()
+    {
+        // Arrange
+        var resources = new AgentSkillResource[]
+        {
+            new AgentInlineSkillResource("config", "value", "A described resource."),
+            new AgentInlineSkillResource("table", "value"),
+        };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(resources);
+
+        // Assert — resources are listed by name only (no description)
+        Assert.Contains("<available_resources>", block);
+        Assert.Contains("<resource name=\"config\"/>", block);
+        Assert.Contains("<resource name=\"table\"/>", block);
+        Assert.Contains("</available_resources>", block);
+        Assert.DoesNotContain("A described resource.", block);
+    }
+
+    [Fact]
+    public void BuildAvailableResourcesBlock_ResourceNameWithSpecialCharacters_IsXmlEscaped()
+    {
+        // Arrange
+        var resources = new AgentSkillResource[] { new AgentInlineSkillResource("a<b>&\"c", "v") };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(resources);
+
+        // Assert
+        Assert.Contains("<resource name=\"a&lt;b&gt;&amp;&quot;c\"/>", block);
+    }
+
+    [Fact]
+    public void BuildAvailableResourcesBlock_NullResources_Throws() =>
+        Assert.Throws<ArgumentNullException>(() => AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(null!));
+
+    [Fact]
+    public void BuildAvailableScriptsBlock_EmptyList_ReturnsSelfClosingElement()
     {
         // Act
         var block = AgentInlineSkillContentBuilder.BuildAvailableScriptsBlock(Array.Empty<AgentSkillScript>());
 
-        // Assert
-        Assert.Equal(string.Empty, block);
+        // Assert — empty list yields a self-closing element so the model knows none are available
+        Assert.Equal("\n<available_scripts />", block);
     }
 
     [Fact]

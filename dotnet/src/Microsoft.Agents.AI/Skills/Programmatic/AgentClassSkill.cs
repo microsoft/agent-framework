@@ -206,7 +206,8 @@ public abstract class AgentClassSkill<
     /// </summary>
     /// <remarks>
     /// The resource is listed in the <c>&lt;available_resources&gt;</c> block of the skill body so the LLM
-    /// knows it can be accessed; an empty block prevents hallucinated resource calls.
+    /// knows it can be accessed. When no resources are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated resource calls.
     /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="value">The static resource value.</param>
@@ -220,7 +221,8 @@ public abstract class AgentClassSkill<
     /// </summary>
     /// <remarks>
     /// The resource is listed in the <c>&lt;available_resources&gt;</c> block of the skill body so the LLM
-    /// knows it can be accessed; an empty block prevents hallucinated resource calls.
+    /// knows it can be accessed. When no resources are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated resource calls.
     /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="method">A method that produces the resource value when requested.</param>
@@ -238,7 +240,8 @@ public abstract class AgentClassSkill<
     /// </summary>
     /// <remarks>
     /// The script is listed in the <c>&lt;available_scripts&gt;</c> block of the skill body so the LLM
-    /// knows it can be called; an empty block prevents hallucinated script calls.
+    /// knows it can be called. When no scripts are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated script calls.
     /// </remarks>
     /// <param name="name">The script name.</param>
     /// <param name="method">A method to execute when the script is invoked.</param>

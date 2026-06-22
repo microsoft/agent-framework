@@ -160,7 +160,7 @@ public sealed class AgentInlineSkillTests
 
         // Assert — resources are rendered in the body so the model can discover them
         Assert.Contains("<available_resources>", content);
-        Assert.Contains("config", content);
+        Assert.Contains("<resource name=\"config\"/>", content);
         Assert.DoesNotContain("A config resource.", content);
     }
 
@@ -176,7 +176,7 @@ public sealed class AgentInlineSkillTests
 
         // Assert — resources are rendered in the body
         Assert.Contains("<available_resources>", content);
-        Assert.Contains("dynamic", content);
+        Assert.Contains("<resource name=\"dynamic\"/>", content);
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public sealed class AgentInlineSkillTests
 
         // Assert
         Assert.Contains("<available_scripts>", content);
-        Assert.Contains("run", content);
+        Assert.Contains("<script name=\"run\"", content);
     }
 
     [Fact]

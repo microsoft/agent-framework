@@ -126,10 +126,13 @@ public sealed class AgentFileSkillScriptTests
         Assert.Contains("<script name=\"build\">", content);
         Assert.Contains("<script name=\"deploy\">", content);
         Assert.Contains("</available_scripts>", content);
+
+        // A scripts-only skill still emits an empty resources peer so the model knows none are available
+        Assert.Contains("<available_resources />", content);
     }
 
     [Fact]
-    public async Task Content_WithoutScripts_ReturnsOriginalContentAsync()
+    public async Task Content_WithoutResourcesOrScripts_EmitsSelfClosingPeersAsync()
     {
         // Arrange
         var fileSkill = new AgentFileSkill(
@@ -140,8 +143,56 @@ public sealed class AgentFileSkillScriptTests
         // Act
         var content = await fileSkill.GetContentAsync();
 
-        // Assert
-        Assert.Equal("Original content only", content);
+        // Assert — both blocks are always emitted as self-closing elements so the model knows none are available
+        Assert.StartsWith("Original content only", content);
+        Assert.Contains("<available_resources />", content);
+        Assert.Contains("<available_scripts />", content);
+    }
+
+    [Fact]
+    public async Task Content_WithResources_AppendsResourceEntriesAsync()
+    {
+        // Arrange
+        var fileSkill = new AgentFileSkill(
+            new AgentSkillFrontmatter("my-skill", "A skill"),
+            "Original content",
+            "/skills/my-skill",
+            resources: [new AgentInlineSkillResource("reference", "value"), new AgentInlineSkillResource("table", "value")]);
+
+        // Act
+        var content = await fileSkill.GetContentAsync();
+
+        // Assert — content starts with original and appends per-resource entries so the model knows what is callable
+        Assert.StartsWith("Original content", content);
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("<resource name=\"reference\"/>", content);
+        Assert.Contains("<resource name=\"table\"/>", content);
+        Assert.Contains("</available_resources>", content);
+
+        // A resources-only skill still emits an empty scripts peer so the model knows none are available
+        Assert.Contains("<available_scripts />", content);
+    }
+
+    [Fact]
+    public async Task Content_WithResourcesAndScripts_AppendsResourcesBeforeScriptsAsync()
+    {
+        // Arrange
+        static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
+        var fileSkill = new AgentFileSkill(
+            new AgentSkillFrontmatter("my-skill", "A skill"),
+            "Original content",
+            "/skills/my-skill",
+            resources: [new AgentInlineSkillResource("reference", "value")],
+            scripts: [CreateScript("build", "/scripts/build.sh", RunnerAsync)]);
+
+        // Act
+        var content = await fileSkill.GetContentAsync();
+
+        // Assert — resources block precedes scripts block
+        var resourcesIndex = content.IndexOf("<available_resources>", StringComparison.Ordinal);
+        var scriptsIndex = content.IndexOf("<available_scripts>", StringComparison.Ordinal);
+        Assert.True(resourcesIndex >= 0 && scriptsIndex >= 0);
+        Assert.True(resourcesIndex < scriptsIndex);
     }
 
     [Fact]
