@@ -90,6 +90,10 @@ class SandboxRuntime(Protocol):
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]: ...
 
 
+class _NamedDirectory(Protocol):
+    name: str
+
+
 _T = TypeVar("_T")
 
 
@@ -725,7 +729,7 @@ def _collect_output_relative_paths(*, sandbox: Any, root: Path) -> set[str]:
 def _parse_output_files(
     *,
     sandbox: Any,
-    output_dir: TemporaryDirectory[str] | None,
+    output_dir: _NamedDirectory | None,
     expect_output_files: bool,
 ) -> list[Content]:
     if output_dir is None:
