@@ -128,8 +128,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Agents_FoundryAgent",
             ProjectPath = "samples/03-workflows/Agents/FoundryAgent",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             SkipReason = "Requires Azure AI Foundry project endpoint.",
         },
 
@@ -384,7 +384,7 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_ConfirmInput",
             ProjectPath = "samples/03-workflows/Declarative/ConfirmInput",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
             Inputs = ["hello", "hello"],
             InputDelayMs = 8000,
             ExpectedOutputDescription = ["The output should show a confirmation prompt and a user response."],
@@ -394,8 +394,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_CustomerSupport",
             ProjectPath = "samples/03-workflows/Declarative/CustomerSupport",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["My laptop won't start"],
             InputDelayMs = 3000,
             ExpectedOutputDescription = ["The output should show a customer support workflow processing a laptop issue, with agent responses providing troubleshooting or support."],
@@ -405,26 +405,16 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_DeepResearch",
             ProjectPath = "samples/03-workflows/Declarative/DeepResearch",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             SkipReason = "Requires external weather API (wttr.in).",
-        },
-
-        new SampleDefinition
-        {
-            Name = "Workflow_Declarative_ExecuteCode",
-            ProjectPath = "samples/03-workflows/Declarative/ExecuteCode",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            Inputs = ["What is 12 * 34?"],
-            InputDelayMs = 5000,
-            ExpectedOutputDescription = ["The output should show a declarative workflow executing generated code, processing a math question and producing a result."],
         },
 
         new SampleDefinition
         {
             Name = "Workflow_Declarative_ExecuteWorkflow",
             ProjectPath = "samples/03-workflows/Declarative/ExecuteWorkflow",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
             SkipReason = "Requires a workflow file path as a CLI argument.",
         },
 
@@ -432,8 +422,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_FunctionTools",
             ProjectPath = "samples/03-workflows/Declarative/FunctionTools",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["What are today's specials?", "EXIT"],
             InputDelayMs = 8000,
             ExpectedOutputDescription = ["The output should show a workflow calling function tools (e.g. a menu plugin) to answer a question about restaurant specials."],
@@ -443,7 +433,7 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_HostedWorkflow",
             ProjectPath = "samples/03-workflows/Declarative/HostedWorkflow",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
             SkipReason = "Hosts a persistent workflow server that does not exit.",
         },
 
@@ -451,8 +441,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_InputArguments",
             ProjectPath = "samples/03-workflows/Declarative/InputArguments",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["I'd like to visit Seattle", "EXIT"],
             InputDelayMs = 8000,
             ExpectedOutputDescription = ["The output should show a workflow capturing location input and providing travel-related information about Seattle."],
@@ -462,8 +452,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_InvokeFunctionTool",
             ProjectPath = "samples/03-workflows/Declarative/InvokeFunctionTool",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["What's the soup of the day?", "EXIT"],
             InputDelayMs = 8000,
             ExpectedOutputDescription = ["The output should show a workflow invoking a function tool (e.g. a menu plugin) to answer a question about the soup of the day."],
@@ -473,8 +463,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_InvokeFoundryToolboxMcp",
             ProjectPath = "samples/03-workflows/Declarative/InvokeFoundryToolboxMcp",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME", "FOUNDRY_TOOLBOX_NAME", "FOUNDRY_AGENT_TOOLSET_API_VERSION"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL", "FOUNDRY_TOOLBOX_NAME", "FOUNDRY_AGENT_TOOLSET_API_VERSION"],
             Inputs = ["How do I use Azure OpenAI with my data?"],
             InputDelayMs = 3000,
             ExpectedOutputDescription = ["The output should show a workflow using Foundry Toolbox MCP tools to search Microsoft Learn documentation and web search to provide a summary of results."],
@@ -484,8 +474,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_InvokeMcpTool",
             ProjectPath = "samples/03-workflows/Declarative/InvokeMcpTool",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["Search for .NET tutorials on Microsoft Learn"],
             InputDelayMs = 3000,
             ExpectedOutputDescription = ["The output should show a workflow using MCP tools to search Microsoft Learn documentation and provide a summary of results."],
@@ -495,8 +485,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_Marketing",
             ProjectPath = "samples/03-workflows/Declarative/Marketing",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["A smart water bottle that tracks hydration"],
             InputDelayMs = 3000,
             ExpectedOutputDescription = ["The output should show a marketing workflow generating content about a smart water bottle product."],
@@ -506,8 +496,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_StudentTeacher",
             ProjectPath = "samples/03-workflows/Declarative/StudentTeacher",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["What is 18 + 27?"],
             InputDelayMs = 3000,
             ExpectedOutputDescription = ["The output should show a student-teacher workflow where a student asks a math question and a teacher provides the answer."],
@@ -517,8 +507,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_Declarative_ToolApproval",
             ProjectPath = "samples/03-workflows/Declarative/ToolApproval",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             Inputs = ["Search for .NET tutorials", "EXIT"],
             InputDelayMs = 8000,
             ExpectedOutputDescription = ["The output should show a workflow using an MCP tool with approval to search Microsoft Learn, followed by an exit from the input loop."],

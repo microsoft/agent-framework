@@ -77,7 +77,6 @@ public static class Program
                     // skip updates that don't have a message ID or text
                     continue;
                 }
-                Console.Clear();
 
                 if (!buffer.TryGetValue(update.MessageId, out List<AgentResponseUpdate>? value))
                 {

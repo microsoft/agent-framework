@@ -1,4 +1,4 @@
-﻿<Solution>
+<Solution>
   <Configurations>
     <BuildType Name="Debug" />
     <BuildType Name="Publish" />
@@ -192,10 +192,10 @@
     <File Path="samples/02-agents/AgentWithMemory/README.md" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
-    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
-    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step05_BoundedChatHistory/AgentWithMemory_Step05_BoundedChatHistory.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step03_MemoryUsingValkey/AgentWithMemory_Step03_MemoryUsingValkey.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step03_MemoryUsingValkey_Bedrock/AgentWithMemory_Step03_MemoryUsingValkey_Bedrock.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step05_BoundedChatHistory/AgentWithMemory_Step05_BoundedChatHistory.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentProviders/openai/">
     <File Path="samples/02-agents/AgentProviders/openai/README.md" />
@@ -242,7 +242,6 @@
     <Project Path="samples/03-workflows/Declarative/ConfirmInput/ConfirmInput.csproj" />
     <Project Path="samples/03-workflows/Declarative/CustomerSupport/CustomerSupport.csproj" />
     <Project Path="samples/03-workflows/Declarative/DeepResearch/DeepResearch.csproj" />
-    <Project Path="samples/03-workflows/Declarative/ExecuteCode/ExecuteCode.csproj" />
     <Project Path="samples/03-workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
     <Project Path="samples/03-workflows/Declarative/FunctionTools/FunctionTools.csproj" />
     <Project Path="samples/03-workflows/Declarative/HostedWorkflow/HostedWorkflow.csproj" />
@@ -615,9 +614,9 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A/Microsoft.Agents.AI.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Hosting.AspNetCore/Microsoft.Agents.AI.Hosting.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AzureFunctions/Microsoft.Agents.AI.Hosting.AzureFunctions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.OpenAI/Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Hosting.AspNetCore/Microsoft.Agents.AI.Hosting.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hyperlight/Microsoft.Agents.AI.Hyperlight.csproj" />
     <Project Path="src/Microsoft.Agents.AI.LocalCodeAct/Microsoft.Agents.AI.LocalCodeAct.csproj" />
@@ -626,13 +625,13 @@
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Tools.Shell/Microsoft.Agents.AI.Tools.Shell.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Valkey/Microsoft.Agents.AI.Valkey.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.Foundry/Microsoft.Agents.AI.Workflows.Declarative.Foundry.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.Mcp/Microsoft.Agents.AI.Workflows.Declarative.Mcp.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Generators/Microsoft.Agents.AI.Workflows.Generators.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Valkey/Microsoft.Agents.AI.Valkey.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
   <Folder Name="/Tests/IntegrationTests/">
@@ -683,11 +682,11 @@
     <Project Path="tests/Microsoft.Agents.AI.Purview.UnitTests/Microsoft.Agents.AI.Purview.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Tools.Shell.UnitTests/Microsoft.Agents.AI.Tools.Shell.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.UnitTests/Microsoft.Agents.AI.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Valkey.UnitTests/Microsoft.Agents.AI.Valkey.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests/Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Declarative.UnitTests/Microsoft.Agents.AI.Workflows.Declarative.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/Microsoft.Agents.AI.Workflows.Generators.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.UnitTests/Microsoft.Agents.AI.Workflows.UnitTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.Valkey.UnitTests/Microsoft.Agents.AI.Valkey.UnitTests.csproj" />
   </Folder>
 </Solution>
 
