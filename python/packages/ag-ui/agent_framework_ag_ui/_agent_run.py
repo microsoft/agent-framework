@@ -718,8 +718,16 @@ def _build_messages_snapshot(
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
+        # Tool-call assistant messages are not streamed via TEXT_MESSAGE_START,
+        # so they must not reuse flow.message_id when accumulated_text exists
+        # (which belongs to the streamed text message). Fixes #6266.
+        tool_call_message_id = (
+            generate_event_id()
+            if flow.accumulated_text
+            else (flow.message_id or generate_event_id())
+        )
         tool_call_message = {
-            "id": flow.message_id or generate_event_id(),
+            "id": tool_call_message_id,
             "role": "assistant",
             "tool_calls": flow.pending_tool_calls.copy(),
         }
@@ -732,10 +740,9 @@ def _build_messages_snapshot(
     # This is a separate message from the tool calls message to maintain
     # the expected AG-UI protocol format (see issue #3619)
     if flow.accumulated_text:
-        # Use a new ID for the content message if we had tool calls (separate message)
-        content_message_id = (
-            generate_event_id() if flow.pending_tool_calls else (flow.message_id or generate_event_id())
-        )
+        # Always preserve the streamed text id so the client can reconcile.
+        # Fixes #6266 — the text message must keep flow.message_id.
+        content_message_id = flow.message_id or generate_event_id()
         all_messages.append(
             {
                 "id": content_message_id,

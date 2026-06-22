@@ -2397,7 +2397,12 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            # Use only the last message's text for structured output parsing,
+            # not self.text which concatenates ALL messages. In multi-turn
+            # scenarios (e.g., with tool calls), intermediate messages would
+            # corrupt the JSON payload. Fixes #6366.
+            last_text = self.messages[-1].text if self.messages else self.text
+            self._value = cast(ResponseModelT, _parse_structured_response_value(last_text, self._response_format))
             self._value_parsed = True
         return self._value
 
@@ -2661,7 +2666,10 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            # Use only the last message's text for structured output parsing,
+            # not self.text which concatenates ALL messages. Fixes #6366.
+            last_text = self.messages[-1].text if self.messages else self.text
+            self._value = cast(ResponseModelT, _parse_structured_response_value(last_text, self._response_format))
             self._value_parsed = True
         return self._value
 
