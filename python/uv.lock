@@ -2188,7 +2188,7 @@ wheels = [
 
 [[package]]
 name = "durabletask"
-version = "1.4.0"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asyncio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -2196,9 +2196,9 @@ dependencies = [
     { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "protobuf", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/26/25/11d70b07723587a0b95fb57b5817627c9e605554b874697e5aeee3e5466d/durabletask-1.4.0.tar.gz", hash = "sha256:639138c10e2687a485ee94d218c27f8dc193376367dce9617f1ca2ec1cc8f021", size = 97252, upload-time = "2026-04-08T18:49:26.348Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a4/ae/2a9ef2fc99d3103eee04106c8608796a98811168a81423d89224bdeec255/durabletask-1.6.0.tar.gz", hash = "sha256:15ad61e865f4977055430ddf1d72ad667f6b06b8f8b2eef3a37271720b1dfb2a", size = 142541, upload-time = "2026-06-18T19:53:08.797Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/3f/7250be7683aa6e9e89324db549e2b44cb6db7904cd315024933a23405e07/durabletask-1.4.0-py3-none-any.whl", hash = "sha256:75e11407bf24f045e32ef26b5e753f49f64fee822c8c9bfc5184a0911cb0969c", size = 107934, upload-time = "2026-04-08T18:49:24.856Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/6c/35f9be7816e8f8fa19d2de49adef8735c072daafc0964713de2b14d0b59d/durabletask-1.6.0-py3-none-any.whl", hash = "sha256:c604c7d8b483fafa13c6762cc293314e4ce68c4ceff5683246abb97e190dd989", size = 163769, upload-time = "2026-06-18T19:53:09.95Z" },
 ]
 
 [[package]]
