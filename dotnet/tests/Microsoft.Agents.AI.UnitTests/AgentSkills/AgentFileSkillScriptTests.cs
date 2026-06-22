@@ -122,10 +122,10 @@ public sealed class AgentFileSkillScriptTests
 
         // Assert — content starts with original and appends per-script entries
         Assert.StartsWith("Original content", content);
-        Assert.Contains("<script_schemas>", content);
-        Assert.Contains("<schema script=\"build\">", content);
-        Assert.Contains("<schema script=\"deploy\">", content);
-        Assert.Contains("</script_schemas>", content);
+        Assert.Contains("<available_scripts>", content);
+        Assert.Contains("<script name=\"build\">", content);
+        Assert.Contains("<script name=\"deploy\">", content);
+        Assert.Contains("</available_scripts>", content);
     }
 
     [Fact]

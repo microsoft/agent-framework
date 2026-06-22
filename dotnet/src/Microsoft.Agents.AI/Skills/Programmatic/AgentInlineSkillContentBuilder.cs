@@ -12,17 +12,19 @@ namespace Microsoft.Agents.AI;
 internal static class AgentInlineSkillContentBuilder
 {
     /// <summary>
-    /// Builds the complete skill content containing name, description, instructions, and script parameter schemas.
+    /// Builds the complete skill content containing name, description, instructions, resources, and script parameter schemas.
     /// </summary>
     /// <param name="name">The skill name.</param>
     /// <param name="description">The skill description.</param>
     /// <param name="instructions">The raw instructions text.</param>
+    /// <param name="resources">Optional resources associated with the skill.</param>
     /// <param name="scripts">Optional scripts associated with the skill.</param>
     /// <returns>An XML-structured content string.</returns>
     public static string Build(
         string name,
         string description,
         string instructions,
+        IReadOnlyList<AgentSkillResource>? resources,
         IReadOnlyList<AgentSkillScript>? scripts)
     {
         _ = Throw.IfNullOrWhitespace(name);
@@ -37,24 +39,46 @@ internal static class AgentInlineSkillContentBuilder
         .Append(EscapeXmlString(instructions))
         .Append("\n</instructions>");
 
+        if (resources is { Count: > 0 })
+        {
+            sb.Append("\n\n<available_resources>\n");
+            foreach (var resource in resources)
+            {
+                sb.Append($"  <resource name=\"{EscapeXmlString(resource.Name)}\"/>\n");
+            }
+
+            sb.Append("</available_resources>");
+        }
+        else
+        {
+            // Emit an empty element so the model knows no resources are available and does not hallucinate resource names.
+            sb.Append("\n\n<available_resources />");
+        }
+
         if (scripts is { Count: > 0 })
         {
             sb.Append('\n');
-            sb.Append(BuildScriptSchemasBlock(scripts));
+            sb.Append(BuildAvailableScriptsBlock(scripts));
+        }
+        else
+        {
+            // Emit an empty element so the model knows no scripts are available and does not hallucinate script names.
+            sb.Append("\n\n<available_scripts />");
         }
 
         return sb.ToString();
     }
 
     /// <summary>
-    /// Builds a <c>&lt;script_schemas&gt;...&lt;/script_schemas&gt;</c> XML block for the given scripts.
-    /// Each script is emitted as a <c>&lt;schema script="..."&gt;</c> element containing only
-    /// the parameter schema. This block serves as a reference for the model to know how to
-    /// format arguments when calling scripts, not as a discovery mechanism.
+    /// Builds an <c>&lt;available_scripts&gt;...&lt;/available_scripts&gt;</c> XML block for the given scripts.
+    /// Each script is emitted as a <c>&lt;script name="..."&gt;</c> element; when the script has a
+    /// parameter schema it is wrapped in a nested <c>&lt;parameters_schema&gt;</c> element, otherwise a
+    /// self-closing <c>&lt;script&gt;</c> element is used. This block lets the model know which scripts
+    /// can be called and how to format their arguments.
     /// </summary>
     /// <param name="scripts">The scripts to include in the block.</param>
-    /// <returns>An XML string starting with <c>\n&lt;script_schemas&gt;</c>, or an empty string if the list is empty.</returns>
-    public static string BuildScriptSchemasBlock(IReadOnlyList<AgentSkillScript> scripts)
+    /// <returns>An XML string starting with <c>\n&lt;available_scripts&gt;</c>, or an empty string if the list is empty.</returns>
+    public static string BuildAvailableScriptsBlock(IReadOnlyList<AgentSkillScript> scripts)
     {
         _ = Throw.IfNull(scripts);
 
@@ -64,7 +88,7 @@ internal static class AgentInlineSkillContentBuilder
         }
 
         var sb = new StringBuilder();
-        sb.Append("\n<script_schemas>\n");
+        sb.Append("\n<available_scripts>\n");
 
         foreach (var script in scripts)
         {
@@ -72,15 +96,17 @@ internal static class AgentInlineSkillContentBuilder
 
             if (parametersSchema is null)
             {
-                sb.Append($"  <schema script=\"{EscapeXmlString(script.Name)}\"/>\n");
+                sb.Append($"  <script name=\"{EscapeXmlString(script.Name)}\"/>\n");
             }
             else
             {
-                sb.Append($"  <schema script=\"{EscapeXmlString(script.Name)}\">{EscapeXmlString(parametersSchema.Value.GetRawText(), preserveQuotes: true)}</schema>\n");
+                sb.Append($"  <script name=\"{EscapeXmlString(script.Name)}\">\n");
+                sb.Append($"    <parameters_schema>{EscapeXmlString(parametersSchema.Value.GetRawText(), preserveQuotes: true)}</parameters_schema>\n");
+                sb.Append("  </script>\n");
             }
         }
 
-        sb.Append("</script_schemas>");
+        sb.Append("</available_scripts>");
 
         return sb.ToString();
     }
