@@ -1860,8 +1860,9 @@ async def test_sse_keepalive_emitted_during_idle_gap_and_real_events_pass_throug
         await first_released.wait()
         yield "data: B\n\n"
 
-    # Use a tiny interval so the idle gap reliably trips several keepalives without slow tests.
-    wrapped = _with_sse_keepalive(upstream(), 0.01)
+    # Keep the interval small so the idle gap trips a keepalive quickly, but large enough that a
+    # loaded CI runner reliably enqueues the first real event before the initial timeout fires.
+    wrapped = _with_sse_keepalive(upstream(), 0.05)
 
     chunks: list[str] = []
     chunks.append(await wrapped.__anext__())  # real event A flushes immediately

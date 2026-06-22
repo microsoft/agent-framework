@@ -61,7 +61,13 @@ async def _with_sse_keepalive(
     them. Racing each individual pull with ``asyncio.wait_for`` would instead scatter the pulls
     across contexts and break that cleanup.
     """
-    queue: asyncio.Queue[str | type[_StreamEnd] | Exception] = asyncio.Queue()
+    # Bound the queue so it acts as backpressure rather than an unbounded buffer: once the
+    # consumer (the StreamingResponse) falls behind, ``put`` blocks and the upstream generator
+    # is throttled to the drain rate instead of buffering arbitrarily many chunks in memory for
+    # a fast agent. A maxsize of 1 is enough to decouple the single producer pull from the single
+    # consumer emit while still pausing the producer the moment the consumer stops draining; a
+    # full queue simply means there is no idle gap, so no keepalive is needed during that window.
+    queue: asyncio.Queue[str | type[_StreamEnd] | Exception] = asyncio.Queue(maxsize=1)
 
     async def _drain() -> None:
         try:
