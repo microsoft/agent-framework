@@ -42,6 +42,12 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
+    /// <param name="onFunctionApproval">
+    /// Optional callback that approves or denies execution of custom function tools wrapped in
+    /// <see cref="ApprovalRequiredAIFunction"/>; it must return <see langword="true"/> to allow the call.
+    /// When not configured, or when it denies or throws, such tools are denied (secure-by-default). This is the
+    /// agent-level approval gate for this provider, independent of <c>SessionConfig.OnPermissionRequest</c>.
+    /// </param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         SessionConfig? sessionConfig = null,
@@ -49,12 +55,13 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? id = null,
         string? name = null,
         string? description = null,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        Func<FunctionCallContent, CancellationToken, ValueTask<bool>>? onFunctionApproval = null)
     {
         _ = Throw.IfNull(copilotClient);
 
         this._copilotClient = copilotClient;
-        this._sessionConfig = sessionConfig;
+        this._sessionConfig = WrapApprovalRequiredTools(sessionConfig, onFunctionApproval);
         this._ownsClient = ownsClient;
         this._id = id;
         this._name = name ?? DefaultName;
@@ -73,6 +80,11 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
+    /// <param name="onFunctionApproval">
+    /// Optional callback that approves or denies execution of custom function tools wrapped in
+    /// <see cref="ApprovalRequiredAIFunction"/>; it must return <see langword="true"/> to allow the call.
+    /// When not configured, or when it denies or throws, such tools are denied (secure-by-default).
+    /// </param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         bool ownsClient = false,
@@ -81,7 +93,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? description = null,
         IList<AITool>? tools = null,
         string? instructions = null,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        Func<FunctionCallContent, CancellationToken, ValueTask<bool>>? onFunctionApproval = null)
         : this(
             copilotClient,
             GetSessionConfig(tools, instructions),
@@ -89,7 +102,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             id,
             name,
             description,
-            jsonSerializerOptions)
+            jsonSerializerOptions,
+            onFunctionApproval)
     {
     }
 
@@ -519,6 +533,49 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
     }
 
+    /// <summary>
+    /// Returns a <see cref="SessionConfig"/> in which every tool wrapped in <see cref="ApprovalRequiredAIFunction"/>
+    /// is replaced with an <see cref="ApprovalGatedAIFunction"/>, so the GitHub Copilot SDK tool loop cannot invoke
+    /// an approval-required function without first passing the Agent Framework approval callback.
+    /// </summary>
+    /// <remarks>
+    /// The source <paramref name="sessionConfig"/> is returned unchanged when it contains no approval-required tools.
+    /// Otherwise a clone is returned so the caller-supplied configuration is not mutated.
+    /// </remarks>
+    private static SessionConfig? WrapApprovalRequiredTools(
+        SessionConfig? sessionConfig,
+        Func<FunctionCallContent, CancellationToken, ValueTask<bool>>? onFunctionApproval)
+    {
+        if (sessionConfig?.Tools is not { Count: > 0 } tools)
+        {
+            return sessionConfig;
+        }
+
+        List<AIFunctionDeclaration> mappedTools = new(tools.Count);
+        bool wrappedAny = false;
+        foreach (AIFunctionDeclaration tool in tools)
+        {
+            if (tool is AIFunction function && function.GetService<ApprovalRequiredAIFunction>() is not null)
+            {
+                mappedTools.Add(new ApprovalGatedAIFunction(function, onFunctionApproval));
+                wrappedAny = true;
+            }
+            else
+            {
+                mappedTools.Add(tool);
+            }
+        }
+
+        if (!wrappedAny)
+        {
+            return sessionConfig;
+        }
+
+        SessionConfig wrapped = sessionConfig.Clone();
+        wrapped.Tools = mappedTools;
+        return wrapped;
+    }
+
     private static async Task<(List<AttachmentFile>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
         IEnumerable<ChatMessage> messages,
         CancellationToken cancellationToken)
@@ -560,6 +617,79 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             catch
             {
                 // Best effort cleanup
+            }
+        }
+    }
+
+    /// <summary>
+    /// An <see cref="AIFunction"/> decorator that enforces an Agent Framework function-approval check
+    /// before invoking a tool wrapped in <see cref="ApprovalRequiredAIFunction"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The GitHub Copilot SDK owns the model tool-calling loop and invokes registered custom functions
+    /// directly, so the standard <c>FunctionInvokingChatClient</c> approval round-trip (emitting a
+    /// <c>ToolApprovalRequestContent</c> and waiting for a <c>ToolApprovalResponseContent</c>) never runs
+    /// for this provider. As a result, an <see cref="ApprovalRequiredAIFunction"/> — which is only a marker
+    /// and does not enforce approval on its own — would otherwise execute without any Agent Framework approval.
+    /// </para>
+    /// <para>
+    /// This decorator restores the approval boundary: the underlying function is only invoked after the
+    /// configured approval callback explicitly approves the call. When no callback is configured, or the
+    /// callback denies or throws, execution is denied (secure-by-default). The decorator forwards all tool
+    /// metadata (name, description, JSON schema, and additional properties such as the Copilot
+    /// <c>skip_permission</c> flag) from the inner function so the tool remains transparent to the SDK.
+    /// </para>
+    /// </remarks>
+    private sealed class ApprovalGatedAIFunction : DelegatingAIFunction
+    {
+        private readonly Func<FunctionCallContent, CancellationToken, ValueTask<bool>>? _onFunctionApproval;
+
+        public ApprovalGatedAIFunction(
+            AIFunction innerFunction,
+            Func<FunctionCallContent, CancellationToken, ValueTask<bool>>? onFunctionApproval)
+            : base(innerFunction)
+        {
+            this._onFunctionApproval = onFunctionApproval;
+        }
+
+        protected override async ValueTask<object?> InvokeCoreAsync(
+            AIFunctionArguments arguments,
+            CancellationToken cancellationToken)
+        {
+            if (!await this.IsApprovedAsync(arguments, cancellationToken).ConfigureAwait(false))
+            {
+                return this._onFunctionApproval is null
+                    ? $"Tool '{this.Name}' requires human approval but no approval callback is configured on the agent; the request was denied."
+                    : $"Tool '{this.Name}' requires human approval and the request was denied.";
+            }
+
+            return await base.InvokeCoreAsync(arguments, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async ValueTask<bool> IsApprovedAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
+        {
+            // Secure-by-default: with no callback configured an approval-required tool can never execute.
+            if (this._onFunctionApproval is null)
+            {
+                return false;
+            }
+
+            FunctionCallContent request = new(
+                callId: $"github-copilot-approval::{this.Name}",
+                name: this.Name,
+                arguments: arguments);
+
+            try
+            {
+                return await this._onFunctionApproval(request, cancellationToken).ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // Do not catch general exception types
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Secure-by-default: any failure in the approval callback denies execution.
+                return false;
             }
         }
     }

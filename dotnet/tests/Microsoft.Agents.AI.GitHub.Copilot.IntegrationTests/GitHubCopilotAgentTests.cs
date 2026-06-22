@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using GitHub.Copilot;
 using GitHub.Copilot.Rpc;
@@ -123,6 +124,63 @@ public class GitHubCopilotAgentTests
             // Assert
             Assert.NotNull(response);
             Assert.NotEmpty(response.Messages);
+            Assert.True(toolInvoked);
+        }
+        finally
+        {
+            await DeleteSessionAsync(client, session);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_WithApprovalRequiredTool_ExecutesWhenCallbackApprovesAsync()
+    {
+        // Arrange
+        SkipIfCopilotNotConfigured();
+
+        bool toolInvoked = false;
+        bool approvalRequested = false;
+
+        AIFunction weatherTool = AIFunctionFactory.Create((string location) =>
+        {
+            toolInvoked = true;
+            return $"The weather in {location} is sunny with a high of 25C.";
+        }, "GetWeather", "Get the weather for a given location.");
+        ApprovalRequiredAIFunction approvalRequiredTool = new(weatherTool);
+
+        ValueTask<bool> approveAsync(FunctionCallContent request, CancellationToken cancellationToken)
+        {
+            approvalRequested = true;
+            return new(true);
+        }
+
+        await using CopilotClient client = new(new CopilotClientOptions());
+        await client.StartAsync();
+
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [approvalRequiredTool],
+            OnPermissionRequest = OnPermissionRequestAsync,
+            SystemMessage = new SystemMessageConfig
+            {
+                Mode = SystemMessageMode.Append,
+                Content = "You are a weather assistant. Always use the GetWeather tool to answer weather questions.",
+            },
+        };
+
+        await using GitHubCopilotAgent agent = new(client, sessionConfig, onFunctionApproval: approveAsync);
+        AgentSession session = await agent.CreateSessionAsync();
+
+        try
+        {
+            // Act
+            AgentResponse response = await agent.RunAsync("What's the weather like in Seattle?", session);
+
+            // Assert - the SDK tool loop must dispatch through the Agent Framework approval gate,
+            // and the underlying function only runs because the callback approved the call.
+            Assert.NotNull(response);
+            Assert.NotEmpty(response.Messages);
+            Assert.True(approvalRequested);
             Assert.True(toolInvoked);
         }
         finally

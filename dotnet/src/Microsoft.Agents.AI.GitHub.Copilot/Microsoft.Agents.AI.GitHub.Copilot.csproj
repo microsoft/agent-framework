@@ -4,7 +4,7 @@
     <IsReleaseCandidate>true</IsReleaseCandidate>
     <!-- GitHub.Copilot.SDK only supports .NET 8.0+ -->
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
-    <NoWarn>$(NoWarn);GHCP001</NoWarn>
+    <NoWarn>$(NoWarn);GHCP001;MEAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>

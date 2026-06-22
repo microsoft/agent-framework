@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using GitHub.Copilot;
 using GitHub.Copilot.Rpc;
@@ -381,5 +382,167 @@ public sealed class GitHubCopilotAgentTests
         Assert.Contains(result.Contents, c => c is TextContent);
         Assert.Null(result.MessageId);
         Assert.Null(result.ResponseId);
+    }
+
+    [Fact]
+    public async Task Constructor_WithApprovalRequiredTool_GatesExecutionAndDeniesWithoutCallbackAsync()
+    {
+        // Arrange
+        bool invoked = false;
+        AIFunction dangerousTool = AIFunctionFactory.Create(
+            () => { invoked = true; return "sensitive operation completed"; },
+            "ApprovalRequiredOperation",
+            "Performs an approval-required operation.");
+        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
+
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool]);
+
+        // Act
+        AIFunction exposedTool = GetExposedFunction(agent);
+        object? result = await exposedTool.InvokeAsync(new AIFunctionArguments());
+
+        // Assert - the provider must NOT expose the same directly-invokable approval-required object,
+        // and invoking the gate without an approval callback must deny execution.
+        Assert.NotSame(approvalRequiredTool, exposedTool);
+        Assert.False(invoked);
+        Assert.Contains("requires human approval", result?.ToString());
+    }
+
+    [Fact]
+    public async Task Constructor_WithApprovalRequiredTool_ExecutesWhenCallbackApprovesAsync()
+    {
+        // Arrange
+        bool invoked = false;
+        AIFunction dangerousTool = AIFunctionFactory.Create(
+            () => { invoked = true; return "sensitive operation completed"; },
+            "ApprovalRequiredOperation",
+            "Performs an approval-required operation.");
+        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
+
+        FunctionCallContent? observedRequest = null;
+        ValueTask<bool> approveAsync(FunctionCallContent request, CancellationToken _) { observedRequest = request; return new(true); }
+
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool], onFunctionApproval: approveAsync);
+
+        // Act
+        AIFunction exposedTool = GetExposedFunction(agent);
+        object? result = await exposedTool.InvokeAsync(new AIFunctionArguments());
+
+        // Assert
+        Assert.True(invoked);
+        Assert.NotNull(observedRequest);
+        Assert.Equal("ApprovalRequiredOperation", observedRequest!.Name);
+        Assert.Contains("sensitive operation completed", result?.ToString());
+    }
+
+    [Fact]
+    public async Task Constructor_WithApprovalRequiredTool_DeniesWhenCallbackRejectsAsync()
+    {
+        // Arrange
+        bool invoked = false;
+        AIFunction dangerousTool = AIFunctionFactory.Create(
+            () => { invoked = true; return "sensitive operation completed"; },
+            "ApprovalRequiredOperation",
+            "Performs an approval-required operation.");
+        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
+
+        ValueTask<bool> denyAsync(FunctionCallContent request, CancellationToken cancellationToken) => new(false);
+
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool], onFunctionApproval: denyAsync);
+
+        // Act
+        AIFunction exposedTool = GetExposedFunction(agent);
+        object? result = await exposedTool.InvokeAsync(new AIFunctionArguments());
+
+        // Assert
+        Assert.False(invoked);
+        Assert.Contains("the request was denied", result?.ToString());
+    }
+
+    [Fact]
+    public async Task Constructor_WithApprovalRequiredTool_DeniesWhenCallbackThrowsAsync()
+    {
+        // Arrange
+        bool invoked = false;
+        AIFunction dangerousTool = AIFunctionFactory.Create(
+            () => { invoked = true; return "sensitive operation completed"; },
+            "ApprovalRequiredOperation",
+            "Performs an approval-required operation.");
+        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
+
+        ValueTask<bool> throwingAsync(FunctionCallContent request, CancellationToken cancellationToken) => throw new InvalidOperationException("callback failure");
+
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool], onFunctionApproval: throwingAsync);
+
+        // Act
+        AIFunction exposedTool = GetExposedFunction(agent);
+        object? result = await exposedTool.InvokeAsync(new AIFunctionArguments());
+
+        // Assert - secure-by-default: a throwing callback denies execution rather than propagating.
+        Assert.False(invoked);
+        Assert.Contains("the request was denied", result?.ToString());
+    }
+
+    [Fact]
+    public void Constructor_WithApprovalRequiredTool_PreservesSkipPermissionMetadata()
+    {
+        // Arrange
+        AIFunction dangerousTool = CopilotTool.DefineTool(
+            () => "ok",
+            toolOptions: new CopilotToolOptions { SkipPermission = true },
+            factoryOptions: new AIFunctionFactoryOptions
+            {
+                Name = "WriteSensitiveMarker",
+                Description = "Writes a sensitive marker file."
+            });
+        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
+
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool]);
+
+        // Act
+        AIFunction exposedTool = GetExposedFunction(agent);
+
+        // Assert - the gate must remain transparent to the Copilot SDK, preserving the skip_permission flag.
+        Assert.NotSame(approvalRequiredTool, exposedTool);
+        Assert.Equal("WriteSensitiveMarker", exposedTool.Name);
+        Assert.NotNull(exposedTool.AdditionalProperties);
+        Assert.True(exposedTool.AdditionalProperties.TryGetValue("skip_permission", out object? skip));
+        Assert.Equal(true, skip);
+    }
+
+    [Fact]
+    public void Constructor_WithNonApprovalTool_LeavesToolUnchanged()
+    {
+        // Arrange
+        AIFunction plainTool = AIFunctionFactory.Create(() => "test", "TestFunc", "Test function");
+
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [plainTool]);
+
+        // Act
+        AIFunction exposedTool = GetExposedFunction(agent);
+
+        // Assert - tools that do not require approval pass through untouched.
+        Assert.Same(plainTool, exposedTool);
+    }
+
+    private static AIFunction GetExposedFunction(GitHubCopilotAgent agent)
+    {
+        SessionConfig sessionConfig = GetSessionConfigFromAgent(agent);
+        AIFunctionDeclaration declaration = Assert.Single(sessionConfig.Tools!);
+        return declaration.GetService<AIFunction>()!;
+    }
+
+    private static SessionConfig GetSessionConfigFromAgent(GitHubCopilotAgent agent)
+    {
+        System.Reflection.FieldInfo field = typeof(GitHubCopilotAgent).GetField(
+            "_sessionConfig",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        return (SessionConfig)field.GetValue(agent)!;
     }
 }
