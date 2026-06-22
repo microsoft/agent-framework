@@ -170,6 +170,7 @@ simple_session = AgentSession(
 )
 
 structured_session = AgentSession(
+    # Hypothetical structured value for illustration (not an existing API)
     service_session_id=ServiceSessionIdentity(
         continuation_id="ctx_123",
         task_id="task_789",
