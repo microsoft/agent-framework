@@ -11,6 +11,7 @@ checkpoint path derivation. The on-disk session-alias store uses the optional
 from __future__ import annotations
 
 import contextlib
+import importlib
 import os
 import sys
 from collections.abc import Mapping
@@ -26,7 +27,7 @@ _KNOWN_COMPONENTS: tuple[str, ...] = ("sessions", "checkpoints")
 def load_diskcache() -> Any:
     """Lazy-import :mod:`diskcache` with a helpful error when missing."""
     try:
-        import diskcache
+        return importlib.import_module("diskcache")
     except ImportError as exc:  # pragma: no cover - exercised via tests by monkeypatching
         raise ImportError(
             "agent-framework-hosting was asked to persist session aliases to disk "
@@ -34,7 +35,6 @@ def load_diskcache() -> Any:
             "is not installed. Install the disk extra: "
             "`pip install 'agent-framework-hosting[disk]`."
         ) from exc
-    return diskcache
 
 
 def acquire_state_dir_lock(component_dir: Path) -> Any:
