@@ -684,11 +684,16 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             {
                 return await this._onFunctionApproval(request, cancellationToken).ConfigureAwait(false);
             }
+            catch (OperationCanceledException)
+            {
+                // Honor cooperative cancellation rather than treating it as a denial.
+                throw;
+            }
 #pragma warning disable CA1031 // Do not catch general exception types
             catch (Exception)
 #pragma warning restore CA1031
             {
-                // Secure-by-default: any failure in the approval callback denies execution.
+                // Secure-by-default: any other failure in the approval callback denies execution.
                 return false;
             }
         }

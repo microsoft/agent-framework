@@ -488,6 +488,30 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
+    public async Task Constructor_WithApprovalRequiredTool_PropagatesCancellationAsync()
+    {
+        // Arrange
+        bool invoked = false;
+        AIFunction dangerousTool = AIFunctionFactory.Create(
+            () => { invoked = true; return "sensitive operation completed"; },
+            "ApprovalRequiredOperation",
+            "Performs an approval-required operation.");
+        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
+
+        ValueTask<bool> cancelingAsync(FunctionCallContent request, CancellationToken cancellationToken)
+            => throw new OperationCanceledException(cancellationToken);
+
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool], onFunctionApproval: cancelingAsync);
+
+        // Act & Assert - cancellation must propagate rather than being swallowed into a denial.
+        AIFunction exposedTool = GetExposedFunction(agent);
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await exposedTool.InvokeAsync(new AIFunctionArguments()));
+        Assert.False(invoked);
+    }
+
+    [Fact]
     public void Constructor_WithApprovalRequiredTool_PreservesSkipPermissionMetadata()
     {
         // Arrange
