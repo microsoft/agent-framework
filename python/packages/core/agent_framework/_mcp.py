@@ -77,7 +77,7 @@ _MCP_GLOBAL_EXTRA_ARGS_KEY = "*"
 _MCP_META_LABEL_PATTERN = r"[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
 _MCP_META_KEY_PATTERN = re.compile(
     rf"^(?:(?:{_MCP_META_LABEL_PATTERN})(?:\.{_MCP_META_LABEL_PATTERN})*/)?"
-    r"(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?)?$"
+    r"[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$"
 )
 # Framework kwargs that flow through the function-invocation pipeline (via
 # ``FunctionInvocationContext.kwargs``) but must never be forwarded to an MCP

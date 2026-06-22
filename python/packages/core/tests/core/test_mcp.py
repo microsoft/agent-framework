@@ -6728,8 +6728,10 @@ def test_prepare_call_kwargs_extracts_meta() -> None:
 @pytest.mark.parametrize(
     "key",
     [
+        "",
         "_leading-underscore",
         "trailing-underscore_",
+        "abc/",
         "1bad.example/name",
         "bad..example/name",
         "bad.example/_name",
