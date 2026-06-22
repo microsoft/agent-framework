@@ -438,16 +438,14 @@ class EdgeGroup(DictConvertible):
         target_cls = cls._TYPE_REGISTRY.get(group_type, EdgeGroup)
         edges = [Edge.from_dict(entry) for entry in data.get("edges", [])]
 
-        obj = target_cls.__new__(target_cls)  # type: ignore[misc]
+        obj = target_cls.__new__(target_cls)
         EdgeGroup.__init__(obj, edges=edges, id=data.get("id"), type=group_type)
 
         # Handle FanOutEdgeGroup-specific attributes
         if isinstance(obj, FanOutEdgeGroup):
-            obj.selection_func_name = data.get("selection_func_name")  # type: ignore[attr-defined]
+            obj.selection_func_name = data.get("selection_func_name")
             obj._selection_func = (  # type: ignore[attr-defined]
-                None
-                if obj.selection_func_name is None  # type: ignore[attr-defined]
-                else _missing_callable(obj.selection_func_name)  # type: ignore[attr-defined]
+                None if obj.selection_func_name is None else _missing_callable(obj.selection_func_name)
             )
             obj._target_ids = [edge.target_id for edge in obj.edges]  # type: ignore[attr-defined]
 
@@ -461,7 +459,7 @@ class EdgeGroup(DictConvertible):
                     restored_cases.append(SwitchCaseEdgeGroupDefault.from_dict(case_data))
                 else:
                     restored_cases.append(SwitchCaseEdgeGroupCase.from_dict(case_data))
-            obj.cases = restored_cases  # type: ignore[attr-defined]
+            obj.cases = restored_cases
             obj._selection_func = _missing_callable("switch_case_selection")  # type: ignore[attr-defined]
 
         return obj
@@ -878,9 +876,9 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         EdgeGroup.__init__(self, edges, id=id, type=self.__class__.__name__)
 
         # Initialize FanOutEdgeGroup-specific attributes
-        self._target_ids = list(target_ids)  # type: ignore[attr-defined]
-        self._selection_func = selection_func  # type: ignore[attr-defined]
-        self.selection_func_name = None  # type: ignore[attr-defined]
+        self._target_ids = list(target_ids)
+        self._selection_func = selection_func
+        self.selection_func_name = None
         self.cases = list(cases)
 
     def to_dict(self) -> dict[str, Any]:

@@ -36,7 +36,7 @@ class TestDurableAIAgentOrchestrationContextGetAgent:
         agent = agent_context.get_agent("assistant")
 
         assert isinstance(agent, DurableAIAgent)
-        assert isinstance(agent, SupportsAgentRun)
+        assert isinstance(agent, SupportsAgentRun)  # pyrefly: ignore[unsafe-overlap]
 
     def test_get_agent_shim_has_correct_name(self, agent_context: DurableAIAgentOrchestrationContext) -> None:
         """Verify retrieved agent has the correct name."""

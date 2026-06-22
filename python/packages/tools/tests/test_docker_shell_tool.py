@@ -185,7 +185,7 @@ def test_build_exec_argv_non_interactive_appends_dash_c():
 
 def test_docker_shell_tool_validates_mode():
     with pytest.raises(ValueError, match="mode must be"):
-        DockerShellTool(mode="bogus")  # type: ignore[arg-type]
+        DockerShellTool(mode="bogus")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 def test_docker_shell_tool_does_not_require_acknowledge_unsafe():

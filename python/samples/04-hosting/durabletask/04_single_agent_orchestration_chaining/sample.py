@@ -20,9 +20,9 @@ To run this sample:
 import logging
 
 # Import helper functions from worker and client modules
-from client import get_client, run_client
+from client import get_client, run_client  # pyrefly: ignore[missing-import]
 from dotenv import load_dotenv
-from worker import get_worker, setup_worker
+from worker import get_worker, setup_worker  # pyrefly: ignore[missing-import]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, force=True)

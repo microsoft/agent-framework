@@ -35,9 +35,9 @@ from . import __version__ as version_info
 from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk._logs.export import LogRecordExporter
@@ -408,14 +408,14 @@ def _create_otlp_exporters(
     if protocol == "grpc":
         # Import all gRPC exporters
         try:
-            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (  # type: ignore[reportMissingImports]
-                OTLPLogExporter as GRPCLogExporter,  # type: ignore[reportUnknownVariableType]
+            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
+                OTLPLogExporter as GRPCLogExporter,
             )
-            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (  # type: ignore[reportMissingImports]
-                OTLPMetricExporter as GRPCMetricExporter,  # type: ignore[reportUnknownVariableType]
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+                OTLPMetricExporter as GRPCMetricExporter,
             )
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # type: ignore[reportMissingImports]
-                OTLPSpanExporter as GRPCSpanExporter,  # type: ignore[reportUnknownVariableType]
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                OTLPSpanExporter as GRPCSpanExporter,
             )
         except ImportError as exc:
             raise ImportError(
@@ -425,21 +425,21 @@ def _create_otlp_exporters(
 
         if actual_logs_endpoint:
             exporters.append(
-                GRPCLogExporter(  # type: ignore[reportUnknownArgumentType]
+                GRPCLogExporter(
                     endpoint=actual_logs_endpoint,
                     headers=actual_logs_headers if actual_logs_headers else None,
                 )
             )
         if actual_traces_endpoint:
             exporters.append(
-                GRPCSpanExporter(  # type: ignore[reportUnknownArgumentType]
+                GRPCSpanExporter(
                     endpoint=actual_traces_endpoint,
                     headers=actual_traces_headers if actual_traces_headers else None,
                 )
             )
         if actual_metrics_endpoint:
             exporters.append(
-                GRPCMetricExporter(  # type: ignore[reportUnknownArgumentType]
+                GRPCMetricExporter(
                     endpoint=actual_metrics_endpoint,
                     headers=actual_metrics_headers if actual_metrics_headers else None,
                 )
@@ -1488,14 +1488,21 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         )
 
         if stream:
+            agent_span = trace.get_current_span()
             span = _start_streaming_span(attributes, OtelAttr.REQUEST_MODEL)
 
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
+                system_instructions = _get_instructions_from_options(opts)
+                _capture_current_agent_system_instructions(
+                    agent_span,
+                    span,
+                    system_instructions,
+                )
                 _capture_messages(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=opts.get("instructions"),
+                    system_instructions=system_instructions,
                 )
 
             span_state = {"closed": False}
@@ -1593,13 +1600,20 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             return wrapped_stream
 
         async def _get_response() -> ChatResponse:
+            agent_span = trace.get_current_span()
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
+                    system_instructions = _get_instructions_from_options(opts)
+                    _capture_current_agent_system_instructions(
+                        agent_span,
+                        span,
+                        system_instructions,
+                    )
                     _capture_messages(
                         span=span,
                         provider_name=provider_name,
                         messages=messages,
-                        system_instructions=opts.get("instructions"),
+                        system_instructions=system_instructions,
                     )
                 start_time_stamp = perf_counter()
                 try:
@@ -1641,7 +1655,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         finish_reason=finish_reason,
                         output=True,
                     )
-                return response  # type: ignore[return-value,no-any-return]
+                return response
 
         return _get_response()
 
@@ -1713,7 +1727,7 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
                 operation_duration_histogram=self.duration_histogram,
                 duration=duration,
             )
-            return result  # type: ignore[no-any-return]
+            return result
 
 
 class AgentTelemetryLayer:
@@ -1769,7 +1783,6 @@ class AgentTelemetryLayer:
             inner_response_telemetry_captured_fields
         )
         inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
-
         if stream:
             span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
 
@@ -1809,7 +1822,7 @@ class AgentTelemetryLayer:
                 if isinstance(run_result, ResponseStream):
                     result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
                 elif isinstance(run_result, Awaitable):
-                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]
                 else:
                     raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
             except Exception as exception:
@@ -1877,38 +1890,44 @@ class AgentTelemetryLayer:
         async def _run() -> AgentResponse[Any]:
             try:
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
-                        _capture_messages(
-                            span=span,
-                            provider_name=provider_name,
-                            messages=messages,
-                            system_instructions=_get_instructions_from_options(dict(merged_options)),
-                        )
-                    start_time_stamp = perf_counter()
                     try:
-                        response: AgentResponse[Any] = await execute()
-                    except Exception as exception:
-                        capture_exception(span=span, exception=exception, timestamp=time_ns())
-                        raise
-                    duration = perf_counter() - start_time_stamp
-                    if response:
-                        response_attributes = _get_response_attributes(
-                            attributes,
-                            response,
-                            capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
-                            not in inner_response_telemetry_captured_fields,
-                            capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
-                        )
-                        _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
-                        _capture_response(span=span, attributes=response_attributes, duration=duration)
-                        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages and span.is_recording():
+                        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                             _capture_messages(
                                 span=span,
                                 provider_name=provider_name,
-                                messages=response.messages,
-                                output=True,
+                                messages=messages,
+                                system_instructions=_get_instructions_from_options(dict(merged_options)),
                             )
-                    return response  # type: ignore[return-value,no-any-return]
+                        start_time_stamp = perf_counter()
+                        response: AgentResponse[Any] = await execute()
+                        duration = perf_counter() - start_time_stamp
+                        if response:
+                            response_attributes = _get_response_attributes(
+                                attributes,
+                                response,
+                                capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
+                                not in inner_response_telemetry_captured_fields,
+                                capture_usage=(
+                                    INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields
+                                ),
+                            )
+                            _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
+                            _capture_response(span=span, attributes=response_attributes, duration=duration)
+                            if (
+                                OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
+                                and response.messages
+                                and span.is_recording()
+                            ):
+                                _capture_messages(
+                                    span=span,
+                                    provider_name=provider_name,
+                                    messages=response.messages,
+                                    output=True,
+                                )
+                        return response
+                    except Exception as exception:
+                        capture_exception(span=span, exception=exception, timestamp=time_ns())
+                        raise
             finally:
                 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                 INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
@@ -2281,6 +2300,83 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
     span.set_status(status=trace.StatusCode.ERROR, description=repr(exception))
 
 
+def _capture_system_instructions(span: trace.Span, system_instructions: str | list[str] | None) -> None:
+    """Capture system instructions on a span."""
+    if not system_instructions:
+        return
+    otel_sys_instructions = [
+        {"type": "text", "content": instruction} for instruction in _normalize_instructions(system_instructions)
+    ]
+    span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions, ensure_ascii=False))
+
+
+def _capture_current_agent_system_instructions(
+    agent_span: trace.Span,
+    chat_span: trace.Span,
+    system_instructions: str | list[str] | None,
+) -> None:
+    """Capture final chat instructions on the current agent span when the chat span belongs to it."""
+    if not system_instructions or not agent_span.is_recording():
+        return
+
+    agent_attributes_obj = getattr(agent_span, "attributes", None)
+    if not isinstance(agent_attributes_obj, Mapping):
+        return
+    agent_attributes = cast(Mapping[str, Any], agent_attributes_obj)
+    if agent_attributes.get(OtelAttr.OPERATION.value) != OtelAttr.AGENT_INVOKE_OPERATION:
+        return
+
+    if not _instructions_preserve_existing_agent_instructions(agent_attributes, system_instructions):
+        return
+
+    chat_parent = getattr(chat_span, "parent", None)
+    agent_context = agent_span.get_span_context()
+    if (
+        chat_parent is None
+        or chat_parent.span_id != agent_context.span_id
+        or chat_parent.trace_id != agent_context.trace_id
+    ):
+        return
+
+    _capture_system_instructions(agent_span, system_instructions)
+
+
+def _normalize_instructions(system_instructions: str | list[str]) -> list[str]:
+    """Normalize system instructions to telemetry text items."""
+    return system_instructions if isinstance(system_instructions, list) else [system_instructions]
+
+
+def _instructions_preserve_existing_agent_instructions(
+    agent_attributes: Mapping[str, Any],
+    system_instructions: str | list[str],
+) -> bool:
+    """Return True when chat instructions preserve the agent span's existing instructions."""
+    existing = agent_attributes.get(OtelAttr.SYSTEM_INSTRUCTIONS)
+    if not isinstance(existing, str):
+        return True
+
+    try:
+        existing_items_obj = json.loads(existing)
+    except json.JSONDecodeError:
+        return False
+
+    if not isinstance(existing_items_obj, list):
+        return False
+    existing_items = cast(list[object], existing_items_obj)
+
+    existing_contents: list[str] = []
+    for item in existing_items:
+        if not isinstance(item, Mapping):
+            continue
+        content = cast(Mapping[str, Any], item).get("content")
+        if isinstance(content, str):
+            existing_contents.append(content)
+
+    existing_text = "\n".join(existing_contents)
+    new_text = "\n".join(_normalize_instructions(system_instructions))
+    return new_text == existing_text or new_text.startswith(f"{existing_text}\n")
+
+
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
@@ -2312,11 +2408,7 @@ def _capture_messages(
     span.set_attribute(
         OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages, ensure_ascii=False)
     )
-    if system_instructions:
-        if not isinstance(system_instructions, list):
-            system_instructions = [system_instructions]
-        otel_sys_instructions = [{"type": "text", "content": instruction} for instruction in system_instructions]
-        span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions, ensure_ascii=False))
+    _capture_system_instructions(span, system_instructions)
 
 
 def _to_otel_message(message: Message) -> dict[str, Any]:

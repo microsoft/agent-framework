@@ -79,8 +79,8 @@ def test_workflow_checkpoint_custom_values():
         workflow_name="test-workflow-456",
         graph_signature_hash="test-hash-456",
         timestamp=custom_timestamp,
-        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type]  # raw dict for serialization test
-        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
+        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
+        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type, dict-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
         state={"key": "value"},
         iteration_count=5,
         metadata={"test": True},
@@ -104,7 +104,7 @@ def test_workflow_checkpoint_to_dict():
         checkpoint_id="test-id",
         workflow_name="test-workflow",
         graph_signature_hash="test-hash",
-        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type]  # raw dict for serialization test
+        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
         state={"key": "value"},
         iteration_count=5,
     )
@@ -162,8 +162,8 @@ async def test_memory_checkpoint_storage_save_and_load():
     checkpoint = WorkflowCheckpoint(
         workflow_name="test-workflow",
         graph_signature_hash="test-hash",
-        messages={"executor1": [{"data": "hello"}]},  # type: ignore[arg-type]  # raw dict for serialization test
-        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
+        messages={"executor1": [{"data": "hello"}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
+        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type, dict-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
     )
 
     # Save checkpoint
@@ -301,7 +301,7 @@ async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
 
     class FinishExecutor(Executor):
         @handler
-        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             await ctx.yield_output(message + "-done")
 
     storage = InMemoryCheckpointStorage()
@@ -596,7 +596,7 @@ async def test_memory_checkpoint_storage_roundtrip_pending_request_info_events()
     checkpoint = WorkflowCheckpoint(
         workflow_name="test-workflow",
         graph_signature_hash="test-hash",
-        pending_request_info_events=pending_events,
+        pending_request_info_events=pending_events,  # type: ignore[arg-type]
     )
 
     await storage.save(checkpoint)
@@ -777,9 +777,9 @@ async def test_file_checkpoint_storage_save_and_load():
         checkpoint = WorkflowCheckpoint(
             workflow_name="test-workflow",
             graph_signature_hash="test-hash",
-            messages={"executor1": [{"data": "hello", "source_id": "test", "target_id": None}]},  # type: ignore[arg-type]  # raw dict for serialization test
+            messages={"executor1": [{"data": "hello", "source_id": "test", "target_id": None}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
             state={"key": "value"},
-            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
+            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type, dict-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
         )
 
         # Save checkpoint
@@ -905,9 +905,9 @@ async def test_file_checkpoint_storage_json_serialization():
         checkpoint = WorkflowCheckpoint(
             workflow_name="test-workflow",
             graph_signature_hash="test-hash",
-            messages={"executor1": [{"data": {"nested": {"value": 42}}, "source_id": "test", "target_id": None}]},  # type: ignore[arg-type]  # raw dict for serialization test
+            messages={"executor1": [{"data": {"nested": {"value": 42}}, "source_id": "test", "target_id": None}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
             state={"list": [1, 2, 3], "dict": {"a": "b", "c": {"d": "e"}}, "bool": True, "null": None},
-            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
+            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type, dict-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
         )
 
         # Save and load
@@ -1272,7 +1272,7 @@ async def test_file_checkpoint_storage_roundtrip_pending_request_info_events():
         checkpoint = WorkflowCheckpoint(
             workflow_name="test-workflow",
             graph_signature_hash="test-hash",
-            pending_request_info_events=pending_events,
+            pending_request_info_events=pending_events,  # type: ignore[arg-type]
         )
 
         await storage.save(checkpoint)

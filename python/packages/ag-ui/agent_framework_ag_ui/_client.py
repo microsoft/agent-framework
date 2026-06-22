@@ -32,13 +32,13 @@ from ._message_adapters import agent_framework_messages_to_agui
 from ._utils import convert_tools_to_agui_format
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # pragma: no cover
 else:
@@ -91,7 +91,7 @@ def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClien
         if response.messages:
             for message in response.messages:
                 _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], message.contents))
-        return response  # type: ignore[no-any-return]
+        return response
 
     async def _stream_wrapper_impl(stream: Any) -> AsyncIterable[ChatResponseUpdate]:
         """Streaming wrapper implementation."""
@@ -273,7 +273,7 @@ class AGUIChatClient(
         config["additional_tools"] = additional_tools
         registered: set[str] = getattr(self, "_registered_server_tools", set())
         registered.add(tool_name)
-        self._registered_server_tools = registered  # type: ignore[attr-defined]
+        self._registered_server_tools = registered
         logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
 
     def _extract_state_from_messages(self, messages: Sequence[Message]) -> tuple[list[Message], dict[str, Any] | None]:
@@ -414,8 +414,8 @@ class AGUIChatClient(
         if tools:
             for tool in tools:
                 if hasattr(tool, "name"):
-                    client_tool_set.add(tool.name)  # type: ignore[arg-type]
-        self._last_client_tool_set = client_tool_set  # type: ignore[attr-defined]
+                    client_tool_set.add(tool.name)
+        self._last_client_tool_set = client_tool_set
 
         logger.debug(
             "[AGUIChatClient] Preparing request",
@@ -451,18 +451,18 @@ class AGUIChatClient(
                 )
                 # Distinguish client vs server tools
                 for i, content in enumerate(update.contents):
-                    if content.type == "function_call":  # type: ignore[attr-defined]
+                    if content.type == "function_call":
                         logger.debug(
-                            f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"  # type: ignore[attr-defined]
+                            f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
                         )
-                        if content.name in client_tool_set:  # type: ignore[attr-defined]
+                        if content.name in client_tool_set:
                             # Client tool - let function invocation execute it
-                            if not content.additional_properties:  # type: ignore[attr-defined]
-                                content.additional_properties = {}  # type: ignore[attr-defined]
-                            content.additional_properties["agui_thread_id"] = thread_id  # type: ignore[attr-defined]
+                            if not content.additional_properties:
+                                content.additional_properties = {}
+                            content.additional_properties["agui_thread_id"] = thread_id
                         else:
                             # Server tool - wrap so function invocation ignores it
-                            logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")  # type: ignore[union-attr]
+                            logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")
                             self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
                             update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
 
