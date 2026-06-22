@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any
 
 import pytest
@@ -16,6 +16,8 @@ from agent_framework import (
     AgentSession,
     BackgroundTaskInfo,
     BackgroundTaskStatus,
+    BaseChatClient,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -36,7 +38,7 @@ from agent_framework._harness._loop import (
 )
 
 
-class RecordingChatClient:
+class RecordingChatClient(BaseChatClient[ChatOptions[None]]):
     """A minimal chat client that records inputs and returns scripted responses.
 
     When ``service_mode=True`` it emulates a service that stores history: it advertises
@@ -52,7 +54,7 @@ class RecordingChatClient:
         honor_response_format: bool = False,
         service_mode: bool = False,
     ) -> None:
-        self.additional_properties: dict[str, Any] = {}
+        super().__init__()
         self.call_count: int = 0
         self.received_messages: list[list[str]] = []
         self.received_response_formats: list[Any] = []
@@ -61,7 +63,7 @@ class RecordingChatClient:
         self._honor_response_format = honor_response_format
         self.service_mode = service_mode
         if service_mode:
-            self.STORES_BY_DEFAULT = True
+            object.__setattr__(self, "STORES_BY_DEFAULT", True)
         self._conv_counter = 0
 
     def _next_text(self, messages: Sequence[Message]) -> str:
@@ -70,30 +72,32 @@ class RecordingChatClient:
         last = messages[-1].text if messages else ""
         return f"response to: {last}"
 
-    def get_response(
+    def _inner_get_response(
         self,
-        messages: Any,
         *,
+        messages: Sequence[Message],
         stream: bool = False,
-        options: dict[str, Any] | None = None,
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        normalized = messages if isinstance(messages, list) else [messages]
-        self.received_messages.append([m.text for m in normalized if isinstance(m, Message)])
-        response_format = options.get("response_format") if options else None
+        self.received_messages.append([m.text for m in messages])
+        response_format = options.get("response_format")
         self.received_response_formats.append(response_format)
-        self.received_conversation_ids.append(options.get("conversation_id") if options else None)
+        conversation_id_option = options.get("conversation_id")
+        self.received_conversation_ids.append(
+            conversation_id_option if isinstance(conversation_id_option, str) else None
+        )
         conversation_id: str | None = None
         if self.service_mode:
             self._conv_counter += 1
             conversation_id = f"conv-{self._conv_counter}"
         if stream:
-            return self._stream(normalized, conversation_id)
+            return self._stream(messages, conversation_id)
 
         async def _get() -> ChatResponse:
             self.call_count += 1
             return ChatResponse(
-                messages=Message(role="assistant", contents=[self._next_text(normalized)]),
+                messages=Message(role="assistant", contents=[self._next_text(messages)]),
                 response_format=response_format if self._honor_response_format else None,
                 conversation_id=conversation_id,
             )
@@ -125,6 +129,12 @@ class RecordingChatClient:
 def always_continue(**kwargs: Any) -> bool:
     """A ``should_continue`` predicate that always keeps looping (bounded by ``max_iterations``)."""
     return True
+
+
+async def _resolve_should_continue_result(value: Any) -> Any:
+    if isinstance(value, Awaitable):
+        return await value
+    return value
 
 
 @pytest.mark.parametrize("bad", [0, -1])
@@ -535,7 +545,7 @@ async def test_fresh_context_session_matrix(
     # Four client calls total: run1[iter1, iter2], run2[iter1, iter2].
     client = RecordingChatClient(texts=["r1i1", "r1i2", "r2i1", "r2i2"], service_mode=store)
 
-    def make_agent() -> Agent:
+    def make_agent() -> Agent[Any]:
         return Agent(
             client=client,
             middleware=[
@@ -551,7 +561,7 @@ async def test_fresh_context_session_matrix(
 
     session = AgentSession()
 
-    async def run(agent: Agent, text: str) -> None:
+    async def run(agent: Agent[Any], text: str) -> None:
         if stream:
             async for _ in agent.run(text, session=session, stream=True):
                 pass
@@ -954,7 +964,7 @@ async def test_todos_remaining_helper_reflects_store_state() -> None:
     predicate = todos_remaining(provider)
 
     # No items yet -> nothing to continue for.
-    assert await predicate(session=session) is False
+    assert await _resolve_should_continue_result(predicate(session=session)) is False
 
     await provider.store.save_state(
         session,
@@ -962,7 +972,7 @@ async def test_todos_remaining_helper_reflects_store_state() -> None:
         next_id=2,
         source_id=provider.source_id,
     )
-    assert await predicate(session=session) is True
+    assert await _resolve_should_continue_result(predicate(session=session)) is True
 
     await provider.store.save_state(
         session,
@@ -970,12 +980,12 @@ async def test_todos_remaining_helper_reflects_store_state() -> None:
         next_id=2,
         source_id=provider.source_id,
     )
-    assert await predicate(session=session) is False
+    assert await _resolve_should_continue_result(predicate(session=session)) is False
 
 
 async def test_todos_remaining_helper_without_session() -> None:
     predicate = todos_remaining(TodoProvider())
-    assert await predicate(session=None) is False
+    assert await _resolve_should_continue_result(predicate(session=None)) is False
 
 
 def test_background_tasks_running_helper_reflects_state() -> None:
@@ -989,7 +999,7 @@ def test_background_tasks_running_helper_reflects_state() -> None:
 
         def run(self, *args: Any, **kwargs: Any) -> Any: ...
 
-    provider = BackgroundAgentsProvider([_DummyAgent()])  # type: ignore[list-item]
+    provider = BackgroundAgentsProvider([_DummyAgent()])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
     session = AgentSession()
     predicate = background_tasks_running(provider)
 
@@ -1024,7 +1034,7 @@ def test_background_tasks_running_helper_without_session() -> None:
 
         def run(self, *args: Any, **kwargs: Any) -> Any: ...
 
-    provider = BackgroundAgentsProvider([_DummyAgent()])  # type: ignore[list-item]
+    provider = BackgroundAgentsProvider([_DummyAgent()])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
     predicate = background_tasks_running(provider)
     assert predicate(session=None) is False
 

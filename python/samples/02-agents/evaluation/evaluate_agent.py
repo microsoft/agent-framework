@@ -69,7 +69,7 @@ async def main() -> None:
     for r in results:
         print(f"{r.provider}: {r.passed}/{r.total} passed")
         for item in r.items:
-            print(f"  [{item.status}] Q: {item.input_text[:50]}  A: {item.output_text[:50]}...")
+            print(f"  [{item.status}] Q: {(item.input_text or '')[:50]}  A: {(item.output_text or '')[:50]}...")
             for score in item.scores:
                 print(f"    {'PASS' if score.passed else 'FAIL'} {score.name}")
 

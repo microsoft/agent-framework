@@ -3,6 +3,7 @@
 
 import os
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -82,9 +83,9 @@ def mock_search_client_empty() -> AsyncMock:
     return client
 
 
-def _make_provider(**overrides) -> AzureAISearchContextProvider:
+def _make_provider(**overrides: Any) -> AzureAISearchContextProvider:
     """Create a semantic-mode provider with mocked internals (skips auto-discovery)."""
-    defaults = {
+    defaults: dict[str, Any] = {
         "source_id": AzureAISearchContextProvider.DEFAULT_SOURCE_ID,
         "endpoint": "https://test.search.windows.net",
         "index_name": "test-index",
@@ -207,7 +208,7 @@ class TestInitAgenticValidation:
 
     def test_both_index_and_kb_raises(self) -> None:
         with pytest.raises(SettingNotFoundError, match="multiple were set"):
-            AzureAISearchContextProvider(
+            cast(Any, AzureAISearchContextProvider)(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
@@ -229,7 +230,7 @@ class TestInitAgenticValidation:
 
     def test_missing_model_raises(self) -> None:
         with pytest.raises(ValueError, match="model"):
-            AzureAISearchContextProvider(
+            cast(Any, AzureAISearchContextProvider)(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
@@ -250,7 +251,7 @@ class TestInitAgenticValidation:
 
     def test_agentic_missing_aoai_url_with_index_raises(self) -> None:
         with pytest.raises(ValueError, match="azure_openai_resource_url"):
-            AzureAISearchContextProvider(
+            cast(Any, AzureAISearchContextProvider)(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
@@ -359,7 +360,10 @@ class TestBeforeRunSemantic:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_awaited_once()
@@ -374,7 +378,10 @@ class TestBeforeRunSemantic:
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[], session_id="s1")
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_not_awaited()
@@ -390,7 +397,10 @@ class TestBeforeRunSemantic:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client_empty.search.assert_awaited_once()
@@ -407,7 +417,10 @@ class TestBeforeRunSemantic:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         msgs = ctx.context_messages[provider.source_id]
@@ -433,7 +446,10 @@ class TestBeforeRunFiltering:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_awaited_once()
@@ -452,7 +468,10 @@ class TestBeforeRunFiltering:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_not_awaited()
@@ -467,7 +486,10 @@ class TestBeforeRunFiltering:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_not_awaited()
@@ -486,7 +508,10 @@ class TestBeforeRunFiltering:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_search_client.search.call_args[1]
@@ -1373,6 +1398,9 @@ class TestPrepareMessagesForKbSearch:
         msg = Message(role="user", contents=["fallback text"])
         result = AzureAISearchContextProvider._prepare_messages_for_kb_search([msg])
         assert len(result) == 1
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseMessageTextContent
+
+        assert isinstance(result[0].content[0], KnowledgeBaseMessageTextContent)
         assert result[0].content[0].text == "fallback text"
 
     def test_data_uri_image(self) -> None:
@@ -1487,7 +1515,7 @@ class TestParseReferencesToAnnotations:
             KnowledgeBaseSearchIndexReference(id="ref-a", activity_source=0),
             KnowledgeBaseWebReference(id="ref-b", activity_source=1, url="https://example.com"),
         ]
-        result = AzureAISearchContextProvider._parse_references_to_annotations(refs)
+        result = AzureAISearchContextProvider._parse_references_to_annotations(refs)  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
         assert len(result) == 2
         assert result[0]["additional_properties"]["activity_source"] == 0
         assert result[1]["additional_properties"]["activity_source"] == 1
@@ -1680,7 +1708,10 @@ class TestBeforeRunAgentic:
             type(mock_content),
         ):
             await provider.before_run(
-                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
             )  # type: ignore[arg-type]
 
         msgs = ctx.context_messages.get(provider.source_id, [])

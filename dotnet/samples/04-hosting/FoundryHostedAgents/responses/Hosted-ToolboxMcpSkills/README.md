@@ -13,7 +13,7 @@ This way the full skill body and resources are only loaded when the agent actual
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-5`)
+- A Foundry project with a deployed model (e.g., `gpt-5`)
 - A Foundry Toolbox already configured with skills provisioned
 - Azure CLI logged in (`az login`)
 
@@ -25,14 +25,14 @@ Copy the template and fill in your values:
 cp .env.example .env
 ```
 
-Edit `.env` and set your Azure AI Foundry project endpoint and toolbox name:
+Edit `.env` and set your Foundry project endpoint and toolbox name:
 
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
 FOUNDRY_MODEL=gpt-5
-FOUNDRY_TOOLBOX_NAME=my-toolbox
+TOOLBOX_NAME=my-toolbox
 ```
 
 > **Note:** `.env` is gitignored. The `.env.example` template is checked in as a reference.

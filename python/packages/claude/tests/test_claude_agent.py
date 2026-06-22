@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -567,10 +567,11 @@ class TestClaudeAgentToolConversion:
 
         # Verify $defs is preserved in the schema
         assert sdk_tool.input_schema is not None
-        assert "$defs" in sdk_tool.input_schema  # type: ignore[operator]
-        assert "Address" in sdk_tool.input_schema["$defs"]  # type: ignore[index]
+        input_schema = cast(dict[str, Any], sdk_tool.input_schema)
+        assert "$defs" in input_schema
+        assert "Address" in input_schema["$defs"]
         # Verify the nested reference exists in properties
-        assert "person" in sdk_tool.input_schema["properties"]  # type: ignore[index]
+        assert "person" in input_schema["properties"]
 
     async def test_tool_handler_success(self) -> None:
         """Test tool handler executes successfully."""

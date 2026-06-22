@@ -120,5 +120,5 @@ class TestExecutorFutureAnnotations:
 
             class Bad(Executor):  # pyright: ignore[reportUnusedClass]
                 @handler  # pyright: ignore[reportUnknownArgumentType]
-                async def example(self, input: NonExistentType, ctx: WorkflowContext[MyTypeA, MyTypeB]) -> None:  # noqa: F821  # type: ignore[name-defined]
+                async def example(self, input: NonExistentType, ctx: WorkflowContext[MyTypeA, MyTypeB]) -> None:  # type: ignore[name-defined]  # ty: ignore[unresolved-reference]  # noqa: F821
                     pass

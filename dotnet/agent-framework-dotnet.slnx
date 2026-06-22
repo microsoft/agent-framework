@@ -331,6 +331,9 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalTools/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalTools/HostedLocalTools.csproj" />
   </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalCodeAct/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalCodeAct/HostedLocalCodeAct.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-McpTools/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-McpTools/HostedMcpTools.csproj" />
   </Folder>
@@ -408,6 +411,7 @@
   <Folder Name="/Samples/05-end-to-end/Evaluation/">
     <Project Path="samples/05-end-to-end/Evaluation/Evaluation_ConversationSplits/Evaluation_ConversationSplits.csproj" />
     <Project Path="samples/05-end-to-end/Evaluation/Evaluation_FoundryQuality/Evaluation_FoundryQuality.csproj" />
+    <Project Path="samples/05-end-to-end/Evaluation/Evaluation_FoundryRubric/Evaluation_FoundryRubric.csproj" />
     <Project Path="samples/05-end-to-end/Evaluation/Evaluation_MixedProviders/Evaluation_MixedProviders.csproj" />
   </Folder>
   <Folder Name="/Samples/05-end-to-end/A2AClientServer/">
@@ -616,6 +620,7 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.AspNetCore/Microsoft.Agents.AI.Hosting.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hyperlight/Microsoft.Agents.AI.Hyperlight.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.LocalCodeAct/Microsoft.Agents.AI.LocalCodeAct.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Mcp/Microsoft.Agents.AI.Mcp.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Mem0/Microsoft.Agents.AI.Mem0.csproj" />
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
@@ -671,6 +676,7 @@
     <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.UnitTests/Microsoft.Agents.AI.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hyperlight.UnitTests/Microsoft.Agents.AI.Hyperlight.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.LocalCodeAct.UnitTests/Microsoft.Agents.AI.LocalCodeAct.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Mcp.UnitTests/Microsoft.Agents.AI.Mcp.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Mem0.UnitTests/Microsoft.Agents.AI.Mem0.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.OpenAI.UnitTests/Microsoft.Agents.AI.OpenAI.UnitTests.csproj" />

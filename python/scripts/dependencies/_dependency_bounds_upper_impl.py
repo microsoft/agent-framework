@@ -426,10 +426,16 @@ def _load_lock_versions(workspace_root: Path) -> dict[str, list[Version]]:
 class VersionCatalog:
     """Cache and fetch available dependency versions."""
 
-    def __init__(self, lock_versions: dict[str, list[Version]], source: str) -> None:
+    def __init__(
+        self,
+        lock_versions: dict[str, list[Version]],
+        source: str,
+        exclude_newer: datetime | None = None,
+    ) -> None:
         """Initialize the catalog with lock-based fallback and fetch source."""
         self._lock_versions = lock_versions
         self._source = source
+        self._exclude_newer = exclude_newer if exclude_newer is not None else _load_exclude_newer_from_env()
         self._cache: dict[str, list[Version]] = {}
         self._lock = threading.Lock()
 
@@ -463,7 +469,11 @@ class VersionCatalog:
         for raw_version, files in payload.get("releases", {}).items():
             if not files:
                 continue
-            non_yanked = any(not bool(file_info.get("yanked", False)) for file_info in files)
+            non_yanked = any(
+                not bool(file_info.get("yanked", False))
+                and _upload_is_not_newer(file_info, exclude_newer=self._exclude_newer)
+                for file_info in files
+            )
             if not non_yanked:
                 continue
             try:
@@ -473,6 +483,35 @@ class VersionCatalog:
         if versions:
             return sorted(versions)
         return self._lock_versions.get(package_name, [])
+
+
+def _load_exclude_newer_from_env() -> datetime | None:
+    raw_value = os.environ.get("UV_EXCLUDE_NEWER")
+    if not raw_value:
+        return None
+    normalized = raw_value.removesuffix("Z")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _upload_is_not_newer(file_info: dict[str, object], *, exclude_newer: datetime | None) -> bool:
+    if exclude_newer is None:
+        return True
+    upload_time = file_info.get("upload_time_iso_8601") or file_info.get("upload_time")
+    if not isinstance(upload_time, str) or not upload_time:
+        return False
+    normalized = upload_time.removesuffix("Z")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    parsed = parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    return parsed <= exclude_newer
 
 
 def _load_package_name(pyproject_file: Path) -> str:

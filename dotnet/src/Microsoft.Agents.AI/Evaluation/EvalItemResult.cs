@@ -66,7 +66,27 @@ public sealed class EvalItemResult
 /// <param name="Name">The evaluator name that produced this score.</param>
 /// <param name="Score">The numeric score value.</param>
 /// <param name="Passed">Whether the evaluator considered this a pass, or null if not determined.</param>
-public record EvalScoreResult(string Name, double Score, bool? Passed = null);
+public record EvalScoreResult(string Name, double Score, bool? Passed = null)
+{
+    /// <summary>
+    /// Gets the per-dimension breakdown when this evaluator is a rubric-based evaluator.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Rubric evaluators (for example, generated rubric evaluators authored in the Azure AI
+    /// Foundry portal) emit one <see cref="RubricScore"/> per dimension per item alongside
+    /// the overall weighted <see cref="Score"/>. Each entry preserves the dimension's
+    /// applicability, weight, and the evaluator-supplied rationale.
+    /// </para>
+    /// <para>
+    /// Non-rubric evaluators (built-in quality, safety, or agent-behavior evaluators) leave
+    /// this property <see langword="null"/>. Use
+    /// <see cref="AgentEvaluationResults.AssertDimensionScoreAtLeast(string, double, string?, bool, string?)"/>
+    /// to gate CI on a specific dimension across all items.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<RubricScore>? Dimensions { get; init; }
+}
 
 /// <summary>
 /// Per-evaluator pass/fail breakdown from an evaluation run.

@@ -54,5 +54,5 @@ class TestFunctionExecutorFutureAnnotations:
             )
 
 
-async def _func_with_bad_annotation(message: NonExistentType, ctx: WorkflowContext[int]) -> None:  # noqa: F821  # type: ignore[name-defined]
+async def _func_with_bad_annotation(message: NonExistentType, ctx: WorkflowContext[int]) -> None:  # type: ignore[name-defined]  # ty: ignore[unresolved-reference]  # noqa: F821
     pass
