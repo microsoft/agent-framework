@@ -36,6 +36,9 @@ Func<Task<string[]>> loadNextThreeCalendarEvents = async () =>
 
 // Create an agent with an AI context provider attached that aggregates two other providers.
 // You must dissable client side conversation storage for clients that support it:
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
