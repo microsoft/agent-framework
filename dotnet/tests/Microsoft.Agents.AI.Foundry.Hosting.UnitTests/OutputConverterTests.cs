@@ -1404,6 +1404,45 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
+    /// <summary>The content_part.done and output_item.done payloads carry the url_citation metadata, guarding against the empty-annotations regression where only the annotation.added event fires.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextWithUrlCitationAnnotation_DoneEventsCarryAnnotationMetadataAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("Hello") { Annotations = [annotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // content_part.done must serialize the annotation, not an empty array.
+        var contentPartDone = Assert.Single(events.OfType<ResponseContentPartDoneEvent>());
+        var donePart = Assert.IsType<OutputContentOutputTextContent>(contentPartDone.Part);
+        var donePartCitation = Assert.IsType<UrlCitationBody>(Assert.Single(donePart.Annotations));
+        Assert.Equal(new Uri("https://example.com/doc"), donePartCitation.Url);
+        Assert.Equal("Example Document", donePartCitation.Title);
+
+        // output_item.done message content must also carry the annotation.
+        var outputItemDone = Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+        var doneMessage = Assert.IsType<OutputItemMessage>(outputItemDone.Item);
+        var doneText = Assert.IsType<MessageContentOutputTextContent>(Assert.Single(doneMessage.Content));
+        var doneTextCitation = Assert.IsType<UrlCitationBody>(Assert.Single(doneText.Annotations));
+        Assert.Equal(new Uri("https://example.com/doc"), doneTextCitation.Url);
+        Assert.Equal("Example Document", doneTextCitation.Title);
+    }
+
     /// <summary>The annotation event must appear after the last text delta and before output_item.done.</summary>
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_TextWithAnnotation_AnnotationOrderedAfterDeltaBeforeMessageDoneAsync()
