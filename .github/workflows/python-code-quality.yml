@@ -169,6 +169,14 @@ jobs:
           os: ${{ runner.os }}
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
+      # Pin the dependency release cutoff to the same 7-day window the dependency
+      # maintenance workflow uses, so this PR check resolves the same upstream
+      # releases as the weekly sweep instead of pulling in newer ones and diverging.
+      - name: Set dependency release cutoff
+        run: |
+          cutoff="$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "UV_EXCLUDE_NEWER=${cutoff}" >> "$GITHUB_ENV"
+          echo "Using dependency release cutoff: ${cutoff}"
       # Smoke both ends of every package's allowed dependency range (lowest-direct and
       # highest) and run each package's pyright pass in an isolated environment. This
       # catches floor-too-low, missing-optional-dependency, and isolated-env typing
