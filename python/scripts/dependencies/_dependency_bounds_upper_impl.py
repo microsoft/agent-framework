@@ -17,7 +17,6 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -39,6 +38,7 @@ logger = logging.getLogger(__name__)
 CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
 AZURE_MONITOR_OPENTELEMETRY = "azure-monitor-opentelemetry"
 OPENTELEMETRY_SDK = "opentelemetry-sdk"
+VALIDATION_TOOL_DEV_PINS = frozenset({"mypy", "pyrefly", "pyright", "ruff", "ty", "zuban"})
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
 SECTION_HEADER_PATTERN = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 INLINE_ARRAY_ASSIGNMENT_PATTERN = re.compile(
@@ -252,25 +252,6 @@ def _exact_pin_version(requirement: Requirement) -> Version | None:
     return None
 
 
-@lru_cache(maxsize=8)
-def _load_workspace_package_versions(workspace_root: str) -> dict[str, Version]:
-    workspace_path = Path(workspace_root)
-    versions: dict[str, Version] = {}
-    for package_pyproject in sorted((workspace_path / "packages").glob("*/pyproject.toml")):
-        with package_pyproject.open("rb") as f:
-            package_data = tomli.load(f)
-        project_section = package_data.get("project", {}) or {}
-        package_name = str(project_section.get("name", "")).strip().lower()
-        package_version = project_section.get("version")
-        if not package_name or not package_version:
-            continue
-        try:
-            versions[package_name] = Version(str(package_version))
-        except InvalidVersion:
-            continue
-    return versions
-
-
 def _collect_dev_pin_replacements(
     pyproject_file: Path,
     *,
@@ -287,8 +268,6 @@ def _collect_dev_pin_replacements(
         optional_dependencies.keys(),
         dependency_groups.keys(),
     )
-    workspace_versions = _load_workspace_package_versions(str(pyproject_file.parent.parent.parent.resolve()))
-
     dev_requirements: list[str] = []
     dev_requirements.extend(
         requirement for requirement in (optional_dependencies.get("dev", []) or []) if isinstance(requirement, str)
@@ -322,16 +301,27 @@ def _collect_dev_pin_replacements(
             continue
         dependency_name = parsed_requirement.name.lower()
         if dependency_name.startswith("agent-framework"):
-            latest_version = workspace_versions.get(dependency_name)
-        else:
-            # Dev-tool refreshes should follow the selected version source (PyPI by default)
-            # instead of being pinned by the current lockfile. VersionCatalog already falls
-            # back to lock data when PyPI cannot be reached or --version-source=lock is used.
-            latest_version = _select_latest_dev_version(catalog.get(dependency_name))
+            logger.info(
+                "Skipping %s in %s because internal package pins are maintained by package versioning.",
+                dependency_name,
+                pyproject_file,
+            )
+            continue
+        # Dev-tool refreshes should follow the selected version source (PyPI by default)
+        # instead of being pinned by the current lockfile. VersionCatalog already falls
+        # back to lock data when PyPI cannot be reached or --version-source=lock is used.
+        latest_version = _select_latest_dev_version(catalog.get(dependency_name))
         if latest_version is None:
             continue
         current_exact_version = _exact_pin_version(parsed_requirement)
-        if current_exact_version is None and not dependency_name.startswith("agent-framework"):
+        if current_exact_version is not None and dependency_name in VALIDATION_TOOL_DEV_PINS:
+            logger.info(
+                "Skipping %s in %s because validation tool upgrades should be handled separately.",
+                dependency_name,
+                pyproject_file,
+            )
+            continue
+        if current_exact_version is None:
             locked_version = _select_latest_dev_version(catalog.get_lock(dependency_name))
             if locked_version is not None:
                 latest_version = locked_version

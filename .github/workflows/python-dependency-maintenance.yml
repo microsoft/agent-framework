@@ -49,7 +49,7 @@ jobs:
         working-directory: ./python
 
       - name: Refresh lockfile after dev pin updates
-        run: uv lock --upgrade
+        run: uv lock
         working-directory: ./python
 
       - name: Save dev dependency changes
@@ -285,7 +285,7 @@ jobs:
 
       - name: Refresh lockfile after dependency range updates
         if: steps.validate_bounds_test.outcome == 'success' && steps.validate_ranges.outcome == 'success'
-        run: uv lock --upgrade
+        run: uv lock
         working-directory: ./python
 
       - name: Install final dependency set
