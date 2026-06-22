@@ -15,14 +15,17 @@ fully here.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
+from agent_framework import AgentSession
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
 from starlette.testclient import TestClient
 
 from agent_framework_hosting import (
+    AgentFrameworkHost,
     Channel,
     ChannelContext,
     ChannelContribution,
@@ -142,6 +145,7 @@ class _IsolationProbeChannel:
         async def _handler(_request: Request) -> JSONResponse:
             keys = get_current_isolation_keys()
             self.captured.append(keys)
+            payload: dict[str, str | bool | None]
             payload = (
                 {"user": keys.user_key, "chat": keys.chat_key}
                 if keys is not None
@@ -151,20 +155,29 @@ class _IsolationProbeChannel:
 
         self._routes: list[BaseRoute] = [Route("/probe", _handler)]
 
-    def contribute(self, _context: ChannelContext) -> ChannelContribution:
+    def contribute(self, context: ChannelContext) -> ChannelContribution:
+        del context
         return ChannelContribution(routes=self._routes)
 
 
-def _make_host_with_probe() -> tuple[object, _IsolationProbeChannel]:
-    from agent_framework_hosting import AgentFrameworkHost
-
+def _make_host_with_probe() -> tuple[AgentFrameworkHost, _IsolationProbeChannel]:
     class _NoopAgent:
-        async def run(self, *_args: object, **_kwargs: object) -> object:  # pragma: no cover - never called
+        id = "noop-agent"
+        name: str | None = "Noop Agent"
+        description: str | None = "Test noop agent"
+
+        def create_session(self, *, session_id: str | None = None) -> AgentSession:
+            return AgentSession(session_id=session_id)
+
+        def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+            return AgentSession(service_session_id=service_session_id, session_id=session_id)
+
+        def run(self, *_args: object, **_kwargs: object) -> Any:  # pragma: no cover - never called
             raise RuntimeError("not invoked")
 
     probe = _IsolationProbeChannel()
     assert isinstance(probe, Channel)
-    host = AgentFrameworkHost(target=_NoopAgent(), channels=[probe])  # type: ignore[arg-type]
+    host = AgentFrameworkHost(target=_NoopAgent(), channels=[probe])
     return host, probe
 
 

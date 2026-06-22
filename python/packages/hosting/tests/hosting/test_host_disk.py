@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from agent_framework import AgentSession
 
 from agent_framework_hosting import AgentFrameworkHost, ChannelContext, ChannelContribution
 
@@ -17,15 +19,26 @@ pytest.importorskip("diskcache")
 class _AgentStub:
     """Bare-minimum SupportsAgentRun stub for host construction."""
 
-    async def run(self, *_args: Any, **_kwargs: Any) -> None:  # pragma: no cover - unused
-        return None
+    id = "agent-stub"
+    name: str | None = "Agent Stub"
+    description: str | None = "Test agent stub"
+
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id)
+
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(service_session_id=service_session_id, session_id=session_id)
+
+    def run(self, *_args: Any, **_kwargs: Any) -> Any:  # pragma: no cover - unused
+        raise RuntimeError("not invoked")
 
 
 class _ChannelStub:
     name = "stub"
     path = "/stub"
 
-    def contribute(self, _context: ChannelContext) -> ChannelContribution:
+    def contribute(self, context: ChannelContext) -> ChannelContribution:
+        del context
         return ChannelContribution()
 
 
@@ -84,7 +97,7 @@ def test_removed_state_dir_component_keys_raise(tmp_path: Path, key: str) -> Non
         AgentFrameworkHost(
             target=_AgentStub(),
             channels=[_ChannelStub()],
-            state_dir={key: tmp_path / key},  # type: ignore[dict-item]
+            state_dir=cast(Any, {key: tmp_path / key}),
         )
 
 
@@ -107,7 +120,7 @@ def test_session_aliases_survive_restart(tmp_path: Path) -> None:
 
 def _build_simple_workflow() -> Any:
     """Build a no-op workflow for checkpoint-wiring tests."""
-    from hosting_workflow_fixtures import build_upper_workflow
+    build_upper_workflow = importlib.import_module("hosting_workflow_fixtures").build_upper_workflow
 
     return build_upper_workflow()
 
@@ -212,8 +225,8 @@ def test_state_dir_checkpoints_for_agent_target_warns_when_explicit(
 def test_state_dir_checkpoints_conflicts_with_workflow_own_storage(tmp_path: Path) -> None:
     """Derived checkpoint path triggers the same conflict guard as explicit."""
     from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
-    from hosting_workflow_fixtures import _UpperExecutor
 
+    _UpperExecutor = importlib.import_module("hosting_workflow_fixtures")._UpperExecutor
     workflow = WorkflowBuilder(
         start_executor=_UpperExecutor(id="upper"),
         checkpoint_storage=InMemoryCheckpointStorage(),

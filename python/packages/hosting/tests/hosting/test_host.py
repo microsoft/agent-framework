@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
+from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message, ResponseStream
 from agent_framework._workflows._events import WorkflowEvent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -61,14 +62,20 @@ class _FakeAgent:
     """Minimal :class:`SupportsAgentRun` implementation that records invocations."""
 
     def __init__(self, reply: str = "ok") -> None:
+        self.id = "fake-agent"
+        self.name: str | None = "Fake Agent"
+        self.description: str | None = "Test fake agent"
         self._reply = reply
         self.calls: list[dict[str, Any]] = []
-        self.created_sessions: list[_FakeAgentSession] = []
+        self.created_sessions: list[AgentSession] = []
 
-    def create_session(self, *, session_id: str | None = None) -> _FakeAgentSession:
-        s = _FakeAgentSession(session_id=session_id)
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        s = AgentSession(session_id=session_id)
         self.created_sessions.append(s)
         return s
+
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
     def run(self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any) -> Any:
         self.calls.append({"messages": messages, "stream": stream, "session": session, "kwargs": kwargs})
@@ -118,6 +125,10 @@ def _make_reply(text: str = "reply") -> HostedRunResult[AgentResponse]:
     envelope whose ``result`` is a real :class:`AgentResponse`.
     """
     return HostedRunResult(_assistant_response(text))
+
+
+def _workflow_fixture(name: str) -> Any:
+    return getattr(importlib.import_module("hosting_workflow_fixtures"), name)
 
 
 @dataclass
@@ -371,8 +382,7 @@ class TestHostWorkflowTarget:
     """The host accepts a ``Workflow`` and dispatches to ``workflow.run(...)``."""
 
     async def test_invoke_workflow_collapses_outputs_to_hosted_run_result(self) -> None:
-        from hosting_workflow_fixtures import build_upper_workflow
-
+        build_upper_workflow = _workflow_fixture("build_upper_workflow")
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
         host = AgentFrameworkHost(target=workflow, channels=[ch])
@@ -391,8 +401,7 @@ class TestHostWorkflowTarget:
         assert host._sessions == {}
 
     async def test_stream_workflow_yields_updates_and_finalizes(self) -> None:
-        from hosting_workflow_fixtures import build_echo_workflow
-
+        build_echo_workflow = _workflow_fixture("build_echo_workflow")
         workflow = build_echo_workflow()
         ch = _RecordingChannel()
         host = AgentFrameworkHost(target=workflow, channels=[ch])
@@ -419,8 +428,7 @@ class TestHostWorkflowTarget:
         assert final.text == "hi"
 
     async def test_stream_workflow_yields_one_update_per_output_event(self) -> None:
-        from hosting_workflow_fixtures import build_multi_chunk_workflow
-
+        build_multi_chunk_workflow = _workflow_fixture("build_multi_chunk_workflow")
         workflow = build_multi_chunk_workflow()
         ch = _RecordingChannel()
         host = AgentFrameworkHost(target=workflow, channels=[ch])
@@ -456,6 +464,7 @@ class TestHostWorkflowTarget:
         update = _workflow_event_to_update(event)
 
         assert update is event.data
+        assert update is not None
         assert update.raw_representation is event
 
     def test_workflow_event_to_update_preserves_content_payload(self) -> None:
@@ -476,8 +485,8 @@ class TestHostWorkflowCheckpointing:
 
     def test_rejects_workflow_with_existing_checkpoint_storage(self, tmp_path: Any) -> None:
         from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
-        from hosting_workflow_fixtures import _UpperExecutor
 
+        _UpperExecutor = _workflow_fixture("_UpperExecutor")
         workflow = WorkflowBuilder(
             start_executor=_UpperExecutor(id="upper"),
             checkpoint_storage=InMemoryCheckpointStorage(),
@@ -499,8 +508,7 @@ class TestHostWorkflowCheckpointing:
         assert any("checkpoint_location" in rec.message for rec in caplog.records)
 
     async def test_invoke_skips_checkpointing_when_no_isolation_key(self, tmp_path: Any) -> None:
-        from hosting_workflow_fixtures import build_upper_workflow
-
+        build_upper_workflow = _workflow_fixture("build_upper_workflow")
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
         host = AgentFrameworkHost(target=workflow, channels=[ch], checkpoint_location=tmp_path)
@@ -515,8 +523,7 @@ class TestHostWorkflowCheckpointing:
         assert list(tmp_path.iterdir()) == []
 
     async def test_invoke_writes_checkpoint_under_isolation_key(self, tmp_path: Any) -> None:
-        from hosting_workflow_fixtures import build_upper_workflow
-
+        build_upper_workflow = _workflow_fixture("build_upper_workflow")
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
         host = AgentFrameworkHost(target=workflow, channels=[ch], checkpoint_location=tmp_path)
@@ -539,8 +546,7 @@ class TestHostWorkflowCheckpointing:
         assert any(scoped.iterdir()), "expected at least one checkpoint to be written under the per-user dir"
 
     async def test_stream_writes_checkpoint_under_isolation_key(self, tmp_path: Any) -> None:
-        from hosting_workflow_fixtures import build_echo_workflow
-
+        build_echo_workflow = _workflow_fixture("build_echo_workflow")
         workflow = build_echo_workflow()
         ch = _RecordingChannel()
         host = AgentFrameworkHost(target=workflow, channels=[ch], checkpoint_location=tmp_path)
@@ -564,8 +570,8 @@ class TestHostWorkflowCheckpointing:
 
     async def test_caller_supplied_checkpoint_storage_used_as_is(self, tmp_path: Any) -> None:
         from agent_framework import InMemoryCheckpointStorage
-        from hosting_workflow_fixtures import build_upper_workflow
 
+        build_upper_workflow = _workflow_fixture("build_upper_workflow")
         storage = InMemoryCheckpointStorage()
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
@@ -637,7 +643,7 @@ class TestCheckpointPathForIsolationKey:
         from agent_framework_hosting._host import _checkpoint_path_for_isolation_key
 
         with pytest.raises(ValueError, match="non-empty string"):
-            _checkpoint_path_for_isolation_key(tmp_path, None)  # type: ignore[arg-type]
+            _checkpoint_path_for_isolation_key(tmp_path, cast(Any, None))
 
 
 class TestHostWorkflowCheckpointingPathTraversal:
@@ -646,8 +652,7 @@ class TestHostWorkflowCheckpointingPathTraversal:
     async def test_traversal_key_skips_checkpointing_with_warning(self, tmp_path: Any, caplog: Any) -> None:
         import logging as _logging
 
-        from hosting_workflow_fixtures import build_upper_workflow
-
+        build_upper_workflow = _workflow_fixture("build_upper_workflow")
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
         host = AgentFrameworkHost(target=workflow, channels=[ch], checkpoint_location=tmp_path)
@@ -671,8 +676,7 @@ class TestHostWorkflowCheckpointingPathTraversal:
         )
 
     async def test_separator_in_key_skips_checkpointing(self, tmp_path: Any) -> None:
-        from hosting_workflow_fixtures import build_upper_workflow
-
+        build_upper_workflow = _workflow_fixture("build_upper_workflow")
         workflow = build_upper_workflow()
         ch = _RecordingChannel()
         host = AgentFrameworkHost(target=workflow, channels=[ch], checkpoint_location=tmp_path)
@@ -771,11 +775,21 @@ class TestHostedRunResult:
                 ]
 
         class _MultiModalAgent:
-            def create_session(self, *, session_id: str | None = None) -> _FakeAgentSession:
-                return _FakeAgentSession(session_id=session_id)
+            id = "multi-modal-agent"
+            name: str | None = "Multi Modal Agent"
+            description: str | None = "Test multi-modal agent"
 
-            async def run(self, *_args: Any, **_kwargs: Any) -> Any:
-                return _MultiModalResponse()
+            def create_session(self, *, session_id: str | None = None) -> AgentSession:
+                return AgentSession(session_id=session_id)
+
+            def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+                return AgentSession(session_id=session_id, service_session_id=service_session_id)
+
+            def run(self, *_args: Any, **_kwargs: Any) -> Any:
+                async def _coro() -> Any:
+                    return _MultiModalResponse()
+
+                return _coro()
 
         ch = _RecordingChannel(name="responses")
         host = AgentFrameworkHost(target=_MultiModalAgent(), channels=[ch])
@@ -840,12 +854,18 @@ class _ProvidersAgent:
     """
 
     def __init__(self, providers: Sequence[Any], *, reply: str = "ok") -> None:
+        self.id = "providers-agent"
+        self.name: str | None = "Providers Agent"
+        self.description: str | None = "Test providers agent"
         self.context_providers = list(providers)
         self._reply = reply
         self.calls: list[dict[str, Any]] = []
 
-    def create_session(self, *, session_id: str | None = None) -> _FakeAgentSession:
-        return _FakeAgentSession(session_id=session_id)
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id)
+
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
     def run(
         self,
@@ -1081,8 +1101,8 @@ class TestBoundResponseStream:
             pass
         # Iteration's finally already closed; an explicit ``aclose``
         # afterwards must be a no-op (no second exit event).
-        await stream.aclose()  # type: ignore[attr-defined]
-        await stream.aclose()  # type: ignore[attr-defined]
+        await cast(Any, stream).aclose()
+        await cast(Any, stream).aclose()
         names = [n for n, _ in prov.events]
         assert names.count("exit") == 1
 
@@ -1105,7 +1125,7 @@ class TestBoundResponseStream:
             attributes={"response_id": "resp_abandon"},
         )
         stream = await ch.context.run_stream(req)
-        await stream.aclose()  # type: ignore[attr-defined]
+        await cast(Any, stream).aclose()
 
         # Binding released without iterating.
         names = [n for n, _ in prov.events]
@@ -1136,9 +1156,9 @@ class TestBoundResponseStream:
         # ``with_result_hook`` is a real method on ``ResponseStream``;
         # if forwarding broke this would AttributeError.
         try:
-            assert callable(stream.with_result_hook)  # type: ignore[attr-defined]
+            assert callable(cast(Any, stream).with_result_hook)
         finally:
-            await stream.aclose()  # type: ignore[attr-defined]
+            await cast(Any, stream).aclose()
 
     async def test_await_path_routes_through_get_final_response(self) -> None:
         """``await stream`` is a convenience for ``await
@@ -1240,7 +1260,9 @@ class _RaisingLifecycleChannel:
         self.start_calls: list[str] = []
         self.stop_calls: list[str] = []
 
-    def contribute(self, _context: ChannelContext) -> ChannelContribution:
+    def contribute(self, context: ChannelContext) -> ChannelContribution:
+        del context
+
         async def _start() -> None:
             self.start_calls.append("up")
             if self._fail_on == "startup":
@@ -1261,7 +1283,9 @@ class _OkLifecycleChannel:
         self.start_calls: list[str] = []
         self.stop_calls: list[str] = []
 
-    def contribute(self, _context: ChannelContext) -> ChannelContribution:
+    def contribute(self, context: ChannelContext) -> ChannelContribution:
+        del context
+
         async def _start() -> None:
             self.start_calls.append("up")
 

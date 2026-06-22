@@ -25,7 +25,7 @@ import asyncio
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -224,7 +224,7 @@ def _workflow_event_to_update(event: WorkflowEvent[Any]) -> AgentResponseUpdate 
 
 
 @asynccontextmanager
-async def _suppress_already_consumed() -> AsyncIterator[None]:
+async def _suppress_already_consumed() -> AsyncGenerator[None]:
     """Yield, swallowing finalizer failures so consumer cleanup never crashes the host.
 
     The bridge stream calls ``get_final_response()`` after iterating the
@@ -737,21 +737,19 @@ class AgentFrameworkHost:
                 ``access_log_format=...``) can be set directly.
         """
         try:
-            from hypercorn.asyncio import (  # pyright: ignore[reportMissingImports]
-                serve as _hypercorn_serve,  # pyright: ignore[reportUnknownVariableType]
-            )
-            from hypercorn.config import Config  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
+            from hypercorn.asyncio import serve as _hypercorn_serve  # pyright: ignore[reportUnknownVariableType]
+            from hypercorn.config import Config
         except ImportError as exc:  # pragma: no cover - exercised at runtime
             raise RuntimeError(
                 "AgentFrameworkHost.serve() requires hypercorn. "
                 "Install with `pip install agent-framework-hosting[serve]` or `pip install hypercorn`."
             ) from exc
 
-        config = Config()  # pyright: ignore[reportUnknownVariableType]
-        config.bind = [f"{host}:{port}"]  # pyright: ignore[reportUnknownMemberType]
-        config.workers = workers  # pyright: ignore[reportUnknownMemberType]
+        config = Config()
+        config.bind = [f"{host}:{port}"]
+        config.workers = workers
         for key, value in config_kwargs.items():
-            setattr(config, key, value)  # pyright: ignore[reportUnknownArgumentType]
+            setattr(config, key, value)
 
         # Touch ``self.app`` so the lifespan startup log fires once before
         # we hand off to hypercorn — gives a single, readable banner of
@@ -865,7 +863,7 @@ class AgentFrameworkHost:
             on_shutdown.extend(contribution.on_shutdown)
 
         @asynccontextmanager
-        async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+        async def lifespan(_app: Starlette) -> AsyncGenerator[None]:
             # Emit the startup banner once. ``serve()`` may have already
             # logged it (it logs eagerly so the banner appears before
             # control passes to hypercorn); the lifespan still logs it
@@ -965,10 +963,9 @@ class AgentFrameworkHost:
                     # other in-flight requests are already using.
                     # ``create_session`` lives on agent-typed targets but not on
                     # ``Workflow``; the ``hasattr`` above guards the call site.
-                    new_session = self.target.create_session(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownVariableType, reportUnknownMemberType]
-                        session_id=session_id
-                    )
-                    session = self._sessions.setdefault(isolation_key, new_session)  # pyright: ignore[reportUnknownArgumentType]
+                    create_session = cast("Callable[..., Any]", self.target.create_session)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+                    new_session = create_session(session_id=session_id)
+                    session = self._sessions.setdefault(isolation_key, new_session)
 
         run_kwargs: dict[str, Any] = {}
         if session is not None:

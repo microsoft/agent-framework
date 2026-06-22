@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from agent_framework import AgentResponseUpdate, Content
 from agent_framework_hosting import (
     AgentFrameworkHost,
     HostedRunResult,
@@ -52,12 +53,18 @@ class _FakeStream:
 
 class _FakeAgent:
     def __init__(self, reply: str = "hello", chunks: list[str] | None = None) -> None:
+        self.id = "fake-agent"
+        self.name: str | None = "Fake Agent"
+        self.description: str | None = "Test fake agent"
         self._reply = reply
         self._chunks = chunks or [reply]
         self.calls: list[dict[str, Any]] = []
 
     def create_session(self, *, session_id: str | None = None) -> Any:
         return {"session_id": session_id}
+
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> Any:
+        return {"service_session_id": service_session_id, "session_id": session_id}
 
     def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
         self.calls.append({"messages": messages, "stream": stream, "kwargs": kwargs})
@@ -273,8 +280,8 @@ class TestResponsesChannelStreaming:
     def test_sse_transform_hook_can_rewrite_chunks(self) -> None:
         agent = _FakeAgent(reply="hello", chunks=["he", "llo"])
 
-        def transform(update: _FakeUpdate) -> _FakeUpdate:
-            return _FakeUpdate(text=update.text.upper())
+        def transform(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            return AgentResponseUpdate(contents=[Content.from_text(update.text.upper())], role="assistant")
 
         host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel(stream_update_hook=transform)])
         with TestClient(host.app) as client:

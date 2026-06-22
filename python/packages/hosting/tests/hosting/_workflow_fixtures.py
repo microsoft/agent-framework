@@ -7,18 +7,20 @@ because the workflow handler validation reflects on real annotation objects
 rather than stringified forms.
 """
 
+from typing import Any
+
 from agent_framework import Executor, Workflow, WorkflowBuilder, WorkflowContext, handler
 
 
 class _UpperExecutor(Executor):
     @handler
-    async def handle(self, text: str, ctx: WorkflowContext[str]) -> None:
+    async def handle(self, text: str, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output(text.upper())
 
 
 class _EchoExecutor(Executor):
     @handler
-    async def handle(self, text: str, ctx: WorkflowContext[str]) -> None:
+    async def handle(self, text: str, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output(text)
 
 
@@ -34,7 +36,7 @@ class _MultiChunkExecutor(Executor):
     """Yields three separate ``output`` events so streaming has something to chew on."""
 
     @handler
-    async def handle(self, text: str, ctx: WorkflowContext[str]) -> None:
+    async def handle(self, text: str, ctx: WorkflowContext[Any, str]) -> None:
         for chunk in (f"{text}-1", f"{text}-2", f"{text}-3"):
             await ctx.yield_output(chunk)
 
