@@ -101,7 +101,7 @@ def messages_from_responses_input(value: Any) -> list[Message]:
             messages.append(Message("user", list(pending_user_parts)))
             pending_user_parts.clear()
 
-    for item in cast("list[Any]", value):  # type: ignore[redundant-cast]
+    for item in cast("list[Any]", value):
         if not isinstance(item, Mapping):
             raise ValueError("each `input` item must be an object")
         item_map = cast("Mapping[str, Any]", item)
@@ -114,12 +114,12 @@ def messages_from_responses_input(value: Any) -> list[Message]:
                 parts = [Content.from_text(text=content)]
             elif isinstance(content, list):
                 parts = []
-                for content_item in cast("list[Any]", content):  # type: ignore[redundant-cast]
+                for content_item in cast("list[Any]", content):
                     if not isinstance(content_item, Mapping):
                         raise ValueError("each message `content` item must be an object")
                     parts.append(_content_from_input_item(cast("Mapping[str, Any]", content_item)))
             else:
-                parts = []
+                raise ValueError("message `content` must be a string or list")
             messages.append(Message(role, parts))
         else:
             pending_user_parts.append(_content_from_input_item(item_map))

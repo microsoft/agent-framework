@@ -142,6 +142,9 @@ class ResponsesChannel:
             body = await request.json()
         except Exception:
             return JSONResponse({"error": "invalid json"}, status_code=400)
+        if not isinstance(body, Mapping):
+            return JSONResponse({"error": "request body must be a JSON object"}, status_code=422)
+        body = cast("Mapping[str, Any]", body)
 
         try:
             messages, options, session = parse_responses_request(body)
@@ -265,7 +268,7 @@ class ResponsesChannel:
                     id=f"msg_{uuid.uuid4().hex}",
                     type="message",
                     role="assistant",
-                    status=message_status,  # type: ignore[arg-type]
+                    status=message_status,
                     content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
                 )
             ],

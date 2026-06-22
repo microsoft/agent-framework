@@ -48,6 +48,10 @@ class TestMessagesFromResponsesInput:
         with pytest.raises(ValueError, match="content.*object"):
             messages_from_responses_input([{"type": "message", "role": "user", "content": ["bad"]}])
 
+    def test_message_envelope_rejects_invalid_content_shape(self) -> None:
+        with pytest.raises(ValueError, match="content.*string or list"):
+            messages_from_responses_input([{"type": "message", "role": "user", "content": 42}])
+
     def test_input_file_via_url(self) -> None:
         msgs = messages_from_responses_input([
             {"type": "input_file", "file_url": "https://example.com/report.pdf", "mime_type": "application/pdf"}

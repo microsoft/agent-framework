@@ -40,6 +40,7 @@ def main() -> None:
         previous_response_id=previous_response_id,
     )
     print(f"User: {prompt}")
+    print(f"Response ID: {response.id}")
     print(f"Agent: {response.output_text}")
 
 

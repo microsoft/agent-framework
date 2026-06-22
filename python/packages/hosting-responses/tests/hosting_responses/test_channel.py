@@ -132,6 +132,13 @@ class TestResponsesChannelNonStreaming:
             r = client.post("/responses", content=b"{not json", headers={"content-type": "application/json"})
         assert r.status_code == 400
 
+    def test_non_object_json_returns_422(self) -> None:
+        client, *_ = _make_client()
+        with client:
+            r = client.post("/responses", json=["not", "an", "object"])
+        assert r.status_code == 422
+        assert r.json()["error"] == "request body must be a JSON object"
+
     def test_invalid_input_returns_422(self) -> None:
         client, *_ = _make_client()
         with client:

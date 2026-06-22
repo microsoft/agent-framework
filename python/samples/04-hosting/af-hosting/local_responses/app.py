@@ -44,7 +44,6 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 from pathlib import Path
-from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, FileHistoryProvider, tool
@@ -62,7 +61,7 @@ def lookup_weather(
     location: Annotated[str, "The city to look up weather for."],
 ) -> str:
     """Return a deterministic weather report for a city."""
-    high_temp = randint(5, 25)
+    high_temp = 5 + (sum(location.encode("utf-8")) % 21)
     reports = {
         "Seattle": f"Seattle is rainy with a high of {high_temp}°C.",
         "Amsterdam": f"Amsterdam is cloudy with a high of {high_temp}°C.",
