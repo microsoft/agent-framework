@@ -1,18 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Hosted workflow sample with a structured intake step + checkpoint location.
+"""Hosted workflow sample with run-hook input prep + checkpoint location.
 
 Same three-agent slogan workflow as
 ``../../foundry-hosted-agents/responses/05_workflows/main.py`` (writer →
-legal reviewer → formatter), but with an extra **structured intake**
-step at the front and driven through the ``agent-framework-hosting``
+legal reviewer → formatter), driven through the ``agent-framework-hosting``
 stack instead of the Foundry-Hosted-Agents runtime.
 
 Workflow shape
 --------------
-``BriefIntakeExecutor`` (typed :class:`SloganBrief` input) → ``writer``
-→ ``legal_reviewer`` → ``formatter``. The intake step formats the
-structured brief into a prompt the writer agent understands.
+``writer`` → ``legal_reviewer`` → ``formatter``. A single run hook parses
+the Responses input and prepares the prompt the writer agent receives.
 
 What this sample shows
 ----------------------
@@ -20,12 +18,12 @@ What this sample shows
   host detects it and dispatches to ``workflow.run(...)`` instead of
   ``agent.run(...)``.
 - ``ResponsesChannel(run_hook=...)`` is the seam for **adapting the
-  channel-native input into the workflow start executor's typed input**.
+  channel-native input into the workflow start executor's input**.
   The hook here parses the inbound text as JSON
   (``{"topic": ..., "style": ..., "audience": ...}``) — if parsing
   fails it falls back to using the whole text as ``topic`` with
-  defaults — and replaces ``ChannelRequest.input`` with a
-  :class:`SloganBrief`.
+  defaults — and replaces ``ChannelRequest.input`` with the prepared
+  writer prompt.
 - ``AgentFrameworkHost(checkpoint_location=...)`` enables
   per-conversation workflow checkpointing. The host scopes the
   checkpoint storage by ``ChannelRequest.session.isolation_key``
@@ -64,17 +62,14 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 
 from agent_framework import (
     Agent,
     AgentExecutor,
-    Executor,
     Message,
     WorkflowBuilder,
-    WorkflowContext,
-    handler,
 )
 from agent_framework_foundry import FoundryChatClient
 from agent_framework_hosting import AgentFrameworkHost, ChannelRequest
@@ -85,76 +80,45 @@ CHECKPOINTS_DIR = Path(__file__).resolve().parent / "storage" / "checkpoints"
 CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@dataclass
-class SloganBrief:
-    """Typed input for the workflow's first executor."""
-
-    topic: str
-    style: str = "modern"
-    audience: str = "general"
-
-
-class BriefIntakeExecutor(Executor):
-    """Format a :class:`SloganBrief` into a prompt for the writer agent."""
-
-    @handler
-    async def handle(self, brief: SloganBrief, ctx: WorkflowContext[str]) -> None:
-        prompt = (
-            f"Topic: {brief.topic}\n"
-            f"Style: {brief.style}\n"
-            f"Audience: {brief.audience}\n\n"
-            "Write a single short slogan that fits the topic, style, and audience."
-        )
-        await ctx.send_message(prompt)
-
-
-def _extract_text(value: object) -> str:
-    """Pull plain text out of whatever the Responses channel produced.
+def prepare_writer_prompt(request: ChannelRequest, **_: object) -> ChannelRequest:
+    """Prepare the workflow's initial writer prompt from Responses input.
 
     The channel hands the host either a ``str`` (rare on the Responses
-    surface) or a list of :class:`Message`. The hook collapses both to
-    a single concatenated string before attempting to parse a brief.
+    surface) or a list of :class:`Message`. This hook collapses that
+    input to text, accepts either JSON or plain text, and replaces the
+    request input with a plain prompt for the writer executor.
     """
-    if isinstance(value, str):
-        return value
-    if isinstance(value, Message):
-        return value.text
-    if isinstance(value, list):
-        return "\n".join(_extract_text(item) for item in value)
-    return ""
 
+    def extract_text(value: object) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, Message):
+            return value.text
+        if isinstance(value, list):
+            return "\n".join(extract_text(item) for item in value)
+        return ""
 
-def _parse_brief(text: str) -> SloganBrief:
-    """Parse user text into a :class:`SloganBrief`.
-
-    Accepts a JSON object with ``topic`` / ``style`` / ``audience``
-    keys; falls back to using the whole text as ``topic`` with the
-    other fields defaulted.
-    """
-    text = text.strip()
-    if text.startswith("{"):
+    text = extract_text(request.input).strip()
+    topic = text or "a generic product"
+    style = "modern"
+    audience = "general"
+    if topic.startswith("{"):
         try:
-            data = json.loads(text)
+            data = json.loads(topic)
         except json.JSONDecodeError:
             data = None
         if isinstance(data, dict) and "topic" in data:
-            return SloganBrief(
-                topic=str(data["topic"]),
-                style=str(data.get("style", "modern")),
-                audience=str(data.get("audience", "general")),
-            )
-    return SloganBrief(topic=text or "a generic product")
+            topic = str(data["topic"])
+            style = str(data.get("style", style))
+            audience = str(data.get("audience", audience))
 
-
-def brief_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
-    """Adapt the channel's free-form text into the workflow's typed input.
-
-    This is the canonical seam for shaping ``ChannelRequest.input`` into
-    the workflow start executor's input type — here :class:`SloganBrief`
-    instead of the list of :class:`Message` produced by the Responses channel.
-    """
-    brief = _parse_brief(_extract_text(request.input))
-    return replace(request, input=brief)
+    prompt = (
+        f"Topic: {topic}\n"
+        f"Style: {style}\n"
+        f"Audience: {audience}\n\n"
+        "Write a single short slogan that fits the topic, style, and audience."
+    )
+    return replace(request, input=prompt)
 
 
 def build_host() -> AgentFrameworkHost:
@@ -182,7 +146,6 @@ def build_host() -> AgentFrameworkHost:
         ),
     )
 
-    intake_ex = BriefIntakeExecutor(id="intake")
     # ``context_mode="last_agent"`` ensures each agent only sees the
     # previous executor's output — matching the Foundry sample.
     writer_ex = AgentExecutor(writer, context_mode="last_agent")
@@ -191,10 +154,9 @@ def build_host() -> AgentFrameworkHost:
 
     workflow = (
         WorkflowBuilder(
-            start_executor=intake_ex,
+            start_executor=writer_ex,
             output_executors=[format_ex],
         )
-        .add_edge(intake_ex, writer_ex)
         .add_edge(writer_ex, legal_ex)
         .add_edge(legal_ex, format_ex)
         .build()
@@ -203,7 +165,7 @@ def build_host() -> AgentFrameworkHost:
     return AgentFrameworkHost(
         target=workflow,
         channels=[
-            ResponsesChannel(run_hook=brief_hook),
+            ResponsesChannel(run_hook=prepare_writer_prompt),
         ],
         # The host writes a per-conversation FileCheckpointStorage rooted
         # at ``CHECKPOINTS_DIR / <isolation_key>`` and restores from the

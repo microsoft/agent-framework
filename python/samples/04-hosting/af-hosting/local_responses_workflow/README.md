@@ -1,29 +1,27 @@
-# local_responses_workflow — workflow target with structured intake + checkpoints
+# local_responses_workflow — workflow target with run-hook prep + checkpoints
 
-A `Workflow` (intake → writer → legal reviewer → formatter) hosted
+A `Workflow` (writer → legal reviewer → formatter) hosted
 behind the **Responses API**, with the host configured to
 **persist per-conversation checkpoints**. Mirrors
 [`../../foundry-hosted-agents/responses/05_workflows/`](../../foundry-hosted-agents/responses/05_workflows/)
 but uses the `agent-framework-hosting` stack instead of the
-Foundry-Hosted-Agents runtime, and adds a structured intake step
-(`SloganBrief` with `topic` / `style` / `audience` fields) at the front
-of the workflow.
+Foundry-Hosted-Agents runtime. The `run_hook` prepares the writer prompt
+before the workflow starts.
 
 ## What's interesting
 
 - `AgentFrameworkHost(target=workflow, …)` — the host detects a
   `Workflow` target and dispatches to `workflow.run(...)` (no
   `Agent.create_session(...)`).
-- `ResponsesChannel` is mounted at `/responses` with a `brief_hook`
-  that **adapts the channel-native input into the workflow start executor's
-  typed input**. Responses delivers a `list[Message]`; the hook normalises it
-  to text and produces a `SloganBrief`.
+- `ResponsesChannel` is mounted at `/responses` with a `prepare_writer_prompt`
+  run hook that **adapts the channel-native input into the workflow start
+  executor's input**. Responses delivers a `list[Message]`; the hook normalises
+  it to text and prepares the prompt the writer agent receives.
 - The hook parses the inbound text as JSON
   (`{"topic": ..., "style": ..., "audience": ...}`); if parsing fails
   it uses the whole text as `topic` with defaults.
-- The workflow's first executor (`BriefIntakeExecutor`) accepts
-  `SloganBrief` directly — that's what gets sent into `workflow.run(...)`
-  by the host.
+- The workflow starts directly at the writer `AgentExecutor`; no extra intake
+  executor is needed because the hook performs the one preparation step.
 - `checkpoint_location=storage/checkpoints/` — the host scopes a
   `FileCheckpointStorage` per conversation (Responses keys it on
   `previous_response_id` / `conversation_id`) and **restores from the
