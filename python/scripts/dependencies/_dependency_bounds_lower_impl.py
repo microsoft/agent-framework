@@ -388,7 +388,7 @@ class VersionCatalog:
 
 
 def _load_exclude_newer_from_env() -> datetime | None:
-    raw_value = os.environ.get("UV_EXCLUDE_NEWER")
+    raw_value = os.environ.get("DEPENDENCY_RELEASE_CUTOFF") or os.environ.get("UV_EXCLUDE_NEWER")
     if not raw_value:
         return None
     normalized = raw_value.removesuffix("Z")
