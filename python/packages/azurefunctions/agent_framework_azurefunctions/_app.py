@@ -48,6 +48,7 @@ from agent_framework_durabletask._workflows.naming import (
     workflow_orchestrator_name,
     workflow_scoped_executor_id,
 )
+from agent_framework_durabletask._workflows.registration import collect_hosted_workflows
 from agent_framework_durabletask._workflows.serialization import strip_pickle_markers
 
 from ._entities import create_agent_entity
@@ -246,6 +247,9 @@ class AgentFunctionApp(DFAppBase):
         # Initialize agent metadata dictionary
         self._agent_metadata = {}
         self._workflows: dict[str, Workflow] = {}
+        # Every workflow whose orchestration has been registered (top-level plus
+        # nested sub-workflows), so a shared sub-workflow is registered once.
+        self._registered_orchestrations: set[str] = set()
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
         self.enable_mcp_tool_trigger = enable_mcp_tool_trigger
@@ -310,21 +314,48 @@ class AgentFunctionApp(DFAppBase):
         return collected
 
     def _register_workflow(self, workflow: Workflow) -> None:
-        """Register one workflow's durable primitives and HTTP routes.
+        """Register a top-level workflow's durable primitives and HTTP routes.
 
-        The "what to register" decision (agent -> entity, non-agent -> activity) is
-        shared with the standalone durabletask host via ``plan_workflow_registration``.
+        The "what to register" decision (agent -> entity, non-agent -> activity,
+        sub-workflow -> child orchestration) is shared with the standalone
+        durabletask host via ``plan_workflow_registration``. Nested sub-workflows
+        have their orchestration primitives registered (deduped by name) so the
+        parent can drive them as child orchestrations, but only the top-level
+        workflow gets HTTP ``workflow/{name}/...`` routes.
 
         Raises:
-            ValueError: If the workflow name is missing/invalid/auto-generated, or a
-                workflow with the same name is already registered.
+            ValueError: If the workflow (or a nested sub-workflow) name is
+                missing/invalid/auto-generated, or a top-level workflow with the
+                same name is already registered.
         """
-        # Durable names are derived from the workflow name and must be stable across
-        # restarts, so reject an unnamed/auto-generated workflow up front.
         validate_workflow_name(workflow.name)
         if workflow.name in self._workflows:
             raise ValueError(f"Workflow '{workflow.name}' is already registered on this app.")
+
+        # Validate the whole composition (top-level plus every nested sub-workflow)
+        # up front, so an invalid/auto-generated nested name fails before any
+        # registration side effects leave the app partially configured.
+        hosted_workflows = list(collect_hosted_workflows(workflow))
+        for hosted in hosted_workflows:
+            validate_workflow_name(hosted.name)
+
         self._workflows[workflow.name] = workflow
+
+        # Register orchestration primitives for the top-level workflow and every
+        # nested sub-workflow (deduped by name).
+        for hosted in hosted_workflows:
+            if hosted.name in self._registered_orchestrations:
+                continue
+            self._register_workflow_primitives(hosted)
+
+        # HTTP routes are only exposed for the top-level workflow; sub-workflows are
+        # driven by the parent via call_sub_orchestrator, not addressed directly.
+        self._register_workflow_routes(workflow)
+
+    def _register_workflow_primitives(self, workflow: Workflow) -> None:
+        """Register one workflow's entities, activities, and orchestrator (no routes)."""
+        validate_workflow_name(workflow.name)
+        self._registered_orchestrations.add(workflow.name)
 
         logger.debug("[AgentFunctionApp] Registering workflow '%s'", workflow.name)
         plan = plan_workflow_registration(workflow)
@@ -341,7 +372,9 @@ class AgentFunctionApp(DFAppBase):
             )
         for executor in plan.activity_executors:
             # Set up a Functions activity trigger for each non-agent executor, scoped
-            # by workflow name to match the orchestrator's dispatch.
+            # by workflow name to match the orchestrator's dispatch. WorkflowExecutor
+            # nodes are not registered here: their inner workflows are registered
+            # separately and driven as child orchestrations.
             self._setup_executor_activity(workflow, executor.id)
 
         self._setup_workflow_orchestration(workflow)
@@ -382,19 +415,19 @@ class AgentFunctionApp(DFAppBase):
         _ = executor_activity
 
     def _setup_workflow_orchestration(self, workflow: Workflow) -> None:
-        """Register a workflow's orchestration and its per-workflow HTTP endpoints.
+        """Register a workflow's orchestrator function under its ``dafx-{name}`` name.
 
-        Routes are scoped by workflow name (``workflow/{name}/run`` etc.) so the URL
-        shape stays the same whether the app hosts one workflow or many; callers do
-        not have to change URLs as an app grows.
+        HTTP routes are registered separately (:meth:`_register_workflow_routes`) and
+        only for top-level workflows; this orchestrator function is registered for
+        every hosted workflow (including nested sub-workflows) so the parent can drive
+        them via ``call_sub_orchestrator``.
         """
         captured_workflow = workflow
-        workflow_name = workflow.name
-        orchestrator_name = workflow_orchestrator_name(workflow_name)
+        orchestrator_name = workflow_orchestrator_name(workflow.name)
 
         @self.function_name(orchestrator_name)
         @self.orchestration_trigger(context_name="context")
-        def workflow_orchestrator(context: df.DurableOrchestrationContext) -> Any:  # type: ignore[type-arg]
+        def workflow_orchestrator(context: df.DurableOrchestrationContext) -> Any:
             """Generic orchestrator for running the configured workflow."""
             input_data = context.get_input()
 
@@ -408,6 +441,19 @@ class AgentFunctionApp(DFAppBase):
             outputs = yield from run_workflow_orchestrator(context, captured_workflow, initial_message, shared_state)
             # Durable Functions runtime extracts return value from StopIteration
             return outputs  # noqa: B901
+
+        # Ensure the orchestrator function is registered (prevents garbage collection)
+        _ = workflow_orchestrator
+
+    def _register_workflow_routes(self, workflow: Workflow) -> None:
+        """Register a top-level workflow's per-workflow HTTP endpoints.
+
+        Routes are scoped by workflow name (``workflow/{name}/run`` etc.) so the URL
+        shape stays the same whether the app hosts one workflow or many; callers do
+        not have to change URLs as an app grows.
+        """
+        workflow_name = workflow.name
+        orchestrator_name = workflow_orchestrator_name(workflow_name)
 
         @self.function_name(f"{orchestrator_name}-start")
         @self.route(route=f"workflow/{workflow_name}/run", methods=["POST"])

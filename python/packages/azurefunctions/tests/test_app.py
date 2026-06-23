@@ -1509,6 +1509,119 @@ class TestAgentFunctionAppWorkflow:
             AgentFunctionApp(workflow=mock_workflow)
 
 
+class TestAgentFunctionAppSubworkflow:
+    """Test recursive registration of nested sub-workflows on the Functions app."""
+
+    @staticmethod
+    def _inner_agent_wf(name: str, executor_id: str) -> tuple[Mock, Mock]:
+        from agent_framework import AgentExecutor
+
+        agent = Mock()
+        agent.name = "InnerAssistant"
+        ex = Mock(spec=AgentExecutor)
+        ex.agent = agent
+        ex.id = executor_id
+        wf = Mock()
+        wf.name = name
+        wf.executors = {executor_id: ex}
+        return wf, agent
+
+    @staticmethod
+    def _outer_wf(name: str, inner: Mock, *, sub_ids: tuple[str, ...] = ("sub",)) -> Mock:
+        from agent_framework import Executor, WorkflowExecutor
+
+        executors: dict[str, Mock] = {}
+        for sid in sub_ids:
+            sub = Mock(spec=WorkflowExecutor)
+            sub.id = sid
+            sub.workflow = inner
+            sub.allow_direct_output = False
+            executors[sid] = sub
+        router = Mock(spec=Executor)
+        router.id = "router"
+        executors["router"] = router
+        wf = Mock()
+        wf.name = name
+        wf.executors = executors
+        return wf
+
+    def test_nested_workflow_registers_both_orchestrations(self) -> None:
+        """An outer workflow registers an orchestration for itself and the inner workflow."""
+        inner, _ = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            app = AgentFunctionApp(workflow=outer)
+
+        assert setup_orch.call_count == 2
+        registered = {call.args[0].name for call in setup_orch.call_args_list}
+        assert registered == {"outer", "inner"}
+        # Only the top-level workflow is tracked as an addressable workflow.
+        assert set(app.workflows) == {"outer"}
+
+    def test_nested_workflow_registers_inner_agent_scoped(self) -> None:
+        """The inner workflow's agent entity is registered under the inner-scoped id."""
+        inner, inner_agent = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_entity") as setup_entity,
+        ):
+            app = AgentFunctionApp(workflow=outer)
+
+        setup_entity.assert_called_once()
+        call_args = setup_entity.call_args.args
+        assert call_args[0] is inner_agent
+        assert call_args[1] == "inner-agent_node"
+        assert "inner-agent_node" in app.agents
+
+    def test_nested_workflow_routes_only_top_level(self) -> None:
+        """HTTP routes are registered only for the top-level workflow."""
+        inner, _ = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_register_workflow_routes") as routes,
+        ):
+            AgentFunctionApp(workflow=outer)
+
+        routes.assert_called_once()
+        assert routes.call_args.args[0] is outer
+
+    def test_shared_subworkflow_registered_once(self) -> None:
+        """A sub-workflow reused by two nodes registers its orchestration only once."""
+        inner, _ = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner, sub_ids=("sub_a", "sub_b"))
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(workflow=outer)
+
+        registered = sorted(call.args[0].name for call in setup_orch.call_args_list)
+        assert registered == ["inner", "outer"]
+
+    def test_nested_workflow_with_invalid_name_is_rejected(self) -> None:
+        """A nested sub-workflow must also have a valid, stable name."""
+        inner, _ = self._inner_agent_wf("has space", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="invalid"),
+        ):
+            AgentFunctionApp(workflow=outer)
+
+
 # NOTE: State snapshot/diff tests were moved to durabletask once the activity
 # execution body was extracted into the host-agnostic execute_workflow_activity.
 # See packages/durabletask/tests/test_workflow_activity.py.

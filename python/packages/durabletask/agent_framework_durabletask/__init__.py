@@ -63,7 +63,7 @@ from ._workflows.naming import (
     workflow_orchestrator_name,
 )
 from ._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
-from ._workflows.registration import WorkflowRegistrationPlan, plan_workflow_registration
+from ._workflows.registration import WorkflowRegistrationPlan, collect_hosted_workflows, plan_workflow_registration
 from ._workflows.runner_context import CapturingRunnerContext
 from ._workflows.serialization import deserialize_workflow_output
 
@@ -126,6 +126,7 @@ __all__ = [
     "WorkflowOrchestrationContext",
     "WorkflowRegistrationPlan",
     "__version__",
+    "collect_hosted_workflows",
     "deserialize_workflow_output",
     "ensure_response_format",
     "execute_workflow_activity",
