@@ -11,39 +11,22 @@ list and split out the ChatOptions-shaped fields the API also carries.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any, cast
 
 from agent_framework import Content, Message
 from agent_framework_hosting import ChannelIdentity, ChannelSession
 
+logger = logging.getLogger("agent_framework_hosting_responses")
+
 # OpenAI Responses field name → Agent Framework ChatOptions field name.
 _RESPONSES_OPTION_REMAP = {
     "max_output_tokens": "max_tokens",
     "parallel_tool_calls": "allow_multiple_tool_calls",
 }
-# Fields we forward to ChatOptions verbatim. ``instructions`` stays here
-# because Agent Framework exposes it as a ChatOptions field; it must not be
-# lifted into a synthetic system message.
-_RESPONSES_OPTION_PASSTHROUGH = {
-    "instructions",
-    "temperature",
-    "top_p",
-    "metadata",
-    "user",
-    "safety_identifier",
-    "tool_choice",
-    "tools",
-    "store",
-    "response_format",
-    "stop",
-    "seed",
-    "frequency_penalty",
-    "presence_penalty",
-    "logit_bias",
-}
 # Fields the Responses transport owns; they must not be forwarded as options.
-_RESPONSES_TRANSPORT_KEYS = {"input", "model", "stream", "previous_response_id"}
+_RESPONSES_TRANSPORT_KEYS = {"input", "stream", "previous_response_id"}
 
 
 def parse_responses_identity(body: Mapping[str, Any], channel_name: str) -> ChannelIdentity | None:
@@ -151,9 +134,10 @@ def parse_responses_request(
             continue
         if (mapped := _RESPONSES_OPTION_REMAP.get(key)) is not None:
             options[mapped] = value
-        elif key in _RESPONSES_OPTION_PASSTHROUGH:
-            options[key] = value
-        # silently drop everything else (truncation, reasoning, include, ...)
+            continue
+        # we pass through all other options, to allow flexibility,
+        # the run_hook can be used to filter/alter by the developer
+        options[key] = value
 
     session: ChannelSession | None = None
     if (prev := body.get("previous_response_id")) and isinstance(prev, str):

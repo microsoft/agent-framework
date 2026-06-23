@@ -130,12 +130,13 @@ class TestParseResponsesRequest:
             "stream": True,
             "previous_response_id": "r",
         })
-        for key in ("input", "model", "stream", "previous_response_id"):
+        assert opts["model"] == "gpt-x"
+        for key in ("input", "stream", "previous_response_id"):
             assert key not in opts
 
-    def test_unknown_keys_silently_dropped(self) -> None:
+    def test_unknown_keys_are_passed_through(self) -> None:
         _, opts, _ = parse_responses_request({"input": "x", "truncation": "auto", "reasoning": {"effort": "low"}})
-        assert opts == {}
+        assert opts == {"truncation": "auto", "reasoning": {"effort": "low"}}
 
     def test_none_values_dropped(self) -> None:
         _, opts, _ = parse_responses_request({"input": "x", "temperature": None})

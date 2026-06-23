@@ -21,6 +21,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any, cast
 
+from agent_framework import Content, Message
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
@@ -40,10 +41,17 @@ from openai.types.responses import (
     ResponseCreatedEvent,
     ResponseError,
     ResponseFailedEvent,
+    ResponseFunctionToolCall,
+    ResponseFunctionToolCallOutputItem,
+    ResponseInputFile,
+    ResponseInputImage,
+    ResponseInputText,
+    ResponseOutputItem,
     ResponseOutputMessage,
     ResponseOutputText,
     ResponseTextDeltaEvent,
 )
+from pydantic import TypeAdapter, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
@@ -52,6 +60,8 @@ from ._parsing import (
     parse_responses_identity,
     parse_responses_request,
 )
+
+_RESPONSE_OUTPUT_ITEM_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseOutputItem)
 
 
 class ResponsesChannel:
@@ -76,7 +86,7 @@ class ResponsesChannel:
 
         Keyword Args:
             path: Endpoint path on the host. Default ``"/responses"`` matches
-                the upstream OpenAI surface; use ``""`` to expose this channel
+                the OpenAI surface; use ``""`` to expose this channel
                 at the app root.
             run_hook: Optional :data:`ChannelRunHook` the host invokes with
                 the parsed :class:`ChannelRequest` before the agent target
@@ -85,8 +95,9 @@ class ResponsesChannel:
                 before the channel serializes an originating
                 :class:`HostedRunResult` into a Responses envelope.
             stream_update_hook: Optional per-update hook
-                applied while streaming Server-Sent Events. Return a
-                replacement update, or ``None`` to drop the update.
+                applied while streaming Server-Sent Events.
+                The callable should return a replacement update,
+                or ``None`` to drop the update.
             response_id_factory: Optional callable that mints the
                 per-request response id. Default produces
                 ``resp_<uuid hex>`` which matches the OpenAI Responses
@@ -104,11 +115,7 @@ class ResponsesChannel:
                 co-locate the new record with the chain's existing
                 partition. The factory passes that hint through to the
                 storage layer; **partition ownership is enforced at
-                the storage layer**, not in the channel: the Foundry
-                storage provider, for example, validates the request
-                against the bound user/chat isolation keys and rejects
-                writes whose embedded partition does not match the
-                authenticated caller's isolation. Channel-level
+                the storage layer**, not in the channel. Channel-level
                 forwarding is therefore a performance hint, not a
                 security boundary; the host's isolation middleware
                 must establish the caller's identity before this
@@ -227,14 +234,14 @@ class ResponsesChannel:
             response_hook=self.response_hook,
             channel_name=self.name,
         )
-        text = _result_to_text(result.result)
-        envelope = self._build_response(body, text, status="completed", response_id=response_id)
+        output = _result_to_output_items(result.result, status="completed")
+        envelope = self._build_response(body, output, status="completed", response_id=response_id)
         return JSONResponse(_response_payload(envelope))
 
     def _build_response(
         self,
         body: Mapping[str, Any],
-        text: str,
+        output: Sequence[ResponseOutputItem],
         *,
         status: str,
         response_id: str | None = None,
@@ -255,7 +262,6 @@ class ResponsesChannel:
         when callers (e.g. :meth:`_stream_events`'s skeleton path
         before this argument was introduced) don't supply one.
         """
-        message_status = status if status in ("in_progress", "completed", "incomplete") else "incomplete"
         model = body.get("model")
         return OpenAIResponse(
             id=response_id or self._response_id_factory(None),
@@ -263,15 +269,7 @@ class ResponsesChannel:
             created_at=int(time.time()),
             status=status,  # type: ignore[arg-type]
             model=model if isinstance(model, str) and model else "agent",
-            output=[
-                ResponseOutputMessage(
-                    id=f"msg_{uuid.uuid4().hex}",
-                    type="message",
-                    role="assistant",
-                    status=message_status,
-                    content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
-                )
-            ],
+            output=list(output),
             parallel_tool_calls=False,
             tool_choice="auto",
             tools=[],
@@ -304,7 +302,12 @@ class ResponsesChannel:
         def sse(event: Any) -> str:
             return f"event: {event.type}\ndata: {_event_json(event)}\n\n"
 
-        skeleton = self._build_response(body, "", status="in_progress", response_id=response_id)
+        skeleton = self._build_response(
+            body,
+            _text_output_items("", status="in_progress", message_id=msg_id),
+            status="in_progress",
+            response_id=response_id,
+        )
         yield sse(ResponseCreatedEvent(type="response.created", response=skeleton, sequence_number=next_seq()))
 
         accumulated = ""
@@ -341,7 +344,12 @@ class ResponsesChannel:
                 final_response = None
         except Exception as exc:
             logger.exception("Responses stream consumption failed")
-            failed = self._build_response(body, accumulated, status="failed", response_id=response_id)
+            failed = self._build_response(
+                body,
+                _text_output_items(accumulated, status="failed", message_id=msg_id),
+                status="failed",
+                response_id=response_id,
+            )
             failed.error = ResponseError(code="server_error", message=str(exc))
             yield sse(
                 ResponseFailedEvent(
@@ -352,11 +360,17 @@ class ResponsesChannel:
             )
             return
 
-        completed_text = _result_to_text(final_response) if final_response is not None else accumulated
-        completed = self._build_response(body, completed_text, status="completed", response_id=response_id)
+        completed_output = (
+            _result_to_output_items(final_response, status="completed")
+            if final_response is not None
+            else _text_output_items(accumulated, status="completed", message_id=msg_id)
+        )
+        completed = self._build_response(body, completed_output, status="completed", response_id=response_id)
         # Reuse the same message id we emitted deltas under.
-        if completed.output and isinstance(completed.output[0], ResponseOutputMessage):
-            completed.output[0].id = msg_id
+        for output_item in completed.output:
+            if isinstance(output_item, ResponseOutputMessage):
+                output_item.id = msg_id
+                break
         yield sse(
             ResponseCompletedEvent(
                 type="response.completed",
@@ -364,6 +378,581 @@ class ResponsesChannel:
                 sequence_number=next_seq(),
             )
         )
+
+
+def _result_to_output_items(result: Any, *, status: str) -> list[ResponseOutputItem]:
+    """Render an agent or workflow result as Responses output items."""
+    messages = getattr(result, "messages", None)
+    if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes, bytearray)):
+        return _messages_to_output_items(cast("Sequence[Any]", messages), status=status)
+
+    if isinstance(result, Message):
+        return _messages_to_output_items([result], status=status)
+    if isinstance(result, Content):
+        return _contents_to_output_items([result], status=status)
+
+    get_outputs = getattr(result, "get_outputs", None)
+    if callable(get_outputs):
+        output_items: list[ResponseOutputItem] = []
+        for output in cast("Sequence[Any]", get_outputs()):
+            output_items.extend(_output_to_output_items(output, status=status))
+        return output_items
+
+    text = getattr(result, "text", None)
+    if isinstance(text, str):
+        return _text_output_items(text, status=status)
+    return _text_output_items(_result_to_text(result), status=status)
+
+
+def _output_to_output_items(output: Any, *, status: str) -> list[ResponseOutputItem]:
+    if isinstance(output, Message):
+        return _messages_to_output_items([output], status=status)
+    if isinstance(output, Content):
+        return _contents_to_output_items([output], status=status)
+    messages = getattr(output, "messages", None)
+    if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes, bytearray)):
+        return _messages_to_output_items(cast("Sequence[Any]", messages), status=status)
+    text = getattr(output, "text", None)
+    if isinstance(text, str):
+        return _text_output_items(text, status=status)
+    return _text_output_items(str(output), status=status)
+
+
+def _messages_to_output_items(messages: Sequence[Any], *, status: str) -> list[ResponseOutputItem]:
+    output_items: list[ResponseOutputItem] = []
+    message_contents: list[Content] = []
+
+    for message in messages:
+        if not isinstance(message, Message):
+            if message_contents:
+                output_items.extend(_contents_to_output_items(message_contents, status=status))
+                message_contents.clear()
+            output_items.extend(_output_to_output_items(message, status=status))
+            continue
+        message_contents.extend(message.contents)
+
+    if message_contents:
+        output_items.extend(_contents_to_output_items(message_contents, status=status))
+
+    return output_items
+
+
+def _contents_to_output_items(
+    contents: Sequence[Content],
+    *,
+    status: str,
+    seen_raw_items: dict[tuple[str, str], int] | None = None,
+) -> list[ResponseOutputItem]:
+    output_items: list[ResponseOutputItem] = []
+    message_content: list[Any] = []
+    seen: dict[tuple[str, str], int] = seen_raw_items if seen_raw_items is not None else {}
+
+    def flush_message() -> None:
+        if not message_content:
+            return
+        output_items.append(_message_output_item(message_content, status=status))
+        message_content.clear()
+
+    content_list = list(contents)
+    index = 0
+    while index < len(content_list):
+        content = content_list[index]
+        raw_item = _raw_response_output_item(content.raw_representation)
+        if raw_item is not None:
+            raw_key = _response_output_item_key(raw_item)
+            if raw_key in seen:
+                output_items[seen[raw_key]] = raw_item
+            else:
+                flush_message()
+                seen[raw_key] = len(output_items)
+                output_items.append(raw_item)
+            index += 1
+            continue
+
+        next_content = content_list[index + 1] if index + 1 < len(content_list) else None
+        if _is_matching_code_interpreter_result(content, next_content):
+            flush_message()
+            output_items.append(_code_interpreter_output_item(content, status=status, result_content=next_content))
+            index += 2
+            continue
+        if _is_matching_image_generation_result(content, next_content):
+            flush_message()
+            output_items.append(_image_generation_output_item(content, status=status, result_content=next_content))
+            index += 2
+            continue
+        if _is_matching_mcp_result(content, next_content):
+            flush_message()
+            output_items.append(_mcp_call_output_item(content, status=status, result_content=next_content))
+            index += 2
+            continue
+
+        match content.type:
+            case "text":
+                message_content.append(_message_text_content(content))
+            case "text_reasoning":
+                flush_message()
+                output_items.append(_reasoning_output_item(content, status=status))
+            case "function_call":
+                flush_message()
+                output_items.append(_function_call_output_item(content, status=status))
+            case "function_result":
+                flush_message()
+                output_items.append(_function_result_output_item(content, status=status))
+            case "code_interpreter_tool_call" | "code_interpreter_tool_result":
+                flush_message()
+                output_items.append(_code_interpreter_output_item(content, status=status))
+            case "image_generation_tool_call" | "image_generation_tool_result":
+                flush_message()
+                output_items.append(_image_generation_output_item(content, status=status))
+            case "mcp_server_tool_call":
+                flush_message()
+                output_items.append(_mcp_call_output_item(content, status=status))
+            case "mcp_server_tool_result":
+                flush_message()
+                output_items.append(_mcp_result_output_item(content, status=status))
+            case "shell_tool_call":
+                flush_message()
+                output_items.append(_shell_call_output_item(content, status=status))
+            case "shell_tool_result":
+                flush_message()
+                output_items.append(_shell_result_output_item(content, status=status))
+            case "function_approval_request":
+                flush_message()
+                output_items.append(_function_approval_request_output_item(content))
+            case "function_approval_response":
+                flush_message()
+                output_items.append(_function_approval_response_output_item(content))
+            case "data" | "uri" | "hosted_file":
+                flush_message()
+                output_items.append(_media_content_output_item(content, status=status))
+            case "error":
+                message_content.append(ResponseOutputText(type="output_text", text=str(content), annotations=[]))
+            case _:
+                flush_message()
+                output_items.extend(_text_output_items(json.dumps(content.to_dict(), default=str), status=status))
+        index += 1
+
+    flush_message()
+    return output_items
+
+
+def _is_matching_code_interpreter_result(content: Content, next_content: Content | None) -> bool:
+    return (
+        content.type == "code_interpreter_tool_call"
+        and next_content is not None
+        and next_content.type == "code_interpreter_tool_result"
+        and content.call_id == next_content.call_id
+    )
+
+
+def _is_matching_image_generation_result(content: Content, next_content: Content | None) -> bool:
+    return (
+        content.type == "image_generation_tool_call"
+        and next_content is not None
+        and next_content.type == "image_generation_tool_result"
+        and content.image_id == next_content.image_id
+    )
+
+
+def _is_matching_mcp_result(content: Content, next_content: Content | None) -> bool:
+    return (
+        content.type == "mcp_server_tool_call"
+        and next_content is not None
+        and next_content.type == "mcp_server_tool_result"
+        and content.call_id == next_content.call_id
+    )
+
+
+def _message_status(status: str) -> str:
+    return status if status in ("in_progress", "completed", "incomplete") else "incomplete"
+
+
+def _text_output_items(text: str, *, status: str, message_id: str | None = None) -> list[ResponseOutputItem]:
+    return [
+        _message_output_item(
+            [ResponseOutputText(type="output_text", text=text, annotations=[])],
+            status=status,
+            message_id=message_id,
+        )
+    ]
+
+
+def _message_output_item(content: Sequence[Any], *, status: str, message_id: str | None = None) -> ResponseOutputItem:
+    return cast(
+        "ResponseOutputItem",
+        ResponseOutputMessage(
+            id=message_id or f"msg_{uuid.uuid4().hex}",
+            type="message",
+            role="assistant",
+            status=_message_status(status),  # type: ignore[arg-type]
+            content=list(content),
+        ),
+    )
+
+
+def _message_text_content(content: Content) -> Any:
+    raw_type = _raw_type(content.raw_representation)
+    if raw_type in ("output_text", "refusal"):
+        return content.raw_representation
+    return ResponseOutputText(type="output_text", text=content.text or "", annotations=[])
+
+
+def _reasoning_output_item(content: Content, *, status: str) -> ResponseOutputItem:
+    reasoning_text = content.text or ""
+    item_id = content.id or f"rs_{uuid.uuid4().hex}"
+    item_data: dict[str, Any] = {
+        "id": item_id,
+        "type": "reasoning",
+        "summary": [],
+        "status": _message_status(status),
+    }
+    if reasoning_text:
+        item_data["content"] = [{"type": "reasoning_text", "text": reasoning_text}]
+    if content.protected_data:
+        item_data["encrypted_content"] = content.protected_data
+    return _response_output_item(item_data)
+
+
+def _function_call_output_item(content: Content, *, status: str) -> ResponseOutputItem:
+    return cast(
+        "ResponseOutputItem",
+        ResponseFunctionToolCall(
+            id=content.additional_properties.get("fc_id") if content.additional_properties else None,
+            type="function_call",
+            call_id=content.call_id or f"call_{uuid.uuid4().hex}",
+            name=content.name or "tool",
+            arguments=_arguments_to_str(content.arguments),
+            status=_message_status(status),  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _function_result_output_item(content: Content, *, status: str) -> ResponseOutputItem:
+    output: str | list[Any]
+    if content.exception:
+        output = content.exception
+    elif output_parts := _content_parts_to_input_items(content.items):
+        output = output_parts
+    elif isinstance(content.result, str):
+        output = content.result
+    elif content.result is None:
+        output = ""
+    else:
+        output = json.dumps(content.result, default=str)
+    return cast(
+        "ResponseOutputItem",
+        ResponseFunctionToolCallOutputItem(
+            id=f"fcout_{uuid.uuid4().hex}",
+            type="function_call_output",
+            call_id=content.call_id or f"call_{uuid.uuid4().hex}",
+            output=output,
+            status=_message_status(status),  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _code_interpreter_output_item(
+    content: Content,
+    *,
+    status: str,
+    result_content: Content | None = None,
+) -> ResponseOutputItem:
+    code = _content_sequence_text(content.inputs)
+    output_parts: list[dict[str, Any]] = []
+    outputs_value: Any = result_content.outputs if result_content is not None else content.outputs
+    if isinstance(outputs_value, Sequence) and not isinstance(outputs_value, (str, bytes, bytearray)):
+        for item in cast("Sequence[Any]", outputs_value):
+            if not isinstance(item, Content):
+                continue
+            if item.type == "text":
+                output_parts.append({"type": "logs", "logs": item.text or ""})
+            elif item.type in ("data", "uri") and item.uri:
+                output_parts.append({"type": "image", "url": item.uri})
+
+    return _response_output_item({
+        "id": _content_item_id(content, result_content) or f"ci_{uuid.uuid4().hex}",
+        "type": "code_interpreter_call",
+        "code": code,
+        "container_id": str(_content_property(content, result_content, "container_id") or "agent_framework"),
+        "outputs": output_parts or None,
+        "status": _code_interpreter_status(status),
+    })
+
+
+def _image_generation_output_item(
+    content: Content,
+    *,
+    status: str,
+    result_content: Content | None = None,
+) -> ResponseOutputItem:
+    result_source = result_content.outputs if result_content is not None else content.outputs
+    result = _image_generation_result(result_source)
+    image_id = content.image_id or (result_content.image_id if result_content is not None else None)
+    return _response_output_item({
+        "id": image_id or f"ig_{uuid.uuid4().hex}",
+        "type": "image_generation_call",
+        "result": result,
+        "status": _image_generation_status(status),
+    })
+
+
+def _mcp_call_output_item(
+    content: Content,
+    *,
+    status: str,
+    result_content: Content | None = None,
+) -> ResponseOutputItem:
+    output = _stringify_output(result_content.output) if result_content is not None else None
+    return _response_output_item({
+        "id": content.call_id or f"mcp_{uuid.uuid4().hex}",
+        "type": "mcp_call",
+        "server_label": content.server_name or "default",
+        "name": content.tool_name or "tool",
+        "arguments": _arguments_to_str(content.arguments),
+        "output": output,
+        "status": _mcp_status(status),
+    })
+
+
+def _mcp_result_output_item(content: Content, *, status: str) -> ResponseOutputItem:
+    return _response_output_item({
+        "id": content.call_id or f"mcp_{uuid.uuid4().hex}",
+        "type": "mcp_call",
+        "server_label": content.server_name or "default",
+        "name": content.tool_name or "tool",
+        "arguments": "",
+        "output": _stringify_output(content.output),
+        "status": _mcp_status(status),
+    })
+
+
+def _shell_call_output_item(content: Content, *, status: str) -> ResponseOutputItem:
+    return _response_output_item({
+        "id": content.additional_properties.get("item_id") or f"shell_{uuid.uuid4().hex}",
+        "type": "shell_call",
+        "call_id": content.call_id or f"call_{uuid.uuid4().hex}",
+        "action": {
+            "commands": content.commands or [],
+            "timeout_ms": content.timeout_ms,
+            "max_output_length": content.max_output_length,
+        },
+        "environment": {"type": "local"},
+        "status": _message_status(status),
+    })
+
+
+def _shell_result_output_item(content: Content, *, status: str) -> ResponseOutputItem:
+    outputs: list[dict[str, Any]] = []
+    outputs_value: Any = content.outputs
+    if isinstance(outputs_value, Sequence) and not isinstance(outputs_value, (str, bytes, bytearray)):
+        for item in cast("Sequence[Any]", outputs_value):
+            if not isinstance(item, Content):
+                continue
+            outcome = {"type": "timeout"} if item.timed_out else {"type": "exit", "exit_code": item.exit_code or 0}
+            outputs.append({"stdout": item.stdout or "", "stderr": item.stderr or "", "outcome": outcome})
+
+    return _response_output_item({
+        "id": content.additional_properties.get("item_id") or f"shellout_{uuid.uuid4().hex}",
+        "type": "shell_call_output",
+        "call_id": content.call_id or f"call_{uuid.uuid4().hex}",
+        "output": outputs,
+        "max_output_length": content.max_output_length,
+        "status": _message_status(status),
+    })
+
+
+def _function_approval_request_output_item(content: Content) -> ResponseOutputItem:
+    function_call = content.function_call
+    return _response_output_item({
+        "id": content.id or f"approval_{uuid.uuid4().hex}",
+        "type": "mcp_approval_request",
+        "server_label": (
+            function_call.additional_properties.get("server_label", "agent_framework")
+            if function_call is not None
+            else "agent_framework"
+        ),
+        "name": function_call.name if function_call is not None and function_call.name else "tool",
+        "arguments": _arguments_to_str(function_call.arguments if function_call is not None else None),
+    })
+
+
+def _function_approval_response_output_item(content: Content) -> ResponseOutputItem:
+    return _response_output_item({
+        "id": content.id or f"approval_{uuid.uuid4().hex}",
+        "type": "mcp_approval_response",
+        "approval_request_id": content.id or "",
+        "approve": bool(content.approved),
+    })
+
+
+def _media_content_output_item(content: Content, *, status: str) -> ResponseOutputItem:
+    parts = _content_parts_to_input_items([content])
+    if parts:
+        return cast(
+            "ResponseOutputItem",
+            ResponseFunctionToolCallOutputItem(
+                id=f"content_{uuid.uuid4().hex}",
+                type="function_call_output",
+                call_id=f"content_{uuid.uuid4().hex}",
+                output=parts,
+                status=_message_status(status),  # type: ignore[arg-type]
+            ),
+        )
+    return _text_output_items(json.dumps(content.to_dict(), default=str), status=status)[0]
+
+
+def _content_parts_to_input_items(contents: Sequence[Content] | None) -> list[Any]:
+    if not contents:
+        return []
+
+    parts: list[Any] = []
+    for content in contents:
+        match content.type:
+            case "text":
+                parts.append(ResponseInputText(type="input_text", text=content.text or ""))
+            case "data" | "uri":
+                if not content.uri:
+                    continue
+                if _is_image_content(content):
+                    parts.append(ResponseInputImage(type="input_image", image_url=content.uri, detail="auto"))
+                else:
+                    parts.append(ResponseInputFile(type="input_file", file_url=content.uri))
+            case "hosted_file":
+                if content.file_id:
+                    parts.append(ResponseInputFile(type="input_file", file_id=content.file_id))
+            case _:
+                parts.append(ResponseInputText(type="input_text", text=json.dumps(content.to_dict(), default=str)))
+    return parts
+
+
+def _content_sequence_text(contents: Sequence[Content] | None) -> str | None:
+    if not contents:
+        return None
+    text = "".join(content.text or "" for content in contents if content.type == "text")
+    return text or None
+
+
+def _is_image_content(content: Content) -> bool:
+    media_type = content.media_type or ""
+    if media_type.startswith("image/"):
+        return True
+    uri = content.uri or ""
+    return uri.startswith("data:image/")
+
+
+def _image_generation_result(outputs: Any) -> str | None:
+    if isinstance(outputs, Content):
+        return _image_generation_content_result(outputs)
+    if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, bytearray)):
+        for output in cast("Sequence[Any]", outputs):
+            if isinstance(output, Content) and (result := _image_generation_content_result(output)):
+                return result
+    if isinstance(outputs, str):
+        return outputs
+    return None
+
+
+def _image_generation_content_result(content: Content) -> str | None:
+    uri = content.uri
+    if not uri:
+        return None
+    if ";base64," in uri:
+        return uri.split(";base64,", 1)[1]
+    return uri
+
+
+def _content_item_id(content: Content, result_content: Content | None = None) -> str | None:
+    item_id = content.additional_properties.get("item_id")
+    if isinstance(item_id, str) and item_id:
+        return item_id
+    if result_content is not None:
+        result_item_id = result_content.additional_properties.get("item_id")
+        if isinstance(result_item_id, str) and result_item_id:
+            return result_item_id
+    return content.call_id or (result_content.call_id if result_content is not None else None)
+
+
+def _content_property(content: Content, result_content: Content | None, key: str) -> Any:
+    if key in content.additional_properties:
+        return content.additional_properties[key]
+    if result_content is not None and key in result_content.additional_properties:
+        return result_content.additional_properties[key]
+    return None
+
+
+def _code_interpreter_status(status: str) -> str:
+    if status in ("in_progress", "completed", "incomplete", "failed"):
+        return status
+    return "incomplete"
+
+
+def _image_generation_status(status: str) -> str:
+    if status in ("in_progress", "completed", "failed"):
+        return status
+    return "failed"
+
+
+def _mcp_status(status: str) -> str:
+    if status in ("in_progress", "completed", "incomplete", "failed"):
+        return status
+    return "incomplete"
+
+
+def _arguments_to_str(arguments: Any | None) -> str:
+    if arguments is None:
+        return ""
+    if isinstance(arguments, str):
+        return arguments
+    return json.dumps(arguments, default=str)
+
+
+def _stringify_output(output: Any) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output
+    if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
+        parts: list[str] = []
+        for item in cast("Sequence[Any]", output):
+            if isinstance(item, Content) and item.type == "text":
+                parts.append(item.text or "")
+            else:
+                parts.append(_stringify_output(item))
+        return "".join(parts)
+    return json.dumps(output, default=str)
+
+
+def _raw_response_output_item(raw: Any) -> ResponseOutputItem | None:
+    if _raw_type(raw) is None:
+        return None
+    try:
+        return cast("ResponseOutputItem", _RESPONSE_OUTPUT_ITEM_ADAPTER.validate_python(raw))
+    except ValidationError:
+        return None
+
+
+def _response_output_item(value: Mapping[str, Any]) -> ResponseOutputItem:
+    return cast("ResponseOutputItem", _RESPONSE_OUTPUT_ITEM_ADAPTER.validate_python(value))
+
+
+def _response_output_item_key(item: ResponseOutputItem) -> tuple[str, str]:
+    item_type = _raw_type(item) or "unknown"
+    item_id = getattr(item, "id", None) or getattr(item, "call_id", None)
+    if isinstance(item_id, str) and item_id:
+        return item_type, item_id
+    return item_type, str(id(item))
+
+
+def _raw_type(raw: Any) -> str | None:
+    raw_type = getattr(raw, "type", None)
+    if isinstance(raw_type, str):
+        return raw_type
+    if isinstance(raw, Mapping):
+        raw_mapping = cast("Mapping[str, Any]", raw)
+        mapping_type = raw_mapping.get("type")
+        if isinstance(mapping_type, str):
+            return mapping_type
+    return None
 
 
 def _result_to_text(result: Any) -> str:

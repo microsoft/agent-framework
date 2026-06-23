@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import AgentResponseUpdate, Content
+from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message
 from agent_framework_hosting import (
     AgentFrameworkHost,
     HostedRunResult,
@@ -16,7 +16,10 @@ from agent_framework_hosting import (
 from starlette.testclient import TestClient
 
 from agent_framework_hosting_responses import ResponsesChannel
-from agent_framework_hosting_responses._channel import _result_to_text  # pyright: ignore[reportPrivateUsage]
+from agent_framework_hosting_responses._channel import (  # pyright: ignore[reportPrivateUsage]
+    _result_to_output_items,
+    _result_to_text,
+)
 
 # --------------------------------------------------------------------------- #
 # Fakes                                                                        #
@@ -52,7 +55,7 @@ class _FakeStream:
 
 
 class _FakeAgent:
-    def __init__(self, reply: str = "hello", chunks: list[str] | None = None) -> None:
+    def __init__(self, reply: Any = "hello", chunks: list[str] | None = None) -> None:
         self.id = "fake-agent"
         self.name: str | None = "Fake Agent"
         self.description: str | None = "Test fake agent"
@@ -71,7 +74,9 @@ class _FakeAgent:
         if stream:
             return _FakeStream(self._chunks)
 
-        async def _coro() -> _FakeAgentResponse:
+        async def _coro() -> Any:
+            if not isinstance(self._reply, str):
+                return self._reply
             return _FakeAgentResponse(text=self._reply)
 
         return _coro()
@@ -155,10 +160,121 @@ class TestResponsesChannelNonStreaming:
     def test_options_propagate_to_target_run(self) -> None:
         client, _host, agent = _make_client()
         with client:
-            r = client.post("/responses", json={"input": "x", "temperature": 0.5, "max_output_tokens": 64})
+            r = client.post(
+                "/responses",
+                json={"input": "x", "temperature": 0.5, "max_output_tokens": 64, "truncation": "auto"},
+            )
         assert r.status_code == 200
         opts = agent.calls[0]["kwargs"]["options"]
-        assert opts == {"temperature": 0.5, "max_tokens": 64}
+        assert opts == {"temperature": 0.5, "max_tokens": 64, "truncation": "auto"}
+
+    def test_multimodal_agent_response_outputs_are_preserved(self) -> None:
+        response = AgentResponse(
+            messages=[
+                Message(
+                    "assistant",
+                    [
+                        Content.from_text_reasoning(id="rs_1", text="checking"),
+                        Content.from_function_call("call_1", "collect_media", arguments={"city": "Seattle"}),
+                        Content.from_function_result(
+                            "call_1",
+                            result=[
+                                Content.from_text("caption"),
+                                Content.from_uri("https://example.com/cat.png", media_type="image/png"),
+                                Content.from_hosted_file("file_pdf", media_type="application/pdf"),
+                            ],
+                        ),
+                        Content.from_text("done"),
+                    ],
+                )
+            ],
+        )
+        client, _host, _agent = _make_client(_FakeAgent(reply=response))
+
+        with client:
+            r = client.post("/responses", json={"input": "hi"})
+
+        assert r.status_code == 200
+        output = r.json()["output"]
+        assert [item["type"] for item in output] == [
+            "reasoning",
+            "function_call",
+            "function_call_output",
+            "message",
+        ]
+        assert output[0]["content"][0]["text"] == "checking"
+        assert output[1]["name"] == "collect_media"
+        assert output[1]["arguments"] == '{"city": "Seattle"}'
+        assert output[2]["output"] == [
+            {"text": "caption", "type": "input_text"},
+            {"detail": "auto", "type": "input_image", "image_url": "https://example.com/cat.png"},
+            {"type": "input_file", "file_id": "file_pdf"},
+        ]
+        assert output[3]["content"][0]["text"] == "done"
+
+    def test_raw_responses_output_items_are_preserved(self) -> None:
+        raw_item = {
+            "id": "ig_1",
+            "type": "image_generation_call",
+            "result": "base64-image",
+            "status": "completed",
+        }
+        response = AgentResponse(
+            messages=[
+                Message(
+                    "assistant",
+                    [
+                        Content.from_image_generation_tool_call(image_id="ig_1", raw_representation=raw_item),
+                        Content.from_image_generation_tool_result(
+                            image_id="ig_1",
+                            outputs=Content.from_uri("data:image/png;base64,base64-image", media_type="image/png"),
+                            raw_representation=raw_item,
+                        ),
+                    ],
+                )
+            ],
+        )
+        client, _host, _agent = _make_client(_FakeAgent(reply=response))
+
+        with client:
+            r = client.post("/responses", json={"input": "hi"})
+
+        assert r.status_code == 200
+        assert r.json()["output"] == [raw_item]
+
+    def test_later_raw_responses_output_item_replaces_earlier_partial_item(self) -> None:
+        partial = {
+            "id": "mcp_1",
+            "type": "mcp_call",
+            "server_label": "weather",
+            "name": "lookup",
+            "arguments": "{}",
+            "status": "in_progress",
+        }
+        completed = {**partial, "status": "completed", "output": "sunny"}
+        response = AgentResponse(
+            messages=[
+                Message(
+                    "assistant",
+                    [
+                        Content.from_mcp_server_tool_call(
+                            "mcp_1",
+                            "lookup",
+                            server_name="weather",
+                            raw_representation=partial,
+                        ),
+                        Content.from_mcp_server_tool_result("mcp_1", output="sunny", raw_representation=completed),
+                    ],
+                )
+            ],
+        )
+        client, _host, _agent = _make_client(_FakeAgent(reply=response))
+
+        with client:
+            r = client.post("/responses", json={"input": "hi"})
+
+        assert r.status_code == 200
+        assert r.json()["output"] == [completed]
 
     def test_previous_response_id_creates_session(self) -> None:
         client, _host, agent = _make_client()
@@ -260,6 +376,118 @@ class TestResultTextRendering:
                 return [_FakeAgentResponse(text="one"), " two"]
 
         assert _result_to_text(_WorkflowResult()) == "one two"
+
+    def test_result_output_items_project_workflow_message_and_content_outputs(self) -> None:
+        class _WorkflowResult:
+            def get_outputs(self) -> list[Any]:
+                return [
+                    Message("assistant", [Content.from_text("one")]),
+                    Content.from_function_result(
+                        "call_1",
+                        result=[Content.from_uri("https://example.com/cat.png", media_type="image/png")],
+                    ),
+                ]
+
+        output = [
+            item.model_dump(mode="json", exclude_none=True)
+            for item in _result_to_output_items(_WorkflowResult(), status="completed")
+        ]
+        assert output[0]["type"] == "message"
+        assert output[0]["content"][0]["text"] == "one"
+        assert output[1]["type"] == "function_call_output"
+        assert output[1]["output"] == [
+            {"detail": "auto", "type": "input_image", "image_url": "https://example.com/cat.png"}
+        ]
+
+    def test_function_result_exception_is_preserved(self) -> None:
+        output = [
+            item.model_dump(mode="json", exclude_none=True)
+            for item in _result_to_output_items(
+                Content.from_function_result("call_1", exception="tool failed"),
+                status="completed",
+            )
+        ]
+        assert output[0]["output"] == "tool failed"
+
+    def test_stateful_call_and_result_content_coalesce_to_one_output_item(self) -> None:
+        output = [
+            item.model_dump(mode="json", exclude_none=True)
+            for item in _result_to_output_items(
+                Message(
+                    "assistant",
+                    [
+                        Content.from_image_generation_tool_call(image_id="ig_1"),
+                        Content.from_image_generation_tool_result(
+                            image_id="ig_1",
+                            outputs=Content.from_uri("data:image/png;base64,base64-image", media_type="image/png"),
+                        ),
+                        Content.from_mcp_server_tool_call(
+                            "mcp_1",
+                            "lookup",
+                            server_name="weather",
+                            arguments={"city": "Seattle"},
+                        ),
+                        Content.from_mcp_server_tool_result("mcp_1", output=[Content.from_text("sunny")]),
+                    ],
+                ),
+                status="completed",
+            )
+        ]
+        assert output == [
+            {
+                "id": "ig_1",
+                "result": "base64-image",
+                "status": "completed",
+                "type": "image_generation_call",
+            },
+            {
+                "id": "mcp_1",
+                "arguments": '{"city": "Seattle"}',
+                "name": "lookup",
+                "output": "sunny",
+                "server_label": "weather",
+                "status": "completed",
+                "type": "mcp_call",
+            },
+        ]
+
+    def test_stateful_call_and_result_content_coalesce_across_messages(self) -> None:
+        output = [
+            item.model_dump(mode="json", exclude_none=True)
+            for item in _result_to_output_items(
+                AgentResponse(
+                    messages=[
+                        Message(
+                            "assistant",
+                            [
+                                Content.from_mcp_server_tool_call(
+                                    "mcp_1",
+                                    "lookup",
+                                    server_name="weather",
+                                    arguments={"city": "Seattle"},
+                                )
+                            ],
+                        ),
+                        Message(
+                            "tool",
+                            [Content.from_mcp_server_tool_result("mcp_1", output=[Content.from_text("sunny")])],
+                        ),
+                    ]
+                ),
+                status="completed",
+            )
+        ]
+        assert output == [
+            {
+                "id": "mcp_1",
+                "arguments": '{"city": "Seattle"}',
+                "name": "lookup",
+                "output": "sunny",
+                "server_label": "weather",
+                "status": "completed",
+                "type": "mcp_call",
+            }
+        ]
 
 
 class TestResponsesChannelStreaming:
