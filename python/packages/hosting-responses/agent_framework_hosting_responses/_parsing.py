@@ -6,27 +6,29 @@ The Responses API accepts ``input`` as either a string or a list of "input
 items". An item is either a content part (``input_text`` / ``input_image``
 / ``input_file``) or a message envelope ``{type: "message", role,
 content: [...]}``. We translate that into an Agent Framework ``Message``
-list and split out the ChatOptions-shaped fields the API also carries.
+list and remap the generation-control fields the API also carries into
+``ChatOptions``-shaped keys. The result is available to the channel's
+``run_hook``; a default hook strips them before they reach the agent so
+unknown fields from untrusted callers are not forwarded unless the host
+developer explicitly opts in.
 """
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from typing import Any, cast
 
 from agent_framework import Content, Message
 from agent_framework_hosting import ChannelIdentity, ChannelSession
 
-logger = logging.getLogger("agent_framework_hosting_responses")
-
 # OpenAI Responses field name → Agent Framework ChatOptions field name.
 _RESPONSES_OPTION_REMAP = {
     "max_output_tokens": "max_tokens",
     "parallel_tool_calls": "allow_multiple_tool_calls",
 }
-# Fields the Responses transport owns; they must not be forwarded as options.
-_RESPONSES_TRANSPORT_KEYS = {"input", "stream", "previous_response_id"}
+# Fields the Responses transport owns; they are consumed separately and must
+# not also appear in options.
+_RESPONSES_TRANSPORT_KEYS = frozenset({"input", "stream", "previous_response_id"})
 
 
 def parse_responses_identity(body: Mapping[str, Any], channel_name: str) -> ChannelIdentity | None:
@@ -121,8 +123,14 @@ def parse_responses_request(
     Returns a triple ``(messages, options, session)`` where:
 
     - ``messages`` is the parsed conversation.
-    - ``options`` is a ``ChatOptions``-shaped dict with the model-tunable
-      fields the channel lifted off the body.
+    - ``options`` is a ``ChatOptions``-shaped dict with the remapped
+      generation-control fields. Known Responses→ChatOptions renames are
+      applied (e.g. ``max_output_tokens`` → ``max_tokens``); transport/
+      session keys are excluded; ``None``-valued fields are dropped.
+      Unknown fields are forwarded as-is so the channel's ``run_hook``
+      can inspect and filter them. The default ``ResponsesChannel`` strips
+      all options before the agent runs; supply a custom ``run_hook`` to
+      selectively keep fields.
     - ``session`` is a :class:`ChannelSession` keyed by
       ``previous_response_id`` when one was supplied, else ``None``.
     """
@@ -132,12 +140,7 @@ def parse_responses_request(
     for key, value in body.items():
         if key in _RESPONSES_TRANSPORT_KEYS or value is None:
             continue
-        if (mapped := _RESPONSES_OPTION_REMAP.get(key)) is not None:
-            options[mapped] = value
-            continue
-        # we pass through all other options, to allow flexibility,
-        # the run_hook can be used to filter/alter by the developer
-        options[key] = value
+        options[_RESPONSES_OPTION_REMAP.get(key, key)] = value
 
     session: ChannelSession | None = None
     if (prev := body.get("previous_response_id")) and isinstance(prev, str):

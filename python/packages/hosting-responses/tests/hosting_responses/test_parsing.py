@@ -105,38 +105,40 @@ class TestMessagesFromResponsesInput:
 
 
 class TestParseResponsesRequest:
-    def test_instructions_are_forwarded_as_chat_options(self) -> None:
-        msgs, opts, sess = parse_responses_request({"input": "hi", "instructions": "be brief"})
-        assert len(msgs) == 1
-        assert msgs[0].role == "user"
-        assert msgs[0].text == "hi"
-        assert opts["instructions"] == "be brief"
-        assert sess is None
-
-    def test_options_passthrough(self) -> None:
-        _, opts, _ = parse_responses_request({"input": "x", "temperature": 0.4, "top_p": 0.9, "tool_choice": "auto"})
+    def test_known_fields_remapped_and_unknown_forwarded(self) -> None:
+        _, opts, _ = parse_responses_request({
+            "input": "hi",
+            "instructions": "be brief",
+            "temperature": 0.4,
+            "top_p": 0.9,
+            "tool_choice": "auto",
+            "max_output_tokens": 256,
+            "parallel_tool_calls": False,
+            "truncation": "auto",
+            "reasoning": {"effort": "low"},
+        })
+        # Known remaps applied.
+        assert opts["max_tokens"] == 256
+        assert opts["allow_multiple_tool_calls"] is False
+        # Straight-through fields present.
         assert opts["temperature"] == 0.4
-        assert opts["top_p"] == 0.9
-        assert opts["tool_choice"] == "auto"
+        assert opts["instructions"] == "be brief"
+        assert opts["truncation"] == "auto"
+        # Transport/session keys excluded.
+        for key in ("input", "stream", "previous_response_id"):
+            assert key not in opts
 
-    def test_options_remap(self) -> None:
-        _, opts, _ = parse_responses_request({"input": "x", "max_output_tokens": 256, "parallel_tool_calls": False})
-        assert opts == {"max_tokens": 256, "allow_multiple_tool_calls": False}
-
-    def test_transport_keys_not_forwarded(self) -> None:
+    def test_model_passes_through_transport_keys_excluded(self) -> None:
         _, opts, _ = parse_responses_request({
             "input": "x",
             "model": "gpt-x",
             "stream": True,
             "previous_response_id": "r",
         })
-        assert opts["model"] == "gpt-x"
         for key in ("input", "stream", "previous_response_id"):
             assert key not in opts
-
-    def test_unknown_keys_are_passed_through(self) -> None:
-        _, opts, _ = parse_responses_request({"input": "x", "truncation": "auto", "reasoning": {"effort": "low"}})
-        assert opts == {"truncation": "auto", "reasoning": {"effort": "low"}}
+        # model passes through — not a transport key; run_hook decides what to do with it.
+        assert opts["model"] == "gpt-x"
 
     def test_none_values_dropped(self) -> None:
         _, opts, _ = parse_responses_request({"input": "x", "temperature": None})

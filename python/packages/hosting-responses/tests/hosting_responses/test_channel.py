@@ -164,7 +164,7 @@ class TestResponsesChannelNonStreaming:
             r = client.post("/responses", json={"input": 42})
         assert r.status_code == 422
 
-    def test_options_propagate_to_target_run(self) -> None:
+    def test_request_options_are_not_forwarded_by_default(self) -> None:
         client, _host, agent = _make_client()
         with client:
             r = client.post(
@@ -172,8 +172,26 @@ class TestResponsesChannelNonStreaming:
                 json={"input": "x", "temperature": 0.5, "max_output_tokens": 64, "truncation": "auto"},
             )
         assert r.status_code == 200
+        assert "options" not in agent.calls[0]["kwargs"]
+
+    def test_custom_run_hook_can_forward_options(self) -> None:
+        import dataclasses
+
+        def keep_temperature(request: Any, **_: Any) -> Any:
+            opts = dict(request.options or {})
+            return dataclasses.replace(request, options={"temperature": opts.get("temperature")})
+
+        agent = _FakeAgent()
+        host = AgentFrameworkHost(
+            target=agent,
+            channels=[ResponsesChannel(run_hook=keep_temperature)],
+        )
+        with TestClient(host.app) as client:
+            r = client.post("/responses", json={"input": "x", "temperature": 0.7, "truncation": "auto"})
+        assert r.status_code == 200
         opts = agent.calls[0]["kwargs"]["options"]
-        assert opts == {"temperature": 0.5, "max_tokens": 64, "truncation": "auto"}
+        assert opts == {"temperature": 0.7}
+        assert "truncation" not in opts
 
     def test_multimodal_agent_response_outputs_are_preserved(self) -> None:
         response = AgentResponse(

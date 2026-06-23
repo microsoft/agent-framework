@@ -1008,8 +1008,7 @@ class AgentFrameworkHost:
 
         When ``debug=True`` is set on the host, also dump the channel-native
         settings the channel attached to the ``ChannelRequest`` — ``options``
-        (the ChatOptions-shaped fields the channel parsed from its protocol
-        payload, e.g. temperature/tools/tool_choice for Responses), plus
+        (if the channel or its ``run_hook`` chose to add any), plus
         ``attributes`` / ``metadata`` (the channel's protocol-specific bag,
         e.g. ``chat_id`` / ``callback_query_id`` for Telegram).
 

@@ -15,6 +15,7 @@ required field without surprises.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 import uuid
@@ -80,6 +81,19 @@ from ._parsing import (
 _RESPONSE_OUTPUT_ITEM_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseOutputItem)
 
 
+def _strip_options_hook(request: ChannelRequest, **_: Any) -> ChannelRequest:
+    """Default run hook: remove all parsed options before reaching the agent.
+
+    Parsed options (e.g. ``temperature``, ``instructions``) are available to
+    a custom ``run_hook`` via ``request.options`` and the raw body via
+    ``protocol_request``.  This default prevents untrusted callers from
+    injecting generation parameters when no custom hook is configured.
+    Host developers who want to forward specific options should supply their
+    own ``run_hook`` instead of this default.
+    """
+    return dataclasses.replace(request, options=None)
+
+
 class ResponsesChannel:
     """Minimal OpenAI-Responses-shaped surface.
 
@@ -107,6 +121,15 @@ class ResponsesChannel:
             run_hook: Optional :data:`ChannelRunHook` the host invokes with
                 the parsed :class:`ChannelRequest` before the agent target
                 runs. May return a replacement request.
+
+                By default the channel strips all parsed options before
+                forwarding the request so callers cannot inject generation
+                parameters (``temperature``, ``instructions``, etc.) unless
+                the host explicitly allows it.  Supplying a custom hook
+                **replaces** that default entirely — the hook receives the
+                full ``ChannelRequest`` (with ``options`` populated from the
+                parsed body) and the raw ``protocol_request``, and is
+                responsible for deciding what to forward to the agent.
             response_hook: Optional :data:`ChannelResponseHook` the host invokes
                 before the channel serializes an originating
                 :class:`HostedRunResult` into a Responses envelope.
@@ -138,7 +161,7 @@ class ResponsesChannel:
                 route is entered.
         """
         self.path = path
-        self._hook = run_hook
+        self._hook: ChannelRunHook = run_hook if run_hook is not None else _strip_options_hook
         self.response_hook = response_hook
         self._stream_update_hook = stream_update_hook
         self._ctx: ChannelContext | None = None
