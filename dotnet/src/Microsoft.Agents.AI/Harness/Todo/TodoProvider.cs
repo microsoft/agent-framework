@@ -46,11 +46,16 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
         ## Todo Items
 
         You have access to a todo list for tracking work items.
-        While planning, make sure that you break down complex tasks into manageable todo items and add them to the list.
+        When a user asks you to perform a task, follow these steps to manage your work:
+        1. Determine whether the ask requires multiple steps to complete (complex) or can be completed using a single step (simple).
+        2. If complex, turn the task into manageable todo items and add them to the list.
+        3. If simple, don't add a todo item, but rather just complete the task directly.
+
+        ### General TODO Guidelines
         Ask questions from the user where clarification is needed to create effective todos.
         If the user provides feedback on your plan, adjust your todos accordingly by adding new items or removing irrelevant/old ones.
         During execution, use the todo list to keep track of what needs to be done, mark items as complete when finished, and remove any items that are no longer needed.
-        When a user changes the topic or changes their mind, ensure that you update the todo list accordingly by removing irrelevant/old items or adding new ones as needed.
+        When a user changes the topic, changes their mind or switches to a new request, ensure that you update the todo list accordingly by removing irrelevant/old items, clearing the list, or adding new ones as needed.
         
         Use these tools to manage your tasks:
         - Use todos_add to break down complex work into trackable items (supports adding one or many at once).

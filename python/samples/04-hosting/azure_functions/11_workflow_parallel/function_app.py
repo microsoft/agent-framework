@@ -26,7 +26,6 @@ Prerequisites:
 - Ensure Azurite and the Durable Task Scheduler emulator are running
 """
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -142,17 +141,12 @@ class FinalReport:
 
 
 @executor(id="input_router")
-async def input_router(doc: str, ctx: WorkflowContext[DocumentInput]) -> None:
-    """Route input document to parallel processors.
+async def input_router(document: DocumentInput, ctx: WorkflowContext[DocumentInput]) -> None:
+    """Route the input document to the parallel processors.
 
-    Accepts a JSON string from the HTTP request and converts to DocumentInput.
+    The durable engine reconstructs ``DocumentInput`` from the client's JSON
+    payload before delivery, mirroring in-process execution.
     """
-    # Parse the JSON string input
-    data = json.loads(doc) if isinstance(doc, str) else doc
-    document = DocumentInput(
-        document_id=data.get("document_id", "unknown"),
-        content=data.get("content", ""),
-    )
     logger.info("[input_router] Routing document: %s", document.document_id)
     await ctx.send_message(document)
 

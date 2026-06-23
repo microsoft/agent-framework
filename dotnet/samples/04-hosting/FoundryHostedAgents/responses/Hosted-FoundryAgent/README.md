@@ -7,7 +7,7 @@ This is the **Foundry hosting** pattern — the agent's behavior is configured i
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with a **registered agent** (created via Foundry UI, CLI, or API)
+- A Foundry project with a **registered agent** (created via Foundry UI, CLI, or API)
 - Azure CLI logged in (`az login`)
 
 ## Configuration
@@ -18,7 +18,7 @@ Copy the template and fill in your project endpoint:
 cp .env.example .env
 ```
 
-Edit `.env` and set your Azure AI Foundry project endpoint:
+Edit `.env` and set your Foundry project endpoint:
 
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>

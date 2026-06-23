@@ -19,6 +19,7 @@ from a chat client.
 | SkillsProvider | File-based skill discovery and progressive loading |
 | Shell tool | Shell command execution + environment probing (when `shell_executor` provided) |
 | Tool approval | "Don't ask again" standing rules + heuristic auto-approval (enabled by default) |
+| Looping | Re-invoke the agent until a `loop_should_continue` predicate is satisfied (when provided) |
 | OpenTelemetry | Built-in observability |
 
 Each feature can be disabled or customized via keyword arguments.
@@ -27,7 +28,7 @@ Each feature can be disabled or customized via keyword arguments.
 
 | File | Description |
 |------|-------------|
-| `harness_research.py` | Interactive research assistant with web search and planning workflow |
+| `harness_research.py` | Interactive research assistant with web search, a plan/execute workflow, and an execute-mode loop that re-invokes the agent until every todo is complete |
 
 ## Running
 
