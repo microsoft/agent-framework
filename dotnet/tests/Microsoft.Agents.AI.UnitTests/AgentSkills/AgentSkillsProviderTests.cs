@@ -626,6 +626,31 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadSkillResource_ResourceThrows_PropagatesExceptionAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("res-skill", "Has resources", "Body.");
+        Func<object> failing = () => throw new InvalidOperationException("boom-resource");
+        skill.AddResource("config", failing);
+        var provider = new AgentSkillsProvider(skill);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var readTool = result.Tools!.First(t => t.Name == "read_skill_resource") as AIFunction;
+
+        // Act & Assert — the exception is not swallowed but propagates to the caller.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await readTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+            {
+                ["skillName"] = "res-skill",
+                ["resourceName"] = "config",
+            })
+            {
+                Services = new TestServiceProvider(),
+            }));
+        Assert.Equal("boom-resource", ex.Message);
+    }
+
+    [Fact]
     public async Task RunSkillScript_EmptySkillName_ReturnsErrorAsync()
     {
         // Arrange
@@ -719,6 +744,31 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         // Assert
         Assert.Equal("Error: Script 'scripts/missing.py' not found in skill 'err-script4-skill'.", content!.ToString());
+    }
+
+    [Fact]
+    public async Task RunSkillScript_ScriptThrows_PropagatesExceptionAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("script-skill", "Has scripts", "Body.");
+        Func<object> failing = () => throw new InvalidOperationException("boom-script");
+        skill.AddScript("explode", failing);
+        var provider = new AgentSkillsProvider(skill);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var runScriptTool = result.Tools!.First(t => t.Name == "run_skill_script") as AIFunction;
+
+        // Act & Assert — the exception is not swallowed but propagates to the caller.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runScriptTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+            {
+                ["skillName"] = "script-skill",
+                ["scriptName"] = "explode",
+            })
+            {
+                Services = new TestServiceProvider(),
+            }));
+        Assert.Equal("boom-script", ex.Message);
     }
 
     [Fact]
