@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -31,11 +32,6 @@ class _FakeAgentResponse:
     text: str
 
 
-@dataclass
-class _FakeUpdate:
-    text: str
-
-
 class _FakeStream:
     """Minimal stand-in for AF's ``ResponseStream`` returned by ``run(stream=True)``."""
 
@@ -43,10 +39,10 @@ class _FakeStream:
         self._chunks = chunks
         self._final = _FakeAgentResponse(text="".join(chunks))
 
-    def __aiter__(self) -> AsyncIterator[_FakeUpdate]:
-        async def _gen() -> AsyncIterator[_FakeUpdate]:
+    def __aiter__(self) -> AsyncIterator[AgentResponseUpdate]:
+        async def _gen() -> AsyncIterator[AgentResponseUpdate]:
             for c in self._chunks:
-                yield _FakeUpdate(c)
+                yield AgentResponseUpdate(contents=[Content.from_text(c)], role="assistant")
 
         return _gen()
 
@@ -99,6 +95,17 @@ def _make_client(
         channels=[ResponsesChannel(path=path, response_id_factory=response_id_factory)],
     )
     return TestClient(host.app), host, agent
+
+
+def _sse_payload(body: str, event_type: str) -> dict[str, Any]:
+    current_event: str | None = None
+    for line in body.splitlines():
+        if line.startswith("event: "):
+            current_event = line[len("event: ") :]
+            continue
+        if current_event == event_type and line.startswith("data: "):
+            return json.loads(line[len("data: ") :])
+    raise AssertionError(f"Missing SSE event: {event_type}")
 
 
 class TestResponsesChannelNonStreaming:
@@ -521,6 +528,41 @@ class TestResponsesChannelStreaming:
         # Stream update hooks are update-only; they do not rewrite get_final_response().
         assert '"text":"hello"' in r.text
 
+    def test_sse_completed_preserves_streamed_multimodal_updates_when_finalize_fails(self) -> None:
+        class _MultimodalStream:
+            def __aiter__(self) -> AsyncIterator[AgentResponseUpdate]:
+                async def _gen() -> AsyncIterator[AgentResponseUpdate]:
+                    yield AgentResponseUpdate(
+                        contents=[
+                            Content.from_text("caption"),
+                            Content.from_uri("https://example.com/cat.png", media_type="image/png"),
+                        ],
+                        role="assistant",
+                    )
+
+                return _gen()
+
+            async def get_final_response(self) -> _FakeAgentResponse:
+                raise RuntimeError("finalize unavailable")
+
+        class _MultimodalAgent(_FakeAgent):
+            def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
+                self.calls.append({"messages": messages, "stream": stream, "kwargs": kwargs})
+                if stream:
+                    return _MultimodalStream()
+                raise AssertionError("non-streaming path not exercised here")
+
+        host = AgentFrameworkHost(target=_MultimodalAgent(), channels=[ResponsesChannel()])
+        with TestClient(host.app) as client:
+            r = client.post("/responses", json={"input": "hi", "stream": True})
+
+        assert r.status_code == 200
+        completed = _sse_payload(r.text, "response.completed")
+        assert completed["response"]["output"][0]["content"][0]["text"] == "caption"
+        assert completed["response"]["output"][1]["output"] == [
+            {"detail": "auto", "type": "input_image", "image_url": "https://example.com/cat.png"}
+        ]
+
     def test_sse_emits_failed_when_stream_raises(self) -> None:
         # Regression: ResponseOutputMessage.status only accepts in_progress/
         # completed/incomplete, so building an OpenAIResponse with status="failed"
@@ -528,9 +570,9 @@ class TestResponsesChannelStreaming:
         # nested message status to "incomplete" while keeping the top-level
         # Response.status="failed".
         class _BoomStream:
-            def __aiter__(self) -> AsyncIterator[_FakeUpdate]:
-                async def _gen() -> AsyncIterator[_FakeUpdate]:
-                    yield _FakeUpdate("partial")
+            def __aiter__(self) -> AsyncIterator[AgentResponseUpdate]:
+                async def _gen() -> AsyncIterator[AgentResponseUpdate]:
+                    yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
                     raise RuntimeError("upstream blew up")
 
                 return _gen()

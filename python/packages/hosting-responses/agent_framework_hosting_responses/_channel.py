@@ -21,7 +21,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any, cast
 
-from agent_framework import Content, Message
+from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
@@ -310,7 +310,7 @@ class ResponsesChannel:
         )
         yield sse(ResponseCreatedEvent(type="response.created", response=skeleton, sequence_number=next_seq()))
 
-        accumulated = ""
+        streamed_updates: list[AgentResponseUpdate] = []
         try:
             stream = await self._ctx.run_stream(
                 request,
@@ -321,9 +321,11 @@ class ResponsesChannel:
                 channel_name=self.name,
             )
             async for update in stream:
-                chunk = getattr(update, "text", None)
-                if chunk:
-                    accumulated += chunk
+                stream_update = _stream_update_from_update(update)
+                if stream_update is None:
+                    continue
+                streamed_updates.append(stream_update)
+                for chunk in _text_deltas_from_update(stream_update):
                     yield sse(
                         ResponseTextDeltaEvent(
                             type="response.output_text.delta",
@@ -346,7 +348,7 @@ class ResponsesChannel:
             logger.exception("Responses stream consumption failed")
             failed = self._build_response(
                 body,
-                _text_output_items(accumulated, status="failed", message_id=msg_id),
+                _streamed_updates_output(streamed_updates, status="failed", message_id=msg_id),
                 status="failed",
                 response_id=response_id,
             )
@@ -363,7 +365,7 @@ class ResponsesChannel:
         completed_output = (
             _result_to_output_items(final_response, status="completed")
             if final_response is not None
-            else _text_output_items(accumulated, status="completed", message_id=msg_id)
+            else _streamed_updates_output(streamed_updates, status="completed", message_id=msg_id)
         )
         completed = self._build_response(body, completed_output, status="completed", response_id=response_id)
         # Reuse the same message id we emitted deltas under.
@@ -378,6 +380,40 @@ class ResponsesChannel:
                 sequence_number=next_seq(),
             )
         )
+
+
+def _stream_update_from_update(update: Any) -> AgentResponseUpdate | None:
+    if isinstance(update, AgentResponseUpdate):
+        return update
+
+    contents = getattr(update, "contents", None)
+    if not isinstance(contents, Sequence) or isinstance(contents, (str, bytes, bytearray)):
+        return None
+    content_items = [content for content in cast("Sequence[Any]", contents) if isinstance(content, Content)]
+    if not content_items:
+        return None
+    role = getattr(update, "role", None)
+    return AgentResponseUpdate(contents=content_items, role=role if isinstance(role, str) else "assistant")
+
+
+def _text_deltas_from_update(update: AgentResponseUpdate) -> list[str]:
+    return [content.text for content in update.contents if content.type == "text" and content.text]
+
+
+def _streamed_updates_output(
+    updates: Sequence[AgentResponseUpdate],
+    *,
+    status: str,
+    message_id: str,
+) -> list[ResponseOutputItem]:
+    if not updates:
+        return _text_output_items("", status=status, message_id=message_id)
+    output_items = _result_to_output_items(AgentResponse.from_updates(updates), status=status)
+    for output_item in output_items:
+        if isinstance(output_item, ResponseOutputMessage):
+            output_item.id = message_id
+            break
+    return output_items
 
 
 def _result_to_output_items(result: Any, *, status: str) -> list[ResponseOutputItem]:
