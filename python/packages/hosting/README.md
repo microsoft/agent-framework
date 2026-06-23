@@ -64,6 +64,19 @@ in memory. Channels opt into continuity by setting
 `ChannelRequest.session = ChannelSession(isolation_key=...)`; requests with the
 same isolation key reuse the same host-created session.
 
+The host treats `isolation_key` as an opaque partition key. Each channel or
+hosting environment decides where that key comes from:
+
+- protocol headers supplied by a trusted platform,
+- request body fields such as a previous response or conversation ID,
+- route/path parameters,
+- channel-native metadata such as chat/user IDs, or
+- environment-provided context in an ephemeral host.
+
+The host should be able to carry any of those sources as long as the channel or
+platform has already authenticated and authorized the caller before passing the
+key to `ChannelSession`.
+
 For long-running deployments that need `reset_session(...)` aliases to survive
 restart, pass `state_dir`:
 

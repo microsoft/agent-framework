@@ -92,14 +92,13 @@ def _exact_path_route(path: str, route: BaseRoute) -> BaseRoute | None:
 def _checkpoint_path_for_isolation_key(root: Path, isolation_key: str) -> Path:
     r"""Return ``root / isolation_key`` after rejecting path-traversal patterns.
 
-    Isolation keys are intentionally caller-controlled: they originate from
-    inbound HTTP headers (``x-agent-{user,chat}-isolation-key`` injected by
-    the Foundry runtime), from channel-supplied derivations such as
-    ``telegram:<chat_id>`` / ``entra:<oid>``, or from a channel ``run_hook``
-    that may read body fields. Joining such a value into a filesystem path
-    without validation is CWE-22: a value such as ``../../../etc/foo`` or
-    ``\\foo`` (Windows UNC) would let the resulting checkpoint directory
-    escape the configured root.
+    Isolation keys are intentionally caller-controlled: they may come from
+    host/platform headers, channel-supplied derivations such as
+    ``telegram:<chat_id>``, body fields parsed by a channel ``run_hook``,
+    route/path segments, or environment-provided context in an ephemeral host.
+    Joining such a value into a filesystem path without validation is CWE-22:
+    a value such as ``../../../etc/foo`` or ``\\foo`` (Windows UNC) would let
+    the resulting checkpoint directory escape the configured root.
 
     The check intentionally uses a denylist so legitimate namespaced keys
     (``telegram:42``, ``entra:abc-def``) are preserved as-is. Rejected:
@@ -504,17 +503,17 @@ class ChannelContext:
 
 
 class _FoundryIsolationASGIMiddleware:
-    """Lift the two well-known Foundry isolation headers into a contextvar.
+    """Lift platform-provided isolation headers into a contextvar.
 
     The Foundry Hosted Agents runtime injects
     ``x-agent-{user,chat}-isolation-key`` on every inbound HTTP request.
     Storage providers that need partition-aware writes (notably
     :class:`FoundryHostedAgentHistoryProvider`) read those keys via
     :func:`get_current_isolation_keys` to avoid every channel having to
-    parse Foundry-specific headers itself. We intentionally inspect
-    only HTTP scopes; lifespan/websocket scopes are forwarded
-    untouched. When neither header is present the contextvar stays at
-    its default ``None``, so local-dev requests behave as before.
+    parse platform-specific headers itself. We intentionally inspect only HTTP
+    scopes; lifespan/websocket scopes are forwarded untouched. When neither
+    header is present the contextvar stays at its default ``None``, so local-dev
+    requests behave as before.
     """
 
     def __init__(self, app: ASGIApp) -> None:

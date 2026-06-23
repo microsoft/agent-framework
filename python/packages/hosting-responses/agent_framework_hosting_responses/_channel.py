@@ -152,13 +152,13 @@ class ResponsesChannel:
             return JSONResponse({"error": str(exc)}, status_code=422)
 
         # When no ``previous_response_id`` chain anchor is on the body,
-        # surface the isolation key the **host** lifted off the request
-        # (via ``_FoundryIsolationASGIMiddleware`` for the default
-        # Foundry-platform deployment, or whatever middleware the
-        # operator configured in front of the host) as the channel
-        # session id, so callers without an explicit anchor still get
-        # a stable per-conversation session id (used by non-Foundry
-        # history providers, routing/idempotency, etc.).
+        # surface any isolation key the **host** lifted from the request
+        # context as the channel session id. Some environments provide
+        # isolation through trusted headers, while other channels derive
+        # it from body fields, paths, channel-native metadata, or even
+        # environment-provided context in an ephemeral host. This fallback
+        # only covers the host-context case; explicit protocol anchors
+        # still win.
         #
         # Security note: we consume the host-bound contextvar set by the
         # ASGI isolation middleware, NOT the raw header off the wire.
@@ -167,10 +167,10 @@ class ResponsesChannel:
         # in front of a custom auth boundary, your middleware should
         # validate the caller before stamping ``set_current_isolation_keys``;
         # never trust raw wire headers to identify a session bucket.
-        # The chat-iso value is *not* a valid storage anchor: the
-        # Foundry history provider deliberately ignores it — multi-turn
-        # storage chaining goes through the ``previous_response_id`` /
-        # bound ``response_id`` pair on ``ChannelRequest.attributes``.
+        # A host-provided isolation key need not be a storage anchor:
+        # multi-turn storage chaining still goes through the
+        # ``previous_response_id`` / bound ``response_id`` pair on
+        # ``ChannelRequest.attributes``.
         bound_keys = get_current_isolation_keys()
         chat_iso = bound_keys.chat_key if bound_keys is not None else None
         if session is None and chat_iso:
