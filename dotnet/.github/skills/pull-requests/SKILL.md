@@ -15,7 +15,7 @@ This skill covers two tasks: (1) writing a high-quality PR description, and
 ## 1. Writing the PR description
 
 Always follow the repository PR template at
-[`.github/pull_request_template.md`](../../pull_request_template.md). Keep its
+[`.github/pull_request_template.md`](../../../../.github/pull_request_template.md). Keep its
 exact structure and headings. Fill every section:
 
 ### `### Motivation & Context`
