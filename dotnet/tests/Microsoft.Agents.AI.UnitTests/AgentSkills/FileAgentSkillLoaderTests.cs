@@ -1203,14 +1203,15 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     [Fact]
     public async Task GetSkillsAsync_NestedSkillMd_DoesNotTreatSubdirectoryAsIndependentSkillAsync()
     {
-        // Arrange — parent has SKILL.md; subdirectory also has SKILL.md.
+        // Arrange — parent has SKILL.md; subdirectory also has SKILL.md with a name
+        // matching its directory so it would pass validation if discovered.
         // Only the parent should be discovered as a skill root.
         string parentSkillDir = this.CreateSkillDirectory("parent-skill", "Parent skill", "Parent body.");
         string childDir = Path.Combine(parentSkillDir, "child");
         Directory.CreateDirectory(childDir);
         File.WriteAllText(
             Path.Combine(childDir, "SKILL.md"),
-            "---\nname: child-skill\ndescription: Child skill\n---\nChild body.");
+            "---\nname: child\ndescription: Child skill\n---\nChild body.");
 
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
