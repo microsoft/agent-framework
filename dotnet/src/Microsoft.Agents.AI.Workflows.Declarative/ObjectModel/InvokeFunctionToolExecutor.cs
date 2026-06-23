@@ -14,7 +14,6 @@ using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
@@ -168,9 +167,6 @@ internal sealed class InvokeFunctionToolExecutor(
             {
                 if (!this._approvalSnapshots.ContainsKey(approval.RequestId))
                 {
-                    this.Logger.LogWarning(
-                        "Approval response '{RequestId}' did not match any pending invocation on '{ActionId}'.",
-                        approval.RequestId, this.Id);
                     await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
                 }
                 else if (!approval.Approved)
@@ -184,9 +180,6 @@ internal sealed class InvokeFunctionToolExecutor(
                 }
                 else
                 {
-                    this.Logger.LogWarning(
-                        "Approval response '{RequestId}' had no remaining pending snapshot on '{ActionId}'.",
-                        approval.RequestId, this.Id);
                     await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
                 }
             }
