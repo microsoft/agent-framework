@@ -15,6 +15,11 @@ container:
 * ``x-agent-user-isolation-key`` — opaque per-user partition key
 * ``x-agent-chat-isolation-key`` — opaque per-conversation partition key
 
+The generic host intentionally reuses those header names so the same isolation
+context can be consumed by supporting providers. Reusing the names does **not**
+mean ``agent-framework-hosting`` is a supported way to run on Foundry Hosted
+Agents; use ``agent-framework-foundry-hosting`` for that hosting surface.
+
 When those headers are present the host-installed ASGI middleware pushes them
 into :data:`current_isolation_keys` for the duration of the request, then
 resets it. Channels may still choose a different session key source and pass it

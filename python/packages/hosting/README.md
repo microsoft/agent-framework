@@ -77,6 +77,13 @@ The host should be able to carry any of those sources as long as the channel or
 platform has already authenticated and authorized the caller before passing the
 key to `ChannelSession`.
 
+The built-in request-context helper recognizes the `x-agent-user-isolation-key`
+and `x-agent-chat-isolation-key` header names because some hosting
+environments, including Foundry Hosted Agents, already use them. Reusing those
+header names does **not** mean `agent-framework-hosting` is the supported way to
+run on Foundry Hosted Agents; use `agent-framework-foundry-hosting` for that
+hosting surface.
+
 For long-running deployments that need `reset_session(...)` aliases to survive
 restart, pass `state_dir`:
 
