@@ -517,6 +517,10 @@ class WorkflowExecutor(Executor):
         self._execution_contexts = execution_contexts
         self._request_to_execution = request_to_execution
 
+        # Reset the sub workflow to its initial state. This must be done before pumping
+        # the request info events back into the sub workflow.
+        await self.workflow.reset()
+
         # Add the `request_info_event`s back to the sub workflow.
         # This is only a temporary solution to rehydrate the sub workflow with the requests.
         # The proper way would be to rehydrate the workflow from a checkpoint on a Workflow
