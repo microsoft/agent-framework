@@ -1864,7 +1864,7 @@ class SkillsProvider(ContextProvider):
         script_runner: SkillScriptRunner | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
-        search_depth: int | None = None,
+        search_depth: int = DEFAULT_SEARCH_DEPTH,
         script_filter: Callable[[str, str], bool] | None = None,
         resource_filter: Callable[[str, str], bool] | None = None,
         instruction_template: str | None = None,
@@ -2425,7 +2425,7 @@ class FileSkillsSource(SkillsSource):
         script_runner: SkillScriptRunner | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
-        search_depth: int | None = None,
+        search_depth: int = DEFAULT_SEARCH_DEPTH,
         script_filter: Callable[[str, str], bool] | None = None,
         resource_filter: Callable[[str, str], bool] | None = None,
     ) -> None:
@@ -2472,10 +2472,9 @@ class FileSkillsSource(SkillsSource):
         self._resource_extensions = resource_extensions or DEFAULT_RESOURCE_EXTENSIONS
         self._script_extensions = script_extensions or DEFAULT_SCRIPT_EXTENSIONS
 
-        depth = search_depth if search_depth is not None else DEFAULT_SEARCH_DEPTH
-        if depth < 1:
-            raise ValueError(f"search_depth must be >= 1, got {depth}")
-        self._search_depth: int = depth
+        if search_depth < 1:
+            raise ValueError(f"search_depth must be >= 1, got {search_depth}")
+        self._search_depth: int = search_depth
         self._script_filter = script_filter
         self._resource_filter = resource_filter
 
