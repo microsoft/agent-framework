@@ -18,7 +18,6 @@ from agent_framework import (
     ClassSkill,
     DeduplicatingSkillsSource,
     FileSkill,
-    FileSkillFilterContext,
     FileSkillScript,
     FileSkillsSource,
     InlineSkill,
@@ -366,26 +365,25 @@ class TestDiscoverResourceFiles:
         (refs / "exclude.md").write_text("exclude", encoding="utf-8")
         resources = _discover_resources(
             str(skill_dir),
-            resource_filter=lambda ctx: "exclude" not in ctx.relative_file_path,
+            resource_filter=lambda name, path: "exclude" not in path,
         )
         assert "references/keep.md" in resources
         assert "references/exclude.md" not in resources
 
-    def test_resource_filter_receives_correct_context(self, tmp_path: Path) -> None:
+    def test_resource_filter_receives_correct_args(self, tmp_path: Path) -> None:
         """resource_filter receives correct skill_name and relative_file_path."""
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "data.json").write_text("{}", encoding="utf-8")
-        received_contexts: list[FileSkillFilterContext] = []
+        received_args: list[tuple[str, str]] = []
 
-        def capture_filter(ctx: FileSkillFilterContext) -> bool:
-            received_contexts.append(ctx)
+        def capture_filter(skill_name: str, relative_file_path: str) -> bool:
+            received_args.append((skill_name, relative_file_path))
             return True
 
         _discover_resources(str(skill_dir), skill_name="my-skill", resource_filter=capture_filter)
-        assert len(received_contexts) == 1
-        assert received_contexts[0].skill_name == "my-skill"
-        assert received_contexts[0].relative_file_path == "data.json"
+        assert len(received_args) == 1
+        assert received_args[0] == ("my-skill", "data.json")
 
 
 class TestTryParseSkillDocument:
@@ -1687,31 +1685,6 @@ class TestSearchDepthValidation:
         assert source._search_depth == 1
 
 
-class TestFileSkillFilterContext:
-    """Tests for FileSkillFilterContext."""
-
-    def test_creates_with_valid_args(self) -> None:
-        ctx = FileSkillFilterContext("my-skill", "scripts/run.py")
-        assert ctx.skill_name == "my-skill"
-        assert ctx.relative_file_path == "scripts/run.py"
-
-    def test_empty_skill_name_raises(self) -> None:
-        with pytest.raises(ValueError, match="skill_name cannot be empty"):
-            FileSkillFilterContext("", "file.py")
-
-    def test_whitespace_skill_name_raises(self) -> None:
-        with pytest.raises(ValueError, match="skill_name cannot be empty"):
-            FileSkillFilterContext("   ", "file.py")
-
-    def test_empty_relative_path_raises(self) -> None:
-        with pytest.raises(ValueError, match="relative_file_path cannot be empty"):
-            FileSkillFilterContext("skill", "")
-
-    def test_whitespace_relative_path_raises(self) -> None:
-        with pytest.raises(ValueError, match="relative_file_path cannot be empty"):
-            FileSkillFilterContext("skill", "   ")
-
-
 class TestFileSkillsSourceSearchDepthAndFilters:
     """Tests for search_depth, script_filter, and resource_filter parameters."""
 
@@ -1763,7 +1736,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
 
         source = FileSkillsSource(
             str(tmp_path),
-            resource_filter=lambda ctx: "secret" not in ctx.relative_file_path,
+            resource_filter=lambda name, path: "secret" not in path,
         )
         skills = await source.get_skills()
         resource_names = [r.name for r in skills[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -1783,7 +1756,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
 
         source = FileSkillsSource(
             str(tmp_path),
-            script_filter=lambda ctx: not ctx.relative_file_path.startswith("test_"),
+            script_filter=lambda name, path: not path.startswith("test_"),
         )
         skills = await source.get_skills()
         script_names = [s.name for s in skills[0]._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -1823,7 +1796,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
 
         provider = SkillsProvider.from_paths(
             str(tmp_path),
-            resource_filter=lambda ctx: ctx.relative_file_path == "keep.md",
+            resource_filter=lambda name, path: path == "keep.md",
         )
         await _init_provider(provider)
         skill = _ctx(provider)[0]["my-skill"]

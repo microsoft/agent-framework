@@ -1553,56 +1553,6 @@ DEFAULT_SCRIPT_EXTENSIONS: Final[tuple[str, ...]] = (".py",)
 DEFAULT_SEARCH_DEPTH: Final[int] = 2
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
-class FileSkillFilterContext:
-    """Context provided to script/resource filter predicates during file-based skill discovery.
-
-    When a ``script_filter`` or ``resource_filter`` predicate is configured on
-    :class:`FileSkillsSource`, each discovered file is wrapped in this context
-    before being passed to the predicate.  The predicate returns ``True`` to
-    include the file or ``False`` to exclude it.
-
-    Attributes:
-        skill_name: The name of the skill (from SKILL.md frontmatter).
-        relative_file_path: The path to the file relative to the skill
-            directory, using forward slashes.  For root-level files this is
-            just the filename; for nested files it includes subdirectories.
-
-    Examples:
-        A filter that excludes test scripts:
-
-        .. code-block:: python
-
-            def no_tests(ctx: FileSkillFilterContext) -> bool:
-                return "test" not in ctx.relative_file_path
-
-
-            source = FileSkillsSource(
-                skill_paths="./skills",
-                script_filter=no_tests,
-            )
-    """
-
-    def __init__(self, skill_name: str, relative_file_path: str) -> None:
-        """Initialize a FileSkillFilterContext.
-
-        Args:
-            skill_name: The name of the skill as declared in SKILL.md frontmatter.
-            relative_file_path: Path to the file relative to the skill directory
-                (forward-slash-separated).
-
-        Raises:
-            ValueError: If either argument is empty or whitespace-only.
-        """
-        if not skill_name or not skill_name.strip():
-            raise ValueError("skill_name cannot be empty.")
-        if not relative_file_path or not relative_file_path.strip():
-            raise ValueError("relative_file_path cannot be empty.")
-
-        self.skill_name = skill_name
-        self.relative_file_path = relative_file_path
-
-
 # region Patterns and prompt template
 
 # Matches YAML frontmatter delimited by "---" lines.
@@ -1915,8 +1865,8 @@ class SkillsProvider(ContextProvider):
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
         search_depth: int | None = None,
-        script_filter: Callable[[FileSkillFilterContext], bool] | None = None,
-        resource_filter: Callable[[FileSkillFilterContext], bool] | None = None,
+        script_filter: Callable[[str, str], bool] | None = None,
+        resource_filter: Callable[[str, str], bool] | None = None,
         instruction_template: str | None = None,
         require_script_approval: bool = False,
         disable_caching: bool = False,
@@ -1943,15 +1893,14 @@ class SkillsProvider(ContextProvider):
                 files within each skill directory.  A value of ``1`` searches
                 only the skill root; ``2`` (the default) searches the root
                 plus one level of subdirectories.  Must be >= 1.
-            script_filter: Optional predicate that filters discovered script
-                files.  Receives a :class:`FileSkillFilterContext` and returns
-                ``True`` to include or ``False`` to exclude.  When ``None``,
-                all scripts matching allowed extensions are included.
-            resource_filter: Optional predicate that filters discovered
-                resource files.  Receives a :class:`FileSkillFilterContext`
-                and returns ``True`` to include or ``False`` to exclude.
-                When ``None``, all resources matching allowed extensions are
-                included.
+            script_filter: Optional predicate ``(skill_name, relative_file_path) -> bool``
+                that filters discovered script files.  Returns ``True`` to
+                include or ``False`` to exclude.  When ``None``, all scripts
+                matching allowed extensions are included.
+            resource_filter: Optional predicate ``(skill_name, relative_file_path) -> bool``
+                that filters discovered resource files.  Returns ``True`` to
+                include or ``False`` to exclude.  When ``None``, all resources
+                matching allowed extensions are included.
             instruction_template: Custom system-prompt template for
                 advertising skills.  Must contain a ``{skills}`` placeholder.
                 Uses a built-in template when ``None``.
@@ -2465,7 +2414,7 @@ class FileSkillsSource(SkillsSource):
                 skill_paths=["./skills", "./more-skills"],
                 script_runner=my_runner,
                 search_depth=3,
-                script_filter=lambda ctx: not ctx.relative_file_path.startswith("tests/"),
+                script_filter=lambda name, path: not path.startswith("tests/"),
             )
     """
 
@@ -2477,8 +2426,8 @@ class FileSkillsSource(SkillsSource):
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
         search_depth: int | None = None,
-        script_filter: Callable[[FileSkillFilterContext], bool] | None = None,
-        resource_filter: Callable[[FileSkillFilterContext], bool] | None = None,
+        script_filter: Callable[[str, str], bool] | None = None,
+        resource_filter: Callable[[str, str], bool] | None = None,
     ) -> None:
         """Initialize a FileSkillsSource.
 
@@ -2502,15 +2451,14 @@ class FileSkillsSource(SkillsSource):
                 files within each skill directory.  A value of ``1`` searches
                 only the skill root; ``2`` (the default) searches the root
                 plus one level of subdirectories.  Must be >= 1.
-            script_filter: Optional predicate that filters discovered script
-                files.  Receives a :class:`FileSkillFilterContext` and returns
-                ``True`` to include or ``False`` to exclude.  When ``None``,
-                all scripts matching allowed extensions are included.
-            resource_filter: Optional predicate that filters discovered
-                resource files.  Receives a :class:`FileSkillFilterContext`
-                and returns ``True`` to include or ``False`` to exclude.
-                When ``None``, all resources matching allowed extensions are
-                included.
+            script_filter: Optional predicate ``(skill_name, relative_file_path) -> bool``
+                that filters discovered script files.  Returns ``True`` to
+                include or ``False`` to exclude.  When ``None``, all scripts
+                matching allowed extensions are included.
+            resource_filter: Optional predicate ``(skill_name, relative_file_path) -> bool``
+                that filters discovered resource files.  Returns ``True`` to
+                include or ``False`` to exclude.  When ``None``, all resources
+                matching allowed extensions are included.
 
         Raises:
             ValueError: If *search_depth* is less than 1.
@@ -2662,12 +2610,12 @@ class FileSkillsSource(SkillsSource):
     ) -> list[str]:
         """Recursively scan a skill directory for resource files matching configured extensions.
 
-        Scans the skill directory up to :attr:`_search_depth` levels deep for
-        files whose extension is in :attr:`_resource_extensions`, excluding
+        Scans the skill directory up to the configured search depth for files
+        whose extension matches the allowed resource extensions, excluding
         ``SKILL.md`` itself.  Each candidate is validated against path-traversal
         and symlink-escape checks; unsafe files are skipped with a warning.
-        If a :attr:`_resource_filter` predicate is configured, files that do
-        not satisfy it are excluded.
+        If a ``resource_filter`` predicate is configured, files that do not
+        satisfy it are excluded.
 
         Args:
             skill_dir_path: Absolute path to the skill directory to scan.
@@ -2788,9 +2736,7 @@ class FileSkillsSource(SkillsSource):
             rel_path = FileSkillsSource._normalize_resource_path(str(entry.relative_to(skill_dir)))
 
             # Apply user-provided filter predicate
-            if self._resource_filter is not None and not self._resource_filter(
-                FileSkillFilterContext(skill_name, rel_path)
-            ):
+            if self._resource_filter is not None and not self._resource_filter(skill_name, rel_path):
                 continue
 
             resources.append(rel_path)
@@ -2819,10 +2765,10 @@ class FileSkillsSource(SkillsSource):
     ) -> list[str]:
         """Recursively scan a skill directory for script files matching configured extensions.
 
-        Scans the skill directory up to :attr:`_search_depth` levels deep for
-        files whose extension is in :attr:`_script_extensions`.  Each candidate
+        Scans the skill directory up to the configured search depth for files
+        whose extension matches the allowed script extensions.  Each candidate
         is validated against path-traversal and symlink-escape checks; unsafe
-        files are skipped with a warning.  If a :attr:`_script_filter` predicate
+        files are skipped with a warning.  If a ``script_filter`` predicate
         is configured, files that do not satisfy it are excluded.
 
         Args:
@@ -2941,9 +2887,7 @@ class FileSkillsSource(SkillsSource):
             rel_path = FileSkillsSource._normalize_resource_path(str(entry.relative_to(skill_dir)))
 
             # Apply user-provided filter predicate
-            if self._script_filter is not None and not self._script_filter(
-                FileSkillFilterContext(skill_name, rel_path)
-            ):
+            if self._script_filter is not None and not self._script_filter(skill_name, rel_path):
                 continue
 
             scripts.append(rel_path)
