@@ -685,6 +685,40 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
+    public async Task ProcessMessagesAsync_UsesProvidedUserId_WhenTokenUserIdIsEmptyAsync()
+    {
+        // Arrange
+        string providedUserId = Guid.NewGuid().ToString();
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = string.Empty, ClientId = "client-123" };
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), settings.TenantId))
+            .ReturnsAsync(tokenInfo);
+
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtectionScopesResponse?)null);
+
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessContentResponse { PolicyActions = [] });
+
+        // Act
+        var result = await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, providedUserId, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(providedUserId, result.userId);
+        this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
+            It.Is<ProcessContentRequest>(request => request.UserId == providedUserId),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ProcessMessagesAsync_ExtractsUserIdFromMessageAuthorName_WhenValidGuidAsync()
     {
         // Arrange

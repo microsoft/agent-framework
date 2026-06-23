@@ -106,8 +106,8 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         List<ProcessContentRequest> pcRequests = [];
         TokenInfo? tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
         string tenantId = tokenInfo?.TenantId ?? settings.TenantId ?? throw new PurviewRequestException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
-        string? resolvedUserId = tokenInfo?.UserId ?? userId;
-        if (resolvedUserId == null && TryGetUserIdFromPayload(messages, out string? payloadUserId))
+        string? resolvedUserId = !string.IsNullOrEmpty(tokenInfo?.UserId) ? tokenInfo.UserId : userId;
+        if (string.IsNullOrEmpty(resolvedUserId) && TryGetUserIdFromPayload(messages, out string? payloadUserId))
         {
             resolvedUserId = payloadUserId;
         }
