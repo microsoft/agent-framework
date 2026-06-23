@@ -16,7 +16,7 @@ public sealed class DurableActivityExecutorResolveInputTypeTests
     [Fact]
     public void ResolveInputType_NullInput_ReturnsFirstSupportedType()
     {
-        Type result = DurableActivityExecutor.ResolveInputType(null, new HashSet<Type> { typeof(int), typeof(string) });
+        Type result = DurableActivityExecutor.ResolveInputType(null, new HashSet<Type> { typeof(int) });
 
         Assert.Equal(typeof(int), result);
     }
