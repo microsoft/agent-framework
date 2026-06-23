@@ -28,6 +28,20 @@ public sealed class AgentSkillsProviderOptions
     public bool ScriptApproval { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether detailed exception information is included
+    /// in the error message returned to the model when a script execution fails.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), exceptions propagate to the caller, allowing
+    /// <see cref="Extensions.AI.FunctionInvokingChatClient"/> to apply its own
+    /// <c>IncludeDetailedErrors</c> policy — which achieves the same effect without requiring
+    /// this property to be set. When <see langword="true"/>, the exception message is appended
+    /// to the error string returned directly to the model, enabling it to retry with different
+    /// arguments. However, this may disclose raw exception details to the model.
+    /// </remarks>
+    public bool IncludeDetailedErrors { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether caching of tools and instructions is disabled.
     /// When <see langword="false"/> (the default), the provider caches the tools and instructions
     /// after the first build and returns the cached instance on subsequent calls.

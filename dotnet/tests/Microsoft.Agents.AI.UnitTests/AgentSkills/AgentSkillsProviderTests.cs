@@ -747,7 +747,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task RunSkillScript_ScriptThrows_PropagatesExceptionAsync()
+    public async Task RunSkillScript_ScriptThrows_PropagatesExceptionByDefaultAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("script-skill", "Has scripts", "Body.");
@@ -758,7 +758,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
         var runScriptTool = result.Tools!.First(t => t.Name == "run_skill_script") as AIFunction;
 
-        // Act & Assert — the exception is not swallowed but propagates to the caller.
+        // Act & Assert — exception propagates when IncludeDetailedErrors is not set
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await runScriptTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
             {
@@ -769,6 +769,33 @@ public sealed class AgentSkillsProviderTests : IDisposable
                 Services = new TestServiceProvider(),
             }));
         Assert.Equal("boom-script", ex.Message);
+    }
+
+    [Fact]
+    public async Task RunSkillScript_ScriptThrows_IncludesDetailsWhenEnabledAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("script-skill", "Has scripts", "Body.");
+        Func<object> failing = () => throw new InvalidOperationException("boom-script");
+        skill.AddScript("explode", failing);
+        var options = new AgentSkillsProviderOptions { IncludeDetailedErrors = true };
+        var provider = new AgentSkillsProvider(new[] { skill }, options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var runScriptTool = result.Tools!.First(t => t.Name == "run_skill_script") as AIFunction;
+
+        // Act
+        var content = await runScriptTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+        {
+            ["skillName"] = "script-skill",
+            ["scriptName"] = "explode",
+        })
+        {
+            Services = new TestServiceProvider(),
+        });
+
+        // Assert — includes exception message
+        Assert.Equal("Error: Failed to execute script 'explode' from skill 'script-skill'. Exception: boom-script", content!.ToString());
     }
 
     [Fact]
