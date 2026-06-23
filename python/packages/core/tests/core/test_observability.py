@@ -3322,6 +3322,33 @@ def test_tools_to_dict_warns_for_unknown_tool_object(caplog: pytest.LogCaptureFi
     assert any("OpenTelemetry tool definition" in rec.message for rec in caplog.records)
 
 
+def test_tool_to_otel_definition_caches_per_tool_object() -> None:
+    """Converting the same tool object twice reuses the cached OTel definition."""
+    from agent_framework import tool
+    from agent_framework.observability import _build_tool_otel_definition, _tool_to_otel_definition
+
+    @tool(name="add", description="Add two numbers")
+    def add(x: int, y: int) -> int:
+        return x + y
+
+    first = _tool_to_otel_definition(add)
+    second = _tool_to_otel_definition(add)
+
+    # The cached result is returned as the same object on subsequent conversions.
+    assert first is second
+    # A fresh (uncached) build produces an equal but distinct object.
+    assert _build_tool_otel_definition(add) == first
+
+
+def test_tool_to_otel_definition_skips_cache_for_unhashable_specs() -> None:
+    """Plain-dict tool specs are converted without raising despite being uncacheable."""
+    from agent_framework.observability import _tool_to_otel_definition
+
+    spec = {"type": "web_search", "name": "web_search"}
+
+    assert _tool_to_otel_definition(spec) == {"type": "web_search", "name": "web_search"}
+
+
 # region Test _capture_response
 
 

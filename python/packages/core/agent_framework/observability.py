@@ -2213,6 +2213,16 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
 
 # region OTel tool definitions
 
+# Per-item in-memory cache of computed OTel tool definitions, keyed by the tool
+# object's identity. Tool objects (e.g. ``FunctionTool``, ``MCPTool``) are often
+# reused across runs, so caching their converted definitions avoids repeating the
+# isinstance checks, schema generation, and dict construction on every invocation.
+# A ``WeakKeyDictionary`` lets entries be garbage collected with their tools.
+# Unhashable / non-weak-referenceable specs (e.g. plain dicts) bypass the cache.
+_TOOL_OTEL_DEFINITION_CACHE: weakref.WeakKeyDictionary[Any, dict[str, Any] | None] = weakref.WeakKeyDictionary()
+# Sentinel distinguishing "not cached" from a cached ``None`` (unparseable tool).
+_CACHE_MISS: Final = object()
+
 
 def _tools_to_dict(
     tools: Any,
@@ -2248,9 +2258,30 @@ def _tools_to_dict(
 def _tool_to_otel_definition(tool_item: Any) -> dict[str, Any] | None:
     """Convert a single tool spec into an OTel GenAI tool-definition dict.
 
+    Results are cached per tool object (keyed by identity) so repeated runs that
+    reuse the same tool instances skip the conversion work. Specs that cannot be
+    weakly referenced (e.g. plain dicts) are converted without caching.
+
     Returns ``None`` and emits a warning when the input cannot be represented
     as either a ``FunctionToolDefinition`` or a ``GenericToolDefinition``.
     """
+    try:
+        cached = _TOOL_OTEL_DEFINITION_CACHE.get(tool_item, _CACHE_MISS)
+    except TypeError:
+        # Unhashable spec (e.g. a plain dict); convert without caching.
+        return _build_tool_otel_definition(tool_item)
+    if cached is not _CACHE_MISS:
+        return cast("dict[str, Any] | None", cached)
+
+    definition = _build_tool_otel_definition(tool_item)
+    with contextlib.suppress(TypeError):
+        # Object may not support weak references; skip caching when that is the case.
+        _TOOL_OTEL_DEFINITION_CACHE[tool_item] = definition
+    return definition
+
+
+def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
+    """Convert a single tool spec into an OTel GenAI tool-definition dict (uncached)."""
     from pydantic import BaseModel
 
     from ._mcp import MCPTool
