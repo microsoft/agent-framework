@@ -193,10 +193,12 @@ class AgentFunctionApp(DFAppBase):
         enable_mcp_tool_trigger: Whether MCP tool triggers are created for agents
         max_poll_retries: Maximum polling attempts when waiting for responses
         poll_interval_seconds: Delay (seconds) between polling attempts
-        workflow: Optional Workflow instance for workflow orchestration
+        workflow: The sole hosted Workflow when exactly one is hosted, else ``None``
+            (use :attr:`workflows` to access all hosted workflows by name)
     """
 
     _agent_metadata: dict[str, AgentMetadata]
+    _workflows: dict[str, Workflow]
     enable_health_check: bool
     enable_http_endpoints: bool
     enable_mcp_tool_trigger: bool
@@ -206,6 +208,7 @@ class AgentFunctionApp(DFAppBase):
         self,
         agents: list[SupportsAgentRun] | None = None,
         workflow: Workflow | None = None,
+        workflows: list[Workflow] | Mapping[str, Workflow] | None = None,
         http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
@@ -217,7 +220,11 @@ class AgentFunctionApp(DFAppBase):
         """Initialize the AgentFunctionApp.
 
         :param agents: List of agent instances to register.
-        :param workflow: Optional Workflow instance to extract agents from and set up orchestration.
+        :param workflow: Optional single Workflow to host. Convenience alias for
+            ``workflows=[workflow]``; an app may host several workflows via ``workflows``.
+        :param workflows: Optional workflows to host, as a list (keyed by each
+            ``Workflow.name``) or a name->Workflow mapping. Each workflow gets its own
+            ``dafx-{name}`` orchestration and ``workflow/{name}/...`` HTTP routes.
         :param http_auth_level: HTTP authentication level (default: ``func.AuthLevel.FUNCTION``).
         :param enable_health_check: Enable the built-in health check endpoint (default: ``True``).
         :param enable_http_endpoints: Enable HTTP endpoints for agents (default: ``True``).
@@ -238,11 +245,11 @@ class AgentFunctionApp(DFAppBase):
 
         # Initialize agent metadata dictionary
         self._agent_metadata = {}
+        self._workflows: dict[str, Workflow] = {}
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
         self.enable_mcp_tool_trigger = enable_mcp_tool_trigger
         self.default_callback = default_callback
-        self.workflow = workflow
 
         try:
             retries = int(max_poll_retries)
@@ -256,32 +263,14 @@ class AgentFunctionApp(DFAppBase):
             interval = DEFAULT_POLL_INTERVAL_SECONDS
         self.poll_interval_seconds = interval if interval > 0 else DEFAULT_POLL_INTERVAL_SECONDS
 
-        # If workflow is provided, extract agents and set up orchestration.
-        # The "what to register" decision (agent -> entity, non-agent -> activity)
-        # is shared with the standalone durabletask host via plan_workflow_registration.
-        if workflow:
-            logger.debug("[AgentFunctionApp] Extracting agents from workflow")
-            # Durable names are derived from the workflow name and must be stable across
-            # restarts, so reject an unnamed/auto-generated workflow up front.
-            validate_workflow_name(workflow.name)
-            plan = plan_workflow_registration(workflow)
-            for agent_executor in plan.agent_executors:
-                # Register each workflow agent through the same surface as a standalone
-                # agent (so it stays tracked in ``agents`` / ``get_agent``), under the
-                # workflow-scoped entity id ``{workflow}-{executor}`` the orchestrator
-                # dispatches to. This keeps two co-hosted workflows that reuse an
-                # executor id from colliding on one global entity name.
-                self.add_agent(
-                    agent_executor.agent,
-                    callback=self.default_callback,
-                    entity_id=workflow_scoped_executor_id(workflow.name, agent_executor.id),
-                )
-            for executor in plan.activity_executors:
-                # Set up a Functions activity trigger for each non-agent executor,
-                # scoped by workflow name to match the orchestrator's dispatch.
-                self._setup_executor_activity(workflow.name, executor.id)
+        # Register each hosted workflow. ``workflow=`` is a convenience alias for a
+        # single-element ``workflows``; both may be combined.
+        for wf in self._collect_workflows(workflow, workflows):
+            self._register_workflow(wf)
 
-            self._setup_workflow_orchestration()
+        # Back-compat: expose the sole workflow as ``.workflow`` when exactly one is
+        # hosted (multi-workflow apps must address workflows by name).
+        self.workflow = next(iter(self._workflows.values())) if len(self._workflows) == 1 else None
 
         if agents:
             # Register all provided agents
@@ -295,17 +284,82 @@ class AgentFunctionApp(DFAppBase):
 
         logger.debug("[AgentFunctionApp] Initialization complete")
 
-    def _setup_executor_activity(self, workflow_name: str, executor_id: str) -> None:
+    def _collect_workflows(
+        self,
+        workflow: Workflow | None,
+        workflows: list[Workflow] | Mapping[str, Workflow] | None,
+    ) -> list[Workflow]:
+        """Combine the ``workflow`` alias and ``workflows`` into a de-duplicated list.
+
+        A name->Workflow mapping must agree with each ``Workflow.name`` so a single
+        identity drives the durable names and HTTP routes.
+
+        Raises:
+            ValueError: If a mapping key disagrees with its ``Workflow.name``.
+        """
+        collected: list[Workflow] = []
+        if workflow is not None:
+            collected.append(workflow)
+        if isinstance(workflows, Mapping):
+            for key, wf in workflows.items():
+                if key != wf.name:
+                    raise ValueError(f"workflows mapping key '{key}' does not match Workflow.name '{wf.name}'.")
+                collected.append(wf)
+        elif workflows is not None:
+            collected.extend(workflows)
+        return collected
+
+    def _register_workflow(self, workflow: Workflow) -> None:
+        """Register one workflow's durable primitives and HTTP routes.
+
+        The "what to register" decision (agent -> entity, non-agent -> activity) is
+        shared with the standalone durabletask host via ``plan_workflow_registration``.
+
+        Raises:
+            ValueError: If the workflow name is missing/invalid/auto-generated, or a
+                workflow with the same name is already registered.
+        """
+        # Durable names are derived from the workflow name and must be stable across
+        # restarts, so reject an unnamed/auto-generated workflow up front.
+        validate_workflow_name(workflow.name)
+        if workflow.name in self._workflows:
+            raise ValueError(f"Workflow '{workflow.name}' is already registered on this app.")
+        self._workflows[workflow.name] = workflow
+
+        logger.debug("[AgentFunctionApp] Registering workflow '%s'", workflow.name)
+        plan = plan_workflow_registration(workflow)
+        for agent_executor in plan.agent_executors:
+            # Register each workflow agent through the same surface as a standalone
+            # agent (so it stays tracked in ``agents`` / ``get_agent``), under the
+            # workflow-scoped entity id ``{workflow}-{executor}`` the orchestrator
+            # dispatches to. This keeps two co-hosted workflows that reuse an executor
+            # id from colliding on one global entity name.
+            self.add_agent(
+                agent_executor.agent,
+                callback=self.default_callback,
+                entity_id=workflow_scoped_executor_id(workflow.name, agent_executor.id),
+            )
+        for executor in plan.activity_executors:
+            # Set up a Functions activity trigger for each non-agent executor, scoped
+            # by workflow name to match the orchestrator's dispatch.
+            self._setup_executor_activity(workflow, executor.id)
+
+        self._setup_workflow_orchestration(workflow)
+
+    def _setup_executor_activity(self, workflow: Workflow, executor_id: str) -> None:
         """Register an activity for executing a specific non-agent executor.
 
         Args:
-            workflow_name: The owning workflow's name (scopes the activity name).
+            workflow: The owning workflow (scopes the activity name and provides the
+                executor instance at run time).
             executor_id: The ID of the executor to create an activity for.
         """
-        activity_name = workflow_executor_activity_name(workflow_name, executor_id)
+        activity_name = workflow_executor_activity_name(workflow.name, executor_id)
         logger.debug(f"[AgentFunctionApp] Registering activity '{activity_name}' for executor '{executor_id}'")
 
-        # Capture executor_id in closure
+        # Capture the specific workflow + executor id in the closure so the right
+        # executor runs even when several workflows are hosted.
+        captured_workflow = workflow
         captured_executor_id = executor_id
 
         @self.function_name(activity_name)
@@ -318,31 +372,30 @@ class AgentFunctionApp(DFAppBase):
             The execution body is shared with the standalone durabletask host via
             ``execute_workflow_activity``.
             """
-            if not self.workflow:
-                raise RuntimeError("Workflow not initialized in AgentFunctionApp")
-
-            executor = self.workflow.executors.get(captured_executor_id)
+            executor = captured_workflow.executors.get(captured_executor_id)
             if not executor:
                 raise ValueError(f"Unknown executor: {captured_executor_id}")
 
-            return execute_workflow_activity(executor, inputData, self.workflow)
+            return execute_workflow_activity(executor, inputData, captured_workflow)
 
         # Ensure the function is registered (prevents garbage collection)
         _ = executor_activity
 
-    def _setup_workflow_orchestration(self) -> None:
-        """Register the workflow orchestration and related HTTP endpoints."""
-        if self.workflow is None:
-            raise RuntimeError("Workflow not initialized in AgentFunctionApp")
-        orchestrator_name = workflow_orchestrator_name(self.workflow.name)
+    def _setup_workflow_orchestration(self, workflow: Workflow) -> None:
+        """Register a workflow's orchestration and its per-workflow HTTP endpoints.
+
+        Routes are scoped by workflow name (``workflow/{name}/run`` etc.) so the URL
+        shape stays the same whether the app hosts one workflow or many; callers do
+        not have to change URLs as an app grows.
+        """
+        captured_workflow = workflow
+        workflow_name = workflow.name
+        orchestrator_name = workflow_orchestrator_name(workflow_name)
 
         @self.function_name(orchestrator_name)
         @self.orchestration_trigger(context_name="context")
         def workflow_orchestrator(context: df.DurableOrchestrationContext) -> Any:  # type: ignore[type-arg]
             """Generic orchestrator for running the configured workflow."""
-            if self.workflow is None:
-                raise RuntimeError("Workflow not initialized in AgentFunctionApp")
-
             input_data = context.get_input()
 
             # Pass the deserialized client input straight to the shared engine, which
@@ -352,11 +405,12 @@ class AgentFunctionApp(DFAppBase):
             # Create local shared state dict for cross-executor state sharing
             shared_state: dict[str, Any] = {}
 
-            outputs = yield from run_workflow_orchestrator(context, self.workflow, initial_message, shared_state)
+            outputs = yield from run_workflow_orchestrator(context, captured_workflow, initial_message, shared_state)
             # Durable Functions runtime extracts return value from StopIteration
             return outputs  # noqa: B901
 
-        @self.route(route="workflow/run", methods=["POST"])
+        @self.function_name(f"{orchestrator_name}-start")
+        @self.route(route=f"workflow/{workflow_name}/run", methods=["POST"])
         @self.durable_client_input(client_name="client")
         async def start_workflow_orchestration(
             req: func.HttpRequest, client: df.DurableOrchestrationClient
@@ -375,20 +429,21 @@ class AgentFunctionApp(DFAppBase):
             instance_id = await client.start_new(orchestrator_name, client_input=client_input)
 
             base_url = self._build_base_url(req.url)
-            status_url = f"{base_url}/api/workflow/status/{instance_id}"
+            status_url = f"{base_url}/api/workflow/{workflow_name}/status/{instance_id}"
 
             return func.HttpResponse(
                 json.dumps({
                     "instanceId": instance_id,
                     "statusQueryGetUri": status_url,
-                    "respondUri": f"{base_url}/api/workflow/respond/{instance_id}/{{requestId}}",
+                    "respondUri": f"{base_url}/api/workflow/{workflow_name}/respond/{instance_id}/{{requestId}}",
                     "message": "Workflow started",
                 }),
                 status_code=202,
                 mimetype="application/json",
             )
 
-        @self.route(route="workflow/status/{instanceId}", methods=["GET"])
+        @self.function_name(f"{orchestrator_name}-status")
+        @self.route(route=f"workflow/{workflow_name}/status/{{instanceId}}", methods=["GET"])
         @self.durable_client_input(client_name="client")
         async def get_workflow_status(
             req: func.HttpRequest, client: df.DurableOrchestrationClient
@@ -400,11 +455,11 @@ class AgentFunctionApp(DFAppBase):
 
             status = await client.get_status(instance_id)
 
-            # Scope the endpoint to this app's workflow orchestrator. The durable client
+            # Scope the endpoint to this workflow's orchestrator. The durable client
             # resolves instance IDs across every orchestration in the task hub, so an ID
-            # belonging to a different orchestration must be treated as "not found" rather
-            # than leaking its status (including pending HITL request details).
-            if not self._is_workflow_orchestration(status):
+            # belonging to a different orchestration (or a different workflow) must be
+            # treated as "not found" rather than leaking its status / HITL details.
+            if not self._is_owned_orchestration(status, workflow_name):
                 return self._build_error_response("Instance not found", status_code=404)
 
             # The workflow's yielded outputs are checkpoint-encoded by the shared
@@ -442,7 +497,7 @@ class AgentFunctionApp(DFAppBase):
                         "requestData": req_data.get("data"),  # type: ignore[reportUnknownMemberType]
                         "requestType": req_data.get("request_type"),  # type: ignore[reportUnknownMemberType]
                         "responseType": req_data.get("response_type"),  # type: ignore[reportUnknownMemberType]
-                        "respondUrl": f"{base_url}/api/workflow/respond/{instance_id}/{req_id}",
+                        "respondUrl": f"{base_url}/api/workflow/{workflow_name}/respond/{instance_id}/{req_id}",
                     })
                 response["pendingHumanInputRequests"] = pending_requests
 
@@ -452,7 +507,8 @@ class AgentFunctionApp(DFAppBase):
                 mimetype="application/json",
             )
 
-        @self.route(route="workflow/respond/{instanceId}/{requestId}", methods=["POST"])
+        @self.function_name(f"{orchestrator_name}-respond")
+        @self.route(route=f"workflow/{workflow_name}/respond/{{instanceId}}/{{requestId}}", methods=["POST"])
         @self.durable_client_input(client_name="client")
         async def send_hitl_response(req: func.HttpRequest, client: df.DurableOrchestrationClient) -> func.HttpResponse:
             """HTTP endpoint to send a response to a pending HITL request.
@@ -466,11 +522,11 @@ class AgentFunctionApp(DFAppBase):
             if not instance_id or not request_id:
                 return self._build_error_response("Instance ID and Request ID are required.")
 
-            # Scope the endpoint to this app's workflow orchestrator before raising an
+            # Scope the endpoint to this workflow's orchestrator before raising an
             # external event, so a leaked instance ID cannot be used to inject events into
-            # a different orchestration in the task hub.
+            # a different orchestration (or a different workflow) in the task hub.
             status = await client.get_status(instance_id)
-            if not self._is_workflow_orchestration(status):
+            if not self._is_owned_orchestration(status, workflow_name):
                 return self._build_error_response("Instance not found", status_code=404)
 
             try:
@@ -505,11 +561,6 @@ class AgentFunctionApp(DFAppBase):
         _ = get_workflow_status
         _ = send_hitl_response
 
-    def _build_status_url(self, request_url: str, instance_id: str) -> str:
-        """Build the status URL for a workflow instance."""
-        base_url = self._build_base_url(request_url)
-        return f"{base_url}/api/workflow/status/{instance_id}"
-
     def _build_base_url(self, request_url: str) -> str:
         """Extract the base URL from a request URL."""
         base_url, _, _ = request_url.partition("/api/")
@@ -517,24 +568,22 @@ class AgentFunctionApp(DFAppBase):
             base_url = request_url.rstrip("/")
         return base_url
 
-    def _is_workflow_orchestration(self, status: Any) -> bool:
-        """Return whether a durable orchestration status belongs to this app's workflow.
+    def _is_owned_orchestration(self, status: Any, workflow_name: str) -> bool:
+        """Return whether a durable orchestration status belongs to the named workflow.
 
-        The ``workflow/status`` and ``workflow/respond`` endpoints address instances by
-        ``instanceId`` alone, but the durable client resolves IDs across *every*
-        orchestration in the task hub -- agent entities, any user-registered
-        orchestrations, and other apps sharing the hub. Without this check a caller
-        holding one instance ID could read another orchestration's status (including
-        pending HITL request payloads) or inject external events into it. Scoping to
-        the workflow's ``dafx-{name}`` orchestration name keeps both endpoints bound to
-        the workflow this app hosts; anything else is treated as "not found".
+        The ``workflow/{name}/status`` and ``.../respond`` endpoints address instances
+        by ``instanceId`` alone, but the durable client resolves IDs across *every*
+        orchestration in the task hub -- agent entities, other workflows on this app,
+        any user-registered orchestrations, and other apps sharing the hub. Without
+        this check a caller holding one instance ID could read another orchestration's
+        status (including pending HITL request payloads) or inject external events into
+        it. Scoping to the route's ``dafx-{workflow_name}`` orchestration keeps each
+        endpoint bound to its own workflow; anything else is treated as "not found".
 
         The orchestration name is compared case-insensitively so the check stays robust
         to host/runtime casing differences.
         """
-        if self.workflow is None:
-            return False
-        expected = workflow_orchestrator_name(self.workflow.name)
+        expected = workflow_orchestrator_name(workflow_name)
         name = getattr(status, "name", None)
         return isinstance(name, str) and name.casefold() == expected.casefold()
 
@@ -546,6 +595,11 @@ class AgentFunctionApp(DFAppBase):
             Dictionary mapping agent names to their SupportsAgentRun instances.
         """
         return {name: metadata.agent for name, metadata in self._agent_metadata.items()}
+
+    @property
+    def workflows(self) -> dict[str, Workflow]:
+        """Returns a dict of workflow name to the hosted :class:`Workflow` instances."""
+        return dict(self._workflows)
 
     def add_agent(
         self,
@@ -630,12 +684,18 @@ class AgentFunctionApp(DFAppBase):
         self,
         context: AgentOrchestrationContextType,
         agent_name: str,
+        workflow_name: str | None = None,
     ) -> DurableAIAgent[AgentTask]:
         """Return a DurableAIAgent proxy for a registered agent.
 
         Args:
             context: Durable Functions orchestration context invoking the agent.
-            agent_name: Name of the agent registered on this app.
+            agent_name: Name of the agent registered on this app. For an agent that
+                belongs to a hosted workflow, pass ``workflow_name`` to resolve it
+                under its workflow-scoped identity; for an agent registered standalone
+                via ``agents=`` / ``add_agent`` use its bare name.
+            workflow_name: Optional owning workflow name. When given, the agent is
+                resolved under the scoped id ``{workflow_name}-{agent_name}``.
 
         Returns:
             DurableAIAgent[AgentTask] wrapper bound to the orchestration context.
@@ -643,7 +703,9 @@ class AgentFunctionApp(DFAppBase):
         Raises:
             ValueError: If the requested agent has not been registered.
         """
-        normalized_name = str(agent_name)
+        normalized_name = (
+            workflow_scoped_executor_id(workflow_name, str(agent_name)) if workflow_name else str(agent_name)
+        )
 
         if normalized_name not in self._agent_metadata:
             raise ValueError(f"Agent '{normalized_name}' is not registered with this app.")

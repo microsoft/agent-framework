@@ -1438,37 +1438,75 @@ class TestAgentFunctionAppWorkflow:
 
         assert "SharedAgent" in app.agents
 
-    def test_build_status_url(self) -> None:
-        """Test _build_status_url constructs correct URL."""
+    def test_init_with_multiple_workflows_registers_each(self) -> None:
+        """The workflows= list registers each workflow keyed by name."""
+        from agent_framework import Executor
+
+        def _wf(name: str, executor_id: str) -> Mock:
+            ex = Mock(spec=Executor)
+            ex.id = executor_id
+            wf = Mock()
+            wf.name = name
+            wf.executors = {executor_id: ex}
+            return wf
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            app = AgentFunctionApp(workflows=[_wf("orders", "router"), _wf("billing", "router")])
+
+        assert set(app.workflows) == {"orders", "billing"}
+        assert app.workflow is None  # ambiguous with >1 workflow
+        assert setup_exec.call_count == 2
+        assert setup_orch.call_count == 2
+
+    def test_init_rejects_duplicate_workflow_name(self) -> None:
+        """Two workflows with the same name are rejected."""
+        from agent_framework import Executor
+
+        def _wf(executor_id: str) -> Mock:
+            ex = Mock(spec=Executor)
+            ex.id = executor_id
+            wf = Mock()
+            wf.name = "orders"
+            wf.executors = {executor_id: ex}
+            return wf
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="already registered"),
+        ):
+            AgentFunctionApp(workflows=[_wf("a"), _wf("b")])
+
+    def test_init_rejects_mapping_key_mismatch(self) -> None:
+        """A workflows mapping whose key disagrees with Workflow.name is rejected."""
         mock_workflow = Mock()
-        mock_workflow.name = "test_workflow"
+        mock_workflow.name = "orders"
         mock_workflow.executors = {}
 
         with (
             patch.object(AgentFunctionApp, "_setup_executor_activity"),
             patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="does not match"),
         ):
-            app = AgentFunctionApp(workflow=mock_workflow)
+            AgentFunctionApp(workflows={"wrong_key": mock_workflow})
 
-        url = app._build_status_url("http://localhost:7071/api/workflow/run", "instance-123")
+    def test_init_rejects_auto_generated_workflow_name(self) -> None:
+        """An auto-generated WorkflowBuilder name is rejected."""
+        import uuid
 
-        assert url == "http://localhost:7071/api/workflow/status/instance-123"
-
-    def test_build_status_url_handles_trailing_slash(self) -> None:
-        """Test _build_status_url handles URLs without /api/ correctly."""
         mock_workflow = Mock()
-        mock_workflow.name = "test_workflow"
+        mock_workflow.name = f"WorkflowBuilder-{uuid.uuid4()}"
         mock_workflow.executors = {}
 
         with (
             patch.object(AgentFunctionApp, "_setup_executor_activity"),
             patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="auto-generated"),
         ):
-            app = AgentFunctionApp(workflow=mock_workflow)
-
-        url = app._build_status_url("http://localhost:7071/", "instance-456")
-
-        assert "instance-456" in url
+            AgentFunctionApp(workflow=mock_workflow)
 
 
 # NOTE: State snapshot/diff tests were moved to durabletask once the activity
@@ -1552,18 +1590,18 @@ class TestWorkflowOrchestrationScoping:
         app = self._app_for("orders")
         status = Mock()
         status.name = name
-        assert app._is_workflow_orchestration(status) is True
+        assert app._is_owned_orchestration(status, "orders") is True
 
     def test_rejects_none_status(self) -> None:
         # client.get_status returns None when no instance resolves for the ID.
         app = self._app_for("orders")
-        assert app._is_workflow_orchestration(None) is False
+        assert app._is_owned_orchestration(None, "orders") is False
 
     def test_rejects_status_without_name(self) -> None:
         app = self._app_for("orders")
         status = Mock()
         status.name = None
-        assert app._is_workflow_orchestration(status) is False
+        assert app._is_owned_orchestration(status, "orders") is False
 
     @pytest.mark.parametrize(
         "other_name",
@@ -1578,7 +1616,7 @@ class TestWorkflowOrchestrationScoping:
         app = self._app_for("orders")
         status = Mock()
         status.name = other_name
-        assert app._is_workflow_orchestration(status) is False
+        assert app._is_owned_orchestration(status, "orders") is False
 
 
 if __name__ == "__main__":
