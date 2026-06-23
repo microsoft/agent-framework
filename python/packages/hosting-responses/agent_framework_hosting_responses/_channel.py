@@ -47,6 +47,8 @@ from openai.types.responses import (
     ResponseInputImage,
     ResponseInputText,
     ResponseOutputItem,
+    ResponseOutputItemAddedEvent,
+    ResponseOutputItemDoneEvent,
     ResponseOutputMessage,
     ResponseOutputText,
     ResponseTextDeltaEvent,
@@ -311,6 +313,7 @@ class ResponsesChannel:
         yield sse(ResponseCreatedEvent(type="response.created", response=skeleton, sequence_number=next_seq()))
 
         streamed_updates: list[AgentResponseUpdate] = []
+        next_output_index = 1
         try:
             stream = await self._ctx.run_stream(
                 request,
@@ -321,22 +324,15 @@ class ResponsesChannel:
                 channel_name=self.name,
             )
             async for update in stream:
-                stream_update = _stream_update_from_update(update)
-                if stream_update is None:
-                    continue
-                streamed_updates.append(stream_update)
-                for chunk in _text_deltas_from_update(stream_update):
-                    yield sse(
-                        ResponseTextDeltaEvent(
-                            type="response.output_text.delta",
-                            item_id=msg_id,
-                            output_index=0,
-                            content_index=0,
-                            delta=chunk,
-                            logprobs=[],
-                            sequence_number=next_seq(),
-                        )
-                    )
+                streamed_updates.append(update)
+                update_events, next_output_index = _stream_events_from_update(
+                    update,
+                    message_id=msg_id,
+                    next_output_index=next_output_index,
+                    next_sequence_number=next_seq,
+                )
+                for event in update_events:
+                    yield sse(event)
             try:
                 # Finalize so context-provider / history hooks on the agent
                 # still run even though we are emitting our own SSE.
@@ -382,22 +378,66 @@ class ResponsesChannel:
         )
 
 
-def _stream_update_from_update(update: Any) -> AgentResponseUpdate | None:
-    if isinstance(update, AgentResponseUpdate):
-        return update
+def _stream_events_from_update(
+    update: AgentResponseUpdate,
+    *,
+    message_id: str,
+    next_output_index: int,
+    next_sequence_number: Callable[[], int],
+) -> tuple[list[Any], int]:
+    events: list[Any] = []
+    for output_item in _contents_to_output_items(update.contents, status="completed"):
+        if isinstance(output_item, ResponseOutputMessage):
+            _append_message_delta_events(
+                events,
+                output_item,
+                message_id=message_id,
+                next_sequence_number=next_sequence_number,
+            )
+            continue
 
-    contents = getattr(update, "contents", None)
-    if not isinstance(contents, Sequence) or isinstance(contents, (str, bytes, bytearray)):
-        return None
-    content_items = [content for content in cast("Sequence[Any]", contents) if isinstance(content, Content)]
-    if not content_items:
-        return None
-    role = getattr(update, "role", None)
-    return AgentResponseUpdate(contents=content_items, role=role if isinstance(role, str) else "assistant")
+        events.append(
+            ResponseOutputItemAddedEvent(
+                type="response.output_item.added",
+                item=output_item,
+                output_index=next_output_index,
+                sequence_number=next_sequence_number(),
+            )
+        )
+        events.append(
+            ResponseOutputItemDoneEvent(
+                type="response.output_item.done",
+                item=output_item,
+                output_index=next_output_index,
+                sequence_number=next_sequence_number(),
+            )
+        )
+        next_output_index += 1
+
+    return events, next_output_index
 
 
-def _text_deltas_from_update(update: AgentResponseUpdate) -> list[str]:
-    return [content.text for content in update.contents if content.type == "text" and content.text]
+def _append_message_delta_events(
+    events: list[Any],
+    output_item: ResponseOutputMessage,
+    *,
+    message_id: str,
+    next_sequence_number: Callable[[], int],
+) -> None:
+    for content_index, content in enumerate(output_item.content):
+        if not isinstance(content, ResponseOutputText) or not content.text:
+            continue
+        events.append(
+            ResponseTextDeltaEvent(
+                type="response.output_text.delta",
+                item_id=message_id,
+                output_index=0,
+                content_index=content_index,
+                delta=content.text,
+                logprobs=[],
+                sequence_number=next_sequence_number(),
+            )
+        )
 
 
 def _streamed_updates_output(

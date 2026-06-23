@@ -557,6 +557,12 @@ class TestResponsesChannelStreaming:
             r = client.post("/responses", json={"input": "hi", "stream": True})
 
         assert r.status_code == 200
+        assert "event: response.output_item.added" in r.text
+        assert "event: response.output_item.done" in r.text
+        added = _sse_payload(r.text, "response.output_item.added")
+        assert added["item"]["output"] == [
+            {"detail": "auto", "type": "input_image", "image_url": "https://example.com/cat.png"}
+        ]
         completed = _sse_payload(r.text, "response.completed")
         assert completed["response"]["output"][0]["content"][0]["text"] == "caption"
         assert completed["response"]["output"][1]["output"] == [
