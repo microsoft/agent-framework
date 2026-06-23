@@ -136,19 +136,19 @@ class FunctionExecutor(Executor):
             # Sync function with context - wrap to make async using thread pool
             async def wrapped_func(message: Any, ctx: WorkflowContext[Any]) -> Any:
                 # Call the sync function with both parameters in a thread
-                return await asyncio.to_thread(func, message, ctx)  # type: ignore
+                return await asyncio.to_thread(func, message, ctx)
 
         elif not self._has_context and self._is_async:
             # Async function without context - wrap to ignore context
             async def wrapped_func(message: Any, ctx: WorkflowContext[Any]) -> Any:
                 # Call the async function with just the message
-                return await func(message)  # type: ignore
+                return await func(message)
 
         else:
             # Sync function without context - wrap to make async and ignore context using thread pool
             async def wrapped_func(message: Any, ctx: WorkflowContext[Any]) -> Any:
                 # Call the sync function with just the message in a thread
-                return await asyncio.to_thread(func, message)  # type: ignore
+                return await asyncio.to_thread(func, message)
 
         # Now register our instance handler
         self._register_instance_handler(

@@ -23,7 +23,6 @@ Prerequisites:
 - Authentication via Azure CLI (az login)
 """
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -42,6 +41,7 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -332,19 +332,14 @@ class InputRouterExecutor(Executor):
     @handler
     async def route_input(
         self,
-        input_json: str,
+        submission: ContentSubmission,
         ctx: WorkflowContext[AgentExecutorRequest],
     ) -> None:
-        """Parse input and create agent request."""
-        data = json.loads(input_json) if isinstance(input_json, str) else input_json
+        """Create the agent request from the submitted content.
 
-        submission = ContentSubmission(
-            content_id=data.get("content_id", "unknown"),
-            title=data.get("title", "Untitled"),
-            body=data.get("body", ""),
-            author=data.get("author", "Anonymous"),
-        )
-
+        The durable engine reconstructs this ``ContentSubmission`` from the
+        client's JSON payload before delivery, mirroring in-process execution.
+        """
         # Store submission in shared state for later retrieval
         ctx.set_state("current_submission", submission)
 
@@ -379,7 +374,7 @@ def _create_workflow() -> Workflow:
         client=chat_client,
         name=CONTENT_ANALYZER_AGENT_NAME,
         instructions=CONTENT_ANALYZER_INSTRUCTIONS,
-        default_options={"response_format": ContentAnalysisResult},
+        default_options=OpenAIChatOptions[Any](response_format=ContentAnalysisResult),
     )
 
     # Create executors

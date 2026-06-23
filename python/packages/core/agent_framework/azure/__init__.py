@@ -19,6 +19,8 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "DurableAIAgentClient": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentOrchestrationContext": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentWorker": ("agent_framework_durabletask", "agent-framework-durabletask"),
+    "DurableWorkflowClient": ("agent_framework_durabletask", "agent-framework-durabletask"),
+    "WORKFLOW_ORCHESTRATOR_NAME": ("agent_framework_durabletask", "agent-framework-durabletask"),
 }
 
 

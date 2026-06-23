@@ -96,7 +96,7 @@ _register_state_type = register_state_type
 def _serialize_value(value: Any) -> Any:
     """Serialize a single value, handling objects with to_dict() and Pydantic models."""
     if hasattr(value, "to_dict") and callable(value.to_dict):
-        return value.to_dict()  # pyright: ignore[reportUnknownMemberType]
+        return value.to_dict()
     # Pydantic BaseModel support — import lazily to avoid hard dep at module level
     with suppress(ImportError):
         from pydantic import BaseModel

@@ -20,7 +20,7 @@
 // indirect prompt injection in an uploaded file.
 //
 // Required environment variables:
-//   FOUNDRY_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
+//   FOUNDRY_PROJECT_ENDPOINT         - Foundry project endpoint
 //   FOUNDRY_MODEL    - Model deployment name (default: gpt-4o)
 //
 // Optional:

@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
-from typing import Any
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import pytest
@@ -17,6 +17,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     Message,
     RawAgent,
     ResponseStream,
@@ -113,7 +114,7 @@ def test_start_span_basic(span_exporter: InMemorySpanExporter):
         OtelAttr.TOOL_TYPE: "function",
     }
     span_exporter.clear()
-    with get_function_span(attributes) as function_span:
+    with get_function_span(attributes) as function_span:  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         assert function_span is not None
         function_span.set_attribute("test_attr", "test_value")
 
@@ -121,10 +122,10 @@ def test_start_span_basic(span_exporter: InMemorySpanExporter):
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "execute_tool test_function"
-    assert span.attributes["test_attr"] == "test_value"
-    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
-    assert span.attributes[OtelAttr.TOOL_NAME] == "test_function"
-    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function description"
+    assert span.attributes["test_attr"] == "test_value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_NAME] == "test_function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function description"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 def test_start_span_with_tool_call_id(span_exporter: InMemorySpanExporter):
@@ -140,20 +141,20 @@ def test_start_span_with_tool_call_id(span_exporter: InMemorySpanExporter):
     }
 
     span_exporter.clear()
-    with get_function_span(attributes) as function_span:
+    with get_function_span(attributes) as function_span:  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         assert function_span is not None
         function_span.set_attribute("test_attr", "test_value")
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "execute_tool test_function"
-    assert span.attributes["test_attr"] == "test_value"
-    assert span.attributes[OtelAttr.TOOL_CALL_ID] == tool_call_id
+    assert span.attributes["test_attr"] == "test_value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == tool_call_id  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     # Verify all attributes
-    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
-    assert span.attributes[OtelAttr.TOOL_NAME] == "test_function"
-    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function"
-    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_NAME] == "test_function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "Test function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 @pytest.fixture
@@ -164,8 +165,13 @@ def mock_chat_client():
         def service_url(self):
             return "https://test.example.com"
 
-        def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             if stream:
                 return self._get_streaming_response(messages=messages, options=options, **kwargs)
@@ -176,7 +182,7 @@ def mock_chat_client():
             return _get()
 
         async def _get_non_streaming_response(
-            self, *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+            self, *, messages: Sequence[Message], options: Mapping[str, Any], **kwargs: Any
         ) -> ChatResponse:
             return ChatResponse(
                 messages=[Message("assistant", ["Test response"])],
@@ -185,7 +191,7 @@ def mock_chat_client():
             )
 
         def _get_streaming_response(
-            self, *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+            self, *, messages: Sequence[Message], options: Mapping[str, Any], **kwargs: Any
         ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
@@ -212,13 +218,13 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "chat Test"
-    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
-    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"
-    assert span.attributes[OtelAttr.INPUT_TOKENS] == 10
-    assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 20
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.INPUT_TOKENS] == 10  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 20  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     if enable_sensitive_data:
-        assert span.attributes[OtelAttr.INPUT_MESSAGES] is not None
-        assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
+        assert span.attributes[OtelAttr.INPUT_MESSAGES] is not None  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+        assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
@@ -235,7 +241,7 @@ async def test_chat_client_observability_accepts_model_option(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
@@ -259,11 +265,11 @@ async def test_chat_client_streaming_observability(
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "chat Test"
-    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
-    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     if enable_sensitive_data:
-        assert span.attributes[OtelAttr.INPUT_MESSAGES] is not None
-        assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
+        assert span.attributes[OtelAttr.INPUT_MESSAGES] is not None  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+        assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -286,13 +292,13 @@ async def test_chat_client_observability_with_instructions(
     span = spans[0]
 
     # Verify system_instructions attribute is set
-    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "You are a helpful assistant."
 
     # Verify input_messages excludes system instructions
-    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
@@ -320,13 +326,92 @@ async def test_chat_client_streaming_observability_with_instructions(
     span = spans[0]
 
     # Verify system_instructions attribute is set
-    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "You are a helpful assistant."
 
-    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["user"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_chat_client_streaming_sync_setup_span_is_parented_to_chat_span(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Regression guard for the streaming sync-setup parenting gap.
+
+    When a chat client subclass creates spans inside ``_inner_get_response`` during
+    the synchronous setup phase (before returning the ``ResponseStream``), those
+    spans must be nested under the chat-completion span produced by
+    ``ChatTelemetryLayer``. The chat span is created via ``_start_streaming_span``
+    (which does not attach the span as current) and ``with_pull_context_manager``
+    only activates the span around each pull, so the synchronous setup window
+    would otherwise see the chat span existing-but-not-current. ``ChatTelemetryLayer``
+    therefore wraps the synchronous ``super_get_response(...)`` call in
+    ``_activate_span(span)`` so subclass spans opened during setup parent correctly.
+    """
+    from agent_framework.observability import get_tracer
+
+    class SyncSetupChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: Sequence[Message], stream: bool, options: Mapping[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            assert stream is True, "this fixture only exercises the streaming path"
+
+            # Synchronous setup the subclass performs before the stream object is
+            # constructed. Real clients do payload building, auth resolution, etc.
+            # here. We model that as a child span the subclass wants to nest under
+            # the chat-completion span.
+            with get_tracer().start_as_current_span("subclass_sync_setup") as setup_span:
+                setup_span.set_attribute("subclass.work", "payload_build")
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("hi")], role="assistant", finish_reason="stop")
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                return ChatResponse.from_updates(updates)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+    client = SyncSetupChatClient()
+    span_exporter.clear()
+
+    stream = client.get_response(stream=True, messages=[Message("user", ["go"])], options={"model": "Test"})
+    async for _update in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    chat_spans = [s for s in spans if s.name == "chat Test"]
+    setup_spans = [s for s in spans if s.name == "subclass_sync_setup"]
+
+    assert len(chat_spans) == 1, f"expected exactly one chat span, got {[s.name for s in spans]}"
+    assert len(setup_spans) == 1, f"expected exactly one setup span, got {[s.name for s in spans]}"
+
+    chat_span = chat_spans[0]
+    setup_span = setup_spans[0]
+
+    # Both spans must be part of the same trace.
+    assert setup_span.context is not None
+    assert chat_span.context is not None
+    assert setup_span.context.trace_id == chat_span.context.trace_id, (
+        "setup span ended up in a different trace from the chat span; "
+        "they should share the trace produced by ChatTelemetryLayer"
+    )
+
+    # And the chat span must be the parent of the setup span.
+    assert setup_span.parent is not None, (
+        "subclass setup span has no parent; expected it to be a child of the chat span"
+    )
+    assert setup_span.parent.span_id == chat_span.context.span_id, (
+        "subclass setup span is not parented to the chat span "
+        f"(parent={setup_span.parent.span_id:x}, chat={chat_span.context.span_id:x}); "
+        "this is the streaming sync-setup parenting gap"
+    )
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -351,10 +436,10 @@ async def test_chat_client_observability_with_system_message_and_instructions(
     assert len(spans) == 1
     span = spans[0]
 
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert system_instructions == [{"type": "text", "content": "Framework system instruction"}]
 
-    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["system", "user"]
     assert input_messages[0]["parts"][0]["content"] == "Original system message"
     assert input_messages[1]["parts"][0]["content"] == "Test message"
@@ -378,7 +463,7 @@ async def test_chat_client_observability_without_instructions(
     span = spans[0]
 
     # Verify system_instructions attribute is NOT set
-    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -399,7 +484,7 @@ async def test_chat_client_observability_with_empty_instructions(
     span = spans[0]
 
     # Empty string should not set system_instructions
-    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -422,8 +507,8 @@ async def test_chat_client_observability_with_list_instructions(
     span = spans[0]
 
     # Verify system_instructions attribute contains both instructions
-    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert len(system_instructions) == 2
     assert system_instructions[0]["content"] == "Instruction 1"
     assert system_instructions[1]["content"] == "Instruction 2"
@@ -442,8 +527,8 @@ async def test_chat_client_without_model_observability(mock_chat_client, span_ex
     span = spans[0]
 
     assert span.name == "chat unknown"
-    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
-    assert span.attributes[OtelAttr.REQUEST_MODEL] == "unknown"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "unknown"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 async def test_chat_client_streaming_without_model_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
@@ -464,8 +549,8 @@ async def test_chat_client_streaming_without_model_observability(mock_chat_clien
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "chat unknown"
-    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
-    assert span.attributes[OtelAttr.REQUEST_MODEL] == "unknown"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "unknown"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 def test_prepend_user_agent_with_none_value():
@@ -515,7 +600,7 @@ def mock_chat_agent():
                 finalizer=AgentResponse.from_updates,
             )
 
-    class MockChatClientAgent(AgentTelemetryLayer, _MockChatClientAgent):
+    class MockChatClientAgent(AgentTelemetryLayer, _MockChatClientAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
         pass
 
     return MockChatClientAgent
@@ -527,7 +612,7 @@ async def test_agent_span_captures_response_telemetry_without_inner_chat_span(
 ):
     """Agent spans should retain response telemetry when no inner chat span owns it."""
 
-    agent = mock_chat_agent()
+    agent = mock_chat_agent()  # type: ignore[operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
 
     span_exporter.clear()
     response = await agent.run("Test message")
@@ -536,16 +621,16 @@ async def test_agent_span_captures_response_telemetry_without_inner_chat_span(
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "invoke_agent test_agent"
-    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
-    assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
-    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
-    assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
-    assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"
-    assert span.attributes[OtelAttr.RESPONSE_ID] == "test_response_id"
-    assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
-    assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 25
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.RESPONSE_ID] == "test_response_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.INPUT_TOKENS] == 15  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 25  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     if enable_sensitive_data:
-        assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
+        assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
@@ -553,7 +638,7 @@ async def test_agent_streaming_response_with_diagnostics_enabled(
     mock_chat_agent: SupportsAgentRun, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
     """Test agent streaming telemetry through the agent telemetry mixin."""
-    agent = mock_chat_agent()
+    agent = mock_chat_agent()  # type: ignore[operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
     span_exporter.clear()
     updates = []
     stream = agent.run("Test message", stream=True)
@@ -567,13 +652,103 @@ async def test_agent_streaming_response_with_diagnostics_enabled(
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "invoke_agent test_agent"
-    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION
-    assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
-    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
-    assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
-    assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.AGENT_INVOKE_OPERATION  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     if enable_sensitive_data:
-        assert span.attributes.get(OtelAttr.OUTPUT_MESSAGES) is not None  # Streaming, so no usage yet
+        assert span.attributes.get(OtelAttr.OUTPUT_MESSAGES) is not None  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]  # Streaming, so no usage yet
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_agent_streaming_sync_setup_span_is_parented_to_agent_span(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Regression guard for the streaming sync-setup parenting gap in ``AgentTelemetryLayer``.
+
+    Mirrors :func:`test_chat_client_streaming_sync_setup_span_is_parented_to_chat_span`
+    but at the agent layer. When an agent's ``run(stream=True)`` synchronously
+    constructs the ``ResponseStream`` (rather than returning a coroutine that
+    the framework wraps via ``ResponseStream.from_awaitable``), any spans the
+    subclass opens during that synchronous setup must still be nested under
+    the agent invoke span produced by ``AgentTelemetryLayer``.
+
+    The agent invoke span is created via ``_start_streaming_span`` (which does
+    not attach the span as current) and ``with_pull_context_manager`` only
+    activates the span around each pull, so the synchronous setup window would
+    otherwise see the agent span existing-but-not-current. ``BaseAgent.run``
+    happens to side-step this by always wrapping its streaming path in
+    ``from_awaitable``, but subclasses that return a stream synchronously do not
+    get the same protection. ``AgentTelemetryLayer`` therefore wraps the
+    synchronous ``execute()`` call in ``_activate_span(span)`` so subclass spans
+    opened during setup parent correctly regardless of the return shape.
+    """
+    from agent_framework import AgentResponse, AgentResponseUpdate
+    from agent_framework.observability import get_tracer
+
+    class _SyncSetupAgent:
+        AGENT_PROVIDER_NAME = "test_agent_system"
+
+        def __init__(self) -> None:
+            self.id = "sync_setup_agent_id"
+            self.name = "sync_setup_agent"
+            self.description = "Agent that performs synchronous setup before streaming."
+            self.default_options: dict[str, Any] = {"model": "TestModel"}
+
+        def run(self, messages=None, *, session=None, stream=False, **kwargs):  # type: ignore[no-untyped-def]
+            assert stream is True, "this fixture only exercises the streaming path"
+
+            # Synchronous setup the agent subclass performs before constructing
+            # the ResponseStream (e.g. resolving credentials, building payload,
+            # opening transport). Real subclasses may want spans here to nest
+            # under the agent invoke span.
+            with get_tracer().start_as_current_span("agent_subclass_sync_setup") as setup_span:
+                setup_span.set_attribute("agent.subclass.work", "payload_build")
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+    class SyncSetupAgent(AgentTelemetryLayer, _SyncSetupAgent):  # type: ignore
+        pass
+
+    agent = SyncSetupAgent()
+    span_exporter.clear()
+
+    stream = agent.run("go", stream=True)
+    async for _update in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.name == "invoke_agent sync_setup_agent"]
+    setup_spans = [s for s in spans if s.name == "agent_subclass_sync_setup"]
+
+    assert len(agent_spans) == 1, f"expected exactly one agent span, got {[s.name for s in spans]}"
+    assert len(setup_spans) == 1, f"expected exactly one setup span, got {[s.name for s in spans]}"
+
+    agent_span = agent_spans[0]
+    setup_span = setup_spans[0]
+
+    # Both spans must be part of the same trace.
+    assert setup_span.context is not None
+    assert agent_span.context is not None
+    assert setup_span.context.trace_id == agent_span.context.trace_id, (
+        "setup span ended up in a different trace from the agent span; "
+        "they should share the trace produced by AgentTelemetryLayer"
+    )
+
+    # And the agent span must be the parent of the setup span.
+    assert setup_span.parent is not None, (
+        "agent subclass setup span has no parent; expected it to be a child of the agent span"
+    )
+    assert setup_span.parent.span_id == agent_span.context.span_id, (
+        "agent subclass setup span is not parented to the agent span "
+        f"(parent={setup_span.parent.span_id:x}, agent={agent_span.context.span_id:x}); "
+        "this is the streaming sync-setup parenting gap at the agent layer"
+    )
 
 
 async def test_function_call_with_error_handling(span_exporter: InMemorySpanExporter):
@@ -1008,7 +1183,7 @@ def test_create_otlp_exporters_grpc_missing_dependency():
 )
 def test_configure_otel_providers_with_views(monkeypatch):
     """Test configure_otel_providers accepts views parameter."""
-    from opentelemetry.sdk.metrics import View
+    from opentelemetry.sdk.metrics import View  # type: ignore[attr-defined]  # ty: ignore[unresolved-import]
     from opentelemetry.sdk.metrics.view import DropAggregation
 
     from agent_framework.observability import configure_otel_providers
@@ -1023,7 +1198,7 @@ def test_configure_otel_providers_with_views(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
     # Create a view that drops all metrics
-    views = [View(instrument_name="*", aggregation=DropAggregation())]
+    views = [View(instrument_name="*", aggregation=DropAggregation())]  # pyrefly: ignore[not-callable]
 
     # Should not raise an error
     configure_otel_providers(views=views)
@@ -1780,9 +1955,9 @@ def test_to_otel_part_data():
     content = Content.from_data(data=data, media_type="application/octet-stream")
     result = _to_otel_part(content)
 
-    assert result["type"] == "blob"
-    assert result["mime_type"] == "application/octet-stream"
-    assert result["modality"] == "application"
+    assert result["type"] == "blob"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert result["mime_type"] == "application/octet-stream"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert result["modality"] == "application"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 def test_to_otel_part_function_call():
@@ -1868,8 +2043,8 @@ def test_to_otel_part_function_result():
     content = Content(type="function_result", call_id="call_123", result="Success")
     result = _to_otel_part(content)
 
-    assert result["type"] == "tool_call_response"
-    assert result["id"] == "call_123"
+    assert result["type"] == "tool_call_response"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert result["id"] == "call_123"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 # region Test workflow observability functions
@@ -1894,11 +2069,11 @@ def test_create_workflow_span(span_exporter):
     """Test create_workflow_span creates a span."""
     from agent_framework.observability import create_workflow_span
 
-    span_exporter.clear()
+    span_exporter.clear()  # type: ignore[attr-defined]
     with create_workflow_span("test_workflow", attributes={"key": "value"}):
         pass
 
-    spans = span_exporter.get_finished_spans()
+    spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
     assert len(spans) == 1
     assert spans[0].name == "test_workflow"
     assert spans[0].attributes["key"] == "value"
@@ -1908,7 +2083,7 @@ def test_create_processing_span(span_exporter):
     """Test create_processing_span creates a span with correct attributes."""
     from agent_framework.observability import OtelAttr, create_processing_span
 
-    span_exporter.clear()
+    span_exporter.clear()  # type: ignore[attr-defined]
     with create_processing_span(
         executor_id="exec_1",
         executor_type="TestExecutor",
@@ -1917,7 +2092,7 @@ def test_create_processing_span(span_exporter):
     ):
         pass
 
-    spans = span_exporter.get_finished_spans()
+    spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
     assert len(spans) == 1
     assert OtelAttr.EXECUTOR_PROCESS_SPAN in spans[0].name
     assert spans[0].attributes[OtelAttr.EXECUTOR_ID] == "exec_1"
@@ -1928,7 +2103,7 @@ def test_create_edge_group_processing_span(span_exporter):
     """Test create_edge_group_processing_span creates correct span."""
     from agent_framework.observability import OtelAttr, create_edge_group_processing_span
 
-    span_exporter.clear()
+    span_exporter.clear()  # type: ignore[attr-defined]
     with create_edge_group_processing_span(
         edge_group_type="ConditionalEdge",
         edge_group_id="edge_1",
@@ -1937,7 +2112,7 @@ def test_create_edge_group_processing_span(span_exporter):
     ):
         pass
 
-    spans = span_exporter.get_finished_spans()
+    spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
     assert len(spans) == 1
     assert OtelAttr.EDGE_GROUP_PROCESS_SPAN in spans[0].name
     assert spans[0].attributes[OtelAttr.EDGE_GROUP_TYPE] == "ConditionalEdge"
@@ -1950,7 +2125,7 @@ def test_create_edge_group_processing_span_invalid_link(span_exporter):
     """Test create_edge_group_processing_span handles invalid trace context gracefully."""
     from agent_framework.observability import create_edge_group_processing_span
 
-    span_exporter.clear()
+    span_exporter.clear()  # type: ignore[attr-defined]
     # Invalid trace context should be handled gracefully
     trace_contexts = [{"traceparent": "invalid-format"}]
     span_ids = ["invalid"]
@@ -1962,7 +2137,7 @@ def test_create_edge_group_processing_span_invalid_link(span_exporter):
     ):
         pass
 
-    spans = span_exporter.get_finished_spans()
+    spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
     assert len(spans) == 1  # Should still create the span
 
 
@@ -2092,7 +2267,7 @@ def test_get_response_attributes_with_response_id():
     response.raw_representation = None
     response.usage_details = None
 
-    attrs = {}
+    attrs = {}  # type: ignore[var-annotated]
     result = _get_response_attributes(attrs, response)
 
     assert result[OtelAttr.RESPONSE_ID] == "resp_123"
@@ -2110,7 +2285,7 @@ def test_get_response_attributes_with_finish_reason():
     response.raw_representation = None
     response.usage_details = None
 
-    attrs = {}
+    attrs = {}  # type: ignore[var-annotated]
     result = _get_response_attributes(attrs, response)
 
     assert OtelAttr.FINISH_REASONS in result
@@ -2129,7 +2304,7 @@ def test_get_response_attributes_with_model():
     response.usage_details = None
     response.model = "gpt-4"
 
-    attrs = {}
+    attrs = {}  # type: ignore[var-annotated]
     result = _get_response_attributes(attrs, response)
 
     assert result[OtelAttr.RESPONSE_MODEL] == "gpt-4"
@@ -2147,7 +2322,7 @@ def test_get_response_attributes_with_usage():
     response.raw_representation = None
     response.usage_details = {"input_token_count": 100, "output_token_count": 50}
 
-    attrs = {}
+    attrs = {}  # type: ignore[var-annotated]
     result = _get_response_attributes(attrs, response)
 
     assert result[OtelAttr.INPUT_TOKENS] == 100
@@ -2172,7 +2347,7 @@ def test_get_response_attributes_with_additional_usage():
         "reasoning_output_token_count": 30,
     }
 
-    attrs = {}
+    attrs: dict[str, Any] = {}
     result = _get_response_attributes(attrs, response)
 
     assert result[OtelAttr.INPUT_TOKENS] == 0
@@ -2198,7 +2373,7 @@ def test_get_response_attributes_maps_legacy_usage_keys():
         "completion/reasoning_tokens": 34,
     }
 
-    attrs = {}
+    attrs: dict[str, Any] = {}
     result = _get_response_attributes(attrs, response)
 
     assert result[OtelAttr.CACHE_CREATION_INPUT_TOKENS] == 12
@@ -2224,7 +2399,7 @@ def test_get_response_attributes_capture_usage_false():
         "reasoning_output_token_count": 30,
     }
 
-    attrs = {}
+    attrs = {}  # type: ignore[var-annotated]
     result = _get_response_attributes(attrs, response, capture_usage=False)
 
     assert OtelAttr.INPUT_TOKENS not in result
@@ -2246,7 +2421,7 @@ def test_get_response_attributes_capture_response_id_false():
     response.raw_representation = None
     response.usage_details = None
 
-    attrs = {}
+    attrs = {}  # type: ignore[var-annotated]
     result = _get_response_attributes(attrs, response, capture_response_id=False)
 
     assert OtelAttr.RESPONSE_ID not in result
@@ -2320,7 +2495,7 @@ def test_to_otel_part_generic():
     from agent_framework.observability import _to_otel_part
 
     # Create a content with type that falls to default case
-    content = Content(type="annotations", text="some text")
+    content = Content(type="annotations", text="some text")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     result = _to_otel_part(content)
 
     # Should return result from to_dict
@@ -2346,7 +2521,7 @@ def test_get_response_attributes_finish_reason_from_raw():
     response.raw_representation = raw_rep
     response.usage_details = None
 
-    attrs = {}
+    attrs = {}  # type: ignore[var-annotated]
     result = _get_response_attributes(attrs, response)
 
     assert OtelAttr.FINISH_REASONS in result
@@ -2366,7 +2541,7 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             self._id = "test_agent"
             self._name = "Test Agent"
             self._description = "A test agent"
-            self._default_options = {}
+            self._default_options = {}  # type: ignore[var-annotated]
 
         @property
         def id(self):
@@ -2410,7 +2585,7 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
 
             yield AgentResponseUpdate(contents=[Content.from_text("Test")], role="assistant")
 
-    class MockAgent(AgentTelemetryLayer, _MockAgent):
+    class MockAgent(AgentTelemetryLayer, _MockAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
         pass
 
     agent = MockAgent()
@@ -2434,7 +2609,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
             self._id = "failing_agent"
             self._name = "Failing Agent"
             self._description = "An agent that fails"
-            self._default_options = {}
+            self._default_options = {}  # type: ignore[var-annotated]
 
         @property
         def id(self):
@@ -2455,7 +2630,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
         async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
             raise RuntimeError("Agent failed")
 
-    class FailingAgent(AgentTelemetryLayer, _FailingAgent):
+    class FailingAgent(AgentTelemetryLayer, _FailingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
         pass
 
     agent = FailingAgent()
@@ -2484,7 +2659,7 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
             self._id = "streaming_agent"
             self._name = "Streaming Agent"
             self._description = "A streaming test agent"
-            self._default_options = {}
+            self._default_options = {}  # type: ignore[var-annotated]
 
         @property
         def id(self):
@@ -2520,7 +2695,7 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
                 finalizer=AgentResponse.from_updates,
             )
 
-    class StreamingAgent(AgentTelemetryLayer, _StreamingAgent):
+    class StreamingAgent(AgentTelemetryLayer, _StreamingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
         pass
 
     agent = StreamingAgent()
@@ -2610,7 +2785,7 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
     span = spans[0]
 
     # Check output messages include finish_reason
-    output_messages = json.loads(span.attributes[OtelAttr.OUTPUT_MESSAGES])
+    output_messages = json.loads(span.attributes[OtelAttr.OUTPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert output_messages[-1].get("finish_reason") == "stop"
 
 
@@ -2629,7 +2804,7 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
             self._id = "failing_stream"
             self._name = "Failing Stream"
             self._description = "A failing streaming agent"
-            self._default_options = {}
+            self._default_options = {}  # type: ignore[var-annotated]
 
         @property
         def id(self):
@@ -2665,7 +2840,7 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
                 finalizer=AgentResponse.from_updates,
             )
 
-    class FailingStreamingAgent(AgentTelemetryLayer, _FailingStreamingAgent):
+    class FailingStreamingAgent(AgentTelemetryLayer, _FailingStreamingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
         pass
 
     agent = FailingStreamingAgent()
@@ -2726,7 +2901,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
             self._id = "test"
             self._name = "Test"
             self._description = "Test"
-            self._default_options = {}
+            self._default_options = {}  # type: ignore[var-annotated]
 
         @property
         def id(self):
@@ -2746,9 +2921,9 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
 
         async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
             if stream:
-                return ResponseStream(
+                return ResponseStream(  # type: ignore[call-arg, misc]
                     self._run_stream(messages=messages, **kwargs),
-                    lambda x: AgentResponse.from_updates(x),
+                    finalizer=lambda x: AgentResponse.from_updates(updates=x),
                 )
             return AgentResponse(messages=[])
 
@@ -2757,7 +2932,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
 
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
 
-    class TestAgent(AgentTelemetryLayer, _TestAgent):
+    class TestAgent(AgentTelemetryLayer, _TestAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
         pass
 
     agent = TestAgent()
@@ -2781,7 +2956,7 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
             self._id = "test"
             self._name = "Test"
             self._description = "Test"
-            self._default_options = {}
+            self._default_options = {}  # type: ignore[var-annotated]
 
         @property
         def id(self):
@@ -2810,7 +2985,7 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
         async def _run_stream(self, messages=None, *, session=None, **kwargs):
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
 
-    class TestAgent(AgentTelemetryLayer, _TestAgent):
+    class TestAgent(AgentTelemetryLayer, _TestAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
         pass
 
     agent = TestAgent()
@@ -2913,7 +3088,7 @@ def test_get_span_creates_span(span_exporter: InMemorySpanExporter):
         OtelAttr.TOOL_NAME: "test_tool",
     }
 
-    with _get_span(attributes=attributes, span_name_attribute=OtelAttr.TOOL_NAME):
+    with _get_span(attributes=attributes, span_name_attribute=OtelAttr.TOOL_NAME):  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         pass
 
     spans = span_exporter.get_finished_spans()
@@ -3180,8 +3355,8 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     # Verify attributes were set on the span
-    assert spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100
-    assert spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
+    assert spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 def test_capture_response_records_zero_token_usage():
@@ -3190,7 +3365,7 @@ def test_capture_response_records_zero_token_usage():
 
     span = Mock()
     token_histogram = Mock()
-    attrs = {
+    attrs: dict[str, Any] = {
         OtelAttr.INPUT_TOKENS: 0,
         OtelAttr.OUTPUT_TOKENS: 0,
     }
@@ -3239,8 +3414,13 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
         def service_url(self):
             return "https://test.example.com"
 
-        def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _get() -> ChatResponse:
                 self.call_count += 1
@@ -3290,8 +3470,8 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
     assert sorted_spans[1].name.startswith("execute_tool"), (
         f"Second span should be 'execute_tool', got '{sorted_spans[1].name}'"
     )
-    assert sorted_spans[1].attributes.get(OtelAttr.TOOL_NAME) == "get_weather"
-    assert sorted_spans[1].attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION
+    assert sorted_spans[1].attributes.get(OtelAttr.TOOL_NAME) == "get_weather"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert sorted_spans[1].attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     # Third span: second chat (LLM call with function result)
     assert sorted_spans[2].name.startswith("chat"), f"Third span should be 'chat', got '{sorted_spans[2].name}'"
@@ -3307,8 +3487,13 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
         def service_url(self):
             return "https://test.example.com"
 
-        def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             if stream:
 
@@ -3337,11 +3522,11 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
             return _get()
 
     agent = Agent(
-        client=NestedTelemetryChatClient(),
+        client=NestedTelemetryChatClient(),  # ty: ignore[invalid-argument-type]
         id="nested_agent_id",
         name="nested_agent",
         description="Nested telemetry agent",
-        default_options={"model": "NestedModel"},
+        default_options={"model": "NestedModel"},  # pyrefly: ignore[bad-argument-type]
     )
 
     span_exporter.clear()
@@ -3359,18 +3544,18 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 2
 
-    span_by_operation = {span.attributes[OtelAttr.OPERATION.value]: span for span in spans}
+    span_by_operation = {span.attributes[OtelAttr.OPERATION.value]: span for span in spans}  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     agent_span = span_by_operation[OtelAttr.AGENT_INVOKE_OPERATION]
     chat_span = span_by_operation[OtelAttr.CHAT_COMPLETION_OPERATION]
 
-    assert chat_span.attributes[OtelAttr.RESPONSE_ID] == "nested_resp_123"
-    assert chat_span.attributes[OtelAttr.INPUT_TOKENS] == 11
-    assert chat_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22
+    assert chat_span.attributes[OtelAttr.RESPONSE_ID] == "nested_resp_123"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert chat_span.attributes[OtelAttr.INPUT_TOKENS] == 11  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert chat_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
-    assert OtelAttr.RESPONSE_ID not in agent_span.attributes
+    assert OtelAttr.RESPONSE_ID not in agent_span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
     # The agent span carries the aggregated usage from all inner chat completions
-    assert agent_span.attributes[OtelAttr.INPUT_TOKENS] == 11
-    assert agent_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22
+    assert agent_span.attributes[OtelAttr.INPUT_TOKENS] == 11  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert agent_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 # region Test non-ASCII character handling in JSON serialization
@@ -3402,20 +3587,20 @@ async def test_capture_messages_preserves_non_ascii_characters(mock_chat_client,
     span = spans[0]
 
     # Verify input messages preserve Japanese characters
-    input_messages_json = span.attributes[OtelAttr.INPUT_MESSAGES]
-    assert japanese_text in input_messages_json
+    input_messages_json = span.attributes[OtelAttr.INPUT_MESSAGES]  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert japanese_text in input_messages_json  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
     # Ensure it's not escaped to Unicode
-    assert "\\u" not in input_messages_json
+    assert "\\u" not in input_messages_json  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
     # Verify output messages preserve Japanese characters
-    output_messages_json = span.attributes[OtelAttr.OUTPUT_MESSAGES]
-    assert japanese_text in output_messages_json
-    assert "\\u" not in output_messages_json
+    output_messages_json = span.attributes[OtelAttr.OUTPUT_MESSAGES]  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert japanese_text in output_messages_json  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "\\u" not in output_messages_json  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
     # Verify JSON is valid and contains the text
-    input_messages = json.loads(input_messages_json)
+    input_messages = json.loads(input_messages_json)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert input_messages[0]["parts"][0]["content"] == japanese_text
-    output_messages = json.loads(output_messages_json)
+    output_messages = json.loads(output_messages_json)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert output_messages[0]["parts"][0]["content"] == japanese_text
 
 
@@ -3441,10 +3626,11 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    span = spans[0]
+    span = spans[0]  # type: ignore[assignment]
 
     # Verify system instructions preserve Chinese characters
-    system_instructions_json = span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS]
+    system_instructions_json = span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS]  # type: ignore[attr-defined]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert isinstance(system_instructions_json, str)
     assert chinese_text in system_instructions_json
     assert "\\u" not in system_instructions_json
 
@@ -3452,7 +3638,7 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
     system_instructions = json.loads(system_instructions_json)
     assert system_instructions[0]["content"] == chinese_text
 
-    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[attr-defined]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
@@ -3490,8 +3676,8 @@ def test_capture_messages_with_prepared_request_info_function_call_arguments(spa
         _capture_messages(span=span, provider_name="test_provider", messages=[msg])
 
     spans = span_exporter.get_finished_spans()
-    span = spans[0]
-    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    span = spans[0]  # type: ignore[assignment]
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[attr-defined]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     tool_part = input_messages[0]["parts"][0]
     assert tool_part["type"] == "tool_call"
     assert tool_part["arguments"]["data"] == {"target_agent": "helper", "reason": "overflow"}
@@ -3521,7 +3707,7 @@ def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_mess
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
+    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
     assert mock_logger_info.call_count == 1, f"Expected 1 log call, got {mock_logger_info.call_count}"
@@ -3559,7 +3745,7 @@ def test_capture_messages_logs_only_chat_history_when_framework_instructions_are
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
+    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["system", "user"]
 
     assert mock_logger_info.call_count == 2, f"Expected 2 log calls, got {mock_logger_info.call_count}"
@@ -3589,12 +3775,12 @@ async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMe
     span = spans[0]
 
     # Verify tool arguments preserve Korean characters
-    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]
-    assert korean_text in tool_arguments_json
-    assert "\\u" not in tool_arguments_json
+    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert korean_text in tool_arguments_json  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "\\u" not in tool_arguments_json  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
     # Verify JSON is valid and contains the text
-    tool_arguments = json.loads(tool_arguments_json)
+    tool_arguments = json.loads(tool_arguments_json)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert tool_arguments["message"] == korean_text
 
 
@@ -3618,8 +3804,8 @@ async def test_tool_result_preserves_non_ascii_characters(span_exporter: InMemor
     span = spans[0]
 
     # Verify tool result preserves Arabic characters
-    tool_result = span.attributes[OtelAttr.TOOL_RESULT]
-    assert arabic_text in tool_result
+    tool_result = span.attributes[OtelAttr.TOOL_RESULT]  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert arabic_text in tool_result  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -3647,19 +3833,19 @@ async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
     span_exporter.clear()
     # Use the tool's input_model to properly pass the Pydantic model argument
     input_model = greet_with_model.input_model
-    await greet_with_model.invoke(arguments=input_model(greeting=Greeting(message=japanese_text)))
+    await greet_with_model.invoke(arguments=input_model(greeting=Greeting(message=japanese_text)))  # type: ignore[misc, operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
 
     # Verify tool arguments preserve Japanese characters
-    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]
-    assert japanese_text in tool_arguments_json
-    assert "\\u" not in tool_arguments_json
+    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert japanese_text in tool_arguments_json  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "\\u" not in tool_arguments_json  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
     # Verify JSON is valid and contains the text
-    tool_arguments = json.loads(tool_arguments_json)
+    tool_arguments = json.loads(tool_arguments_json)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert tool_arguments["greeting"]["message"] == japanese_text
 
 
@@ -3686,12 +3872,12 @@ async def test_agent_instructions_from_default_options(
     span = spans[0]
 
     # Instructions from default_options should be captured
-    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "Default system instructions."
 
-    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
@@ -3717,10 +3903,10 @@ async def test_agent_instructions_preserve_system_messages_in_history(
     assert len(spans) == 1
     span = spans[0]
 
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert system_instructions == [{"type": "text", "content": "Default system instructions."}]
 
-    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["system", "user"]
     assert input_messages[0]["parts"][0]["content"] == "Original system message"
     assert input_messages[1]["parts"][0]["content"] == "Test message"
@@ -3745,8 +3931,8 @@ async def test_agent_instructions_from_options_override(
     assert len(spans) == 1
     span = spans[0]
 
-    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "Override instructions."
 
@@ -3771,8 +3957,8 @@ async def test_agent_instructions_merged_from_default_and_options(
     span = spans[0]
 
     # Merged instructions should contain both default and override, concatenated with newline
-    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert len(system_instructions) == 1
     assert "Default instructions." in system_instructions[0]["content"]
     assert "Additional instructions." in system_instructions[0]["content"]
@@ -3801,8 +3987,8 @@ async def test_agent_streaming_instructions_from_default_options(
     assert len(spans) == 1
     span = spans[0]
 
-    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "Default streaming instructions."
 
@@ -3830,11 +4016,139 @@ async def test_agent_streaming_instructions_merged_from_default_and_options(
     assert len(spans) == 1
     span = spans[0]
 
-    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
-    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert len(system_instructions) == 1
     assert "Default instructions." in system_instructions[0]["content"]
     assert "Stream override." in system_instructions[0]["content"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agent_instructions_include_context_provider_extensions(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data,
+    stream: bool,
+) -> None:
+    """Agent span instructions include instructions added by context providers."""
+    import json
+
+    class UserMemoryProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="user-memory")
+
+        async def before_run(
+            self,
+            *,
+            agent: Any,
+            session: Any,
+            context: Any,
+            state: dict[str, Any],
+        ) -> None:
+            context.extend_instructions(self.source_id, "The user's name is Alice.")
+
+    agent = Agent(
+        client=mock_chat_client(),
+        name="memory_agent",
+        instructions="You are a friendly assistant.",
+        context_providers=[UserMemoryProvider()],
+    )
+
+    span_exporter.clear()
+    if stream:
+        result_stream = agent.run("Hello", stream=True)
+        async for _ in result_stream:
+            pass
+        await result_stream.get_final_response()
+    else:
+        await agent.run("Hello")
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [
+        span
+        for span in spans
+        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+    ]
+    assert len(agent_spans) == 1
+
+    agent_attributes = agent_spans[0].attributes
+    assert agent_attributes is not None
+    system_instructions = json.loads(cast(str, agent_attributes[OtelAttr.SYSTEM_INSTRUCTIONS]))
+    contents = [item["content"] for item in system_instructions]
+    assert any("You are a friendly assistant." in content for content in contents)
+    assert any("The user's name is Alice." in content for content in contents)
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_instructions_not_overwritten_by_unrelated_nested_chat(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data,
+) -> None:
+    """Unrelated nested chat calls must not overwrite agent span instructions."""
+    import json
+
+    class NestedChatProvider(ContextProvider):
+        def __init__(self, nested_client: BaseChatClient[Any]) -> None:
+            super().__init__(source_id="nested-chat")
+            self.nested_client = nested_client
+
+        async def before_run(
+            self,
+            *,
+            agent: Any,
+            session: Any,
+            context: Any,
+            state: dict[str, Any],
+        ) -> None:
+            context.extend_instructions(self.source_id, "Context-provided instructions.")
+
+        async def after_run(
+            self,
+            *,
+            agent: Any,
+            session: Any,
+            context: Any,
+            state: dict[str, Any],
+        ) -> None:
+            await self.nested_client.get_response(
+                messages=[Message(role="user", contents=["Nested request"])],
+                options={"model": "NestedModel", "instructions": "Unrelated nested instructions."},
+                client_kwargs={"session": session},
+            )
+
+    agent = Agent(
+        client=mock_chat_client(),
+        name="guarded_agent",
+        instructions="Base agent instructions.",
+        context_providers=[NestedChatProvider(mock_chat_client())],
+    )
+
+    span_exporter.clear()
+    await agent.run("Hello")
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [
+        span
+        for span in spans
+        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+    ]
+    assert len(agent_spans) == 1
+    chat_spans = [
+        span
+        for span in spans
+        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
+    ]
+    assert len(chat_spans) == 2
+
+    agent_attributes = agent_spans[0].attributes
+    assert agent_attributes is not None
+    system_instructions = json.loads(cast(str, agent_attributes[OtelAttr.SYSTEM_INSTRUCTIONS]))
+    contents = [item["content"] for item in system_instructions]
+    assert any("Base agent instructions." in content for content in contents)
+    assert any("Context-provided instructions." in content for content in contents)
+    assert all("Unrelated nested instructions." not in content for content in contents)
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -3854,7 +4168,7 @@ async def test_agent_no_instructions_in_default_or_options(
     assert len(spans) == 1
     span = spans[0]
 
-    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 # region Additional coverage tests
@@ -3924,7 +4238,7 @@ def test_capture_response_with_error_type(span_exporter: InMemorySpanExporter):
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].attributes.get(OtelAttr.ERROR_TYPE) == "ValueError"
+    assert spans[0].attributes.get(OtelAttr.ERROR_TYPE) == "ValueError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 def test_backfill_request_model_when_unknown(span_exporter: InMemorySpanExporter):
@@ -3999,8 +4313,13 @@ async def test_chat_client_backfills_request_model_from_response(span_exporter: 
         def service_url(self):
             return "https://test.example.com"
 
-        def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _get() -> ChatResponse:
                 return ChatResponse(
@@ -4019,8 +4338,8 @@ async def test_chat_client_backfills_request_model_from_response(span_exporter: 
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "chat resolved-model"
-    assert span.attributes[OtelAttr.REQUEST_MODEL] == "resolved-model"
-    assert span.attributes[OtelAttr.RESPONSE_MODEL] == "resolved-model"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "resolved-model"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.RESPONSE_MODEL] == "resolved-model"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 async def test_chat_client_streaming_backfills_request_model_from_response(
@@ -4032,8 +4351,13 @@ async def test_chat_client_streaming_backfills_request_model_from_response(
         def service_url(self):
             return "https://test.example.com"
 
-        def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
@@ -4057,8 +4381,8 @@ async def test_chat_client_streaming_backfills_request_model_from_response(
     assert len(spans) == 1
     span = spans[0]
     assert span.name == "chat resolved-stream-model"
-    assert span.attributes[OtelAttr.REQUEST_MODEL] == "resolved-stream-model"
-    assert span.attributes[OtelAttr.RESPONSE_MODEL] == "resolved-stream-model"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "resolved-stream-model"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.RESPONSE_MODEL] == "resolved-stream-model"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 def test_configure_otel_providers_with_env_file_path(monkeypatch, tmp_path):
@@ -4233,28 +4557,35 @@ async def test_agent_invoke_span_aggregates_usage_across_tool_calls(span_exporte
 
     spans = span_exporter.get_finished_spans()
 
-    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert len(invoke_spans) == 1
     agent_span = invoke_spans[0]
 
-    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert len(chat_spans) == 2
 
+    chat_0_attrs = chat_spans[0].attributes
+    chat_1_attrs = chat_spans[1].attributes
+    agent_attrs = agent_span.attributes
+    assert chat_0_attrs is not None
+    assert chat_1_attrs is not None
+    assert agent_attrs is not None
+
     # Individual chat spans retain their own usage
-    assert chat_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 2239
-    assert chat_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 192
-    assert chat_spans[0].attributes.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100
-    assert chat_spans[0].attributes.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
-    assert chat_spans[1].attributes.get(OtelAttr.INPUT_TOKENS) == 2569
-    assert chat_spans[1].attributes.get(OtelAttr.OUTPUT_TOKENS) == 99
-    assert chat_spans[1].attributes.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 200
-    assert chat_spans[1].attributes.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 0
+    assert chat_0_attrs.get(OtelAttr.INPUT_TOKENS) == 2239
+    assert chat_0_attrs.get(OtelAttr.OUTPUT_TOKENS) == 192
+    assert chat_0_attrs.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100
+    assert chat_0_attrs.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
+    assert chat_1_attrs.get(OtelAttr.INPUT_TOKENS) == 2569
+    assert chat_1_attrs.get(OtelAttr.OUTPUT_TOKENS) == 99
+    assert chat_1_attrs.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 200
+    assert chat_1_attrs.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 0
 
     # The invoke_agent span must report the aggregate across all LLM round-trips
-    assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 2239 + 2569
-    assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 192 + 99
-    assert agent_span.attributes.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100 + 200
-    assert agent_span.attributes.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
+    assert agent_attrs.get(OtelAttr.INPUT_TOKENS) == 2239 + 2569
+    assert agent_attrs.get(OtelAttr.OUTPUT_TOKENS) == 192 + 99
+    assert agent_attrs.get(OtelAttr.CACHE_READ_INPUT_TOKENS) == 100 + 200
+    assert agent_attrs.get(OtelAttr.REASONING_OUTPUT_TOKENS) == 25
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
@@ -4279,11 +4610,11 @@ async def test_agent_invoke_span_usage_single_call(span_exporter: InMemorySpanEx
     await agent.run(messages="Hi")
 
     spans = span_exporter.get_finished_spans()
-    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert len(invoke_spans) == 1
 
-    assert invoke_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100
-    assert invoke_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
+    assert invoke_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert invoke_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
@@ -4326,13 +4657,13 @@ async def test_agent_invoke_span_aggregates_usage_on_max_iterations_exhaustion(s
 
     spans = span_exporter.get_finished_spans()
 
-    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert len(invoke_spans) == 1
     agent_span = invoke_spans[0]
 
     # The invoke_agent span must aggregate usage from the in-loop call and the final exhaustion call
-    assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 500
-    assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 100
+    assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 500  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 100  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 # region Test span nesting (parent-child relationships)
@@ -4346,8 +4677,13 @@ async def test_chat_span_nested_under_agent_span(span_exporter: InMemorySpanExpo
         def service_url(self):
             return "https://test.example.com"
 
-        def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             if stream:
 
@@ -4378,10 +4714,10 @@ async def test_chat_span_nested_under_agent_span(span_exporter: InMemorySpanExpo
             return _get()
 
     agent = Agent(
-        client=NestedChatClient(),
+        client=NestedChatClient(),  # ty: ignore[invalid-argument-type]
         id="nested_agent_id",
         name="nested_agent",
-        default_options={"model": "NestedModel"},
+        default_options={"model": "NestedModel"},  # pyrefly: ignore[bad-argument-type]
     )
 
     span_exporter.clear()
@@ -4396,7 +4732,7 @@ async def test_chat_span_nested_under_agent_span(span_exporter: InMemorySpanExpo
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 2
 
-    span_by_op = {s.attributes[OtelAttr.OPERATION.value]: s for s in spans}
+    span_by_op = {s.attributes[OtelAttr.OPERATION.value]: s for s in spans}  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     agent_span = span_by_op[OtelAttr.AGENT_INVOKE_OPERATION]
     chat_span = span_by_op[OtelAttr.CHAT_COMPLETION_OPERATION]
 
@@ -4404,12 +4740,17 @@ async def test_chat_span_nested_under_agent_span(span_exporter: InMemorySpanExpo
     assert agent_span.parent is None
 
     # Chat span's parent must be the agent span
-    assert chat_span.parent is not None
-    assert chat_span.parent.span_id == agent_span.context.span_id
-    assert chat_span.parent.trace_id == agent_span.context.trace_id
+    chat_parent = chat_span.parent
+    agent_context = agent_span.context
+    chat_context = chat_span.context
+    assert chat_parent is not None
+    assert agent_context is not None
+    assert chat_context is not None
+    assert chat_parent.span_id == agent_context.span_id
+    assert chat_parent.trace_id == agent_context.trace_id
 
     # Both spans must share the same trace
-    assert chat_span.context.trace_id == agent_span.context.trace_id
+    assert chat_context.trace_id == agent_context.trace_id
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -4430,8 +4771,13 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
         def service_url(self):
             return "https://test.example.com"
 
-        def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             self.call_count += 1
             is_first = self.call_count == 1
@@ -4486,10 +4832,10 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
             return _get()
 
     agent = Agent(
-        client=NestedToolChatClient(),
+        client=NestedToolChatClient(),  # ty: ignore[invalid-argument-type]
         id="tool_agent_id",
         name="tool_agent",
-        default_options={"model": "ToolModel", "tools": [get_weather], "tool_choice": "auto"},
+        default_options={"model": "ToolModel", "tools": [get_weather], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
     )
 
     span_exporter.clear()
@@ -4503,9 +4849,9 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
 
     spans = span_exporter.get_finished_spans()
 
-    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
-    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
-    tool_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION]
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    tool_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     assert len(invoke_spans) == 1, f"Expected 1 invoke_agent span, got {len(invoke_spans)}"
     assert len(chat_spans) == 2, f"Expected 2 chat spans, got {len(chat_spans)}"
@@ -4515,12 +4861,17 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
     assert agent_span.parent is None
 
     # All inner spans must be parented under the agent invoke span
+    agent_context = agent_span.context
+    assert agent_context is not None
     for inner in (*chat_spans, *tool_spans):
-        assert inner.parent is not None, f"Span {inner.name} has no parent"
-        assert inner.parent.span_id == agent_span.context.span_id, (
-            f"Span {inner.name} parent={inner.parent.span_id} != agent={agent_span.context.span_id}"
+        inner_parent = inner.parent
+        inner_context = inner.context
+        assert inner_parent is not None, f"Span {inner.name} has no parent"
+        assert inner_context is not None
+        assert inner_parent.span_id == agent_context.span_id, (
+            f"Span {inner.name} parent={inner_parent.span_id} != agent={agent_context.span_id}"
         )
-        assert inner.context.trace_id == agent_span.context.trace_id
+        assert inner_context.trace_id == agent_context.trace_id
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -4547,13 +4898,16 @@ async def test_chat_span_nested_under_explicit_outer_span(
             await client.get_response(messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
 
     spans = span_exporter.get_finished_spans()
-    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert len(chat_spans) == 1
     chat_span = chat_spans[0]
 
-    assert chat_span.parent is not None
-    assert chat_span.parent.span_id == outer_ctx.span_id
-    assert chat_span.context.trace_id == outer_ctx.trace_id
+    chat_parent = chat_span.parent
+    chat_context = chat_span.context
+    assert chat_parent is not None
+    assert chat_context is not None
+    assert chat_parent.span_id == outer_ctx.span_id
+    assert chat_context.trace_id == outer_ctx.trace_id
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -4572,8 +4926,13 @@ async def test_http_span_nested_under_chat_span(span_exporter: InMemorySpanExpor
         def service_url(self):
             return "https://test.example.com"
 
-        def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             if stream:
 
@@ -4612,7 +4971,7 @@ async def test_http_span_nested_under_chat_span(span_exporter: InMemorySpanExpor
         await client.get_response(messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
 
     spans = span_exporter.get_finished_spans()
-    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     http_spans = [s for s in spans if s.name == "HTTP POST"]
     assert len(chat_spans) == 1
     assert len(http_spans) == 1
@@ -4620,9 +4979,14 @@ async def test_http_span_nested_under_chat_span(span_exporter: InMemorySpanExpor
     chat_span = chat_spans[0]
     http_span = http_spans[0]
 
-    assert http_span.parent is not None
-    assert http_span.parent.span_id == chat_span.context.span_id
-    assert http_span.context.trace_id == chat_span.context.trace_id
+    http_parent = http_span.parent
+    http_context = http_span.context
+    chat_context = chat_span.context
+    assert http_parent is not None
+    assert http_context is not None
+    assert chat_context is not None
+    assert http_parent.span_id == chat_context.span_id
+    assert http_context.trace_id == chat_context.trace_id
 
 
 # region Test ResponseStream.with_pull_context_manager
@@ -4723,6 +5087,40 @@ async def test_with_pull_context_manager_wraps_stream_resolution_via_await():
     assert events[resolve_index - 1] == "enter"  # Pull context active during resolution
 
 
+async def test_with_pull_context_manager_wraps_stream_resolution_via_get_final_response():
+    """``get_final_response`` resolves the inner stream under the pull contexts (no prior iteration)."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def cm():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    async def inner() -> AsyncIterable[int]:
+        yield 1
+
+    async def make_stream() -> ResponseStream[int, list[int]]:
+        # Record that we resolve while a pull context is active.
+        events.append("resolving")
+        return ResponseStream(inner(), finalizer=lambda updates: list(updates))
+
+    stream: ResponseStream[int, list[int]] = ResponseStream.from_awaitable(make_stream())
+    stream.with_pull_context_manager(cm)
+
+    # Drive get_final_response() directly, without any prior `async for` or `await stream`.
+    final = await stream.get_final_response()
+
+    assert final == [1]
+    assert "resolving" in events
+    resolve_index = events.index("resolving")
+    assert events[resolve_index - 1] == "enter"  # Pull context active during resolution
+
+
 # region Test streaming telemetry error paths
 
 
@@ -4735,8 +5133,13 @@ async def test_chat_streaming_super_failure_closes_span(span_exporter: InMemoryS
         def service_url(self):
             return "https://test.example.com"
 
-        def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             raise RuntimeError("inner failed")
 
@@ -4746,7 +5149,7 @@ async def test_chat_streaming_super_failure_closes_span(span_exporter: InMemoryS
         client.get_response(stream=True, messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
 
     spans = span_exporter.get_finished_spans()
-    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert len(chat_spans) == 1
     assert chat_spans[0].status.status_code == StatusCode.ERROR
 
@@ -4792,14 +5195,14 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
                 raise RuntimeError("execute failed")
             raise NotImplementedError
 
-    class FailingExecuteAgent(AgentTelemetryLayer, _FailingExecuteAgent):
+    class FailingExecuteAgent(AgentTelemetryLayer, _FailingExecuteAgent):  # type: ignore[misc]
         pass
 
     # Sentinel values to detect that contextvars were reset to their pre-call state.
     sentinel_fields: set[str] = set()
     sentinel_usage: dict[str, Any] = {}
     fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(sentinel_fields)
-    usage_token = INNER_ACCUMULATED_USAGE.set(sentinel_usage)
+    usage_token = INNER_ACCUMULATED_USAGE.set(sentinel_usage)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     try:
         agent = FailingExecuteAgent()
         span_exporter.clear()
@@ -4814,7 +5217,7 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
         INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(fields_token)
 
     spans = span_exporter.get_finished_spans()
-    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert len(agent_spans) == 1
     assert agent_spans[0].status.status_code == StatusCode.ERROR
 

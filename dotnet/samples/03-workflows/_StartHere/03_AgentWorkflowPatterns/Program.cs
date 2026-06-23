@@ -27,12 +27,20 @@ public static class Program
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
         var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
-        Console.Write("Choose workflow type ('sequential', 'concurrent', 'handoffs', 'groupchat'): ");
+        Console.Write("Choose workflow type ('sequential', 'sequential-chain-only', 'concurrent', 'handoffs', 'groupchat'): ");
         switch (Console.ReadLine())
         {
             case "sequential":
                 await RunWorkflowAsync(
                     AgentWorkflowBuilder.BuildSequential(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client)),
+                    [new(ChatRole.User, "Hello, world!")]);
+                break;
+
+            case "sequential-chain-only":
+                await RunWorkflowAsync(
+                    AgentWorkflowBuilder.BuildSequential(
+                        chainOnlyAgentResponses: true,
+                        from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client)),
                     [new(ChatRole.User, "Hello, world!")]);
                 break;
 
