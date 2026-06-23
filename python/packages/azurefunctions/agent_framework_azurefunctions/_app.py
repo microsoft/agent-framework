@@ -43,6 +43,7 @@ from agent_framework_durabletask import (
     plan_workflow_registration,
 )
 from agent_framework_durabletask._workflows.naming import (
+    SUBWORKFLOW_REQUEST_SEPARATOR,
     validate_workflow_name,
     workflow_executor_activity_name,
     workflow_orchestrator_name,
@@ -525,27 +526,29 @@ class AgentFunctionApp(DFAppBase):
                 "lastUpdatedTime": status.last_updated_time.isoformat() if status.last_updated_time else None,
             }
 
-            # Add pending HITL requests info if available
-            if (
-                (custom_status := status.custom_status)
-                and isinstance(custom_status, dict)
-                and (pending_requests_dict := custom_status.get("pending_requests"))  # type: ignore
-                and isinstance(pending_requests_dict, dict)
-            ):
-                base_url = self._build_base_url(req.url)
-                pending_requests: list[dict[str, Any]] = []
-                for req_id, req_data in pending_requests_dict.items():  # type: ignore
-                    if not isinstance(req_data, dict):
-                        continue
-                    pending_requests.append({
-                        "requestId": req_id,
-                        "sourceExecutor": req_data.get("source_executor_id"),  # type: ignore[reportUnknownMemberType]
-                        "requestData": req_data.get("data"),  # type: ignore[reportUnknownMemberType]
-                        "requestType": req_data.get("request_type"),  # type: ignore[reportUnknownMemberType]
-                        "responseType": req_data.get("response_type"),  # type: ignore[reportUnknownMemberType]
-                        "respondUrl": f"{base_url}/api/workflow/{workflow_name}/respond/{instance_id}/{req_id}",
-                    })
-                response["pendingHumanInputRequests"] = pending_requests
+            # Add pending HITL requests info if available. Requests originating in a
+            # nested sub-workflow are bubbled up here with a qualified requestId
+            # ({executorId}::{requestId}); the respondUrl always targets this top-level
+            # instance, so the caller has a single addressing surface (B2).
+            custom_status = status.custom_status
+            if isinstance(custom_status, dict):
+                gathered = await self._gather_pending_hitl_requests(client, cast("dict[str, Any]", custom_status))
+                if gathered:
+                    base_url = self._build_base_url(req.url)
+                    pending_requests: list[dict[str, Any]] = [
+                        {
+                            "requestId": qualified_id,
+                            "sourceExecutor": req_data.get("source_executor_id"),
+                            "requestData": req_data.get("data"),
+                            "requestType": req_data.get("request_type"),
+                            "responseType": req_data.get("response_type"),
+                            "respondUrl": (
+                                f"{base_url}/api/workflow/{workflow_name}/respond/{instance_id}/{qualified_id}"
+                            ),
+                        }
+                        for qualified_id, req_data in gathered
+                    ]
+                    response["pendingHumanInputRequests"] = pending_requests
 
             return func.HttpResponse(
                 json.dumps(response, default=_json_default),
@@ -584,11 +587,19 @@ class AgentFunctionApp(DFAppBase):
             # See strip_pickle_markers() docstring for details on the attack vector.
             response_data = strip_pickle_markers(response_data)
 
-            # Send the response as an external event
-            # The request_id is used as the event name for correlation
+            # A qualified requestId ({executorId}::{requestId}) addresses a request that
+            # originated in a nested sub-workflow: resolve it to the owning child
+            # orchestration instance and the bare request id it is waiting on.
+            resolved = await self._resolve_hitl_target(client, instance_id, request_id)
+            if resolved is None:
+                return self._build_error_response("Pending request not found", status_code=404)
+            target_instance_id, bare_request_id = resolved
+
+            # Send the response as an external event. The (bare) request_id is used as the
+            # event name for correlation on the owning orchestration instance.
             await client.raise_event(
-                instance_id=instance_id,
-                event_name=request_id,
+                instance_id=target_instance_id,
+                event_name=bare_request_id,
                 event_data=response_data,
             )
 
@@ -606,6 +617,78 @@ class AgentFunctionApp(DFAppBase):
         _ = start_workflow_orchestration
         _ = get_workflow_status
         _ = send_hitl_response
+
+    async def _gather_pending_hitl_requests(
+        self,
+        client: "df.DurableOrchestrationClient",
+        custom_status: dict[str, Any],
+        *,
+        prefix: str = "",
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Collect ``(qualifiedRequestId, requestData)`` pairs for an instance and its sub-workflows.
+
+        ``custom_status`` is the already-fetched custom status of the instance at the
+        current level. Nested sub-workflows (listed in its ``subworkflows`` map) are
+        fetched by id and recursed into, accumulating an ``{executorId}::`` prefix so a
+        request deep in the tree carries its full path. Child instances come from the
+        trusted parent status, so no per-child ownership check is applied (the caller
+        validated the top-level instance).
+        """
+        gathered: list[tuple[str, dict[str, Any]]] = []
+
+        pending = custom_status.get("pending_requests")
+        if isinstance(pending, dict):
+            for req_id, req_data in cast("dict[str, Any]", pending).items():
+                if isinstance(req_data, dict):
+                    gathered.append((f"{prefix}{req_id}", cast("dict[str, Any]", req_data)))
+
+        subworkflows = custom_status.get("subworkflows")
+        if isinstance(subworkflows, dict):
+            for executor_id, child_instance_id in cast("dict[str, Any]", subworkflows).items():
+                if not isinstance(child_instance_id, str):
+                    continue
+                child_status = await client.get_status(child_instance_id)
+                child_custom = child_status.custom_status if child_status else None
+                if isinstance(child_custom, dict):
+                    gathered.extend(
+                        await self._gather_pending_hitl_requests(
+                            client,
+                            cast("dict[str, Any]", child_custom),
+                            prefix=f"{prefix}{executor_id}{SUBWORKFLOW_REQUEST_SEPARATOR}",
+                        )
+                    )
+
+        return gathered
+
+    async def _resolve_hitl_target(
+        self,
+        client: "df.DurableOrchestrationClient",
+        instance_id: str,
+        request_id: str,
+    ) -> tuple[str, str] | None:
+        """Resolve a possibly-qualified request id to ``(owningInstanceId, bareRequestId)``.
+
+        An unqualified id targets ``instance_id`` directly. A qualified id
+        ``{executorId}::{rest}`` addresses a nested sub-workflow: the executor's child
+        instance id is read from this instance's ``subworkflows`` custom-status map and
+        the remainder resolved recursively. Returns ``None`` when a referenced
+        sub-workflow is not currently active (so the caller can return "not found").
+        """
+        if SUBWORKFLOW_REQUEST_SEPARATOR not in request_id:
+            return instance_id, request_id
+
+        executor_id, remainder = request_id.split(SUBWORKFLOW_REQUEST_SEPARATOR, 1)
+        status = await client.get_status(instance_id)
+        custom_status = status.custom_status if status else None
+        if not isinstance(custom_status, dict):
+            return None
+        subworkflows = cast("dict[str, Any]", custom_status).get("subworkflows")
+        if not isinstance(subworkflows, dict):
+            return None
+        child_instance_id = cast("dict[str, Any]", subworkflows).get(executor_id)
+        if not isinstance(child_instance_id, str):
+            return None
+        return await self._resolve_hitl_target(client, child_instance_id, remainder)
 
     def _build_base_url(self, request_url: str) -> str:
         """Extract the base URL from a request URL."""

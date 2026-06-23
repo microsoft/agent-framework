@@ -30,6 +30,7 @@ import re
 
 __all__ = [
     "DURABLE_NAME_PREFIX",
+    "SUBWORKFLOW_REQUEST_SEPARATOR",
     "is_auto_generated_workflow_name",
     "validate_workflow_name",
     "workflow_executor_activity_name",
@@ -42,6 +43,15 @@ __all__ = [
 # .NET's ``WorkflowNamingHelper.OrchestrationFunctionPrefix`` and the existing
 # ``AgentSessionId.ENTITY_NAME_PREFIX``.
 DURABLE_NAME_PREFIX = "dafx-"
+
+# Separator joining an executor id to a (possibly already-qualified) request id when
+# a nested sub-workflow's pending HITL request is bubbled up to the top-level instance
+# (B2 single-surface addressing: ``{executorId}::{requestId}``). Both hosts and the
+# client must agree on this so a qualified id round-trips: the read side qualifies an
+# inner request with it; the respond side splits on it to route the response to the
+# owning child orchestration. Executor ids and framework request ids do not contain
+# this sequence, so the split is unambiguous.
+SUBWORKFLOW_REQUEST_SEPARATOR = "::"
 
 # A workflow name is interpolated into durable orchestration/activity/entity names
 # *and* into HTTP route segments (``workflow/{workflowName}/run``), so it must be

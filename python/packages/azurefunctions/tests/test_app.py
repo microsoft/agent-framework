@@ -1732,5 +1732,109 @@ class TestWorkflowOrchestrationScoping:
         assert app._is_owned_orchestration(status, "orders") is False
 
 
+class TestAgentFunctionAppSubworkflowHitl:
+    """Sub-workflow HITL plumbing: gather nested pending requests and route responses.
+
+    These exercise the host-side helpers the ``workflow/{name}/status`` and
+    ``.../respond`` routes use to support nested sub-workflows behind a single
+    top-level addressing surface (B2 qualified request ids).
+    """
+
+    @staticmethod
+    def _app() -> AgentFunctionApp:
+        mock_workflow = Mock()
+        mock_workflow.name = "orders"
+        mock_workflow.executors = {}
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            return AgentFunctionApp(workflow=mock_workflow)
+
+    @staticmethod
+    def _client(by_instance: dict[str, dict | None]) -> AsyncMock:
+        """An AsyncMock durable client whose get_status returns a per-instance custom status."""
+
+        async def _get_status(instance_id: str) -> Mock | None:
+            if instance_id not in by_instance:
+                return None
+            status = Mock()
+            status.custom_status = by_instance[instance_id]
+            return status
+
+        client = AsyncMock()
+        client.get_status.side_effect = _get_status
+        return client
+
+    async def test_gather_returns_top_level_requests_unqualified(self) -> None:
+        app = self._app()
+        client = self._client({})
+        custom_status = {"pending_requests": {"top-1": {"source_executor_id": "outer"}}}
+
+        gathered = await app._gather_pending_hitl_requests(client, custom_status)
+
+        assert gathered == [("top-1", {"source_executor_id": "outer"})]
+
+    async def test_gather_qualifies_nested_requests(self) -> None:
+        app = self._app()
+        client = self._client({"child-1": {"pending_requests": {"inner-1": {"source_executor_id": "inner"}}}})
+        parent_status = {
+            "pending_requests": {"top-1": {"source_executor_id": "outer"}},
+            "subworkflows": {"sub": "child-1"},
+        }
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+
+        ids = {qid for qid, _ in gathered}
+        assert ids == {"top-1", "sub::inner-1"}
+
+    async def test_gather_accumulates_deep_path(self) -> None:
+        app = self._app()
+        client = self._client({
+            "child-1": {"subworkflows": {"leaf": "child-2"}},
+            "child-2": {"pending_requests": {"deep": {"source_executor_id": "leaf_node"}}},
+        })
+        parent_status = {"subworkflows": {"mid": "child-1"}}
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+
+        assert [qid for qid, _ in gathered] == ["mid::leaf::deep"]
+
+    async def test_resolve_unqualified_targets_same_instance(self) -> None:
+        app = self._app()
+        client = self._client({})
+
+        resolved = await app._resolve_hitl_target(client, "parent", "req-1")
+
+        assert resolved == ("parent", "req-1")
+
+    async def test_resolve_qualified_targets_child_instance(self) -> None:
+        app = self._app()
+        client = self._client({"parent": {"subworkflows": {"sub": "child-1"}}})
+
+        resolved = await app._resolve_hitl_target(client, "parent", "sub::req-9")
+
+        assert resolved == ("child-1", "req-9")
+
+    async def test_resolve_deeply_qualified_targets_leaf(self) -> None:
+        app = self._app()
+        client = self._client({
+            "parent": {"subworkflows": {"mid": "child-1"}},
+            "child-1": {"subworkflows": {"leaf": "child-2"}},
+        })
+
+        resolved = await app._resolve_hitl_target(client, "parent", "mid::leaf::deep")
+
+        assert resolved == ("child-2", "deep")
+
+    async def test_resolve_unknown_subworkflow_returns_none(self) -> None:
+        app = self._app()
+        client = self._client({"parent": {"state": "running"}})  # no subworkflows map
+
+        resolved = await app._resolve_hitl_target(client, "parent", "sub::req-9")
+
+        assert resolved is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

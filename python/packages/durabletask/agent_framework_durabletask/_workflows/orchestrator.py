@@ -117,6 +117,10 @@ class TaskMetadata:
     source_executor_id: str
     task_type: TaskType
     remaining_messages: list[tuple[str, Any, str]] | None = None
+    # For SUBWORKFLOW tasks: the deterministic child orchestration instance id. The
+    # parent records these in its custom status before awaiting the child so the read
+    # side can reach nested pending HITL requests while the parent is suspended.
+    child_instance_id: str | None = None
 
 
 @dataclass
@@ -806,6 +810,7 @@ def _prepare_all_tasks(
                         message=message,
                         source_executor_id=source_executor_id,
                         task_type=TaskType.SUBWORKFLOW,
+                        child_instance_id=child_instance_id,
                     )
                 )
             else:
@@ -934,7 +939,11 @@ def run_workflow_orchestrator(
             enriched["iteration"] = iteration
             live_events.append(enriched)
 
-    def publish_live_status(state: str, pending_requests: dict[str, Any] | None = None) -> None:
+    def publish_live_status(
+        state: str,
+        pending_requests: dict[str, Any] | None = None,
+        subworkflows: dict[str, str] | None = None,
+    ) -> None:
         # Publish only on live execution so events are not re-emitted on replay
         # (the custom status set during the first execution already persisted).
         if ctx.is_replaying:
@@ -947,6 +956,12 @@ def run_workflow_orchestrator(
             status["events"] = live_events
         if pending_requests is not None:
             status["pending_requests"] = pending_requests
+        # Map of {executorId: childInstanceId} for sub-workflows dispatched this
+        # superstep. The parent is suspended in task_all while a child waits for human
+        # input, so recording the child ids here lets the read side discover and
+        # qualify nested pending requests (B2 single-surface HITL).
+        if subworkflows:
+            status["subworkflows"] = subworkflows
         ctx.set_custom_status(status)
 
     fan_in_pending: dict[str, dict[str, list[tuple[Any, str]]]] = {
@@ -977,6 +992,17 @@ def run_workflow_orchestrator(
         all_results: list[ExecutorResult] = []
         if all_tasks:
             logger.debug("Executing %d tasks in parallel (agents + activities)", len(all_tasks))
+            # Record dispatched sub-workflow child instance ids before suspending in
+            # task_all. While a nested sub-workflow waits for human input, this parent
+            # stays suspended here, so its custom status must already carry the child
+            # ids for the read side to discover and qualify nested pending requests.
+            active_subworkflows = {
+                meta.executor_id: meta.child_instance_id
+                for meta in task_metadata_list
+                if meta.task_type == TaskType.SUBWORKFLOW and meta.child_instance_id is not None
+            }
+            if active_subworkflows:
+                publish_live_status("running", subworkflows=active_subworkflows)
             raw_results = yield ctx.task_all(all_tasks)
             logger.debug("All %d tasks completed", len(all_tasks))
 

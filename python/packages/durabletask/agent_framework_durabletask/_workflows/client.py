@@ -19,7 +19,7 @@ from typing import Any, cast
 from agent_framework import WorkflowEvent
 from durabletask.client import TaskHubGrpcClient
 
-from .naming import workflow_orchestrator_name
+from .naming import SUBWORKFLOW_REQUEST_SEPARATOR, workflow_orchestrator_name
 from .serialization import deserialize_workflow_event, deserialize_workflow_output, strip_pickle_markers
 
 logger = logging.getLogger("agent_framework.durabletask")
@@ -341,6 +341,13 @@ class DurableWorkflowClient:
             A list of pending requests. Each entry contains ``request_id``,
             ``source_executor_id``, ``data``, ``request_type``, and ``response_type``.
             Empty if the workflow is not currently waiting for human input.
+
+        Note:
+            Requests originating in a nested sub-workflow are included with a
+            **qualified** ``request_id`` (``{executorId}::{requestId}``, nested for
+            deeper levels). Pass that qualified id straight back to
+            :meth:`send_hitl_response`; it is routed to the owning child orchestration
+            automatically, so the caller only ever addresses the top-level instance.
         """
         state = self._client.get_orchestration_state(instance_id)
         if state is None or not state.serialized_custom_status:
@@ -348,32 +355,54 @@ class DurableWorkflowClient:
         if not self._is_owned_orchestration(state, workflow_name):
             return []
 
+        return self._collect_pending_hitl_requests(state.serialized_custom_status)
+
+    def _collect_pending_hitl_requests(self, serialized_custom_status: str) -> list[dict[str, Any]]:
+        """Collect an orchestration's pending requests plus any nested sub-workflow ones.
+
+        Nested requests (discovered via the ``subworkflows`` map the parent records in
+        its custom status) are qualified with the owning executor id so deeper requests
+        accumulate a full ``{executorId}::{...}::{requestId}`` path. Child instances are
+        reached directly by id (already trusted, having come from the parent's status),
+        so no per-child ownership check is applied.
+        """
         try:
-            custom_status = json.loads(state.serialized_custom_status)
+            custom_status = json.loads(serialized_custom_status)
         except (json.JSONDecodeError, TypeError):
             return []
-
         if not isinstance(custom_status, dict):
             return []
         status_dict = cast(dict[str, Any], custom_status)
 
-        pending = status_dict.get("pending_requests")
-        if not isinstance(pending, dict):
-            return []
-        pending_dict = cast(dict[str, Any], pending)
-
         requests: list[dict[str, Any]] = []
-        for request_id, req_data in pending_dict.items():
-            if not isinstance(req_data, dict):
-                continue
-            req = cast(dict[str, Any], req_data)
-            requests.append({
-                "request_id": req.get("request_id", request_id),
-                "source_executor_id": req.get("source_executor_id"),
-                "data": req.get("data"),
-                "request_type": req.get("request_type"),
-                "response_type": req.get("response_type"),
-            })
+
+        pending = status_dict.get("pending_requests")
+        if isinstance(pending, dict):
+            for request_id, req_data in cast(dict[str, Any], pending).items():
+                if not isinstance(req_data, dict):
+                    continue
+                req = cast(dict[str, Any], req_data)
+                requests.append({
+                    "request_id": req.get("request_id", request_id),
+                    "source_executor_id": req.get("source_executor_id"),
+                    "data": req.get("data"),
+                    "request_type": req.get("request_type"),
+                    "response_type": req.get("response_type"),
+                })
+
+        subworkflows = status_dict.get("subworkflows")
+        if isinstance(subworkflows, dict):
+            for executor_id, child_instance_id in cast(dict[str, str], subworkflows).items():
+                if not isinstance(child_instance_id, str):
+                    continue
+                child_state = self._client.get_orchestration_state(child_instance_id)
+                if child_state is None or not child_state.serialized_custom_status:
+                    continue
+                for child_req in self._collect_pending_hitl_requests(child_state.serialized_custom_status):
+                    qualified = dict(child_req)
+                    qualified["request_id"] = f"{executor_id}{SUBWORKFLOW_REQUEST_SEPARATOR}{child_req['request_id']}"
+                    requests.append(qualified)
+
         return requests
 
     def send_hitl_response(
@@ -387,6 +416,9 @@ class DurableWorkflowClient:
         Args:
             instance_id: The workflow instance ID.
             request_id: The pending request's ID (from ``get_pending_hitl_requests``).
+                May be a **qualified** id (``{executorId}::{requestId}``) for a request
+                that originated in a nested sub-workflow; it is routed to the owning
+                child orchestration automatically.
             response: The response payload (e.g. a dict matching the expected
                 response type the executor's ``@response_handler`` expects).
             workflow_name: Optional workflow name; when set (or a client default is
@@ -395,7 +427,8 @@ class DurableWorkflowClient:
                 workflow's orchestration.
 
         Raises:
-            ValueError: If the instance does not belong to the targeted workflow.
+            ValueError: If the instance does not belong to the targeted workflow, or a
+                qualified id references a sub-workflow that is not currently active.
 
         Note:
             The payload is sanitized with ``strip_pickle_markers`` before delivery to
@@ -407,8 +440,56 @@ class DurableWorkflowClient:
             if state is None or not self._is_owned_orchestration(state, workflow_name):
                 raise ValueError(f"Instance '{instance_id}' does not belong to the targeted workflow.")
 
+        # A qualified id addresses a nested sub-workflow: resolve it to the owning child
+        # orchestration instance and the bare request id the child is actually waiting on.
+        target_instance_id, bare_request_id = self._resolve_hitl_target(instance_id, request_id)
+
         safe_response = strip_pickle_markers(response)
-        self._client.raise_orchestration_event(instance_id, event_name=request_id, data=safe_response)
+        self._client.raise_orchestration_event(target_instance_id, event_name=bare_request_id, data=safe_response)
         logger.debug(
-            "[DurableWorkflowClient] Sent HITL response for request %s on instance %s", request_id, instance_id
+            "[DurableWorkflowClient] Sent HITL response for request %s on instance %s",
+            bare_request_id,
+            target_instance_id,
         )
+
+    def _resolve_hitl_target(self, instance_id: str, request_id: str) -> tuple[str, str]:
+        """Resolve a possibly-qualified request id to ``(owning_instance_id, bare_request_id)``.
+
+        An unqualified id targets ``instance_id`` directly. A qualified id
+        ``{executorId}::{rest}`` addresses a nested sub-workflow: the executor's child
+        instance id is read from this instance's ``subworkflows`` custom-status map and
+        the remainder is resolved recursively, so arbitrarily deep nesting lands on the
+        leaf child orchestration and its bare request id.
+        """
+        if SUBWORKFLOW_REQUEST_SEPARATOR not in request_id:
+            return instance_id, request_id
+
+        executor_id, remainder = request_id.split(SUBWORKFLOW_REQUEST_SEPARATOR, 1)
+        child_instance_id = self._lookup_subworkflow_instance(instance_id, executor_id)
+        if child_instance_id is None:
+            raise ValueError(
+                f"No active sub-workflow '{executor_id}' found for instance '{instance_id}' "
+                f"while routing HITL response for request '{request_id}'."
+            )
+        return self._resolve_hitl_target(child_instance_id, remainder)
+
+    def _lookup_subworkflow_instance(self, instance_id: str, executor_id: str) -> str | None:
+        """Return the child orchestration instance id for ``executor_id``, if active.
+
+        Reads the ``subworkflows`` map (``{executorId: childInstanceId}``) the parent
+        records in its custom status while dispatching sub-workflow nodes.
+        """
+        state = self._client.get_orchestration_state(instance_id)
+        if state is None or not state.serialized_custom_status:
+            return None
+        try:
+            custom_status = json.loads(state.serialized_custom_status)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(custom_status, dict):
+            return None
+        subworkflows = cast(dict[str, Any], custom_status).get("subworkflows")
+        if not isinstance(subworkflows, dict):
+            return None
+        child = cast(dict[str, Any], subworkflows).get(executor_id)
+        return child if isinstance(child, str) else None
