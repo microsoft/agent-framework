@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: proposed
 contact: sergeymenshykh
 date: 2026-06-23
 deciders: sergeymenshykh
