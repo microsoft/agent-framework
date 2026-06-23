@@ -1167,7 +1167,8 @@ class TestSkillsProviderCodeSkill:
         assert "<name>prog-skill</name>" in result
         assert "<description>A skill.</description>" in result
         assert "<instructions>\nCode-defined instructions.\n</instructions>" in result
-        assert "<resources>" not in result
+        assert "<available_resources />" in result
+        assert "<available_scripts />" in result
 
     async def test_load_skill_appends_resource_listing(self) -> None:
         skill = InlineSkill(
@@ -1184,7 +1185,7 @@ class TestSkillsProviderCodeSkill:
         assert "<name>prog-skill</name>" in result
         assert "<description>A skill.</description>" in result
         assert "Do things." in result
-        assert "<resources>" in result
+        assert "<available_resources>" in result
         assert '<resource name="ref-a" description="First resource"/>' in result
         assert '<resource name="ref-b"/>' in result
 
@@ -1196,7 +1197,7 @@ class TestSkillsProviderCodeSkill:
         await _init_provider(provider)
         result = await provider._load_skill(_raw_skills(provider), "prog-skill")
         assert "Body only." in result
-        assert "<resources>" not in result
+        assert "<available_resources />" in result
 
     async def test_read_static_resource(self) -> None:
         skill = InlineSkill(
@@ -3969,16 +3970,16 @@ class TestLoadSkillWithScripts:
         await _init_provider(provider)
         result = await provider._load_skill(_raw_skills(provider), "my-skill")
 
-        assert "<scripts>" in result
+        assert "<available_scripts>" in result
         assert 'name="analyze"' in result
         assert 'description="Run analysis"' in result
 
-    async def test_code_skill_no_scripts_element(self) -> None:
+    async def test_code_skill_emits_empty_scripts_element(self) -> None:
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._load_skill(_raw_skills(provider), "my-skill")
-        assert "<scripts>" not in result
+        assert "<available_scripts />" in result
 
 
 # ---------------------------------------------------------------------------
@@ -4056,13 +4057,13 @@ class TestClassSkill:
         skill = _MinimalClassSkill()
         assert "Do minimal things." in (await skill.get_content())
 
-    async def test_minimal_skill_content_no_resources_element(self) -> None:
+    async def test_minimal_skill_content_emits_empty_resources_element(self) -> None:
         skill = _MinimalClassSkill()
-        assert "<resources>" not in (await skill.get_content())
+        assert "<available_resources />" in (await skill.get_content())
 
-    async def test_minimal_skill_content_no_scripts_element(self) -> None:
+    async def test_minimal_skill_content_emits_empty_scripts_element(self) -> None:
         skill = _MinimalClassSkill()
-        assert "<scripts>" not in (await skill.get_content())
+        assert "<available_scripts />" in (await skill.get_content())
 
     def test_full_skill_has_resources(self) -> None:
         skill = _FullClassSkill()
@@ -4076,12 +4077,12 @@ class TestClassSkill:
 
     async def test_full_skill_content_contains_resources(self) -> None:
         skill = _FullClassSkill()
-        assert "<resources>" in (await skill.get_content())
+        assert "<available_resources>" in (await skill.get_content())
         assert 'name="test-resource"' in (await skill.get_content())
 
     async def test_full_skill_content_contains_scripts(self) -> None:
         skill = _FullClassSkill()
-        assert "<scripts>" in (await skill.get_content())
+        assert "<available_scripts>" in (await skill.get_content())
         assert 'name="test-script"' in (await skill.get_content())
 
     async def test_content_is_cached(self) -> None:
@@ -4127,8 +4128,8 @@ class TestClassSkill:
 
         result = await provider._load_skill(_raw_skills(provider), "full-skill")
         assert "Use this skill for full tasks." in result
-        assert "<resources>" in result
-        assert "<scripts>" in result
+        assert "<available_resources>" in result
+        assert "<available_scripts>" in result
 
     async def test_in_memory_source_with_class_skill(self) -> None:
         skill = _MinimalClassSkill()
@@ -4345,12 +4346,12 @@ class TestClassSkillDecoratorDiscovery:
 
     async def test_content_includes_discovered_resources(self) -> None:
         skill = _DecoratorClassSkill()
-        assert "<resources>" in (await skill.get_content())
+        assert "<available_resources>" in (await skill.get_content())
         assert 'name="lookup-table"' in (await skill.get_content())
 
     async def test_content_includes_discovered_scripts(self) -> None:
         skill = _DecoratorClassSkill()
-        assert "<scripts>" in (await skill.get_content())
+        assert "<available_scripts>" in (await skill.get_content())
         assert 'name="convert"' in (await skill.get_content())
 
     def test_duplicate_resource_name_raises(self) -> None:
@@ -4748,7 +4749,7 @@ class _MixedPropertyMethodSkill(ClassSkill):
         await _init_provider(provider)
         result = await provider._load_skill(_raw_skills(provider), "my-skill")
 
-        assert "<scripts>" in result
+        assert "<available_scripts>" in result
         assert 'name="analyze"' in result
         assert "<parameters_schema>" in result
         assert '"query"' in result
@@ -5734,7 +5735,7 @@ class TestArrayStyleScriptArgs:
         assert "Failed to run" in result
 
     async def test_file_skill_content_includes_scripts_block(self) -> None:
-        """FileSkill.content appends a <scripts> block when scripts are present."""
+        """FileSkill.content appends an <available_scripts> block when scripts are present."""
         script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py")
         skill = FileSkill(
             frontmatter=SkillFrontmatter(name="my-skill", description="test"),
@@ -5742,16 +5743,30 @@ class TestArrayStyleScriptArgs:
             path=f"{_ABS}/test",
             scripts=[script],
         )
-        assert "<scripts>" in (await skill.get_content())
+        assert "<available_scripts>" in (await skill.get_content())
         assert 'name="run.py"' in (await skill.get_content())
         assert "<parameters_schema>" in (await skill.get_content())
         assert '"type": "array"' in (await skill.get_content())
 
-    async def test_file_skill_content_no_scripts_no_block(self) -> None:
-        """FileSkill.content does not append a <scripts> block when no scripts."""
+    async def test_file_skill_content_no_scripts_emits_empty_block(self) -> None:
+        """FileSkill.content always emits self-closing resource and script blocks when empty."""
         skill = FileSkill(
             frontmatter=SkillFrontmatter(name="my-skill", description="test"),
             content="---\nname: my-skill\n---\nBody",
             path=f"{_ABS}/test",
         )
-        assert "<scripts>" not in (await skill.get_content())
+        content = await skill.get_content()
+        assert "<available_resources />" in content
+        assert "<available_scripts />" in content
+
+    async def test_file_skill_content_includes_resources_block(self) -> None:
+        """FileSkill.content appends an <available_resources> block when resources are present."""
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="test"),
+            content="---\nname: my-skill\n---\nBody",
+            path=f"{_ABS}/test",
+            resources=[InlineSkillResource(name="ref-data", content="data")],
+        )
+        content = await skill.get_content()
+        assert "<available_resources>" in content
+        assert '<resource name="ref-data"/>' in content

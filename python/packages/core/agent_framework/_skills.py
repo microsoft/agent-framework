@@ -675,9 +675,13 @@ def _build_skill_content(
 ) -> str:
     """Build XML-structured content for code-defined and class-based skills.
 
-    Produces an XML document containing name, description, instructions,
-    resources, and scripts elements.  Used by both :class:`InlineSkill`
-    and :class:`ClassSkill` to generate their ``content`` property.
+    Produces an XML document containing name, description, instructions, and
+    ``<available_resources>`` / ``<available_scripts>`` blocks.  The two blocks
+    are always emitted: when a category has no entries, a self-closing element
+    (e.g. ``<available_scripts />``) is emitted so the model knows none are
+    available and does not hallucinate their names.  Used by both
+    :class:`InlineSkill` and :class:`ClassSkill` to generate their ``content``
+    property.
 
     Args:
         name: The skill name.
@@ -698,13 +702,8 @@ def _build_skill_content(
         "</instructions>"
     )
 
-    if resources:
-        resource_lines = "\n".join(_create_resource_element(r) for r in resources)
-        result += f"\n\n<resources>\n{resource_lines}\n</resources>"
-
-    if scripts:
-        script_lines = "\n".join(_create_script_element(s) for s in scripts)
-        result += f"\n\n<scripts>\n{script_lines}\n</scripts>"
+    result += f"\n\n{_build_available_resources_block(resources)}"
+    result += f"\n\n{_build_available_scripts_block(scripts)}"
 
     return result
 
@@ -723,6 +722,50 @@ def _create_resource_element(resource: SkillResource) -> str:
     if resource.description:
         attrs += f' description="{xml_escape(resource.description, quote=True)}"'
     return f"  <resource {attrs}/>"
+
+
+def _build_available_resources_block(resources: Sequence[SkillResource] | None) -> str:
+    """Build an ``<available_resources>`` XML block for the given resources.
+
+    Each resource is emitted as a ``<resource name="…"/>`` element (with an
+    optional ``description`` attribute).  When there are no resources, a
+    self-closing ``<available_resources />`` element is returned so the model
+    knows none are available and does not hallucinate resource names.
+
+    Args:
+        resources: The resources to include in the block, if any.
+
+    Returns:
+        The ``<available_resources>`` XML block, or ``<available_resources />``
+        when *resources* is empty or ``None``.
+    """
+    if not resources:
+        return "<available_resources />"
+    resource_lines = "\n".join(_create_resource_element(r) for r in resources)
+    return f"<available_resources>\n{resource_lines}\n</available_resources>"
+
+
+def _build_available_scripts_block(scripts: Sequence[SkillScript] | None) -> str:
+    """Build an ``<available_scripts>`` XML block for the given scripts.
+
+    Each script is emitted as a ``<script name="…">`` element; when the script
+    has a parameter schema it is wrapped in a nested ``<parameters_schema>``
+    element, otherwise a self-closing ``<script …/>`` element is used.  When
+    there are no scripts, a self-closing ``<available_scripts />`` element is
+    returned so the model knows none are available and does not hallucinate
+    script names.
+
+    Args:
+        scripts: The scripts to include in the block, if any.
+
+    Returns:
+        The ``<available_scripts>`` XML block, or ``<available_scripts />``
+        when *scripts* is empty or ``None``.
+    """
+    if not scripts:
+        return "<available_scripts />"
+    script_lines = "\n".join(_create_script_element(s) for s in scripts)
+    return f"<available_scripts>\n{script_lines}\n</available_scripts>"
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
@@ -781,6 +824,10 @@ class InlineSkill(Skill):
 
     async def get_content(self) -> str:
         """Synthesized XML content with name, description, instructions, resources, and scripts.
+
+        The ``<available_resources>`` and ``<available_scripts>`` blocks are
+        always emitted; an empty category is rendered as a self-closing element
+        (e.g. ``<available_scripts />``) so the model knows none are available.
 
         The result is cached after the first access.  Adding resources or
         scripts after the first access will not be reflected.
@@ -1351,6 +1398,10 @@ class ClassSkill(Skill, ABC):
     async def get_content(self) -> str:
         """Synthesized XML content containing name, description, instructions, resources, and scripts.
 
+        The ``<available_resources>`` and ``<available_scripts>`` blocks are
+        always emitted; an empty category is rendered as a self-closing element
+        (e.g. ``<available_scripts />``) so the model knows none are available.
+
         The result is cached after the first access.
 
         Returns:
@@ -1437,25 +1488,27 @@ class FileSkill(Skill):
         return self._frontmatter
 
     async def get_content(self) -> str:
-        """The skill content with appended scripts block.
+        """The skill content with appended resource and script blocks.
 
-        When scripts are present, a ``<scripts>`` XML block is appended
-        to the raw SKILL.md content so that the LLM can discover each
-        script's ``<parameters_schema>``.
+        The raw SKILL.md content is followed by ``<available_resources>`` and
+        ``<available_scripts>`` blocks.  Both are always emitted: a category
+        with no entries is appended as a self-closing element (e.g.
+        ``<available_scripts />``) so the model knows none are available and
+        does not hallucinate their names.  When entries are present, scripts
+        include their ``<parameters_schema>`` so the LLM can discover the
+        argument format.
 
-        The result is cached after the first access.  Adding scripts
-        after the first access will not be reflected.
+        The result is cached after the first access.  Adding resources or
+        scripts after the first access will not be reflected.
 
         Returns:
             The skill content string.
         """
         if self._cached_content is not None:
             return self._cached_content
-        if not self._scripts:
-            self._cached_content = self._content
-        else:
-            script_lines = "\n".join(_create_script_element(s) for s in self._scripts)
-            self._cached_content = f"{self._content}\n\n<scripts>\n{script_lines}\n</scripts>"
+        resources_block = _build_available_resources_block(self._resources)
+        scripts_block = _build_available_scripts_block(self._scripts)
+        self._cached_content = f"{self._content}\n\n{resources_block}\n\n{scripts_block}"
         return self._cached_content
 
     async def get_resource(self, name: str) -> SkillResource | None:
