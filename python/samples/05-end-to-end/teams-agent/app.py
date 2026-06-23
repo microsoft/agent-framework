@@ -12,7 +12,6 @@
 
 import asyncio
 import logging
-import os
 from random import randint
 from typing import Annotated
 
@@ -105,7 +104,7 @@ async def handle_message(ctx: ActivityContext[MessageActivity]) -> None:
         ctx.stream.emit(reply)
     except Exception as e:
         logger.exception("Error handling message: %s", e)
-        await ctx.send(f"Sorry, an error occurred: {e}")
+        await ctx.send("Sorry, an error occurred while processing your message.")
 
 
 def main() -> None:

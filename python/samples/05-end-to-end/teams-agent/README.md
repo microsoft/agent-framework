@@ -17,7 +17,7 @@ Create a `.env` file in this sample folder (see [.env.example](.env.example)):
 ```bash
 # Azure OpenAI (model the agent uses)
 AZURE_OPENAI_ENDPOINT="https://<your-resource>.openai.azure.com"
-AZURE_OPENAI_CHAT_COMPLETION_MODEL="<deployment-name>"
+AZURE_OPENAI_CHAT_MODEL="<deployment-name>"
 AZURE_OPENAI_API_KEY="<api-key>"
 
 # Teams bot credentials
@@ -29,7 +29,7 @@ TENANT_ID="<tenant-id>"
 PORT=3978
 ```
 
-`AZURE_OPENAI_CHAT_COMPLETION_MODEL` is the **deployment name** of your model, not the base model name.
+`AZURE_OPENAI_CHAT_MODEL` is the **deployment name** of your model, not the base model name.
 
 ## Running the Agent Locally
 
@@ -57,7 +57,7 @@ To exchange messages with the bot from Teams, Teams needs to reach your local en
 ## Troubleshooting
 
 - **404 on `/api/messages`**: Ensure you are POSTing and using the correct tunnel URL.
-- **Empty responses**: Check that `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_COMPLETION_MODEL`, and `AZURE_OPENAI_API_KEY` are valid.
+- **Empty responses**: Check that `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_MODEL`, and `AZURE_OPENAI_API_KEY` are valid.
 - **Auth errors from Teams**: Validate `CLIENT_ID` / `CLIENT_SECRET` / `TENANT_ID` match your Azure Bot registration.
 
 ## Further Reading
