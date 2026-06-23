@@ -1,6 +1,7 @@
 # Durable hosting: multiple workflows and sub-workflows (Python)
 
-Status: Draft / for discussion
+Status: Implemented — decisions promoted to
+[ADR-0030](../decisions/0030-durabletask-multiworkflow-and-subworkflows.md)
 Scope: `python/packages/durabletask` (standalone Durable Task worker) and
 `python/packages/azurefunctions` (Azure Functions host)
 Related: PR #6418 (standalone Durable Task workflow hosting), core
