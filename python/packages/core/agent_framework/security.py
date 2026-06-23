@@ -2037,6 +2037,17 @@ class SecureAgentConfig(ContextProvider):
         policy_enforcer: Optional PolicyEnforcementFunctionMiddleware instance.
         auto_hide_untrusted: Whether to automatically hide untrusted content.
 
+    Note:
+        The quarantine chat client is stored per-instance (see ``get_quarantine_client``)
+        but is *also* registered in a single process-global slot via
+        ``set_quarantine_client``. The ``quarantined_llm`` tool always reads that global
+        slot, so the behavior is **last-writer-wins**: when multiple ``SecureAgentConfig``
+        instances are constructed in the same process with different ``quarantine_chat_client``
+        values, the most recently constructed instance's client is the one every agent's
+        ``quarantined_llm`` tool will use. Running multiple instances is supported, but they
+        share this one global quarantine client rather than each using their own. If you need
+        distinct quarantine clients per agent, run them in separate processes.
+
     Examples:
         .. code-block:: python
 
@@ -2093,7 +2104,9 @@ class SecureAgentConfig(ContextProvider):
                 If provided, the quarantined_llm tool will make actual isolated LLM calls
                 instead of returning placeholder responses. This client should ideally be
                 a separate instance using a cheaper model (e.g., gpt-4o-mini) since it
-                processes untrusted content.
+                processes untrusted content. Note: this client is registered in a
+                process-global slot shared by all instances (last-writer-wins); see the
+                class docstring for details on running multiple instances.
             source_id: Optional source identifier for context provider attribution.
                 Defaults to "secure_agent".
         """
