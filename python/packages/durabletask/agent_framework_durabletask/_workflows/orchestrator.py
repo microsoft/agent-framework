@@ -73,6 +73,12 @@ SOURCE_HITL_RESPONSE = "__hitl_response__"
 # Standalone clients start a configured workflow by scheduling an orchestration
 # with this name, e.g.
 # ``client.schedule_new_orchestration(WORKFLOW_ORCHESTRATOR_NAME, input=...)``.
+#
+# DEPRECATED (multi-workflow migration): this fixed single-workflow name is being
+# replaced by per-workflow orchestration names ``dafx-{workflowName}`` derived via
+# :func:`agent_framework_durabletask._workflows.naming.workflow_orchestrator_name`.
+# It is retained for source compatibility while the single-workflow hosting path
+# still uses it; new code should prefer ``workflow_orchestrator_name(name)``.
 WORKFLOW_ORCHESTRATOR_NAME = "workflow_orchestrator"
 
 

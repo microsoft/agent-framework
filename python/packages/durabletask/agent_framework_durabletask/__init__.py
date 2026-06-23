@@ -55,6 +55,13 @@ from ._workflows.activity import execute_workflow_activity
 from ._workflows.client import DurableWorkflowClient
 from ._workflows.context import WorkflowOrchestrationContext
 from ._workflows.dt_context import DurableTaskWorkflowContext
+from ._workflows.naming import (
+    DURABLE_NAME_PREFIX,
+    is_auto_generated_workflow_name,
+    validate_workflow_name,
+    workflow_name_from_orchestrator,
+    workflow_orchestrator_name,
+)
 from ._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
 from ._workflows.registration import WorkflowRegistrationPlan, plan_workflow_registration
 from ._workflows.runner_context import CapturingRunnerContext
@@ -68,6 +75,7 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "DEFAULT_MAX_POLL_RETRIES",
     "DEFAULT_POLL_INTERVAL_SECONDS",
+    "DURABLE_NAME_PREFIX",
     "MIMETYPE_APPLICATION_JSON",
     "MIMETYPE_TEXT_PLAIN",
     "REQUEST_RESPONSE_FORMAT_JSON",
@@ -121,8 +129,12 @@ __all__ = [
     "deserialize_workflow_output",
     "ensure_response_format",
     "execute_workflow_activity",
+    "is_auto_generated_workflow_name",
     "load_agent_response",
     "plan_workflow_registration",
     "run_agent_coroutine",
     "run_workflow_orchestrator",
+    "validate_workflow_name",
+    "workflow_name_from_orchestrator",
+    "workflow_orchestrator_name",
 ]
