@@ -15,7 +15,7 @@ import pytest
 from agent_framework import WorkflowEvent
 
 from agent_framework_durabletask import DurableWorkflowClient
-from agent_framework_durabletask._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME
+from agent_framework_durabletask._workflows.naming import workflow_orchestrator_name
 from agent_framework_durabletask._workflows.serialization import serialize_value, serialize_workflow_event
 
 
@@ -45,14 +45,14 @@ class TestStartWorkflow:
     def test_start_workflow_schedules_orchestrator(
         self, workflow_client: DurableWorkflowClient, mock_client: Mock
     ) -> None:
-        """start_workflow schedules the auto-registered orchestrator by name."""
+        """start_workflow schedules the per-workflow orchestration by name."""
         mock_client.schedule_new_orchestration.return_value = "instance-1"
 
-        result = workflow_client.start_workflow(input="hello")
+        result = workflow_client.start_workflow(input="hello", workflow_name="orders")
 
         assert result == "instance-1"
         mock_client.schedule_new_orchestration.assert_called_once_with(
-            WORKFLOW_ORCHESTRATOR_NAME, input="hello", instance_id=None
+            workflow_orchestrator_name("orders"), input="hello", instance_id=None
         )
 
     def test_start_workflow_passes_non_string_input_unchanged(
@@ -62,7 +62,7 @@ class TestStartWorkflow:
         mock_client.schedule_new_orchestration.return_value = "instance-2"
         payload = {"order_id": 42, "items": ["a", "b"]}
 
-        workflow_client.start_workflow(input=payload)
+        workflow_client.start_workflow(input=payload, workflow_name="orders")
 
         _, kwargs = mock_client.schedule_new_orchestration.call_args
         assert kwargs["input"] == payload
@@ -73,10 +73,98 @@ class TestStartWorkflow:
         """An explicit instance id is forwarded to the underlying client."""
         mock_client.schedule_new_orchestration.return_value = "explicit-id"
 
-        workflow_client.start_workflow(input="x", instance_id="explicit-id")
+        workflow_client.start_workflow(input="x", workflow_name="orders", instance_id="explicit-id")
 
         _, kwargs = mock_client.schedule_new_orchestration.call_args
         assert kwargs["instance_id"] == "explicit-id"
+
+
+class TestWorkflowNameTargeting:
+    """Resolving the target workflow name from a default or per-call value."""
+
+    def test_uses_constructor_default(self, mock_client: Mock) -> None:
+        """A client default workflow name is used when none is passed per call."""
+        client = DurableWorkflowClient(mock_client, workflow_name="billing")
+        mock_client.schedule_new_orchestration.return_value = "i"
+
+        client.start_workflow(input="x")
+
+        mock_client.schedule_new_orchestration.assert_called_once_with(
+            workflow_orchestrator_name("billing"), input="x", instance_id=None
+        )
+
+    def test_per_call_overrides_default(self, mock_client: Mock) -> None:
+        """A per-call workflow name overrides the constructor default."""
+        client = DurableWorkflowClient(mock_client, workflow_name="billing")
+        mock_client.schedule_new_orchestration.return_value = "i"
+
+        client.start_workflow(input="x", workflow_name="orders")
+
+        mock_client.schedule_new_orchestration.assert_called_once_with(
+            workflow_orchestrator_name("orders"), input="x", instance_id=None
+        )
+
+    def test_raises_when_no_name_resolvable(self, workflow_client: DurableWorkflowClient) -> None:
+        """With no default and no per-call name, starting raises a clear error."""
+        with pytest.raises(ValueError, match="No workflow name"):
+            workflow_client.start_workflow(input="x")
+
+
+class TestOwnershipValidation:
+    """Opt-in validation that an instance belongs to the targeted workflow."""
+
+    def test_runtime_status_returns_none_for_foreign_instance(self, mock_client: Mock) -> None:
+        """A status query scoped to a workflow returns None for a foreign instance."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("billing")  # different workflow
+        state.runtime_status.name = "RUNNING"
+        mock_client.get_orchestration_state.return_value = state
+
+        assert client.get_runtime_status("instance-1") is None
+
+    def test_runtime_status_returns_status_for_owned_instance(self, mock_client: Mock) -> None:
+        """A status query returns the status for an instance of the targeted workflow."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("orders")
+        state.runtime_status.name = "RUNNING"
+        mock_client.get_orchestration_state.return_value = state
+
+        assert client.get_runtime_status("instance-1") == "RUNNING"
+
+    def test_pending_hitl_empty_for_foreign_instance(self, mock_client: Mock) -> None:
+        """Pending HITL is empty for an instance of a different workflow."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("billing")
+        state.serialized_custom_status = json.dumps({"pending_requests": {"req-1": {"source_executor_id": "x"}}})
+        mock_client.get_orchestration_state.return_value = state
+
+        assert client.get_pending_hitl_requests("instance-1") == []
+
+    def test_send_hitl_rejects_foreign_instance(self, mock_client: Mock) -> None:
+        """Sending a HITL response to a foreign instance raises and does not deliver."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("billing")
+        mock_client.get_orchestration_state.return_value = state
+
+        with pytest.raises(ValueError, match="does not belong"):
+            client.send_hitl_response("instance-1", "req-1", {"approved": True})
+
+        mock_client.raise_orchestration_event.assert_not_called()
+
+    def test_send_hitl_allows_owned_instance(self, mock_client: Mock) -> None:
+        """Sending a HITL response to an owned instance delivers the event."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("orders")
+        mock_client.get_orchestration_state.return_value = state
+
+        client.send_hitl_response("instance-1", "req-1", {"approved": True})
+
+        mock_client.raise_orchestration_event.assert_called_once()
 
 
 class TestAwaitWorkflowOutput:
@@ -356,11 +444,12 @@ class TestRunWorkflow:
         """By default run_workflow starts the workflow and returns its deserialized output."""
         mock_client.schedule_new_orchestration.return_value = "instance-1"
         metadata = Mock()
+        metadata.name = workflow_orchestrator_name("orders")
         metadata.runtime_status.name = "COMPLETED"
         metadata.serialized_output = json.dumps(["done"])
         mock_client.wait_for_orchestration_completion.return_value = metadata
 
-        result = await workflow_client.run_workflow(input="hello")
+        result = await workflow_client.run_workflow(input="hello", workflow_name="orders")
 
         assert result == ["done"]
         mock_client.schedule_new_orchestration.assert_called_once()
@@ -372,7 +461,7 @@ class TestRunWorkflow:
         """With wait=False, run_workflow returns the instance id and does not await completion."""
         mock_client.schedule_new_orchestration.return_value = "instance-2"
 
-        result = await workflow_client.run_workflow(input="hello", wait=False)
+        result = await workflow_client.run_workflow(input="hello", workflow_name="orders", wait=False)
 
         assert result == "instance-2"
         mock_client.wait_for_orchestration_completion.assert_not_called()

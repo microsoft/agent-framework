@@ -49,6 +49,7 @@ from agent_framework._workflows._edge import (
 from agent_framework._workflows._state import State
 
 from .context import WorkflowOrchestrationContext
+from .naming import workflow_executor_activity_name, workflow_scoped_executor_id
 from .serialization import (
     deserialize_value,
     reconstruct_to_type,
@@ -232,10 +233,19 @@ def _prepare_agent_task(
     ctx: WorkflowOrchestrationContext,
     executor_id: str,
     message: Any,
+    workflow_name: str,
 ) -> Any:
-    """Prepare an agent task for execution via the context adapter."""
+    """Prepare an agent task for execution via the context adapter.
+
+    The agent entity is addressed by the workflow-scoped identity
+    ``{workflow_name}-{executor_id}`` so two co-hosted workflows that reuse an
+    executor id dispatch to distinct entities (the entity layer prefixes this with
+    ``dafx-``). The session *key* stays the orchestration instance id, so
+    conversation state remains isolated per run.
+    """
     message_content = _extract_message_content(message)
-    return ctx.prepare_agent_task(executor_id, message_content, ctx.instance_id)
+    scoped_id = workflow_scoped_executor_id(workflow_name, executor_id)
+    return ctx.prepare_agent_task(scoped_id, message_content, ctx.instance_id)
 
 
 def _prepare_activity_task(
@@ -244,8 +254,14 @@ def _prepare_activity_task(
     message: Any,
     source_executor_id: str,
     shared_state_snapshot: dict[str, Any] | None,
+    workflow_name: str,
 ) -> Any:
-    """Prepare an activity task for execution via the context adapter."""
+    """Prepare an activity task for execution via the context adapter.
+
+    The activity is dispatched under the workflow-scoped name
+    ``dafx-{workflow_name}-{executor_id}`` so two co-hosted workflows that reuse an
+    executor id register and dispatch to distinct activity functions.
+    """
     activity_input = {
         "executor_id": executor_id,
         "message": serialize_value(message),
@@ -253,7 +269,7 @@ def _prepare_activity_task(
         "source_executor_ids": [source_executor_id],
     }
     activity_input_json = json.dumps(activity_input)
-    activity_name = f"dafx-{executor_id}"
+    activity_name = workflow_executor_activity_name(workflow_name, executor_id)
     return ctx.prepare_activity_task(activity_name, activity_input_json)
 
 
@@ -655,7 +671,9 @@ def _prepare_all_tasks(
                 agent_messages_by_executor[executor_id].append((executor_id, message, source_executor_id))
             else:
                 logger.debug("Preparing activity task: %s", executor_id)
-                task = _prepare_activity_task(ctx, executor_id, message, source_executor_id, shared_state)
+                task = _prepare_activity_task(
+                    ctx, executor_id, message, source_executor_id, shared_state, workflow.name
+                )
                 all_tasks.append(task)
                 task_metadata_list.append(
                     TaskMetadata(
@@ -671,7 +689,7 @@ def _prepare_all_tasks(
         remaining = messages_list[1:]
 
         logger.debug("Preparing agent task: %s", executor_id)
-        task = _prepare_agent_task(ctx, first_msg[0], first_msg[1])
+        task = _prepare_agent_task(ctx, first_msg[0], first_msg[1], workflow.name)
         all_tasks.append(task)
         task_metadata_list.append(
             TaskMetadata(
@@ -815,7 +833,7 @@ def run_workflow_orchestrator(
         # Phase 3: Process sequential agent messages
         for executor_id, message, _source_executor_id in remaining_agent_messages:
             logger.debug("Processing sequential message for agent: %s", executor_id)
-            task = _prepare_agent_task(ctx, executor_id, message)
+            task = _prepare_agent_task(ctx, executor_id, message, workflow.name)
             agent_response: AgentResponse = yield task
             logger.debug("Agent %s sequential response completed", executor_id)
 

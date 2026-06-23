@@ -32,8 +32,10 @@ __all__ = [
     "DURABLE_NAME_PREFIX",
     "is_auto_generated_workflow_name",
     "validate_workflow_name",
+    "workflow_executor_activity_name",
     "workflow_name_from_orchestrator",
     "workflow_orchestrator_name",
+    "workflow_scoped_executor_id",
 ]
 
 # Shared prefix for every durable name this hosting layer registers. Matches
@@ -93,6 +95,40 @@ def workflow_name_from_orchestrator(orchestrator_name: str) -> str | None:
         return None
     name = orchestrator_name[len(DURABLE_NAME_PREFIX) :]
     return name or None
+
+
+def workflow_scoped_executor_id(workflow_name: str, executor_id: str) -> str:
+    """Return the workflow-scoped identity for an executor.
+
+    Inner executors (non-agent activities and agent entities) are scoped by
+    workflow so two co-hosted workflows that reuse an ``executor_id`` register and
+    dispatch to distinct durable primitives instead of colliding on one global
+    name. This is the **unprefixed** identity (e.g. used as
+    :class:`~agent_framework_durabletask.AgentSessionId` ``name``, which the entity
+    layer then prefixes); see :func:`workflow_executor_activity_name` for the full
+    activity function name.
+
+    Args:
+        workflow_name: The owning workflow's name.
+        executor_id: The executor's id within that workflow.
+
+    Returns:
+        ``"{workflow_name}-{executor_id}"``.
+    """
+    return f"{workflow_name}-{executor_id}"
+
+
+def workflow_executor_activity_name(workflow_name: str, executor_id: str) -> str:
+    """Return the durable activity function name for a non-agent executor.
+
+    Args:
+        workflow_name: The owning workflow's name.
+        executor_id: The executor's id within that workflow.
+
+    Returns:
+        ``"dafx-{workflow_name}-{executor_id}"``.
+    """
+    return f"{DURABLE_NAME_PREFIX}{workflow_scoped_executor_id(workflow_name, executor_id)}"
 
 
 def validate_workflow_name(workflow_name: str) -> None:

@@ -388,7 +388,7 @@ def _create_workflow() -> Workflow:
     #   input_router -> content_analyzer_agent -> content_analyzer_executor
     #   -> human_review_executor (HITL pause here) -> publish_executor
     return (
-        WorkflowBuilder(start_executor=input_router)
+        WorkflowBuilder(name="content_moderation", start_executor=input_router)
         .add_edge(input_router, content_analyzer_agent)
         .add_edge(content_analyzer_agent, content_analyzer_executor)
         .add_edge(content_analyzer_executor, human_review_executor)

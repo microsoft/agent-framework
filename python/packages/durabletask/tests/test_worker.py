@@ -179,11 +179,11 @@ class TestDurableAIAgentWorkerWorkflow:
     def test_configure_workflow_registers_agent_entity_by_executor_id(
         self, agent_worker: DurableAIAgentWorker, mock_grpc_worker: Mock
     ) -> None:
-        """Workflow agent executors register entities keyed by executor id.
+        """Workflow agent executors register entities keyed by the workflow-scoped id.
 
-        The orchestrator dispatches by executor id, so an
-        ``AgentExecutor(agent, id=...)`` whose id differs from the agent name must
-        still be reachable.
+        The orchestrator dispatches by the scoped identity
+        ``{workflow}-{executorId}``, so an ``AgentExecutor(agent, id=...)`` whose id
+        differs from the agent name must still be reachable under that scoped id.
         """
         from agent_framework import AgentExecutor
 
@@ -194,12 +194,14 @@ class TestDurableAIAgentWorkerWorkflow:
         agent_executor.agent = agent
 
         workflow = Mock()
+        workflow.name = "review"
         workflow.executors = {"custom-executor-id": agent_executor}
 
         agent_worker.configure_workflow(workflow)
 
-        assert "custom-executor-id" in agent_worker.registered_agent_names
+        assert "review-custom-executor-id" in agent_worker.registered_agent_names
         assert "Reviewer" not in agent_worker.registered_agent_names
+        assert "custom-executor-id" not in agent_worker.registered_agent_names
         mock_grpc_worker.add_orchestrator.assert_called_once()
 
     def test_configure_workflow_registers_non_agent_executor_as_activity(
@@ -212,6 +214,7 @@ class TestDurableAIAgentWorkerWorkflow:
         activity_executor.id = "router-node"
 
         workflow = Mock()
+        workflow.name = "route"
         workflow.executors = {"router-node": activity_executor}
 
         agent_worker.configure_workflow(workflow)
@@ -219,6 +222,70 @@ class TestDurableAIAgentWorkerWorkflow:
         assert agent_worker.registered_agent_names == []
         mock_grpc_worker.add_activity.assert_called_once()
         mock_grpc_worker.add_orchestrator.assert_called_once()
+        # The activity is registered under the workflow-scoped name.
+        registered_activity = mock_grpc_worker.add_activity.call_args[0][0]
+        assert registered_activity.__name__ == "dafx-route-router-node"
+
+
+class TestMultiWorkflowRegistration:
+    """Test hosting multiple workflows on one worker with scoped names."""
+
+    def _agent_workflow(self, name: str, executor_id: str) -> Mock:
+        from agent_framework import AgentExecutor
+
+        agent = Mock()
+        agent.name = "Assistant"
+        agent_executor = Mock(spec=AgentExecutor)
+        agent_executor.id = executor_id
+        agent_executor.agent = agent
+
+        workflow = Mock()
+        workflow.name = name
+        workflow.executors = {executor_id: agent_executor}
+        return workflow
+
+    def test_two_workflows_reusing_executor_id_do_not_collide(self, agent_worker: DurableAIAgentWorker) -> None:
+        """Two workflows that reuse an executor id register distinct scoped entities."""
+        agent_worker.configure_workflow(self._agent_workflow("orders", "assistant"))
+        agent_worker.configure_workflow(self._agent_workflow("billing", "assistant"))
+
+        assert "orders-assistant" in agent_worker.registered_agent_names
+        assert "billing-assistant" in agent_worker.registered_agent_names
+        assert set(agent_worker.registered_workflow_names) == {"orders", "billing"}
+
+    def test_registers_one_orchestrator_per_workflow(
+        self, agent_worker: DurableAIAgentWorker, mock_grpc_worker: Mock
+    ) -> None:
+        """Each configured workflow registers its own orchestrator."""
+        agent_worker.configure_workflow(self._agent_workflow("orders", "a"))
+        agent_worker.configure_workflow(self._agent_workflow("billing", "b"))
+
+        assert mock_grpc_worker.add_orchestrator.call_count == 2
+        registered_names = {call.args[0].__name__ for call in mock_grpc_worker.add_orchestrator.call_args_list}
+        assert registered_names == {"dafx-orders", "dafx-billing"}
+
+    def test_rejects_duplicate_workflow_name(self, agent_worker: DurableAIAgentWorker) -> None:
+        """Configuring two workflows with the same name is rejected."""
+        agent_worker.configure_workflow(self._agent_workflow("orders", "a"))
+
+        with pytest.raises(ValueError, match="already registered"):
+            agent_worker.configure_workflow(self._agent_workflow("orders", "b"))
+
+    def test_rejects_auto_generated_workflow_name(self, agent_worker: DurableAIAgentWorker) -> None:
+        """A workflow with an auto-generated WorkflowBuilder name is rejected."""
+        import uuid
+
+        workflow = self._agent_workflow(f"WorkflowBuilder-{uuid.uuid4()}", "a")
+
+        with pytest.raises(ValueError, match="auto-generated"):
+            agent_worker.configure_workflow(workflow)
+
+    def test_rejects_invalid_workflow_name(self, agent_worker: DurableAIAgentWorker) -> None:
+        """A workflow with an invalid name is rejected."""
+        workflow = self._agent_workflow("has space", "a")
+
+        with pytest.raises(ValueError, match="invalid"):
+            agent_worker.configure_workflow(workflow)
 
 
 if __name__ == "__main__":

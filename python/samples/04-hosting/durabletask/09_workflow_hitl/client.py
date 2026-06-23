@@ -33,6 +33,8 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+WORKFLOW_NAME = "content_moderation"
+
 
 def get_client(taskhub: str | None = None, endpoint: str | None = None) -> DurableTaskSchedulerClient:
     """Create a configured DurableTaskSchedulerClient."""
@@ -67,8 +69,7 @@ def _wait_for_hitl_request(
         status = client.get_runtime_status(instance_id)
         if status in terminal_statuses:
             raise RuntimeError(
-                f"Workflow instance {instance_id} reached terminal state '{status}' "
-                "before pausing for human input."
+                f"Workflow instance {instance_id} reached terminal state '{status}' before pausing for human input."
             )
         time.sleep(2)
     raise TimeoutError(f"Timed out waiting for a HITL request on instance {instance_id}")
@@ -96,7 +97,7 @@ def run_case(client: DurableWorkflowClient, submission: dict[str, Any], *, appro
 
 async def main() -> None:
     """Run an approved case and a rejected case."""
-    client = DurableWorkflowClient(get_client())
+    client = DurableWorkflowClient(get_client(), workflow_name=WORKFLOW_NAME)
 
     logger.info("CASE 1: Appropriate content (will approve)")
     run_case(

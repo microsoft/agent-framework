@@ -19,10 +19,10 @@ from agent_framework_durabletask import (
     THREAD_ID_HEADER,
     WAIT_FOR_RESPONSE_FIELD,
     WAIT_FOR_RESPONSE_HEADER,
-    WORKFLOW_ORCHESTRATOR_NAME,
     AgentEntity,
     AgentEntityStateProviderMixin,
     DurableAgentState,
+    workflow_orchestrator_name,
 )
 
 from agent_framework_azurefunctions import AgentFunctionApp
@@ -1332,6 +1332,7 @@ class TestAgentFunctionAppWorkflow:
     def test_init_with_workflow_stores_workflow(self) -> None:
         """Test that workflow is stored when provided."""
         mock_workflow = Mock()
+        mock_workflow.name = "test_workflow"
         mock_workflow.executors = {}
 
         with (
@@ -1356,6 +1357,7 @@ class TestAgentFunctionAppWorkflow:
         mock_executor.id = "custom-executor-id"
 
         mock_workflow = Mock()
+        mock_workflow.name = "orders"
         mock_workflow.executors = {"custom-executor-id": mock_executor}
 
         with (
@@ -1365,17 +1367,17 @@ class TestAgentFunctionAppWorkflow:
         ):
             app = AgentFunctionApp(workflow=mock_workflow)
 
-        # The entity is registered under the executor id (the dispatch identity).
+        # The entity is registered under the workflow-scoped dispatch identity.
         setup_entity.assert_called_once()
         call_args = setup_entity.call_args.args
         assert call_args[0] is mock_agent
-        assert call_args[1] == "custom-executor-id"
+        assert call_args[1] == "orders-custom-executor-id"
 
         # Regression guard: the workflow agent must also be tracked on the app's
-        # normal registration surface, keyed by the executor id, so it appears in
-        # ``agents`` and is retrievable via ``get_agent`` (as the constructor documents).
-        assert "custom-executor-id" in app.agents
-        assert app.agents["custom-executor-id"] is mock_agent
+        # normal registration surface, keyed by the scoped id, so it appears in
+        # ``agents`` and is retrievable via ``get_agent``.
+        assert "orders-custom-executor-id" in app.agents
+        assert app.agents["orders-custom-executor-id"] is mock_agent
 
     def test_init_with_workflow_calls_setup_methods(self) -> None:
         """Test that workflow setup methods are called."""
@@ -1383,6 +1385,7 @@ class TestAgentFunctionAppWorkflow:
         mock_executor.id = "TestExecutor"
 
         mock_workflow = Mock()
+        mock_workflow.name = "test_workflow"
         # Include a non-AgentExecutor so _setup_executor_activity is called
         mock_workflow.executors = {"TestExecutor": mock_executor}
 
@@ -1421,6 +1424,7 @@ class TestAgentFunctionAppWorkflow:
         mock_executor.id = "SharedAgent"
 
         mock_workflow = Mock()
+        mock_workflow.name = "shared_flow"
         mock_workflow.executors = {"SharedAgent": mock_executor}
 
         with (
@@ -1437,6 +1441,7 @@ class TestAgentFunctionAppWorkflow:
     def test_build_status_url(self) -> None:
         """Test _build_status_url constructs correct URL."""
         mock_workflow = Mock()
+        mock_workflow.name = "test_workflow"
         mock_workflow.executors = {}
 
         with (
@@ -1452,6 +1457,7 @@ class TestAgentFunctionAppWorkflow:
     def test_build_status_url_handles_trailing_slash(self) -> None:
         """Test _build_status_url handles URLs without /api/ correctly."""
         mock_workflow = Mock()
+        mock_workflow.name = "test_workflow"
         mock_workflow.executors = {}
 
         with (
@@ -1524,40 +1530,55 @@ class TestWorkflowOrchestrationScoping:
     "not found" instead of leaking its status/HITL details or accepting injected events.
     """
 
+    def _app_for(self, workflow_name: str) -> AgentFunctionApp:
+        mock_workflow = Mock()
+        mock_workflow.name = workflow_name
+        mock_workflow.executors = {}
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            return AgentFunctionApp(workflow=mock_workflow)
+
     @pytest.mark.parametrize(
         "name",
         [
-            WORKFLOW_ORCHESTRATOR_NAME,
-            WORKFLOW_ORCHESTRATOR_NAME.upper(),
-            "Workflow_Orchestrator",  # case-insensitive: must match
+            workflow_orchestrator_name("orders"),  # exact dafx-orders
+            workflow_orchestrator_name("orders").upper(),  # case-insensitive: must match
+            "DAFX-orders",  # mixed case prefix
         ],
     )
     def test_accepts_matching_workflow_orchestration(self, name: str) -> None:
+        app = self._app_for("orders")
         status = Mock()
         status.name = name
-        assert AgentFunctionApp._is_workflow_orchestration(status) is True
+        assert app._is_workflow_orchestration(status) is True
 
     def test_rejects_none_status(self) -> None:
         # client.get_status returns None when no instance resolves for the ID.
-        assert AgentFunctionApp._is_workflow_orchestration(None) is False
+        app = self._app_for("orders")
+        assert app._is_workflow_orchestration(None) is False
 
     def test_rejects_status_without_name(self) -> None:
+        app = self._app_for("orders")
         status = Mock()
         status.name = None
-        assert AgentFunctionApp._is_workflow_orchestration(status) is False
+        assert app._is_workflow_orchestration(status) is False
 
     @pytest.mark.parametrize(
         "other_name",
         [
             "SomeUserOrchestration",
-            "dafx-WeatherAgent",
-            "workflow_orchestrator_v2",
+            "dafx-WeatherAgent",  # an agent entity, not this workflow's orchestration
+            "dafx-billing",  # a *different* workflow's orchestration
+            "workflow_orchestrator",  # the deprecated fixed name
         ],
     )
     def test_rejects_other_orchestration_name(self, other_name: str) -> None:
+        app = self._app_for("orders")
         status = Mock()
         status.name = other_name
-        assert AgentFunctionApp._is_workflow_orchestration(status) is False
+        assert app._is_workflow_orchestration(status) is False
 
 
 if __name__ == "__main__":
