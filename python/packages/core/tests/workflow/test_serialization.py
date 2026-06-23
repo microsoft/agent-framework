@@ -311,7 +311,7 @@ class TestSerializationWorkflowClasses:
             SwitchCaseEdgeGroupCase(condition=lambda x: x > 0, target_id="positive"),
             SwitchCaseEdgeGroupDefault(target_id="default"),
         ]
-        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)
+        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)  # type: ignore[arg-type]
 
         # Test to_dict
         data = edge_group.to_dict()
@@ -515,7 +515,7 @@ class TestSerializationWorkflowClasses:
             SwitchCaseEdgeGroupCase(condition=is_positive, target_id="positive"),
             SwitchCaseEdgeGroupDefault(target_id="default"),
         ]
-        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)
+        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)  # type: ignore[arg-type]
 
         # Test to_dict
         data = edge_group.to_dict()

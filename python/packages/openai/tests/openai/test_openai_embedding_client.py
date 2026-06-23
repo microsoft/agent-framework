@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import os
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -186,7 +187,7 @@ async def test_openai_base64_decoding(openai_unit_test_env: dict[str, str]) -> N
 
 
 async def test_openai_error_when_no_model() -> None:
-    client = OpenAIEmbeddingClient.__new__(OpenAIEmbeddingClient)
+    client = cast(Any, object.__new__(OpenAIEmbeddingClient))
     client.model = None
     client.client = MagicMock()
     client.additional_properties = {}
@@ -232,7 +233,9 @@ async def test_integration_openai_get_embeddings() -> None:
     assert all(isinstance(v, float) for v in result[0].vector)
     assert result[0].model is not None
     assert result.usage is not None
-    assert result.usage["input_token_count"] > 0
+    input_token_count = result.usage["input_token_count"]
+    assert input_token_count is not None
+    assert input_token_count > 0
 
 
 @skip_if_openai_integration_tests_disabled

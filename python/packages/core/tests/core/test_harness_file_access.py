@@ -13,11 +13,13 @@ from agent_framework import (
     Agent,
     AgentFileStore,
     AgentSession,
+    Content,
     ExperimentalFeature,
     FileAccessProvider,
     FileSearchMatch,
     FileSearchResult,
     FileSystemAgentFileStore,
+    FunctionTool,
     InMemoryAgentFileStore,
     Message,
     SupportsChatGetResponse,
@@ -32,12 +34,17 @@ from agent_framework._harness._file_access import (
 )
 
 
-def _tool_by_name(tools: list[object], name: str) -> object:
+def _tool_by_name(tools: list[object], name: str) -> FunctionTool:
     """Return the tool with the requested name from a prepared tool list."""
     for tool in tools:
-        if getattr(tool, "name", None) == name:
+        if isinstance(tool, FunctionTool) and tool.name == name:
             return tool
     raise AssertionError(f"Tool {name!r} was not found.")
+
+
+def _text(content: Content) -> str:
+    assert content.text is not None
+    return content.text
 
 
 def test_normalize_relative_path_collapses_and_validates() -> None:
@@ -435,6 +442,28 @@ def test_filesystem_store_requires_non_empty_root() -> None:
         FileSystemAgentFileStore("   ")
 
 
+async def test_filesystem_store_does_not_create_root_until_write(tmp_path: Path) -> None:
+    """Constructing a store must not touch the filesystem; the root is created lazily on first write."""
+    root = tmp_path / "does-not-exist-yet"
+
+    # Construction performs no filesystem writes (safe in read-only CWDs).
+    store = FileSystemAgentFileStore(root)
+    assert not root.exists()
+
+    # Read-only operations tolerate the missing root without creating it.
+    assert await store.read_file("a.txt") is None
+    assert await store.file_exists("a.txt") is False
+    assert await store.list_files() == []
+    assert await store.list_directories() == []
+    assert await store.search_files("", ".") == []
+    assert not root.exists()
+
+    # The first write creates the root directory lazily.
+    await store.write_file("a.txt", "alpha")
+    assert root.is_dir()
+    assert await store.read_file("a.txt") == "alpha"
+
+
 async def test_file_access_provider_registers_tools_and_instructions(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
@@ -444,7 +473,7 @@ async def test_file_access_provider_registers_tools_and_instructions(
     provider = FileAccessProvider(store=store)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["work with files"])],
     )
@@ -468,49 +497,87 @@ async def test_file_access_provider_registers_tools_and_instructions(
         assert any(DEFAULT_FILE_ACCESS_INSTRUCTIONS in chunk for chunk in (instructions or []))
 
 
-async def test_file_access_provider_delete_approval_defaults_to_always_require(
+async def test_file_access_provider_all_tools_require_approval(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    """By default ``file_access_delete_file`` should require host approval."""
+    """Every file-access tool should require host approval."""
     session = AgentSession(session_id="session-1")
     provider = FileAccessProvider(store=InMemoryAgentFileStore())
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["work with files"])],
     )
 
     tools = options["tools"]
     assert isinstance(tools, list)
-    delete_file = _tool_by_name(tools, "file_access_delete_file")
-    assert delete_file.approval_mode == "always_require"
-    # The non-destructive tools should remain autonomous.
     for name in (
-        "file_access_save_file",
-        "file_access_read_file",
-        "file_access_list_files",
-        "file_access_list_subdirectories",
-        "file_access_search_files",
+        FileAccessProvider.SAVE_FILE_TOOL_NAME,
+        FileAccessProvider.READ_FILE_TOOL_NAME,
+        FileAccessProvider.DELETE_FILE_TOOL_NAME,
+        FileAccessProvider.LIST_FILES_TOOL_NAME,
+        FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
+        FileAccessProvider.SEARCH_FILES_TOOL_NAME,
     ):
-        assert _tool_by_name(tools, name).approval_mode == "never_require"
+        assert _tool_by_name(tools, name).approval_mode == "always_require"
 
 
-async def test_file_access_provider_delete_approval_opt_out(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """``require_delete_approval=False`` should drop delete to ``never_require``."""
-    session = AgentSession(session_id="session-1")
-    provider = FileAccessProvider(store=InMemoryAgentFileStore(), require_delete_approval=False)
-    agent = Agent(client=chat_client_base, context_providers=[provider])
+def test_read_only_tools_auto_approval_rule() -> None:
+    """The read-only rule approves only the non-mutating tools."""
+    approved = {
+        FileAccessProvider.READ_FILE_TOOL_NAME,
+        FileAccessProvider.LIST_FILES_TOOL_NAME,
+        FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
+        FileAccessProvider.SEARCH_FILES_TOOL_NAME,
+    }
+    rejected = {
+        FileAccessProvider.SAVE_FILE_TOOL_NAME,
+        FileAccessProvider.DELETE_FILE_TOOL_NAME,
+        "some_other_tool",
+    }
+    for name in approved:
+        call = Content("function_call", call_id="c1", name=name, arguments="{}")
+        assert FileAccessProvider.read_only_tools_auto_approval_rule(call) is True
+    for name in rejected:
+        call = Content("function_call", call_id="c1", name=name, arguments="{}")
+        assert FileAccessProvider.read_only_tools_auto_approval_rule(call) is False
+    # A hosted tool with the same name (carrying a server_label) is NOT auto-approved.
+    for name in approved:
+        hosted = Content(
+            "function_call",
+            call_id="c1",
+            name=name,
+            arguments="{}",
+            additional_properties={"server_label": "remote"},
+        )
+        assert FileAccessProvider.read_only_tools_auto_approval_rule(hosted) is False
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
-        session=session,
-        input_messages=[Message(role="user", contents=["work with files"])],
-    )
 
-    delete_file = _tool_by_name(options["tools"], "file_access_delete_file")  # type: ignore[arg-type]
-    assert delete_file.approval_mode == "never_require"
+def test_all_tools_auto_approval_rule() -> None:
+    """The all-tools rule approves every file-access tool but nothing else."""
+    for name in (
+        FileAccessProvider.SAVE_FILE_TOOL_NAME,
+        FileAccessProvider.READ_FILE_TOOL_NAME,
+        FileAccessProvider.DELETE_FILE_TOOL_NAME,
+        FileAccessProvider.LIST_FILES_TOOL_NAME,
+        FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
+        FileAccessProvider.SEARCH_FILES_TOOL_NAME,
+    ):
+        call = Content("function_call", call_id="c1", name=name, arguments="{}")
+        assert FileAccessProvider.all_tools_auto_approval_rule(call) is True
+        # A hosted tool with the same name (carrying a server_label) is NOT auto-approved.
+        hosted = Content(
+            "function_call",
+            call_id="c1",
+            name=name,
+            arguments="{}",
+            additional_properties={"server_label": "remote"},
+        )
+        assert FileAccessProvider.all_tools_auto_approval_rule(hosted) is False
+
+    unrelated = Content("function_call", call_id="c1", name="some_other_tool", arguments="{}")
+    assert FileAccessProvider.all_tools_auto_approval_rule(unrelated) is False
 
 
 async def test_file_access_provider_tools_round_trip_files(
@@ -522,7 +589,7 @@ async def test_file_access_provider_tools_round_trip_files(
     provider = FileAccessProvider(store=store)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["work with files"])],
     )
@@ -537,47 +604,47 @@ async def test_file_access_provider_tools_round_trip_files(
     search_files = _tool_by_name(tools, "file_access_search_files")
 
     saved = await save_file.invoke(arguments={"file_name": "plan.md", "content": "step 1\nERROR step 2"})
-    assert "plan.md" in saved[0].text and "saved" in saved[0].text
+    assert "plan.md" in _text(saved[0]) and "saved" in _text(saved[0])
 
     # Default overwrite=False should refuse the second save.
     refused = await save_file.invoke(arguments={"file_name": "plan.md", "content": "stomp"})
-    assert "already exists" in refused[0].text
+    assert "already exists" in _text(refused[0])
 
     # overwrite=True should succeed.
     overwritten = await save_file.invoke(
         arguments={"file_name": "plan.md", "content": "stomp\nERROR replaced", "overwrite": True}
     )
-    assert "saved" in overwritten[0].text
+    assert "saved" in _text(overwritten[0])
 
     read_back = await read_file.invoke(arguments={"file_name": "plan.md"})
-    assert read_back[0].text == "stomp\nERROR replaced"
+    assert _text(read_back[0]) == "stomp\nERROR replaced"
 
     listed = await list_files.invoke()
-    assert json.loads(listed[0].text) == ["plan.md"]
+    assert json.loads(_text(listed[0])) == ["plan.md"]
 
     # The list tool should accept an optional directory argument so agents can
     # enumerate nested folders (not only the root).
     await save_file.invoke(arguments={"file_name": "reports/2024.md", "content": "annual"})
     listed_nested = await list_files.invoke(arguments={"directory": "reports"})
-    assert json.loads(listed_nested[0].text) == ["2024.md"]
+    assert json.loads(_text(listed_nested[0])) == ["2024.md"]
     # Blank / whitespace directory should fall back to the root listing.
     listed_blank = await list_files.invoke(arguments={"directory": "   "})
-    assert sorted(json.loads(listed_blank[0].text)) == ["plan.md"]
+    assert sorted(json.loads(_text(listed_blank[0]))) == ["plan.md"]
 
     # The subdirectory-discovery tool surfaces child directories (not files).
     listed_dirs = await list_subdirectories.invoke()
-    assert json.loads(listed_dirs[0].text) == ["reports"]
+    assert json.loads(_text(listed_dirs[0])) == ["reports"]
     listed_dirs_blank = await list_subdirectories.invoke(arguments={"directory": "   "})
-    assert json.loads(listed_dirs_blank[0].text) == ["reports"]
+    assert json.loads(_text(listed_dirs_blank[0])) == ["reports"]
     # A leaf directory with no child directories returns an empty list.
     listed_dirs_nested = await list_subdirectories.invoke(arguments={"directory": "reports"})
-    assert json.loads(listed_dirs_nested[0].text) == []
+    assert json.loads(_text(listed_dirs_nested[0])) == []
 
     missing = await read_file.invoke(arguments={"file_name": "missing.md"})
-    assert "not found" in missing[0].text
+    assert "not found" in _text(missing[0])
 
     search_payload = await search_files.invoke(arguments={"regex_pattern": "error", "file_pattern": "*.md"})
-    parsed = json.loads(search_payload[0].text)
+    parsed = json.loads(_text(search_payload[0]))
     assert parsed[0]["file_name"] == "plan.md"
     assert parsed[0]["matching_lines"][0]["line"] == "ERROR replaced"
 
@@ -585,14 +652,14 @@ async def test_file_access_provider_tools_round_trip_files(
     # the glob (``*`` crosses ``/`` with fnmatch). Results use root-relative names.
     await save_file.invoke(arguments={"file_name": "reports/issues.md", "content": "ERROR nested"})
     scoped = await search_files.invoke(arguments={"regex_pattern": "error", "file_pattern": "reports/*"})
-    scoped_parsed = json.loads(scoped[0].text)
+    scoped_parsed = json.loads(_text(scoped[0]))
     assert [entry["file_name"] for entry in scoped_parsed] == ["reports/issues.md"]
 
     deleted = await delete_file.invoke(arguments={"file_name": "plan.md"})
-    assert "deleted" in deleted[0].text
+    assert "deleted" in _text(deleted[0])
 
     missing_delete = await delete_file.invoke(arguments={"file_name": "plan.md"})
-    assert "not found" in missing_delete[0].text
+    assert "not found" in _text(missing_delete[0])
 
 
 async def test_file_access_provider_accepts_custom_instructions() -> None:
@@ -663,12 +730,12 @@ async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:
     """File-access harness public classes should expose HARNESS experimental metadata."""
-    assert AgentFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert InMemoryAgentFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert FileSystemAgentFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert FileSearchMatch.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert FileSearchResult.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert FileAccessProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
+    assert getattr(AgentFileStore, "__feature_id__", None) == ExperimentalFeature.HARNESS.value
+    assert getattr(InMemoryAgentFileStore, "__feature_id__", None) == ExperimentalFeature.HARNESS.value
+    assert getattr(FileSystemAgentFileStore, "__feature_id__", None) == ExperimentalFeature.HARNESS.value
+    assert getattr(FileSearchMatch, "__feature_id__", None) == ExperimentalFeature.HARNESS.value
+    assert getattr(FileSearchResult, "__feature_id__", None) == ExperimentalFeature.HARNESS.value
+    assert getattr(FileAccessProvider, "__feature_id__", None) == ExperimentalFeature.HARNESS.value
     assert ".. warning:: Experimental" in (FileAccessProvider.__doc__ or "")
 
 
@@ -741,7 +808,7 @@ async def test_file_access_tool_wrappers_surface_value_error_as_message(
     provider = FileAccessProvider(store=store)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["work with files"])],
     )
@@ -756,18 +823,23 @@ async def test_file_access_tool_wrappers_surface_value_error_as_message(
 
     # Path-traversal attempts on each tool should return a clean string, not raise.
     saved = await save_file.invoke(arguments={"file_name": "../escape.txt", "content": "x"})
-    assert "Could not save" in saved[0].text and "escape" in saved[0].text.lower()
+    assert "Could not save" in _text(saved[0]) and "escape" in _text(saved[0]).lower()
     read = await read_file.invoke(arguments={"file_name": "../escape.txt"})
-    assert "Could not read" in read[0].text
+    assert "Could not read" in _text(read[0])
     deleted = await delete_file.invoke(arguments={"file_name": "../escape.txt"})
-    assert "Could not delete" in deleted[0].text
+    assert "Could not delete" in _text(deleted[0])
     listed = await list_files.invoke(arguments={"directory": "../escape"})
-    assert "Could not list" in listed[0].text
+    assert "Could not list" in _text(listed[0])
 
     # Regex length cap should also be returned to the model as text.
     too_long = "a" * 1024
     searched = await search_files.invoke(arguments={"regex_pattern": too_long})
-    assert "Could not search files" in searched[0].text
+    assert "Could not search files" in _text(searched[0])
+
+    # An invalid regex is surfaced to the caller (the model) as a raised error
+    # so it can correct the pattern and retry.
+    with pytest.raises(re.error):
+        await search_files.invoke(arguments={"regex_pattern": "[unclosed"})
 
 
 async def test_file_access_tool_read_file_wrapper_surfaces_non_utf8(
@@ -781,13 +853,15 @@ async def test_file_access_tool_read_file_wrapper_surfaces_non_utf8(
     provider = FileAccessProvider(store=store)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["read it"])],
     )
-    read_file = _tool_by_name(options["tools"], "file_access_read_file")
+    tools = options["tools"]
+    assert isinstance(tools, list)
+    read_file = _tool_by_name(tools, "file_access_read_file")
     response = await read_file.invoke(arguments={"file_name": "blob.bin"})
-    assert "Could not read" in response[0].text and "UTF-8" in response[0].text
+    assert "Could not read" in _text(response[0]) and "UTF-8" in _text(response[0])
 
 
 _NEEDS_SYMLINK = "Symbolic links are not supported in this environment"

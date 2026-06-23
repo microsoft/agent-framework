@@ -31,8 +31,8 @@ from agent_framework.azure import (
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
-from tools import get_local_events, get_weather_forecast
+from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk  # pyrefly: ignore[missing-import]
+from tools import get_local_events, get_weather_forecast  # pyrefly: ignore[missing-import]
 
 # Load environment variables from .env file
 load_dotenv()
@@ -298,8 +298,8 @@ async def _stream_to_client(
 def _format_chunk(chunk: StreamChunk, use_sse_format: bool) -> str:
     """Format a text chunk."""
     if use_sse_format:
-        return _format_sse_event("message", chunk.text, chunk.entry_id)
-    return chunk.text
+        return _format_sse_event("message", chunk.text or "", chunk.entry_id)
+    return chunk.text or ""
 
 
 def _format_end_of_stream(entry_id: str, use_sse_format: bool) -> str:

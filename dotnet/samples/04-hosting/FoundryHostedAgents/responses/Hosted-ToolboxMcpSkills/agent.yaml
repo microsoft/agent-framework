@@ -10,5 +10,5 @@ resources:
 environment_variables:
   - name: FOUNDRY_MODEL
     value: ${FOUNDRY_MODEL}
-  - name: FOUNDRY_TOOLBOX_NAME
-    value: ${FOUNDRY_TOOLBOX_NAME}
+  - name: TOOLBOX_NAME
+    value: ${TOOLBOX_NAME}

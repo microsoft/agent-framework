@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from event_stream import EventStream
+from event_stream import EventStream  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui_examples.agents.subgraphs_agent import subgraphs_agent
 

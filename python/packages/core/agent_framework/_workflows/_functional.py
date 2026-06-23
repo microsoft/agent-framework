@@ -55,7 +55,7 @@ from ._events import (
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowRunState,
-    _framework_event_origin,  # type: ignore[reportPrivateUsage]
+    _framework_event_origin,
 )
 from ._workflow import WorkflowRunResult
 
@@ -516,7 +516,7 @@ class StepWrapper(Generic[R]):
             # Dedicated bypass event so consumers can tell cache-hit replays
             # apart from fresh executions.
             await ctx.add_event(WorkflowEvent.executor_bypassed(self.name, cached))
-            return cached  # type: ignore[return-value, no-any-return]
+            return cached
 
         # Inject RunContext if the step function declares it
         call_args, call_kwargs = self._build_call_args_with_ctx(ctx, args, kwargs)

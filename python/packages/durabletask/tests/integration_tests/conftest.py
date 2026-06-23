@@ -12,7 +12,7 @@ import time
 import uuid
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import pytest
@@ -21,13 +21,20 @@ from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.client import OrchestrationStatus
 
-from agent_framework_durabletask import DurableAIAgentClient
+from agent_framework_durabletask import DurableAIAgentClient, DurableWorkflowClient
 
 # Load environment variables from .env file
 load_dotenv(Path(__file__).parent / ".env")
 
 # Configure logging to reduce noise during tests
 logging.basicConfig(level=logging.WARNING)
+
+
+class AgentClientFactoryProtocol(Protocol):
+    """Protocol for the agent client factory fixture."""
+
+    @classmethod
+    def create(cls, max_poll_retries: int = 90) -> tuple[DurableTaskSchedulerClient, DurableAIAgentClient]: ...
 
 
 # =============================================================================
@@ -472,7 +479,7 @@ def orchestration_helper(worker_process: dict[str, Any]) -> OrchestrationHelper:
 
 
 @pytest.fixture(scope="module")
-def agent_client_factory(worker_process: dict[str, Any]) -> type:
+def agent_client_factory(worker_process: dict[str, Any]) -> type[AgentClientFactoryProtocol]:
     """Return a factory class for creating agent clients.
 
     Usage in tests:
@@ -492,3 +499,10 @@ def agent_client_factory(worker_process: dict[str, Any]) -> type:
             return create_agent_client(cls.endpoint, cls.taskhub, max_poll_retries)
 
     return AgentClientFactory
+
+
+@pytest.fixture(scope="module")
+def workflow_client(worker_process: dict[str, Any]) -> DurableWorkflowClient:
+    """Create a DurableWorkflowClient bound to the current sample worker's task hub."""
+    dts_client = create_dts_client(worker_process["endpoint"], worker_process["taskhub"])
+    return DurableWorkflowClient(dts_client)

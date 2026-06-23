@@ -6,7 +6,7 @@ import sys
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableSequence, Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Generic, Literal, cast, overload
+from typing import Any, Generic, Literal, TypedDict, cast, overload  # noqa: F401
 
 import pytest
 from agent_framework import (
@@ -104,14 +104,18 @@ class StreamingChatClientStub(
         else:
             self.last_session = None
         self.last_service_session_id = self.last_session.service_session_id if self.last_session else None
-        return cast(
-            Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-            super().get_response(
+        if stream:
+            return super().get_response(
                 messages=messages,
-                stream=cast(Literal[True, False], stream),
+                stream=True,
                 options=options,
                 **kwargs,
-            ),
+            )
+        return super().get_response(
+            messages=messages,
+            stream=False,
+            options=options,
+            **kwargs,
         )
 
     @override
@@ -216,7 +220,12 @@ class StubAgent(SupportsAgentRun):
         if stream:
 
             async def _stream() -> AsyncIterator[AgentResponseUpdate]:
-                self.messages_received = [] if messages is None else list(messages)  # type: ignore[arg-type]
+                if messages is None:
+                    self.messages_received = []
+                elif isinstance(messages, (str, Content, Message)):
+                    self.messages_received = [messages]
+                else:
+                    self.messages_received = list(messages)
                 self.last_session = session
                 self.tools_received = kwargs.get("tools")
                 for update in self.updates:
@@ -233,7 +242,10 @@ class StubAgent(SupportsAgentRun):
         return _get_response()
 
     def create_session(self, **kwargs: Any) -> AgentSession:
-        return AgentSession()
+        return AgentSession(session_id=kwargs.get("session_id"))
+
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
 
 # Fixtures

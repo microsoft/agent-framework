@@ -701,7 +701,7 @@ class AzureAISearchContextProvider(ContextProvider):
                     embeddings = await self.embedding_function.get_embeddings([query])  # type: ignore[reportUnknownVariableType]
                     query_vector = embeddings[0].vector  # type: ignore[reportUnknownVariableType]
                 else:
-                    query_vector = await self.embedding_function(query)  # type: ignore[reportUnknownVariableType]
+                    query_vector = await self.embedding_function(query)
                 vector_queries = [VectorizedQuery(vector=query_vector, k=vector_k, fields=self.vector_field_name)]  # type: ignore[reportUnknownArgumentType]
 
         search_params: dict[str, Any] = {"search_text": query, "top": self.top_k}
@@ -721,7 +721,7 @@ class AzureAISearchContextProvider(ContextProvider):
             doc_id = doc.get("id") or doc.get("@search.id")  # type: ignore[reportUnknownVariableType]
             doc_text: str = self._extract_document_text(doc, doc_id=doc_id)  # type: ignore[reportUnknownArgumentType]
             if doc_text:
-                result_messages.append(Message(role="user", contents=[doc_text]))  # type: ignore[reportUnknownArgumentType]
+                result_messages.append(Message(role="user", contents=[doc_text]))
         return result_messages
 
     async def _ensure_knowledge_base(self) -> None:

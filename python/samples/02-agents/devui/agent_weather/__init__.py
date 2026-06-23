@@ -2,6 +2,6 @@
 
 """Weather agent sample for DevUI testing."""
 
-from .agent import agent
+from .agent import agent  # ty: ignore[unresolved-import]
 
 __all__ = ["agent"]

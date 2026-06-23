@@ -2,6 +2,8 @@
 
 """Unit tests for WorkflowFactory."""
 
+from typing import Any, cast
+
 import pytest
 
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
@@ -327,7 +329,7 @@ class TestWorkflowFactoryAgentRegistration:
             name = "mock-agent"
 
         factory = WorkflowFactory()
-        factory.register_agent("myAgent", MockAgent())
+        factory.register_agent("myAgent", cast(Any, MockAgent()))
 
         assert "myAgent" in factory._agents
 
@@ -1024,7 +1026,7 @@ actions:
         workflow = factory.create_workflow_from_yaml_path(workflow_file)
 
         assert workflow is not None
-        assert "TestAgent" in workflow._declarative_agents
+        assert "TestAgent" in cast(Any, workflow)._declarative_agents
 
     def test_agent_connection_definition_raises(self):
         """Test that connection-based agent definition raises error."""
@@ -1062,7 +1064,7 @@ actions:
         class MockAgent:
             name = "PreregisteredAgent"
 
-        factory = WorkflowFactory(agents={"TestAgent": MockAgent()})
+        factory = WorkflowFactory(agents={"TestAgent": cast(Any, MockAgent())})
         workflow = factory.create_workflow_from_yaml("""
 kind: Workflow
 agents:
@@ -1075,7 +1077,7 @@ actions:
     value: 1
 """)
 
-        assert workflow._declarative_agents["TestAgent"].name == "PreregisteredAgent"
+        assert cast(Any, workflow)._declarative_agents["TestAgent"].name == "PreregisteredAgent"
 
 
 class TestWorkflowFactoryInputSchema:
@@ -1099,7 +1101,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["type"] == "object"
         assert "name" in schema["properties"]
         assert "age" in schema["properties"]
@@ -1126,7 +1128,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert "required_field" in schema["required"]
         assert "optional_field" not in schema["required"]
 
@@ -1145,7 +1147,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["greeting"]["default"] == "Hello"
 
     def test_inputs_schema_with_enum(self):
@@ -1166,7 +1168,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["color"]["enum"] == ["red", "green", "blue"]
 
     def test_inputs_schema_type_mappings(self):
@@ -1193,7 +1195,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["str_field"]["type"] == "string"
         assert schema["properties"]["int_field"]["type"] == "integer"
         assert schema["properties"]["float_field"]["type"] == "number"
@@ -1215,7 +1217,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["name"]["type"] == "string"
         assert schema["properties"]["count"]["type"] == "integer"
         assert "name" in schema["required"]
@@ -1234,7 +1236,11 @@ class TestWorkflowFactoryChaining:
         class MockAgent2:
             name = "Agent2"
 
-        factory = WorkflowFactory().register_agent("agent1", MockAgent1()).register_agent("agent2", MockAgent2())
+        factory = (
+            WorkflowFactory()
+            .register_agent("agent1", cast(Any, MockAgent1()))
+            .register_agent("agent2", cast(Any, MockAgent2()))
+        )
 
         assert "agent1" in factory._agents
         assert "agent2" in factory._agents
@@ -1267,7 +1273,7 @@ class TestWorkflowFactoryChaining:
 
         factory = (
             WorkflowFactory()
-            .register_agent("agent", MockAgent())
+            .register_agent("agent", cast(Any, MockAgent()))
             .register_tool("tool", my_tool)
             .register_binding("binding", my_binding)
         )

@@ -411,8 +411,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # `oauth_consent_request` stream event instead of crashing the server.
         self._agent_stack: AsyncExitStack | None = None
         self._agent_init_lock = asyncio.Lock()
-        self.shutdown_handler(self._cleanup_agent)  # pyright: ignore[reportUnknownMemberType]
-        self.response_handler(self._handle_response)  # pyright: ignore[reportUnknownMemberType]
+        self.shutdown_handler(self._cleanup_agent)
+        self.response_handler(self._handle_response)
 
     async def _ensure_agent_ready(self) -> None:
         """Lazily enter the agent's async context exactly once.
@@ -1728,7 +1728,7 @@ async def _to_outputs(
                 # for round trips where the original approval request needs to be looked up.
                 item = getattr(event, "item", None)
                 if item is not None and getattr(item, "id", None) is not None:
-                    approval_request_id = cast(str, item.id)  # type: ignore
+                    approval_request_id = cast(str, item.id)
                     await approval_storage.save_approval_request(approval_request_id, content)
                     request_saved = True
             yield event

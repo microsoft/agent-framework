@@ -543,12 +543,12 @@ class ParseValueExecutor(DeclarativeActionExecutor):
             if value is None:
                 return []
             if isinstance(value, list):
-                return cast(list[Any], value)  # type: ignore[redundant-cast]
+                return cast(list[Any], value)
             if isinstance(value, str):
                 try:
                     parsed = json.loads(value)
                     if isinstance(parsed, list):
-                        return cast(list[Any], parsed)  # type: ignore[redundant-cast]
+                        return cast(list[Any], parsed)
                     return [parsed]
                 except json.JSONDecodeError:
                     return [value]
